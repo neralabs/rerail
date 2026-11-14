@@ -353,6 +353,24 @@ start, as far as the blocks whose outputs are final. A run rule reads its word f
 register, but for a token at the block's last byte, whose run starts in the next block (a
 cold block, as the lean lexer's word on past the block).
 
-Next: the readers' openers and the tests still load a mask word at their token; the lean
-lexer reads those tokens' bytes.
+## A token's test at its bytes
+
+The lean lexer tests a `-` or a leading `0` by the bytes at the token: `d == b'-'`, the next
+byte a digit or not. The token loop loaded the test's mask word, and the block made the mask
+at every byte. Now a run test of a few bytes (eight at most) whose mask is byte tests alone
+(`local_ops`: classes, `next`, `prev`) is the CPU's at the token's bytes:
+
+```text
+# the records' row: the test's output, its delay, its byte tests (a LocalCheck's ops)
+block 0 reclocal m30 d1 b...  p0.1 ...
+```
+
+The CPU reads each byte once at the token (`local_at`, straight-line, 0 outside the file),
+and its form makes no mask of the test where nothing else of the records reads it
+(`read_at_tokens`; guard `the_cpu_reads_local_tests_at_the_token`). Metal and the interpreter
+read the mask, which means the same. The punctuation's and the number's tests: 51 operations,
+from 57; tier 1's Rust 247 KB, from 254.
+
+Left as masks: a test that counts over the token (a float's `.`, a string's bad bytes), and
+the readers' openers (a string's `"` is `quote & ~escaped`, a carried value).
 

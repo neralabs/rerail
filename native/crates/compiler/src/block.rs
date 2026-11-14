@@ -1780,6 +1780,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             };
             let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
         }
+        // `block N reclocal mO dD OPS`: a run test's output, read at the token's bytes.
+        for c in &r.locals {
+            let _ = writeln!(out, "  block {at} reclocal {}", crate::rir_text::local_check_text(c));
+        }
         // `block N rectested T`: the gap marks made by token tests alone.
         if r.tested_only != 0 {
             let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);

@@ -73,6 +73,10 @@ pub struct Records {
     pub nexts: Vec<PairTable>,
     /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
     pub tested_only: u32,
+    /// The run tests' outputs the CPU reads at a token's bytes (decision 0177): output `mask`
+    /// at byte `j` is `ops` at place `j + delay` (`program::LocalOp`), as a lexer reads the
+    /// bytes of the token it tests. Metal and the interpreter read the mask.
+    pub locals: Vec<crate::program::LocalCheck>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,

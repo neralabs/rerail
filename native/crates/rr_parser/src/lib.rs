@@ -1472,6 +1472,21 @@ pub mod tests {
         assert!(c.native.extracts.iter().all(|e| made.contains(e)), "every extract the record pass's");
     }
 
+    /// Decision 0177's guard for the token tests: a run test of byte tests alone is read at the
+    /// token's bytes on the CPU (`Records::locals`), as the lean lexer reads a `-` or a `0`; the
+    /// CPU makes no mask of it.
+    #[test]
+    fn the_cpu_reads_local_tests_at_the_token() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let at = c.native.read_at_tokens();
+        assert!(at.len() >= 2, "the punctuation's and the number's tests read at the token: {at:?}");
+        let cpu = c.native.cpu_form();
+        for &o in &at {
+            assert!(matches!(cpu.insts[usize::from(cpu.outputs[o])], BlockInst::Const(0)), "the CPU makes test {o}'s mask");
+        }
+    }
+
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
     /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
     #[test]

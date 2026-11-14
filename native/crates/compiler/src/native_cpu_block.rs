@@ -1983,7 +1983,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
         // the token, as a lexer checks the token it reads.
         let tests: Vec<crate::records::TokenCheck> = r.checks.iter().filter(|c| usize::from(c.rule) == k).copied().collect();
-        let ended = if tests.is_empty() { ended } else { tested(f, &tests, outputs, c, s, done, heads) };
+        let ended = if tests.is_empty() { ended } else { tested(f, &tests, &r.locals, outputs, c, s, done, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row, then the next byte's bit in the row's set, if
@@ -2221,7 +2221,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
 /// `least` bits from `s` compared at once, from one word or two.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], outputs: usize, c: &FileCols, s: Value, done: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> cranelift_codegen::ir::Block {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], locals: &[crate::program::LocalCheck], outputs: usize, c: &FileCols, s: Value, done: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> cranelift_codegen::ir::Block {
     let fl = MemFlags::trusted();
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
@@ -2299,6 +2299,28 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], out
             let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(t.least));
             f.ins().brif(long, test, &[], next, &[kept.into()]);
             f.switch_to_block(test);
+            // Read at the token's bytes (`Records::locals`): its first `least`, straight-line.
+            if let Some(lc) = locals.iter().find(|l| l.mask == t.o) {
+                let mut memo = std::collections::HashMap::new();
+                let mut all = f.ins().iconst(types::I64, 1);
+                for j in 0..t.least {
+                    let at = f.ins().iadd_imm(s, i64::from(j) + i64::from(lc.delay));
+                    let b = local_at(f, &lc.ops, lc.ops.len() - 1, c, at, 0, &mut memo);
+                    all = f.ins().band(all, b);
+                }
+                let hit = f.ins().ineg(all);
+                let hit = into(f, hit, refuse, hits);
+                f.ins().jump(next, &[hit.into()]);
+                // The mask's form's blocks, unreached.
+                let _ = (two, one);
+                f.switch_to_block(next);
+                if escape {
+                    refuse = f.block_params(next)[0];
+                } else {
+                    hits = f.block_params(next)[0];
+                }
+                continue;
+            }
             let x = word_at(f, q0, t.o);
             let lo = f.ins().ushr(x, sh);
             let end = f.ins().iadd_imm(sh, i64::from(t.least));
@@ -2333,6 +2355,94 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], out
     f.ins().jump(done, &[l.into(), refuse.into(), tag.into(), hits.into()]);
     f.switch_to_block(here);
     ended
+}
+
+/// A local check's op `k` (`program::LocalOp`) at stream place `at - back`, 0 or 1: a byte's
+/// test a load of the file's byte (0 outside it), a `prev` the operand further back. Each
+/// (op, back) made once (`memo`).
+fn local_at(f: &mut FunctionBuilder<'_>, ops: &[crate::program::LocalOp], k: usize, c: &FileCols, at: Value, back: i64, memo: &mut std::collections::HashMap<(usize, i64), Value>) -> Value {
+    use crate::program::LocalOp as L;
+    if let Some(&v) = memo.get(&(k, back)) {
+        return v;
+    }
+    let i = if back == 0 { at } else { f.ins().iadd_imm(at, -back) };
+    let one = |f: &mut FunctionBuilder<'_>, b: Value| -> Value {
+        let b = f.ins().uextend(types::I64, b);
+        b
+    };
+    let v = match ops[k] {
+        L::Bytes(set) => {
+            let inside = f.ins().icmp(IntCC::UnsignedLessThan, i, c.len);
+            let zero = f.ins().iconst(types::I64, 0);
+            let p = f.ins().select(inside, i, zero);
+            let addr = c.bytes_at(f, p);
+            let b = f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), addr, 0);
+            let b = f.ins().select(inside, b, zero);
+            let used: Vec<usize> = (0..4).filter(|&w| set[w] != 0).collect();
+            let word = match used.as_slice() {
+                [] => zero,
+                [w] => {
+                    let hi = f.ins().ushr_imm(b, 6);
+                    let same = f.ins().icmp_imm(IntCC::Equal, hi, *w as i64);
+                    let x = f.ins().iconst(types::I64, set[*w] as i64);
+                    f.ins().select(same, x, zero)
+                }
+                _ => {
+                    let hi = f.ins().ushr_imm(b, 6);
+                    let mut x = f.ins().iconst(types::I64, set[0] as i64);
+                    for w in 1..4 {
+                        let same = f.ins().icmp_imm(IntCC::Equal, hi, w as i64);
+                        let y = f.ins().iconst(types::I64, set[w] as i64);
+                        x = f.ins().select(same, y, x);
+                    }
+                    x
+                }
+            };
+            let bit = f.ins().ushr(word, b);
+            f.ins().band_imm(bit, 1)
+        }
+        L::Const(p) => {
+            let sh = f.ins().band_imm(i, 63);
+            let x = f.ins().iconst(types::I64, p as i64);
+            let bit = f.ins().ushr(x, sh);
+            let bit = f.ins().band_imm(bit, 1);
+            let ok = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+            let ok = one(f, ok);
+            f.ins().band(bit, ok)
+        }
+        L::Within(d) => {
+            let lo = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, i64::from(d));
+            let end = f.ins().iadd_imm(c.len, i64::from(d));
+            let hi = f.ins().icmp(IntCC::SignedLessThan, i, end);
+            let both = f.ins().band(lo, hi);
+            one(f, both)
+        }
+        L::Not(a) => {
+            let x = local_at(f, ops, usize::from(a), c, at, back, memo);
+            f.ins().bxor_imm(x, 1)
+        }
+        L::And(a, b) | L::Or(a, b) | L::Xor(a, b) | L::AndNot(a, b) => {
+            let x = local_at(f, ops, usize::from(a), c, at, back, memo);
+            let y = local_at(f, ops, usize::from(b), c, at, back, memo);
+            match ops[k] {
+                L::And(..) => f.ins().band(x, y),
+                L::Or(..) => f.ins().bor(x, y),
+                L::Xor(..) => f.ins().bxor(x, y),
+                _ => {
+                    let ny = f.ins().bxor_imm(y, 1);
+                    f.ins().band(x, ny)
+                }
+            }
+        }
+        L::Prev(a, n) => {
+            let x = local_at(f, ops, usize::from(a), c, at, back + i64::from(n), memo);
+            let ok = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, i64::from(n));
+            let ok = one(f, ok);
+            f.ins().band(x, ok)
+        }
+    };
+    memo.insert((k, back), v);
+    v
 }
 
 /// A file's records (`records::pass`): per token, its code from its first and last bytes, stored

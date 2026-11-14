@@ -469,6 +469,10 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 let v = low.program.masks[usize::from(c.o)];
                 c.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a token test's mask not an output")? as u16;
             }
+            for l in r.locals.iter_mut() {
+                let v = low.program.masks[usize::from(l.mask)];
+                l.mask = low.program.outputs.iter().position(|&o| o == v).ok_or("a token test's mask not an output")? as u16;
+            }
         }
         // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
         low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK || label == FALLBACK_TOKENS).map(|(_, &v)| v).collect();
@@ -2838,6 +2842,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     };
     // The token tests, each its mask a mask output (made an output's below), as a rule's.
     let mut checks = Vec::new();
+    let mut locals = Vec::new();
     for (k, tests) in rule_tests.iter().enumerate() {
         for &i in tests {
             let (_, count, v, least, then) = low.token_escapes[i].clone();
@@ -2848,6 +2853,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     (mark_masks.len() - 1) as u16
                 }
             };
+            // A run test of a few bytes made of byte tests alone: the CPU reads it at the
+            // token's bytes (`Records::locals`), as a lexer does, not as a mask a block.
+            if !count && least <= 8 && !locals.iter().any(|l: &crate::program::LocalCheck| l.mask == o) {
+                if let Some(ops) = low.local_ops(v) {
+                    locals.push(crate::program::LocalCheck { mask: o, delay: v.d, ops });
+                }
+            }
             checks.push(crate::records::TokenCheck { rule: k as u8, count, o, least, then });
         }
     }
@@ -2858,7 +2870,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let marks = if low.extra.contains(&token_rows[r].0) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 };
         retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k) };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), locals };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).
