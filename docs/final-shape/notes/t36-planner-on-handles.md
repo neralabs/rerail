@@ -240,3 +240,18 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     Checked while porting: each form rule, read from the overlay, equalled the rules made alone (head, literals,
     observation key) over the maintain, session, edit, again, retain, cone, phase and corpus tests; the check is
     gone. dl1 (no maintained run): the 48 findings are equal; cold 46.5 G, warm 1.7 G.
+  - Item 6, where it stands (2026-11-14). Every pass's output is a version edit: the inlining and the negation split
+    are overlays of the program's version, the run reads the last one as it is, a kept choice holds its version, and
+    a maintained form's rules are an overlay of the run's version. What still reads or writes trees, and why it goes
+    with item 7 rather than here:
+    - The passes' readings of the program: `refusals`, `bounds`, `factorizable`, the split's candidates, guards and
+      types, and its strata check (`front::unstratified`). Each reads the rules and the program's other fields
+      (outputs, natives, lattice, decls, `together`). The run's version is made of the rules alone (`body::made`),
+      with no `About`, so the version's own strata (`program_image::analyses::strata`) cannot read it. Under item 7
+      the run's version is the program's image (decision 0173 §5), `About` and all, and these read it whole; reading
+      only their rules from the version now would leave each half on the tree.
+    - The maintained form's rules are written as trees (`maintain::rewrite_with`, over a one-stratum program cut from
+      the base) and encoded into the overlay once. The rewrite is also the session's (E3, `retain::Cut::program`),
+      which item 7 makes an overlay; it moves to `RuleBuilder` edits there, as `normalize` and `stated_apart` did
+      (0173 stage 2, step 3). The `Forms` arena keeps the form's tree for the run's tree readers until then.
+    - Each pass still decodes its result once for the rest of the run.
