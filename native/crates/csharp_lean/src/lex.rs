@@ -662,9 +662,9 @@ impl<'s> Lexer<'s> {
     /// or the file ends first, or an escape is not one.
     pub fn string_end(&self, s: usize) -> Option<usize> {
         let mut i = s + 1;
+        let eol = self.blocks.eol(s + 1);
         loop {
             i = self.blocks.string_stop(i);
-            let eol = self.blocks.eol(s + 1);
             if eol < i {
                 return None;
             }
@@ -679,6 +679,8 @@ impl<'s> Lexer<'s> {
     fn verbatim_end(&self, s: usize) -> Option<usize> {
         let mut i = s + 1;
         loop {
+            // The next `"` (or `\`, text here), by stage 1's stop mask.
+            i = self.blocks.string_stop(i);
             match self.src.get(i)? {
                 b'"' if self.at(i + 1) == b'"' => i += 2,
                 b'"' => return Some(i + 1),
@@ -755,6 +757,10 @@ impl<'s> Lexer<'s> {
     fn interpolated_end(&self, s: usize) -> Option<usize> {
         let (dollars, verbatim, quotes, mut i) = self.interpolation_start(s)?;
         loop {
+            // The next byte the string's text may end at: its next quote or `\`, or line end (stage
+            // 1's masks), or a brace before them (8 bytes a step within that range).
+            let stop = self.blocks.string_stop(i).min(self.blocks.eol(i));
+            i = rerail_simd8::swar::first_of2(self.src, i, stop, b'{', b'}');
             match *self.src.get(i)? {
                 b'"' if quotes > 1 => {
                     let q = self.quotes(i);
