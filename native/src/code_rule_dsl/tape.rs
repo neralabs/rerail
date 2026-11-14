@@ -63,6 +63,8 @@ pub mod csharp_lean;
 pub mod php_lean;
 /// HTML's tape from the lean parser (`rerail_html_lean`).
 pub mod html_lean;
+/// CSS's tape from the lean parser (`rerail_css_lean`).
+pub mod css_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

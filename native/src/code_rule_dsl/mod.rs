@@ -4933,6 +4933,11 @@ pub(crate) fn install_languages() {
             // tree-sitter-html.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Html, name: "lean HTML parser", rank: 0, runs: true, parser: &tape::html_lean::Lean });
         }
+        if cfg!(feature = "lang-css") {
+            // The lean CSS parser (`tape::css_lean`, decision 0200); a file it refuses goes to
+            // tree-sitter-css.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Css, name: "lean CSS parser", rank: 0, runs: true, parser: &tape::css_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

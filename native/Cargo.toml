@@ -207,6 +207,8 @@ rerail-csharp-lean = { path = "crates/csharp_lean" }
 rerail-php-lean = { path = "crates/php_lean" }
 # The lean HTML parser, measured directly (`tape::tests::html_parse_costs`).
 rerail-html-lean = { path = "crates/html_lean" }
+# The lean CSS parser, measured directly (`tape::tests::css_parse_costs`).
+rerail-css-lean = { path = "crates/css_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
