@@ -64,7 +64,7 @@ not one call at a time. Each primitive therefore has two forms:
 A set is a mask over the language's codes: each code is one (kind, field, flags, memberships). So
 "is this node in S" is one code read and one bit test.
 
-## 3. First results (E12, M5, one thread, best of three)
+## 3. First results (E12, M5 Max, one thread, best of three)
 
 `tape16 prim <capture>` runs every primitive on F15, XF, MF and BE. Every answer is checked against
 the tree: 0 wrong, on all three corpora.
@@ -95,9 +95,10 @@ marked "(noisy)".
 - **Point `has` and point `nearest` need to skip.** Both scan or climb across nodes that cannot
   match.
 
-### Second pass: reading `has` backwards, and a block summary (M3, quiet; data-layer)
+### Second pass: reading `has` backwards, and a block summary (M3 Max, quiet; data-layer)
 
-The M5 was under heavy load, so these timings come from a quiet M3 (`target-cpu=native`). Every answer is right on all three corpora.
+The M5 was under load 80–160, so these timings come from the M3 Max (load 3, 94% idle,
+`target-cpu=native`). Every answer is right on all three corpora.
 
 | ns | F15 | XF | MF | BE |
 |---|---|---|---|---|
@@ -209,7 +210,7 @@ Every answer is right on all three corpora (rerail: functions 0.3–0.6 ns on ev
 | nearest / has, every node (fn), data-layer | 2.1 / 4.6 | 0.4 / 0.3 | 6.0 / 10.8 | 0.4 / 0.5 |
 | nearest / has, every node (string, 24% of nodes), data-layer | | 2.3 / 3.1 | | 3.2 / 7.5 |
 
-On a quiet M3 (`target-cpu=native`), 0 wrong on all three corpora, ns a node, before → now:
+On the M3 Max (quiet, `target-cpu=native`), 0 wrong on all three corpora, ns a node, before → now:
 
 | | XF, data-layer | BE, data-layer | XF, rerail | BE, rerail |
 |---|---|---|---|---|
@@ -264,10 +265,10 @@ The rightmost path ends with the file, so its few ends are read singly. Every an
 
 | ns a node, instructions | XF | MF | BE |
 |---|---|---|---|
-| span, every node in order, a read a node (M3, quiet) | 3.6, 95 | 7.5, 204 | 32–35, 500 |
+| span, every node in order, a read a node (M3 Max, quiet) | 3.6, 95 | 7.5, 204 | 32–35, 500 |
 | the same, open nodes closed by the sweep (M5) | 5.6, 97 | 12.6, 181 | 47.6, 499 |
 | **the same, a block at a time** (M5, under load) | **3.3, 52** | **6.1, 97** | 47.6, 499 |
-| span of every call (M3), less the sweep | about 8 | about 12 | about 33 |
+| span of every call (M3 Max), less the sweep | about 8 | about 12 | about 33 |
 
 - **Read a block at a time, MF's ends cost half as much (12.7 → 6.1 ns).** The cost was each read
   decoding its block header again, not the random start: closing open nodes by the sweep alone saved
@@ -298,7 +299,7 @@ The rightmost path ends with the file, so its few ends are read singly. Every an
 | a read a node | 3.1 | 6.5 | 26.2 |
 | **a block at a time (BE: the parenthesis pass)** | **1.7** | **3.2** | **5.0** |
 
-### Step 5: the bulk primitives on Metal (M3, quiet)
+### Step 5: the bulk primitives on Metal (M3 Max, quiet)
 
 `tape16 prim-gpu <capture>` runs the kernels (`src/prim_gpu.rs`). They read each candidate's
 one-buffer image in place, with one thread a group of 64 nodes by preorder rank, on one language's
@@ -357,8 +358,9 @@ sqlite (0.47M nodes) is too small to fill the GPU: XF 0.11–0.15 there.
 
 The pack (sqlite, data-layer, rerail captures) ran on:
 
-- three Apple machines: an M1, an M3, and an M1 with a larger GPU;
-- four x86 cloud VMs: Zen 3, Zen 4, a recent Intel server CPU, and an older Intel server CPU.
+- the M1 Mac mini, the M3 Max and the M1 Max;
+- four GCP spot VMs: Zen 3 (EPYC 7B13), Zen 4 (EPYC 9B14), Sapphire Rapids (Xeon 8481C), and
+  an older n1 Xeon at 2.2 GHz.
 
 Each machine ran `inplace` (baseline and native builds, and Metal on the Macs) and `prim` (native).
 The Macs also ran `prim-gpu`. **Every answer is right on every machine, corpus and candidate,**
@@ -367,7 +369,7 @@ and the VMs are deleted.
 Data-layer, native build, ns a node (bulk) or a call (point). Bulk is functions; rerail is within
 0.1–0.2 ns of these.
 
-| | M1 | M3 | M1, larger GPU | Zen 3 | Zen 4 | recent Intel | older Intel |
+| | M1 | M3 Max | M1 Max | Zen 3 | Zen 4 | SPR | n1 Xeon |
 |---|---|---|---|---|---|---|---|
 | 121 rules, XF / MF / BE | 18 / 24 / 72 | 15 / 19 / 52 | 18 / 23 / 72 | 25 / 37 / 66 | 25 / 36 / 64 | 25 / 33 / 79 | 48 / 68 / 133 |
 | code sweep, 64 at a time | 0.3 | 0.3 | 0.3 | 0.4 | 0.4 | 0.4 | 0.6 |
@@ -382,7 +384,7 @@ Bytes a node (the same everywhere): XF 4.15, MF 3.37, BE 2.43.
 GPU, data-layer Python, functions, ns a node, including the match (single runs, ±2× by clock
 state):
 
-| | M1 | M3 | M1, larger GPU |
+| | M1 | M3 Max | M1 Max |
 |---|---|---|---|
 | nearest, XF / BE (scan) | 0.67 / 2.73 | 0.05 / 0.24 | 0.34 / 0.74 |
 | has, climbing, XF / BE | 0.39 / 1.63 | 0.10 / 0.49 | 0.27 / 0.89 |
@@ -390,17 +392,17 @@ state):
 | span, XF / MF / BE | 1.55 / 3.03 / 2.13 | 0.08 / 0.16 / 0.33 | 0.33 / 0.61 / 0.81 |
 
 - **The bulk axes are 0.3–0.7 ns a node on every recent machine, on all three candidates.** BE is
-  within 0.1–0.2 ns of XF in bulk (0.4 on the older Intel), as on the M5. Only the older Intel is about 2×
+  within 0.1–0.2 ns of XF in bulk (0.4 on the n1), as on the M5. Only the old n1 Xeon is about 2×
   slower.
 - **The gap between the candidates is now point reads and spans:**
   - BE's point climb is 2.3–3.5× XF's;
   - BE's spans are 2.5–3× XF's, and MF's 1.8–2×;
   - over the 121-rule mix (a per-read mix, not bulk), BE is 2.6–4× XF.
-- **On the GPU, the M3 is 5–10× the M1.** On the M1's small GPU, the scans (BE's `nearest`,
+- **On the GPU, the M3 Max is 5–10× the M1.** On the M1's small GPU, the scans (BE's `nearest`,
   `has` from counts) cost more than climbing: few cores, and the levels' serial steps. `has` by
-  climbing stays the better form there. On the M3 the scans win for BE.
+  climbing stays the better form there. On the M3 Max the scans win for BE.
 - **x86 needs nothing special.** The sweep, the bulk axes and the spans run at about Apple's speed
-  on Zen 3/4 and the recent Intel. The recent Intel's point reads on BE are slower (`findclose`, as in
+  on Zen 3/4 and Sapphire Rapids. Sapphire Rapids' point reads on BE are slower (`findclose`, as in
   t38).
 
 ## 4. What using the bulk primitives takes in the engine

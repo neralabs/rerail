@@ -591,7 +591,7 @@ Each machine ran the pack: a baseline x86-64 build (no POPCNT) and a `target-cpu
 (POPCNT, BMI2 and PDEP on all four). Every answer is right on every machine, build and corpus.
 The raw results stay outside the tree.
 
-| ns, native build | M5 | Zen 3 | Zen 4 | recent Intel server | older Intel server |
+| ns, native build | M5 | Zen 3 (EPYC 7B13) | Zen 4 (EPYC 9B14) | Sapphire Rapids (8481C) | Haswell-era Xeon (n1) |
 |---|---|---|---|---|---|
 | MF, median-rule mix | 2.3 | 4.3 | 4.3 | 3.5 | 6.8 |
 | BE, median-rule mix | 4.6 | 7.7 | 7.7 | 8.1 | 15.7 |
@@ -604,22 +604,22 @@ The raw results stay outside the tree.
 | shape 2 load, MF | 30.6 | 48.4 | 45.2 | 52.0 | 85.8 |
 
 - **The ranking holds on x86:** X ≈ MF on the median rule, and the B family 2–3× slower. The cloud
-  cores are about 2× slower than the M5 a call, and the older Intel 3×.
+  cores are about 2× slower than the M5 a call, and the Haswell-era Xeon 3×.
 - **The baseline build costs Elias–Fano 2×** (Zen 3: BE start 26.1 → 11.5, 121 rules 98 → 64).
   Without POPCNT the select's counts are done in software. So x86 builds need x86-64-v2 (POPCNT,
   every Intel since Nehalem) at least. With v3 (BMI2), the select is PDEP.
 - **MF's gap end is its weak point on x86:** 14.5–17 ns against X's 6.3–6.5, because the gap needs a
   second random read. On the 121-rule mix that makes MF 1.4–1.5× X on x86, against 1.4× on the M5.
   XF with lengths (XF in the tables: 4.15 B/node) avoids it.
-- **`findclose` is relatively worse on the recent Intel** (17 ns against Zen's 12).
+- **`findclose` is relatively worse on Sapphire Rapids** (17 ns against Zen's 12).
 
 ### 6. M1 and M3 hardware (data-layer)
 
-The pack ran on an M1 and an M3. On Apple CPUs the
+The pack ran on an M1 Mac mini (16 GB, quiet) and an M3 Max (load 3–5). On Apple CPUs the
 `target-cpu=native` build matches the default build, within noise. Every answer is right, on the CPU
 and on Metal.
 
-| CPU, ns | M5 | M3 | M1 |
+| CPU, ns | M5 Max | M3 Max | M1 |
 |---|---|---|---|
 | MF, median-rule mix | 2.3 | 2.4 | 3.0 |
 | BE, median-rule mix | 4.6 | 5.1 | 6.5 |
@@ -630,7 +630,7 @@ and on Metal.
 | B subtree end (`findclose`) | 6.5 | 7.3 | 11.0 |
 | shape 2 load, MF | 30.6 | 36.7 | 45.8 |
 
-| Metal, ns a question | M5 | M3 | M1 (smaller GPU) |
+| Metal, ns a question | M5 Max | M3 Max | M1 (8-core GPU) |
 |---|---|---|---|
 | MF start | 0.17 | 0.14 | 1.29 |
 | MF end | 0.29 | 0.23 | 4.50 |
@@ -644,9 +644,9 @@ and on Metal.
   XF; BE is its worst case.
 - **On M1's GPU every question costs 1–4.5 ns,** 8–15× the M5's, and still at or above one CPU
   thread for the X family. B's parent is 4× X's there too.
-- **An M1 with a larger GPU matches the M1 on the CPU** (MF median
+- **The M1 Max (32-core GPU; CPU 60% idle while measured) matches the M1 on the CPU** (MF median
   3.1, 121 rules 24.7; BE 6.9 and 71.8). On its GPU: MF start 0.23, end 0.55, subtree end and parent
-  0.135, children 1.1; B's parent 1.18. That is 1.5–2× the M5's GPU, and about 9× the smaller M1's.
+  0.135, children 1.1; B's parent 1.18. That is 1.5–2× the M5's GPU, and about 9× the M1 Mac mini's.
 
 ### What the third round says
 

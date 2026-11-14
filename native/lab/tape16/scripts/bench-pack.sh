@@ -35,7 +35,12 @@ builds="base native"
 [ "${2:-}" = --native ] && builds=native
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/native/lab/tape16"
-host=$(hostname -s 2>/dev/null || hostname)
+# Results are named by the CPU model (never the hostname); T16_LABEL overrides it, for two machines of one model.
+if [ -z "${T16_LABEL:-}" ]; then
+    if [ "$(uname -s)" = Darwin ]; then T16_LABEL=$(sysctl -n machdep.cpu.brand_string)
+    else T16_LABEL=$(sed -n 's/^model name[^:]*: *//p' /proc/cpuinfo | head -n 1); fi
+fi
+host=$(printf '%s' "${T16_LABEL:-cpu}" | tr -cs 'A-Za-z0-9' '-' | sed 's/^-//; s/-$//')
 mkdir -p "$here/results"
 for build in $builds; do
     flags=""
