@@ -1086,7 +1086,7 @@ fn upkeep_command(args: &[String]) -> Result<String, String> {
     out += &format!("{:.2} s\n", started.elapsed().as_secs_f64());
     let forms = crate::code_rule_dsl::logic::costs::kernel_forms(20);
     if !forms.is_empty() {
-        out += "\nforms this machine's runs went without (decision 0191), most batches first:\n";
+        out += "\nforms this machine's runs went without (decision 0202), most batches first:\n";
         for (kind, name, batches, compiled, seconds, failed, missing) in forms {
             out += &format!(
                 "{kind:<16} {name:<40.40} {batches:>9} batches  {compiled:>5} compiles {seconds:>8.2} s  {failed} failed{}\n",

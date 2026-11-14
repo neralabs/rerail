@@ -56,7 +56,7 @@ enum Binding {
 }
 
 impl Binding {
-    /// Its kind of form in the record of forms (`rerail_accel::forms`, decision 0191).
+    /// Its kind of form in the record of forms (`rerail_accel::forms`, decision 0202).
     fn form(self) -> &'static str {
         match self {
             Binding::CpuJit => "cpu-jit",

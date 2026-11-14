@@ -147,7 +147,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
                 // The CPU's wave instead, named in the profile's warnings: a Metal path that fails (a kernel that does
                 // not compile, a run over its bounds) is never silent.
                 Ok(found) => {
-                    // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0191).
+                    // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
                     rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
                     return Ok(Arc::new(Ok(found) as WaveFound));
                 }
@@ -159,7 +159,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
             }
         }
         let _ = lane;
-        // The wave's CPU form is the interpreter: no Cranelift form of its roots (decision 0191).
+        // The wave's CPU form is the interpreter: no Cranelift form of its roots (decision 0202).
         rerail_accel::forms::missing("cpu-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the CPU interpreter: no Cranelift form", 1);
         Ok(Arc::new(self.on(MatcherBackend::Cpu)))
     }

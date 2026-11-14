@@ -142,6 +142,8 @@ impl Job for SqliteFile {
     }
 
     fn due(&mut self) -> Due {
+        // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         if !self.path.exists() {
             return Due::No;
         }
@@ -164,6 +166,7 @@ impl Job for SqliteFile {
     }
 
     fn step(&mut self, slice: &Slice) -> Result<Step, String> {
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         let err = |e: rusqlite::Error| format!("{}: {e}", self.path.display());
         let db = self.connect(slice.memory).map_err(err)?;
         // Pages given back reach the disk at the checkpoint after (the file is truncated there, under WAL).
@@ -221,6 +224,7 @@ impl Job for Collect {
     }
 
     fn due(&mut self) -> Due {
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         let Some(store) = self.store.upgrade() else { return Due::No };
         if store.capacity().is_ok_and(|c| !matches!(c.state, CapacityState::Normal)) {
             return Due::Urgent;
@@ -232,6 +236,7 @@ impl Job for Collect {
     }
 
     fn step(&mut self, slice: &Slice) -> Result<Step, String> {
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
         let now = unix_now();
         while !slice.over() {
@@ -255,17 +260,17 @@ mod tests {
         let db = Connection::open(&p).unwrap();
         db.execute_batch(&format!(
             "PRAGMA auto_vacuum = {auto}; PRAGMA journal_mode = WAL;
-             CREATE TABLE kept(k INTEGER PRIMARY KEY, v TEXT); CREATE INDEX kept_v ON kept(v);
+             CREATE TABLE rows(k INTEGER PRIMARY KEY, v TEXT); CREATE INDEX rows_v ON rows(v);
              CREATE TABLE fact_stats(tbl TEXT, col TEXT, rows INTEGER, sq INTEGER);
              CREATE TABLE facts(a INTEGER); INSERT INTO fact_stats VALUES ('facts', 'a', 1, 1);"
         ))
         .unwrap();
         let tx = db.unchecked_transaction().unwrap();
         for i in 0..20_000 {
-            tx.execute("INSERT INTO kept(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
+            tx.execute("INSERT INTO rows(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
         }
         tx.commit().unwrap();
-        db.execute_batch("DELETE FROM kept WHERE k % 4 != 0; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        db.execute_batch("DELETE FROM rows WHERE k % 4 != 0; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
         p
     }
 
@@ -289,7 +294,7 @@ mod tests {
             assert!(only.analyze.is_empty(), "{auto}: the planner's table and a missing one are left out: {only:?}");
             let mut job = SqliteFile::new(&p, Tables::All);
             let work = job.probe().unwrap();
-            assert_eq!(work.analyze, vec!["fact_stats".to_string(), "kept".to_string()], "{auto}");
+            assert_eq!(work.analyze, vec!["fact_stats".to_string(), "rows".to_string()], "{auto}");
             assert_eq!((work.free_pages > 0, work.vacuum), (auto == "INCREMENTAL", auto == "NONE"), "{auto}: {work:?}");
             assert!(run(&mut job) > 0);
             let after = std::fs::metadata(&p).unwrap().len();
@@ -297,7 +302,7 @@ mod tests {
             let db = Connection::open(&p).unwrap();
             let tbls: Vec<String> = db.prepare("SELECT DISTINCT tbl FROM sqlite_stat1").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
             assert!(!tbls.contains(&"facts".to_string()), "{tbls:?}");
-            assert!(tbls.contains(&"kept".to_string()), "{tbls:?}");
+            assert!(tbls.contains(&"rows".to_string()), "{tbls:?}");
             assert_eq!(db.query_row("PRAGMA auto_vacuum", [], |r| r.get::<_, i64>(0)).unwrap(), 2, "{auto}: incremental after");
             assert_eq!(job.due(), Due::No);
         }

@@ -119,7 +119,7 @@ fn write() {
         } else {
             sql_plans::insert(&tx, &machine, threads, at, &plans)?
         };
-        // The forms' record, summed over runs (decision 0191).
+        // The forms' record, summed over runs (decision 0202).
         if !forms.is_empty() {
             let mut up = tx.prepare_cached(
                 "INSERT INTO kernel_forms VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
@@ -387,6 +387,8 @@ impl rerail_accel::upkeep::Job for Retrain {
     }
 
     fn due(&mut self) -> rerail_accel::upkeep::Due {
+        // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         use std::sync::atomic::Ordering;
         let since = TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()).is_none_or(|t| t.elapsed() >= RETRAIN_EVERY);
         if WRITTEN.load(Ordering::Relaxed) >= RETRAIN_AFTER && !TRAINING.load(Ordering::Acquire) && since && path().is_some() {
@@ -401,6 +403,7 @@ impl rerail_accel::upkeep::Job for Retrain {
     }
 
     fn step(&mut self, _: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         use std::sync::atomic::Ordering;
         let Some(path) = path() else { return Ok(rerail_accel::upkeep::Step::Done) };
         if TRAINING.swap(true, Ordering::AcqRel) {
@@ -537,7 +540,7 @@ pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
     jobs
 }
 
-/// The forms this machine's runs went without (decision 0191), most batches first: (kind, name, batches run
+/// The forms this machine's runs went without (decision 0202), most batches first: (kind, name, batches run
 /// without the form, compiles, their seconds, failures, why missing).
 pub fn kernel_forms(limit: usize) -> Vec<(String, String, i64, i64, f64, i64, Option<String>)> {
     let Some(path) = path() else { return Vec::new() };

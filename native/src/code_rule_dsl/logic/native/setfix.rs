@@ -2193,6 +2193,50 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     }).collect())
 }
 
+/// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key.
+pub type Histogram = (u64, rustc_hash::FxHashMap<Vec<i64>, u64>);
+
+/// Decision 0203 §3: per wanted (step, key columns) of probe `line`'s join, the rows of the step's relation (every
+/// live row, not its delta alone) that pass the step's constants, counted by the values of those columns. A relation
+/// of more than `cap` rows is read at a stride, its counts scaled. `None` for a step that is not a positive atom.
+pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, wanted: &[(usize, Vec<usize>)], cap: usize) -> Result<Vec<Option<Histogram>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let store = comp.store.read().unwrap();
+    let Some(Body::Join(j)) = comp.probes.get(line).map(|p| &p.body) else { return Ok(vec![None; wanted.len()]) };
+    Ok(wanted.iter().map(|(at, cols)| {
+        let Some(Step::Atom { src, neg: false, keys, .. }) = j.steps.get(*at) else { return None };
+        let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();
+        let mut counts: rustc_hash::FxHashMap<Vec<i64>, u64> = rustc_hash::FxHashMap::default();
+        let mut passed = 0u64;
+        let mut count = |n: usize, value: &dyn Fn(u32, usize) -> Option<i64>| -> u64 {
+            let stride = n.div_ceil(cap.max(1)).max(1);
+            let mut id = 0usize;
+            while id < n {
+                let i = id as u32;
+                if consts.iter().all(|&(c, v)| value(i, c) == Some(v)) && let Some(key) = cols.iter().map(|&c| value(i, c)).collect::<Option<Vec<i64>>>() {
+                    passed += 1;
+                    *counts.entry(key).or_insert(0) += 1;
+                }
+                id += stride;
+            }
+            stride as u64
+        };
+        let stride = match src {
+            Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => {
+                let rel = &store.rels[*r];
+                count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.row(i as usize)[c]))
+            }
+            Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
+        };
+        if stride > 1 {
+            counts.values_mut().for_each(|n| *n *= stride);
+        }
+        Some((passed * stride, counts))
+    }).collect())
+}
+
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and each value's postings when a bounded exact histogram is available.
 pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }

@@ -4831,22 +4831,22 @@ stratum above it, which sees both the facts and the answers.
 
 ## O162. Metal forms of the matcher wave and of block programs with rounds, back fills and loads
 
-Decision 0191 (a). `kernel_forms` ranks them by batches. **Closure:** generated MSL for each, compiled in upkeep at
+Decision 0202 (a). `kernel_forms` ranks them by batches. **Closure:** generated MSL for each, compiled in upkeep at
 idle, with the record's `metal-form` entries gone.
 
 ## O163. IR forms of the clauses the lowering refuses, and of the logic natives
 
-Decision 0191 (b). **Closure:** the `ir-form` entries lowered, most batches first, each with a test that the
+Decision 0202 (b). **Closure:** the `ir-form` entries lowered, most batches first, each with a test that the
 program's findings equal the native ones.
 
 ## O164. A compiled form a later process can reuse
 
-Decision 0191 (c, d). A `Program` has no byte form. **Closure:** a first compile's split measured (MSL front end
+Decision 0202 (c, d). A `Program` has no byte form. **Closure:** a first compile's split measured (MSL front end
 and pipeline); then stored programs (0173) or `MTLBinaryArchive`s keyed by `pipeline_key`, whichever pays.
 
 ## O165. Upkeep's compiles are released by the residency's drop
 
-Decision 0191. `drop_pipelines` clears every pipeline two minutes after a full execution. **Closure:** pipelines
+Decision 0202. `drop_pipelines` clears every pipeline two minutes after a full execution. **Closure:** pipelines
 compiled ahead of need exempted, or persisted (O164).
 
 ## O160. Re-sorting stored rows is not an upkeep job yet
@@ -4865,6 +4865,24 @@ nothing lists the joins whose cost is past their forecast, and nothing tries the
 **Closure:** the planner's alternative orders for a plan exposed, a bounded off-path run of one over the store's
 facts, and an upkeep job that records a winning order as the plan's kept choice (0090 §5), with a test on a join
 planned with a wrong estimate.
+
+**Progress (2026-11-14, decision 0203):** built: the runners-up exposed, slow lines flagged mid-run with exact pair
+statistics, the critical path, the memo beside the kept plans, and the `join-search` upkeep job, whose proposals
+the next plan weighs. A test plans a join with a wrong estimate (`exact_statistics_and_the_memo_change_the_plan`).
+What remains is the off-path run: proposals are priced, not run over stored facts.
+
+## O166. No batch pricer is set for the join choices
+
+Decision 0203 §2: `joins::choose` calls a `Pricer` once a round, but none is set, so the planner's estimates stand.
+**Closure:** the misprediction classifier (the cost model's batched GPU prediction, 0100 §14) set as the pricer,
+with its features drawn from the candidates' steps, and a measurement of a round's prediction cost against the
+search's.
+
+## O167. Wider searches asked for by a one-shot process are lost at its exit
+
+Decision 0203 §5: the `join-search` job runs at idle; a command exits first, and only `wants_search` survives (the
+next run searches inline where the line's work pays). **Closure:** the queued requests kept in the store as the
+line and rule, and run by `rerail-engine upkeep` or a daemon, which rebuild the model from the stored statistics.
 
 ## Remeasured after the hub merge (2026-11-13)
 

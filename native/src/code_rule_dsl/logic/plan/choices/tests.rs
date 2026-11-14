@@ -70,7 +70,7 @@
         assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));
         assert!(stored.kept(2).is_none(), "a step past the body");
         // A run at another scale takes the plan stored at the nearest one (O-replan-churn), to re-price it.
-        let mut plans = super::super::RunPlans { kept: Default::default(), stored: Arc::new([(key, stored.clone())].into_iter().collect()) };
+        let mut plans = super::super::RunPlans { kept: Default::default(), stored: Arc::new([(key, stored.clone())].into_iter().collect()), ..Default::default() };
         let near = plans.find(&key.0, body.len(), 55_000.0).expect("the plan stored two scales down");
         assert!(same(&near.0, &order));
         assert!(plans.find(&(key.0 ^ 1), body.len(), 3700.0).is_none(), "another rule's plan is not taken");
@@ -79,9 +79,19 @@
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let prepared = [9u8; 32];
         assert!(read_plans(&store, &prepared).unwrap().is_empty());
-        assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()]).unwrap());
+        assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()], &Default::default()).unwrap());
         let read = read_plans(&store, &prepared).unwrap();
         assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));
+        // The join memo (decision 0203 §6) is kept in the same entry, and given to the process's memo when read.
+        let line: super::super::PlanKey = 0x5eed_0192_u128 << 64 | 0x77;
+        let sig: super::super::Sig = ("b".into(), vec![(0, None)]);
+        let note = super::super::joins::Note { rule: 42, runs: 1, critical: 0.5, est: 10.0, ran: 1e6, wants_search: true, ..Default::default() };
+        let rows = note_rows((vec![(line, note.clone())], vec![(line, 42, sig.clone(), [50, 50_000])]));
+        assert!(write_plans(&store, &prepared, &[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &rows).unwrap());
+        let read = read_plans(&store, &prepared).unwrap();
+        assert_eq!(read.get(&key), Some(&stored), "the plans are kept beside the notes");
+        let taken = super::super::joins::note(&line).expect("the note, taken from the store");
+        assert_eq!((taken.rule, taken.ran, taken.wants_search, taken.exact.clone()), (42, 1e6, true, vec![(sig, [50, 50_000])]));
         assert!(read_plans(&store, &[8u8; 32]).unwrap().is_empty(), "another prepared program's are not taken");
         assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
         drop(store);

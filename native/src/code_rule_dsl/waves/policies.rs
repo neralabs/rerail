@@ -657,7 +657,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
             let lowered = match LoweredMatcher::lower(&tree) {
                 Ok(lowered) => lowered,
                 Err(e) => {
-                    // A clause the IR refuses runs on W's matcher, natively (decision 0191's `ir-form` list).
+                    // A clause the IR refuses runs on W's matcher, natively (decision 0202's `ir-form` list).
                     let name = format!("{policy}/{}", clause.id);
                     rerail_accel::forms::missing("ir-form", &name, &name, &format!("{e:?}"), 1);
                     return None;

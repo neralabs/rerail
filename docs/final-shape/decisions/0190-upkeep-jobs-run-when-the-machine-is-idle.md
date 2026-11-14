@@ -151,7 +151,10 @@ Decision 0164 keeps sorted orders in frames, compacted at a dead-row bound. Its 
 It waits on 0164's frames being built. The search-index job above is the first instance of this kind of work: it
 builds the indexes that narrow a search.
 
-### 6. Statistics and join orders for slow joins (O161, not built)
+### 6. Statistics and join orders for slow joins (O161; built as decision 0203)
+
+Decision 0203 builds this: slow joins flagged while they run, exact pair statistics, the critical path, and the
+`join-search` job. What follows is the design as it was first written.
 
 Two pieces exist.
 - **The plans' statistics.** They are kept by delta (0096). Each plan's decisions are kept with the log2 buckets of

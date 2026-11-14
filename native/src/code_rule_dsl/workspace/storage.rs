@@ -158,6 +158,8 @@ impl rerail_accel::upkeep::Job for SearchIndex {
     }
 
     fn due(&mut self) -> rerail_accel::upkeep::Due {
+        // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         use rerail_accel::upkeep::Due;
         let Some(store) = self.store.upgrade() else { return Due::No };
         // From the start: a backlog below the cursor is the backlog too.
@@ -168,6 +170,7 @@ impl rerail_accel::upkeep::Job for SearchIndex {
     }
 
     fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> std::result::Result<rerail_accel::upkeep::Step, String> {
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         use rerail_accel::upkeep::Step;
         let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
         index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until);
