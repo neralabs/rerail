@@ -529,18 +529,20 @@ describe("audit rule provenance", () => {
 
     expect(await move(path)).toBe(30);
 
-    // No VACUUM: the file keeps its size, most of it free pages, and every audit reads its provenance as before.
-    expect(statSync(path).size).toBe(before);
-    expect(pageBytes(path).free).toBeGreaterThan(before / 2);
+    // No VACUUM: the file keeps the pages the move freed, more than half of it, and grows only by the shared copy it
+    // stored before freeing any. Every audit reads its provenance as before.
+    const moved = statSync(path).size;
+    expect(moved).toBeGreaterThanOrEqual(before);
+    expect(pageBytes(path).free).toBeGreaterThan(moved / 2);
     const store = new SqliteAuditStore(path);
     try {
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
-      // New audits of the same rules fill the free pages before the file grows.
+      // New audits of the same rules fill the free pages, and the file keeps its size.
       for (let index = 0; index < 30; index += 1) store.finish(store.start(auditInput("/home/dev/app", app)), { status: "completed" });
     } finally {
       store.close();
     }
-    expect(statSync(path).size).toBe(before);
+    expect(statSync(path).size).toBe(moved);
 
     // `rerail scrub` rewrites the file (`eraseFreedPages`): it shrinks to its pages in use, a small part of what it was.
     const scrub = openRerailDatabase(path);
