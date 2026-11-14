@@ -1,9 +1,41 @@
 import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WalkReadBuffers } from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+
+/**
+ * A failure the next file a test opens meets, as a failing disk gives one: its second `read` (the first filled the first
+ * buffer, so the read grew it) or its `close` rejects with `EIO`.
+ */
+const failing = vi.hoisted(() => ({ next: undefined as "read" | "close" | undefined }));
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof FileSystem>();
+  const eio = () => Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const call = failing.next;
+      failing.next = undefined;
+      if (call === "read") {
+        const read = handle.read.bind(handle) as (...forwarded: unknown[]) => ReturnType<typeof handle.read>;
+        let reads = 0;
+        handle.read = ((...forwarded: unknown[]) => ((reads += 1) === 2 ? Promise.reject(eio()) : read(...forwarded))) as typeof handle.read;
+      }
+      if (call === "close") {
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          await close();
+          throw eio();
+        };
+      }
+      return handle;
+    },
+  };
+});
 
 let folder: string;
 
@@ -11,6 +43,7 @@ beforeEach(async () => {
   folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-walk-read-buffers-")));
 });
 afterEach(async () => {
+  failing.next = undefined;
   await removeFolder(folder);
 });
 
@@ -124,6 +157,24 @@ describe("WalkReadBuffers", () => {
     await expect(lent(buffers, folder, 2)).rejects.toThrow();
     const next = await lent(buffers, await file("b.py", "b\n"), 2);
     expect(next.memory).toBe(first.memory);
+  });
+
+  it.each(["read", "close"] as const)("keeps the buffer a read grew when its %s then fails, so a read as large after it allocates none", async call => {
+    const buffers = new WalkReadBuffers(1_000_001);
+    const contents = "z".repeat(100_000);
+    const path = await file("large.py", contents);
+    // A stamp of 10 bytes starts the read in a 64 KiB buffer, which it fills and leaves for one of 128 KiB.
+    failing.next = call;
+    await expect(lent(buffers, path, 10)).rejects.toThrow("EIO");
+    const allocations = vi.spyOn(Buffer, "allocUnsafeSlow");
+    try {
+      const next = await lent(buffers, path, 100_000);
+      expect(next.text).toBe(contents);
+      expect(next.memory.byteLength).toBe(128 * 1024);
+      expect(allocations).not.toHaveBeenCalled();
+    } finally {
+      allocations.mockRestore();
+    }
   });
 
   it("gives the bytes readFile gives, cut at the limit, whatever the file's size, stamp and the reads before it", async () => {

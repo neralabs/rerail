@@ -286,7 +286,9 @@ fn node_regexes<'a>(matcher: &'a AstMatcher, utils: &'a UtilTable, regexes: &mut
 }
 
 /// Regexes a utility contributes, each once, told apart by identity: the same compiled regex
-/// reached along several paths. Two summaries are the same when they hold the same regexes.
+/// reached along several paths, or written by several terms as one pattern (`regexes`), which
+/// reads the same groups from the witness each time. Two summaries are the same when they hold
+/// the same regexes.
 #[derive(Clone, Default)]
 struct UtilityRegexes<'a>(Vec<&'a Regex>);
 
