@@ -469,7 +469,135 @@ pub(super) const HINTS: usize = 8;
 /// stretch equal in all three. The sorted ids' tags are returned (empty when untagged). Held beside the ids, the keys
 /// are 24 bytes a row sorted, for the sort only; compared through the rows instead, each comparison read two
 /// scattered rows (O125: 8 G instructions of the cold run's 346 G).
+///
+/// Packed (decision 0179): the tag, the first two values less their least, and the id, each in as few bits as its
+/// range needs, side by side in one u64 (8 bytes a row) or u128 (16) when they fit; the 24-byte tuple otherwise.
+/// Each field is ordered as its value, so the packed keys sort as the tuples do. `RERAIL_SORT_PACKED=off` keeps
+/// the tuple (a measurement aid).
 pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
+    static PACKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *PACKED.get_or_init(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
+        && let Some(tags) = sort_packed(ids, tagged, ncols, &val, &cmp)
+    {
+        return tags;
+    }
+    sort_tupled(ids, tagged, ncols, val, cmp)
+}
+
+/// `sort_keyed` by packed keys, or `None` (nothing done) when its fields need more than 128 bits.
+fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, usize) -> i64, cmp: &impl Fn(u32, u32) -> Ordering) -> Option<Vec<u16>> {
+    let (n, nv) = (ids.len(), ncols.min(2));
+    // The held fields of each row, read once: its tag (when tagged), then its first two values, each value's bits
+    // with the sign flipped, so the fields order as the signed values do.
+    let nf = usize::from(tagged) + nv;
+    if n < 2 || nf == 0 {
+        return None;
+    }
+    let flip = |v: i64| (v as u64) ^ (1 << 63);
+    let mut f: Vec<u64> = Vec::with_capacity(n * nf);
+    let mut top = 0u32;
+    for &id in ids.iter() {
+        top = top.max(id);
+        let v0 = val(id, 0);
+        if tagged {
+            f.push(u64::from(tag(v0)));
+        }
+        f.push(flip(v0));
+        if nv > 1 {
+            f.push(flip(val(id, 1)));
+        }
+    }
+    let bits = |span: u64| 64 - span.leading_zeros();
+    let wid = bits(u64::from(top));
+    if nf == 1 {
+        // One value (most orders): packed in place, `(v - least) << id bits | id`.
+        let (lo, hi) = f.iter().fold((u64::MAX, 0), |(l, h), &v| (l.min(v), h.max(v)));
+        if bits(hi - lo) + wid > 64 {
+            return None;
+        }
+        for (k, &id) in f.iter_mut().zip(ids.iter()) {
+            *k = (*k - lo) << wid | u64::from(id);
+        }
+        f.sort_unstable();
+        let mask = (1u64 << wid) - 1;
+        for (slot, k) in ids.iter_mut().zip(&f) {
+            *slot = (k & mask) as u32;
+        }
+        return Some(Vec::new());
+    }
+    let (mut lo, mut hi) = ([u64::MAX; 3], [0u64; 3]);
+    for row in f.chunks_exact(nf) {
+        for (j, &v) in row.iter().enumerate() {
+            lo[j] = lo[j].min(v);
+            hi[j] = hi[j].max(v);
+        }
+    }
+    let mut w = [0u32; 3];
+    for j in 0..nf {
+        w[j] = bits(hi[j] - lo[j]);
+    }
+    let total = w.iter().sum::<u32>() + wid;
+    if total > 128 {
+        return None;
+    }
+    // Each field's place: the first highest, the id lowest.
+    let mut shift = [0u32; 3];
+    let mut at = wid;
+    for j in (0..nf).rev() {
+        shift[j] = at;
+        at += w[j];
+    }
+    // Zero-width fields hold nothing (their shift may be the key's whole width).
+    let (sh, lo_) = (shift, lo);
+    let pack = |row: &[u64], id: u32| -> u128 {
+        let mut k = u128::from(id);
+        for j in 0..row.len() {
+            if w[j] > 0 {
+                k |= u128::from(row[j] - lo_[j]) << sh[j];
+            }
+        }
+        k
+    };
+    let mask = (1u128 << wid) - 1;
+    let keys: Vec<u128> = if total <= 64 {
+        let mut narrow: Vec<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
+        drop(f);
+        narrow.sort_unstable();
+        for (slot, &k) in ids.iter_mut().zip(&narrow) {
+            *slot = (u128::from(k) & mask) as u32;
+        }
+        if ncols <= 2 && !tagged {
+            return Some(Vec::new());
+        }
+        narrow.into_iter().map(u128::from).collect()
+    } else {
+        let mut keys: Vec<u128> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id)).collect();
+        drop(f);
+        keys.sort_unstable();
+        for (slot, k) in ids.iter_mut().zip(&keys) {
+            *slot = (k & mask) as u32;
+        }
+        keys
+    };
+    // The stretches equal in every held field, which `cmp` orders when the order has more columns.
+    if ncols > 2 {
+        let mut at = 0;
+        while at < keys.len() {
+            let mut end = at + 1;
+            while end < keys.len() && keys[end] >> wid == keys[at] >> wid {
+                end += 1;
+            }
+            if end - at > 1 {
+                ids[at..end].sort_unstable_by(|&a, &b| cmp(a, b));
+            }
+            at = end;
+        }
+    }
+    Some(if tagged { keys.iter().map(|&k| ((k >> shift[0]) as u64 + lo[0]) as u16).collect() } else { Vec::new() })
+}
+
+/// `sort_keyed` by 24-byte tuples of the tag, the first two values and the id.
+fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
     let mut keys: Vec<(u16, i64, i64, u32)> = ids
         .iter()
         .map(|&id| {
@@ -736,6 +864,74 @@ pub mod tests {
         by10.tier(&rows, k, 2);
         assert_eq!(by10.runs(), 2);
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
+    }
+
+    /// Packed keys (decision 0179) sort as the 24-byte tuples do, ids and tags alike: values narrow (a u64), wide or
+    /// negative (a u128), node ids (`d << 32 | x`), and too wide to pack (the tuples); one, two and three columns,
+    /// tagged (every column) and not; keys equal in their first two values (left to `cmp`) and repeated rows (by id).
+    #[test]
+    fn packed_keys_sort_as_the_tuples_do() {
+        let k = 3;
+        let n = 3000i64;
+        let shapes: [(&str, fn(i64) -> i64); 5] = [
+            ("narrow", |i| i % 37),
+            ("negative", |i| (i % 211) - 105),
+            ("node", |i| ((i % 9) << 32) | (i * 7) % 4001),
+            ("wide", |i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64)),
+            ("extremes", |i| [i64::MIN, -1, 0, 1, i64::MAX][i as usize % 5]),
+        ];
+        let mut packed_seen = [false; 2];
+        for (name, f) in shapes {
+            let rows: Vec<i64> = (0..n).flat_map(|i| [f(i), f(i / 3), i % 5]).collect();
+            for (cols, tagged) in [(vec![0], false), (vec![0, 1], false), (vec![1, 0], false), (vec![0, 1, 2], true)] {
+                let val = |id: u32, i: usize| rows[id as usize * k + cols[i]];
+                let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
+                let start: Vec<u32> = (0..n as u32).rev().collect();
+                let (mut a, mut b) = (start.clone(), start);
+                let ta = sort_packed(&mut a, tagged, cols.len(), &val, &cmp);
+                let tb = sort_tupled(&mut b, tagged, cols.len(), val, cmp);
+                packed_seen[usize::from(name == "wide")] |= ta.is_some();
+                let Some(ta) = ta else { continue };
+                assert_eq!(a, b, "{name} {cols:?} tagged={tagged}");
+                assert_eq!(ta, tb, "{name} {cols:?} tagged={tagged}");
+            }
+        }
+        assert!(packed_seen[0], "the narrow shapes pack");
+    }
+
+    /// Measurement aid (decision 0179): instructions and cycles a row of the packed and tupled sorts, over orders of
+    /// one and two columns shaped as the O125 replay's large derived-input builds (node ids, `file << 32 | at`).
+    #[test]
+    #[ignore]
+    fn sort_keyed_costs() {
+        let n = 50_000u32;
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut rand = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        for shape in ["clustered", "shuffled", "small"] {
+            let rows: Vec<i64> = (0..n as i64).flat_map(|i| {
+                let node = match shape { "clustered" => ((i / 600) << 32) | (i % 600) * 3, "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
+                [node, (rand() % 5000) as i64]
+            }).collect();
+            for cols in [vec![0usize], vec![0, 1]] {
+                let k = 2;
+                let val = |id: u32, i: usize| rows[id as usize * k + cols[i]];
+                let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
+                let mut cost = |packed: bool| {
+                    let (mut ins, mut cyc) = (u64::MAX, u64::MAX);
+                    for _ in 0..5 {
+                        let mut ids: Vec<u32> = (0..n).collect();
+                        let (i0, c0) = rerail_compiler::native_cpu_codegen::retired();
+                        if packed { std::hint::black_box(sort_packed(&mut ids, false, cols.len(), &val, &cmp)); } else { std::hint::black_box(sort_tupled(&mut ids, false, cols.len(), val, cmp)); }
+                        let (i1, c1) = rerail_compiler::native_cpu_codegen::retired();
+                        ins = ins.min(i1 - i0);
+                        cyc = cyc.min(c1 - c0);
+                    }
+                    (ins as f64 / f64::from(n), cyc as f64 / f64::from(n))
+                };
+                let (t, p) = (cost(false), cost(true));
+                println!("sort {shape} cols {cols:?}: tupled {:.0} ins {:.0} cyc a row; packed {:.0} ins {:.0} cyc a row", t.0, t.1, p.0, p.1);
+            }
+        }
     }
 
     /// A printed order (a derived input's own index) finds what the plain order finds, key for key: whole keys

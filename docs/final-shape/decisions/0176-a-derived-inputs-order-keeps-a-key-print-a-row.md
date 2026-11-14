@@ -67,7 +67,8 @@ no change. Edit steps rose 0.1–0.2 G: they sort many runs of a few hundred to 
 Removed.
 
 **Open.** The build's remaining cost is the comparison sort over 24-byte keys. Building fewer orders (an order
-made when first probed, not at open) or sorting fewer bytes a key would be the next levers.
+made when first probed, not at open) or sorting fewer bytes a key would be the next levers. Both are built in
+decision 0179 (the builds' CPU halves).
 
 **On the earlier numbers.** The regression was first measured on debug builds (cold cross 75 → 82 G, 11%). Debug
 code makes each probe's search about eight times as costly, so the share was overstated. The optimized build's

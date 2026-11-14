@@ -61,7 +61,8 @@ use rustc_hash::{FxHashMap as HashMap, FxHasher};
 use std::ffi::{CStr, CString};
 use std::hash::Hasher;
 use std::os::raw::c_int;
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::atomic::{AtomicU64 as OrderCount, Ordering as AtomicOrdering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
@@ -2383,6 +2384,13 @@ fn thread_cpu() -> f64 {
 /// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
 static LOADS: Mutex<[(f64, u64); 2]> = Mutex::new([(0.0, 0); 2]);
 
+/// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0179.
+static ORDERS_OPENED: OrderCount = OrderCount::new(0);
+static ORDERS_MADE: OrderCount = OrderCount::new(0);
+pub fn orders_counted() -> (u64, u64) {
+    (ORDERS_OPENED.load(AtomicOrdering::Relaxed), ORDERS_MADE.load(AtomicOrdering::Relaxed))
+}
+
 /// `set_fixpoint_loads()`: "base_cpu_ms base_rows derived_cpu_ms derived_rows". Base-fact relations and their
 /// indexes are construction (the product's tape and anchor index hold them), reported apart from execution.
 pub fn loads() -> String {
@@ -2469,12 +2477,29 @@ impl<'a> RowRef<'a> {
 /// Over a view of a source answering several columns at once (`Source::composite`, the reach index), a probe is the
 /// source's `lookup_all` (`composite`).
 /// Over a derived relation (no view) with no kept chain answering the key, the index is a sorted order of its own on
-/// the key columns (`order`, decision 0112: 4 bytes a row, not a hash table's 18 and its build's 46).
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, order: Option<Index> }
+/// the key columns (`order`, decision 0112: 4 bytes a row, not a hash table's 18 and its build's 46). It is made
+/// when first probed (`ordered`: printed or not, decision 0179), so an order no probe reaches costs nothing.
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, ordered: Option<bool>, order: OnceLock<Index> }
 impl Csr {
-    /// The sorted order a probe walks: the relation's kept chain (`chain`) or this index's own order.
+    /// The sorted order a probe walks: the relation's kept chain (`chain`) or this index's own order, made now if
+    /// this is its first probe.
     fn runs<'a>(&'a self, rel: &'a InRel) -> Option<&'a Index> {
-        self.order.as_ref().or_else(|| self.chain.map(|i| &rel.chains[i]))
+        match self.ordered {
+            Some(printed) => Some(self.order.get_or_init(|| {
+                let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
+                let c0 = thread_cpu();
+                charge(Unit::IndexEntry, rel.len() as u64);
+                let mut order = if printed { Index::printed(self.cols.clone()) } else { Index::new(self.cols.clone()) };
+                order.add_run(&rel.rows, rel.k, 0, rel.n, 0);
+                ORDERS_MADE.fetch_add(1, AtomicOrdering::Relaxed);
+                LOADS.lock().unwrap()[1].0 += thread_cpu() - c0;
+                if env_set!("RERAIL_SPIKE_INDEX") {
+                    eprintln!("O125 order made took {:.3} ms rows={} cols={:?}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols);
+                }
+                order
+            })),
+            None => self.chain.map(|i| &rel.chains[i]),
+        }
     }
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         // Each row's key read once (a view's values go through its source), then hashed once.
@@ -2537,7 +2562,7 @@ impl Csr {
                 e.2 = (w - s) as u32;
             }
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, order: None }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
@@ -3248,7 +3273,7 @@ impl InRel {
     pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
         let set = self.sketches.iter().map(Sketch::bytes).sum::<usize>() + self.dead.capacity() * 8;
         let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.runs(), ix.bytes())).collect();
-        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1) + c.order.as_ref().map_or(0, Index::bytes))).collect()).unwrap_or_default();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1) + c.order.get().map_or(0, Index::bytes))).collect()).unwrap_or_default();
         (self.k, set, chains, csr)
     }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
@@ -3697,7 +3722,7 @@ impl InRel {
             let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, order: None };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() };
             let m = if cols.is_empty() {
                 empty(false, false)
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
@@ -3720,7 +3745,6 @@ impl InRel {
                 // it, is selective, so no composite index is built.
                 Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
-                charge(Unit::IndexEntry, self.len() as u64);
                 // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
                 // table of before decision 0112's derived-input order.
                 static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
@@ -3729,10 +3753,14 @@ impl InRel {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
                     // row and a probe reads prints, not rows (`runs::print_span`).
-                    let mut order = if mode != Some("off") { Index::printed(cols.to_vec()) } else { Index::new(cols.to_vec()) };
-                    order.add_run(&self.rows, self.k, 0, self.n, 0);
-                    Csr { order: Some(order), ..empty(false, false) }
+                    // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
+                    let csr = Csr { ordered: Some(mode != Some("off")), ..empty(false, false) };
+                    ORDERS_OPENED.fetch_add(1, AtomicOrdering::Relaxed);
+                    static EAGER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                    if *EAGER.get_or_init(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
+                    csr
                 } else {
+                    charge(Unit::IndexEntry, self.len() as u64);
                     Csr::build(self, cols)
                 }
             };
@@ -4495,7 +4523,7 @@ fn join_rule(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner) -> Result<
 /// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
 fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, order: None });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();
