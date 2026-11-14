@@ -26,6 +26,8 @@ PORT = "4227"
 CACHE_SIZE_GB = 60
 # A workspace crate that missed this recently is being edited here: it compiles incrementally, uncached.
 HOT_SECONDS = 2 * 3600
+# A host nobody has touched for this long is idle: it takes a compile per core.
+USER_IDLE_SECONDS = 300
 # A remote step that takes longer than this has stalled: the compile runs here instead.
 COPY_SECONDS = 120
 COMPILE_SECONDS = 900
@@ -289,15 +291,18 @@ def hosts():
 
 
 def capacity(host):
-    """How many compiles `host` takes now: its cores less its load, read at most every 20 s."""
+    """How many compiles `host` takes now, read at most every 30 s: one per core while nobody has used
+    it for 5 minutes, half as many while someone does. Not its load average: macOS's background
+    work (Photos' and Spotlight's analysis) keeps that high on an idle machine, and runs at a
+    priority every compile preempts."""
     path = state("load", host["name"])
     try:
         st = os.stat(path)
-        if time.time() - st.st_mtime < 20:
+        if time.time() - st.st_mtime < 30:
             return int(open(path).read() or 0)
     except (OSError, ValueError):
         pass
-    # One compile reads the load; the others take the last value meanwhile (none at first).
+    # One compile asks; the others take the last answer meanwhile (none at first).
     lock = Lock(path + ".lock", blocking=False)
     if not lock.held:
         lock.release()
@@ -306,14 +311,15 @@ def capacity(host):
         except (OSError, ValueError):
             return 0
     try:
-        out = subprocess.run(ssh(host["name"], "sysctl -n vm.loadavg"), capture_output=True, text=True, timeout=5)
-        load = float(out.stdout.split()[1]) if out.returncode == 0 else None
+        out = subprocess.run(ssh(host["name"], "ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'"),
+                             capture_output=True, text=True, timeout=5)
+        idle = int(out.stdout.split()[0]) / 1e9 if out.returncode == 0 else None
     except (subprocess.TimeoutExpired, ValueError, IndexError):
-        load = None
+        idle = None
     finally:
         lock.release()
-    # The load counts the farm's own compiles there: only the rest is the host's own work.
-    free = 0 if load is None else max(0, int(host["cores"] - max(0.0, load - held(host)) + 0.5))
+    free = 0 if idle is None else host["cores"] if idle > USER_IDLE_SECONDS else host["cores"] // 2
+    log(f"{host['name']}: idle {idle} s, takes {free}")
     open(path + ".tmp", "w").write(str(free))
     os.replace(path + ".tmp", path)
     return free
@@ -329,16 +335,6 @@ def ssh(host, command):
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=3", "-o", "ControlMaster=auto", "-o", f"ControlPath={control}",
             "-o", "ControlPersist=10m", host, command]
-
-
-def held(host):
-    """How many of `host`'s slots compiles hold now."""
-    n = 0
-    for i in range(host["cores"]):
-        lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
-        n += not lock.held
-        lock.release()
-    return n
 
 
 def remote_slot():
@@ -381,10 +377,14 @@ def ship(host, root, names):
                                  capture_output=True, timeout=COPY_SECONDS)
         except subprocess.TimeoutExpired:
             tar.kill()
+            log(f"copy to {host} {root} timed out")
             return False
         finally:
             tar.stdout.close()
-        return tar.wait() == 0 and put.returncode == 0
+        ok = tar.wait() == 0 and put.returncode == 0
+        if not ok:
+            log(f"copy to {host} {root} failed: tar {tar.returncode}, {put.stderr[-300:]!r}")
+        return ok
     finally:
         os.unlink(f.name)
 
@@ -431,47 +431,61 @@ def tracked(checkout):
 
 
 def remote(host, rustc, args, env, since):
-    """Compiles on `host`. False when anything but the compile itself failed, or the compile failed:
-    the caller compiles here then, and only that run's output is shown."""
+    """Compiles on `host`. False when anything failed, the compile included: the caller compiles here
+    then, and only that run's output is shown. Logs why, and where the time went."""
     name = host["name"]
     cwd = os.getcwd()
     out_dir = os.path.abspath(value(args, "--out-dir"))
     crate, extra = value(args, "--crate-name"), codegen(args, "extra-filename") or ""
     checkout = checkout_of(cwd)
+    times, mark = [], [time.time()]
+
+    def lap(label):
+        now = time.time()
+        times.append(f"{label} {now - mark[0]:.2f}")
+        mark[0] = now
+
+    def give_up(why):
+        log(f"{crate}: not on {name}: {why} ({', '.join(times)})")
+        return False
+
+    if host.get("shared"):
+        return run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
     # The crate's sources: its checkout's files, or (a dependency's) its own directory.
     if checkout and not sync(name, checkout, tracked(checkout), since):
-        return False
-    if not checkout and not sync(name, cwd, [n for n in walk(cwd)], since):
-        return False
+        return give_up("its checkout was not copied")
+    if not checkout and not sync(name, cwd, list(walk(cwd)), since):
+        return give_up("its sources were not copied")
+    lap("sources")
     deps = [f for f in os.listdir(out_dir) if f.endswith(".rmeta") or (f.startswith("lib") and f.endswith(".dylib"))]
     externs = [e.split("=", 1)[1] for e in values(args, "--extern") if "=" in e]
     deps += [os.path.basename(e) for e in externs if os.path.dirname(os.path.abspath(e)) == out_dir]
     if not sync(name, out_dir, sorted(set(deps)), since):
-        return False
+        return give_up("its dependencies were not copied")
     for e in externs:
         d = os.path.dirname(os.path.abspath(e))
         if d != out_dir and not sync(name, d, [os.path.basename(e)], since):
-            return False
+            return give_up(f"{e} was not copied")
     if env.get("OUT_DIR") and not sync(name, env["OUT_DIR"], list(walk(env["OUT_DIR"])), since):
-        return False
+        return give_up("its OUT_DIR was not copied")
     # The native libraries it names (`-L native=dir`, from build scripts): rustc bundles a static one
     # into the rlib.
+    # A system directory (Xcode's clang runtime) is the host's own.
     for d in values(args, "-L"):
         d = os.path.abspath(d.split("=", 1)[-1])
-        if d != out_dir and os.path.isdir(d) and not sync(name, d, [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))], since):
-            return False
+        if d != out_dir and d.startswith(HOME + "/") and os.path.isdir(d) and not sync(name, d, [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))], since):
+            return give_up(f"{d} was not copied")
+    lap("deps")
     request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
                "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
-    started = time.time()
     try:
         run = subprocess.run(ssh(name, os.path.join(SHARE, "remote-rustc")), input=json.dumps(request).encode(),
                              capture_output=True, timeout=COMPILE_SECONDS)
     except subprocess.TimeoutExpired:
-        log(f"{crate}: {name} timed out")
-        return False
+        return give_up("the compile timed out")
+    lap("compile")
     if run.returncode != 0:
-        log(f"{crate}: {name} failed ({run.returncode}): {run.stderr[-400:]!r}")
-        return False
+        return give_up(f"the compile failed ({run.returncode}): {run.stderr[-400:]!r}")
     kinds = emits(args)
     outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
         + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
@@ -482,17 +496,35 @@ def remote(host, rustc, args, env, since):
                              timeout=COPY_SECONDS)
     except subprocess.TimeoutExpired:
         get.kill()
-        log(f"{crate}: outputs from {name} timed out")
-        return False
+        return give_up("its outputs timed out")
     finally:
         get.stdout.close()
     if get.wait() != 0 or put.returncode != 0:
-        log(f"{crate}: outputs from {name} not copied: {get.stderr.read()[-300:]!r} {put.stderr[-300:]!r} "
-            f"(rustc said {run.stderr[-300:]!r})")
-        return False
+        return give_up(f"its outputs were not copied: {get.stderr.read()[-300:]!r} {put.stderr[-300:]!r}")
+    lap("outputs")
     sys.stdout.buffer.write(run.stdout)
     sys.stderr.buffer.write(run.stderr)
-    log(f"{crate}: compiled on {name} in {time.time() - started:.1f} s")
+    log(f"{crate}: compiled on {name} ({', '.join(times)})")
+    return True
+
+
+def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up):
+    """Compiles on a host that mounts this machine's checkouts, target directories and registry at
+    the same paths (`"shared": true`, README): nothing is copied either way. rustc reads its inputs
+    and writes its outputs through the mount."""
+    request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
+               "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
+    try:
+        run = subprocess.run(ssh(host["name"], os.path.join(SHARE, "remote-rustc")), input=json.dumps(request).encode(),
+                             capture_output=True, timeout=COMPILE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return give_up("the compile timed out")
+    lap("compile")
+    if run.returncode != 0:
+        return give_up(f"the compile failed ({run.returncode}): {run.stderr[-400:]!r}")
+    sys.stdout.buffer.write(run.stdout)
+    sys.stderr.buffer.write(run.stderr)
+    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)})")
     return True
 
 
@@ -525,6 +557,8 @@ def farm_rustc(argv0, args):
         local(rustc, args + ["-C", f"incremental={inc}"])
     if remote_eligible(args):
         host, lock = remote_slot()
+        if not host:
+            log(f"{crate}: no host has a free slot")
         if host:
             try:
                 if remote(host, rustc, args, env, since):

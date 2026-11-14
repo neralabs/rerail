@@ -1,0 +1,60 @@
+#!/bin/sh
+# The farm's shared volume (README.md, "Shared volume"): the build machine exports ~/orca (the
+# checkouts and their target directories) over NFS to a private subnet, and each host mounts it at
+# the same path, so a remote compile reads its inputs and writes its outputs in place: nothing is
+# copied. cargo's registry sources stay copied (`setup`): a host's own ~/.cargo is its own.
+#
+#   shared-volume server SUBNET_ADDRESS PREFIX_LENGTH     on the build machine
+#   shared-volume client SUBNET_ADDRESS SERVER_ADDRESS    on each host
+#
+# SUBNET_ADDRESS is this machine's address on the link between the machines (a private subnet of
+# its own, such as 10.x.y.z, set on the "Thunderbolt Bridge" network service). Both need sudo.
+# Attribute caching is off on the hosts (noac, nonegnamecache): a file cargo writes here (a
+# dependency's .rmeta) is seen there at once, and one written there at once here.
+set -eu
+service=${FARM_NETWORK_SERVICE:-Thunderbolt Bridge}
+exported="$HOME/orca"
+
+subnet_mask() {
+  python3 -c 'import ipaddress,sys; print(ipaddress.ip_network("0.0.0.0/" + sys.argv[1]).netmask)' "$1"
+}
+
+case "${1:-}" in
+server)
+  address=$2 prefix=$3
+  mask=$(subnet_mask "$prefix")
+  network=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1] + "/" + sys.argv[2]).network.network_address)' "$address" "$prefix")
+  sudo networksetup -setmanual "$service" "$address" "$mask"
+  line="$exported -alldirs -maproot=nobody -network $network -mask $mask"
+  # One line per filesystem: replace the farm's line, keep every other export.
+  tmp=$(mktemp)
+  { grep -v '# rerail-farm$' /etc/exports 2>/dev/null || true; echo "$line # rerail-farm"; } > "$tmp"
+  sudo cp "$tmp" /etc/exports
+  rm -f "$tmp"
+  sudo nfsd checkexports
+  sudo nfsd enable
+  sudo nfsd restart
+  showmount -e localhost
+  ;;
+client)
+  address=$2 server=$3
+  sudo networksetup -setmanual "$service" "$address" 255.255.255.0
+  options="vers=3,tcp,rsize=1048576,wsize=1048576,readahead=128,noac,nonegnamecache,locallocks,soft,timeo=50,retrans=3,nosuid"
+  map=/etc/auto_rerail_farm
+  tmp=$(mktemp)
+  for d in $exported; do echo "$d -$options $server:$d"; done > "$tmp"
+  sudo cp "$tmp" "$map"
+  rm -f "$tmp"
+  grep -q "auto_rerail_farm" /etc/auto_master || echo "/-			auto_rerail_farm	-nobrowse" | sudo tee -a /etc/auto_master >/dev/null
+  # What was copied to these paths before the volume (the farm's copy mode) moves aside.
+  for d in $exported; do
+    if [ -d "$d" ] && ! mount | grep -q " on $d "; then mv "$d" "$d.copied-$(date +%s)"; fi
+  done
+  sudo automount -vc
+  ls "$HOME/orca" >/dev/null && echo "mounted: $exported"
+  ;;
+*)
+  sed -n '2,13p' "$0"
+  exit 2
+  ;;
+esac

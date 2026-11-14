@@ -38,6 +38,7 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `farm.py` | both of them |
 | `remote-rustc` | runs one compile on a remote Mac |
 | `setup` | installs all of it, and `remote-rustc` on each host |
+| `shared-volume` | the NFS export here and the mount on each host |
 | `hosts.example.json` | the hosts, copied to `~/.config/rerail-farm/hosts.json` |
 
 ## Setup
@@ -68,8 +69,34 @@ configure-and-make in every new target directory; its build script is never cach
 
 ## Hosts
 
-`hosts.json` lists `{"name", "cores", "enabled"}`. A host takes as many compiles as it has cores
-less its load average (read at most every 20 s), so a machine in use takes fewer. A host behind a
-slow link is better disabled: the first copy of a checkout (about 350 MB) to it is slow.
+`hosts.json` lists `{"name", "cores", "enabled", "shared"}`. A host takes a compile per core while
+nobody has touched its keyboard or mouse for 5 minutes, and half as many otherwise (`HIDIdleTime`,
+read at most every 30 s). Not its load average: macOS's background analysis (Photos, Spotlight)
+keeps that high on an idle Mac, at a priority every compile preempts. A host behind a slow link is
+better disabled.
 
-`RERAIL_FARM_LOG=file` logs each decision: hot, hit (nothing logged), here, or which host and how long.
+## Shared volume
+
+Without one, each remote compile copies what changed: the checkout's files (by size and mtime),
+the dependencies' `.rmeta` files and `OUT_DIR`, then the outputs back. That costs about as much as
+the compile itself (0.8 s a job: 0.5 s for the dependencies, 0.25 s for the outputs). With
+`"shared": true` a host mounts this machine's `~/orca` (the checkouts and their target
+directories) at the same path over NFS, and nothing is copied: rustc reads its inputs and writes
+its outputs in place.
+
+```
+scripts/build/farm/shared-volume server ADDRESS PREFIX     # here
+scripts/build/farm/shared-volume client ADDRESS SERVER     # on each host
+```
+
+Each gives the link between the machines (the "Thunderbolt Bridge" service) a static address on a
+private subnet of its own, and the export reaches only that subnet. The hosts mount with attribute
+caching off, so a dependency's `.rmeta` written here is seen there at once. cargo's registry
+sources stay copied (`setup`); a host's own `~/.cargo` is its own.
+
+A crate that links a host's system library that the host lacks (Xcode 26's `clang_rt` on an older
+macOS) fails there and compiles here.
+
+`RERAIL_FARM_LOG=file` logs each decision (hot, hit: nothing logged, here, or which host) with
+where a remote compile's time went, and why a compile did not go remote. `RERAIL_FARM_LOCAL=1`
+compiles every miss here.
