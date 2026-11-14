@@ -2548,6 +2548,20 @@ fn ecma_implied_tokens() {
     std::fs::write(out, text).unwrap();
 }
 
+/// Writes a dialect's token automata (`TokenGrammar::automata_text`) to `RERAIL_AUTOMATA_OUT`, for a lean
+/// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` (the only one so far) writes
+/// `native/crates/sql_lean/automata.tsv`.
+#[test]
+#[ignore = "writes a lean parser's automata table; needs RERAIL_AUTOMATA_OUT"]
+fn token_automata_text() {
+    let out = std::env::var("RERAIL_AUTOMATA_OUT").expect("set RERAIL_AUTOMATA_OUT");
+    let dialect = match std::env::var("RERAIL_AUTOMATA_DIALECT").as_deref() {
+        Ok("sql") | Err(_) => GrammarDialect::Sql,
+        Ok(other) => panic!("no automata table for {other}"),
+    };
+    std::fs::write(out, tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar").automata_text()).unwrap();
+}
+
 #[test]
 #[ignore = "writes the oracle's expected tapes; needs RERAIL_PY_FILES and RERAIL_PY_OUT"]
 fn python_tape_expect() {

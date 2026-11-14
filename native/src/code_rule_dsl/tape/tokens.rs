@@ -756,6 +756,52 @@ fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
 /// What the automata say about where tokens are implied, for the check of rules that test
 /// tokens (`compile::token_tests`).
 impl TokenGrammar {
+    /// The automata of the kinds whose tapes leave tokens out (the filtered kinds), as text, for a
+    /// lean parser's tables (`rerail-sql-lean`'s `gen_kinds.py`): a parser that writes the tape
+    /// itself decides each gap as `stored_children` does. Lines, tab-separated; a label is
+    /// `t` or `n` (token or named), its name and its field (`""`: none), and a word is labels
+    /// joined by `\x1f`, a label's parts by `\x1e`:
+    ///
+    /// - `K kind`: the automaton that follows is this kind's;
+    /// - `S state accepting`; `M state label to`: a move;
+    /// - `I state label word`: the implied word from `state` to the named child `label`;
+    /// - `E state word`: the implied word from `state` to the end;
+    /// - `P label`: a kept token (`kept`).
+    pub fn automata_text(&self) -> String {
+        let label = |l: &Label| format!("{}\x1e{}\x1e{}", if l.token { "t" } else { "n" }, self.texts[l.name as usize], self.texts[l.field as usize]);
+        let word = |w: &[Label]| w.iter().map(label).collect::<Vec<_>>().join("\x1f");
+        let mut kinds: Vec<_> = self.kinds.iter().filter(|(sym, _)| self.filters.contains(sym)).collect();
+        kinds.sort_by_key(|(sym, _)| self.texts[**sym as usize].clone());
+        let mut out = String::new();
+        for (sym, a) in kinds {
+            out.push_str(&format!("K\t{}\n", self.texts[*sym as usize]));
+            for (state, moves) in a.moves.iter().enumerate() {
+                out.push_str(&format!("S\t{state}\t{}\n", u8::from(a.accepting[state])));
+                let mut moves: Vec<_> = moves.iter().map(|(l, to)| (label(l), to)).collect();
+                moves.sort();
+                for (l, to) in moves {
+                    out.push_str(&format!("M\t{state}\t{l}\t{to}\n"));
+                }
+            }
+            let mut to: Vec<_> = a.implied.to.iter().map(|((state, l), w)| (*state, label(l), word(w))).collect();
+            to.sort();
+            for (state, l, w) in to {
+                out.push_str(&format!("I\t{state}\t{l}\t{w}\n"));
+            }
+            for (state, w) in a.implied.end.iter().enumerate() {
+                if let Some(w) = w {
+                    out.push_str(&format!("E\t{state}\t{}\n", word(w)));
+                }
+            }
+            let mut kept: Vec<_> = a.kept.iter().map(label).collect();
+            kept.sort();
+            for l in kept {
+                out.push_str(&format!("P\t{l}\n"));
+            }
+        }
+        out
+    }
+
     /// Per kind: the (token, field) pairs a tape of it may leave out: those some implied word of
     /// its automaton holds, less the kept ones ([`kept`]). `""` is no
     /// field.

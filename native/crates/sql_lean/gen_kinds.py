@@ -1,0 +1,260 @@
+"""Writes src/kinds.rs: the node kinds of tree-sitter-sql (`native/grammars/tree-sitter-sql`), named and
+anonymous, as the lean parser's `K` and `KINDS`, and its keywords' words (`WORDS`).
+
+    python3 native/crates/sql_lean/gen_kinds.py
+
+With them, `DROPPED`: the tokens a tape leaves out under each kind, from `implied.tsv`, which the
+engine's automata write (`cargo test … ecma_implied_tokens --ignored` with
+`RERAIL_IMPLIED_DIALECTS=sql RERAIL_ECMA_IMPLIED=native/crates/sql_lean/implied.tsv`): the parser
+stores a token by the grammar, as the engine's tape writer does, not by hand.
+
+A dev tool: the generated file is checked in, and the build does not run this."""
+import json, os, re
+
+here = os.path.dirname(os.path.abspath(__file__))
+grammar = os.path.join(here, '..', '..', 'grammars', 'tree-sitter-sql', 'src', 'grammar.json')
+
+named, anon, fields = [], [], []
+
+def add(lst, v):
+    if v not in lst:
+        lst.append(v)
+
+def walk(r):
+    t = r['type']
+    if t in ('TOKEN', 'IMMEDIATE_TOKEN'):
+        # A token's own pieces are not tokens (but a string inside one is its text: `tok{prec{"<"}}`).
+        c = r['content']
+        while c['type'].startswith('PREC'):
+            c = c['content']
+        if c['type'] == 'STRING':
+            add(anon, c['value'])
+        return
+    if t == 'FIELD':
+        add(fields, r['name'])
+    if t == 'STRING':
+        add(anon, r['value'])
+    elif t == 'ALIAS':
+        add(named if r['named'] else anon, r['value'])
+        if r['content']['type'] not in ('STRING', 'TOKEN', 'IMMEDIATE_TOKEN', 'PATTERN'):
+            walk(r['content'])
+        return
+    for m in r.get('members', []):
+        walk(m)
+    if 'content' in r:
+        walk(r['content'])
+
+g = json.load(open(grammar))
+sup = set(g.get('supertypes', []))
+for k, v in g['rules'].items():
+    if not k.startswith('_') and k not in sup:
+        add(named, k)
+    walk(v)
+for e in g['externals']:
+    if e['type'] == 'SYMBOL' and not e['name'].startswith('_'):
+        add(named, e['name'])
+    elif e['type'] == 'STRING':
+        add(anon, e['value'])
+words = {'!': 'Bang', '!=': 'Ne', '"': 'DQuote', '#': 'Hash', '$': 'Dollar', '%': 'Percent', '%=': 'PercentEq', '&': 'Amp',
+         '&&': 'AmpAmp', '&=': 'AmpEq', "'": 'Quote', '(': 'LParen', ')': 'RParen', '*': 'Star', '*=': 'StarEq', '*/': 'StarSlash',
+         '+': 'Plus', '+=': 'PlusEq', ',': 'Comma', '-': 'Minus', '-=': 'MinusEq', '->': 'Arrow', '.': 'Dot', '..': 'DotDot',
+         '...': 'DotDotDot', '..=': 'DotDotEq', '/': 'Slash', '/*': 'SlashStar', '//': 'SlashSlash', '/=': 'SlashEq', ':': 'Colon',
+         '::': 'ColonColon', ';': 'Semi', '<': 'Lt', '<<': 'LtLt', '<<=': 'LtLtEq', '<=': 'Le', '=': 'Eq', '==': 'EqEq', '=>': 'FatArrow',
+         '>': 'Gt', '>=': 'Ge', '>>': 'GtGt', '>>=': 'GtGtEq', '?': 'Question', '@': 'At', '[': 'LBracket', ']': 'RBracket', '^': 'Caret',
+         '^=': 'CaretEq', '_': 'Underscore', '{': 'LBrace', '|': 'Pipe', '|=': 'PipeEq', '||': 'PipePipe', '}': 'RBrace',
+         '>>>': 'GtGtGt', '>>>=': 'GtGtGtEq', '++': 'PlusPlus', '--': 'MinusMinus', '~': 'Tilde', '@interface': 'AtInterface',
+         '\\{': 'BackslashLBrace', '"""': 'TripleQuote', '??': 'QQ', '??=': 'QQEq', '#if': 'HashIf', '#else': 'HashElse', '#elif': 'HashElif', '#endif': 'HashEndif', '#region': 'HashRegion', '#endregion': 'HashEndregion', '#line': 'HashLine', '#pragma': 'HashPragma', '#nullable': 'HashNullable', '#error': 'HashError', '#warning': 'HashWarning', '#define': 'HashDefine', '#undef': 'HashUndef', '__makeref': 'Makeref', '__reftype': 'Reftype', '__refvalue': 'Refvalue', '#!': 'Shebang', '@"': 'AtQuote', 'Cdecl': 'CdeclCc', 'Stdcall': 'StdcallCc', 'Thiscall': 'ThiscallCc', 'Fastcall': 'FastcallCc', '?->': 'QArrow', '<=>': 'Spaceship', '===': 'EqEqEq', '!==': 'NeEq', '<>': 'LtGt', '**': 'StarStar', '**=': 'StarStarEq', '.=': 'DotEq', '|>': 'PipeGt', '#[': 'HashLBracket', '<<<': 'LtLtLt', '\\': 'Backslash', '`': 'Backtick', '?>': 'QGt', '\\u': 'BackslashU', 'yield from': 'YieldFrom', '<!': 'LtBang', '</': 'LtSlash', '/>': 'SlashGt', '-->': 'CommentEnd', ']]>': 'CdataEnd', ':=': 'ColonEq', '@@': 'AtAt'}
+
+def camel(s):
+    return ''.join(w[:1].upper() + w[1:] for w in re.split(r'[_ ]', s) if w)
+
+rows = [(camel(n), n, True) for n in named]
+seen = {r[0] for r in rows}
+for a in anon:
+    v = 'T' + (words.get(a) or camel(a))
+    assert re.fullmatch(r'T[A-Za-z0-9]+', v), a
+    assert v not in seen, a
+    seen.add(v)
+    rows.append((v, a, False))
+
+out = ['// Written by gen_kinds.py from the token grammar; do not edit.', '',
+       '/// Node kinds, as the tape names them: tree-sitter-sql\'s, named and anonymous.',
+       '#[derive(Clone, Copy, Debug, PartialEq, Eq)]', '#[repr(u16)]', 'pub enum K {']
+out += [f'    {v},' for v, _, _ in rows]
+out += ['}', '', '/// Each kind\'s name and whether it is named, in `K`\'s order.', 'pub const KINDS: &[(&str, bool)] = &[']
+out += [f'    ({json.dumps(n)}, {str(b).lower()}),' for _, n, b in rows]
+out += ['];', '', '/// The last kind.', '#[allow(dead_code)] // the tests\' check of the table', f'pub const LAST: K = K::{rows[-1][0]};', '']
+fields.sort()
+out += ['/// Fields, as the tape names them; 0 is no field.', 'pub const FIELDS: &[&str] = &[', '    "",']
+out += [f'    "{f}",' for f in fields]
+out += ['];', '', '/// Field ids, in `FIELDS`\' order.', 'pub mod f {', '    #[allow(dead_code)] // no field', '    pub const NONE: u8 = 0;']
+out += [f'    pub const {f.upper()}: u8 = {i + 1};' for i, f in enumerate(fields)]
+out += ['}', '']
+index = {(n, b): i for i, (_, n, b) in enumerate(rows)}
+dropped = set()
+for line in open(os.path.join(here, 'implied.tsv')):
+    d, kind, token, field = line.rstrip('\n').split('\t')
+    parent = index[(kind, True)]
+    tok = index.get((token, False))
+    assert tok is not None, (kind, token)
+    fid = 0 if field == '' else fields.index(field) + 1
+    dropped.add(parent | tok << 10 | fid << 20)
+keys = sorted(dropped)
+out += ['/// The tokens a tape leaves out: `kind | token << 10 | field << 20`, sorted (`implied.tsv`, the',
+        '/// engine\'s automata).', 'pub const DROPPED: &[u32] = &[']
+for i in range(0, len(keys), 12):
+    out.append('    ' + ' '.join(f'{k},' for k in keys[i:i + 12]))
+out += ['];', '']
+# Each keyword's words: a keyword rule is a word, case folded, or a choice of them (`int`, `integer`, `int4`),
+# or a sequence of words (`character varying`). `WORDS`: each word, lower case, with the keyword it is alone,
+# sorted for a binary search; `PHRASES`: the keywords of two words.
+def alts(r):
+    t = r['type']
+    if t in ('TOKEN', 'IMMEDIATE_TOKEN'):
+        return alts(r['content'])
+    if t == 'CHOICE':
+        return [a for m in r['members'] for a in alts(m)]
+    if t == 'PATTERN':
+        m = re.fullmatch(r'((?:\[[a-zA-Z0-9_]{2}\]|_)+)', r['value'])
+        assert m, r['value']
+        return [(''.join(a or b for a, b in re.findall(r'\[(.).\]|(_)', r['value'])).lower(),)]
+    if t == 'SYMBOL':
+        return alts(g['rules'][r['name']])
+    if t == 'SEQ':
+        parts = [alts(m) for m in r['members']]
+        assert all(len(p) == 1 and len(p[0]) == 1 for p in parts), r
+        return [tuple(p[0][0] for p in parts)]
+    raise AssertionError(t)
+words, phrases = [], []
+for k, v in g['rules'].items():
+    if not k.startswith('keyword_'):
+        continue
+    for a in alts(v):
+        (words if len(a) == 1 else phrases).append((a, rows[index[(k, True)]][0]))
+# Sorted by word alone, so a word that two keywords take (`character`) keeps the grammar's order.
+words.sort(key=lambda w: w[0])
+out += ['/// Each keyword\'s words, lower case, with its kind, sorted by word (the keyword rules\' patterns); a word two',
+        '/// keywords take is there twice, in the grammar\'s order.', 'pub static WORDS: &[(&str, K)] = &[']
+for (w,), v in words:
+    out.append(f'    ("{w}", K::{v}),')
+out += ['];', '', '/// The keywords of two words.', '#[allow(dead_code)] // read where the grammar takes them', 'pub static PHRASES: &[(&str, &str, K)] = &[']
+for a, v in phrases:
+    out.append(f'    ("{a[0]}", "{a[1]}", K::{v}),')
+out += ['];', '']
+# The token automata of the kinds whose tapes leave tokens out (`automata.tsv`, the engine's
+# `TokenGrammar::automata_text`: `cargo test … token_automata_text --ignored` with
+# `RERAIL_AUTOMATA_OUT=native/crates/sql_lean/automata.tsv`), so the writer decides each gap as the
+# engine's `stored_children` does. A label is `kind | field << 10`. Only the implied words that hold a
+# token the tape can leave out are kept: a gap matching any other leaves its tokens stored.
+def lab(t):
+    kind, name, field = t.split('\x1e')
+    k = index.get((name, kind == 'n'))
+    assert k is not None, (kind, name)
+    return k | (0 if field == '' else fields.index(field) + 1) << 10
+autos = []  # per automaton: kind, states [(accepting, [(label, to)])], implied {(state, label): word}, end {state: word}, kept
+for line in open(os.path.join(here, 'automata.tsv')):
+    r = line.rstrip('\n').split('\t')
+    if r[0] == 'K':
+        autos.append((index[(r[1], True)], [], {}, {}, set()))
+    elif r[0] == 'S':
+        assert int(r[1]) == len(autos[-1][1])
+        autos[-1][1].append((r[2] == '1', []))
+    elif r[0] == 'M':
+        autos[-1][1][int(r[1])][1].append((lab(r[2]), int(r[3])))
+    elif r[0] == 'I':
+        autos[-1][2][(int(r[1]), lab(r[2]))] = [lab(x) for x in r[3].split('\x1f')] if r[3] else []
+    elif r[0] == 'E':
+        autos[-1][3][int(r[1])] = [lab(x) for x in r[2].split('\x1f')] if r[2] else []
+    elif r[0] == 'P':
+        autos[-1][4].add(lab(r[1]))
+auto_of = [0] * len(rows)
+starts, moves_at, moves, accept, implied_rows, end_rows, word_tbl, kept_rows = [], [0], [], [], [], [], [], []
+def word_at(w):
+    at = len(word_tbl)
+    word_tbl.extend(w)
+    return at
+for a, (kind, states, imp, end, kept) in enumerate(autos):
+    auto_of[kind] = a + 1
+    base = len(accept)
+    starts.append(base)
+    for acc, ms in states:
+        accept.append(acc)
+        for l, to in sorted(ms):
+            moves.append((l, base + to))
+        moves_at.append(len(moves))
+    drops = lambda w: any(l not in kept for l in w)
+    for (st, l), w in sorted(imp.items()):
+        if drops(w):
+            implied_rows.append((base + st, l, word_at(w), len(w)))
+    for st, w in sorted(end.items()):
+        if drops(w):
+            end_rows.append((base + st, word_at(w), len(w)))
+    for l in sorted(kept):
+        kept_rows.append((a, l))
+def table(name, ty, vals, per=16, doc=''):
+    o = [doc, f'pub static {name}: &[{ty}] = &[']
+    for i in range(0, len(vals), per):
+        o.append('    ' + ' '.join(f'{v},' for v in vals[i:i + per]))
+    return o + ['];', '']
+out += table('AUTOMATON', 'u16', auto_of, 32, '/// Per kind: its automaton, plus one (0: none; its tokens are all stored).')
+out += table('START', 'u32', starts, 16, '/// Per automaton: its first state.')
+out += table('MOVES_AT', 'u32', moves_at, 16, '/// Per state: where its moves start in `MOVES`, and (the next one\'s) where they end.')
+out += table('MOVES', '(u32, u32)', [f'({l}, {t})' for l, t in moves], 8, '/// Moves, by state, sorted by label: (label, the state moved to).')
+out += table('ACCEPTS', 'u64', [sum(1 << b for b in range(64) if i + b < len(accept) and accept[i + b]) for i in range(0, len(accept), 64)], 8, '/// Per state: whether it accepts, a bit each.')
+out += table('IMPLIED', '(u32, u32, u32, u32)', [f'({a}, {b}, {c}, {d})' for a, b, c, d in implied_rows], 6, '/// The implied words before a named child: (state, the child\'s label, where the word starts in `WORD`, its length), sorted.')
+out += table('IMPLIED_END', '(u32, u32, u32)', [f'({a}, {b}, {c})' for a, b, c in end_rows], 6, '/// The implied words before the end: (state, where the word starts in `WORD`, its length), sorted.')
+out += table('WORD', 'u32', word_tbl, 16, '/// The implied words\' labels.')
+out += table('KEPT', '(u16, u32)', [f'({a}, {l})' for a, l in kept_rows], 8, '/// The tokens each automaton keeps wherever they stand: (automaton, label), sorted.')
+# FIRST sets: the keywords a rule can begin with (a keyword rule is a token here), for the parser's
+# choice between a keyword and an identifier where the grammar takes either (tree-sitter's keyword
+# lexing: a word is a keyword where the parse state takes it).
+rules = g['rules']
+nullable, first = {}, {}
+def fn(r):
+    t = r['type']
+    if t in ('STRING', 'PATTERN', 'TOKEN', 'IMMEDIATE_TOKEN'):
+        return False, set()
+    if t == 'BLANK':
+        return True, set()
+    if t == 'SYMBOL':
+        n = r['name']
+        if n.startswith('keyword_'):
+            return False, {n}
+        return nullable.get(n, False), set(first.get(n, ()))
+    if t == 'SEQ':
+        out = set()
+        for m in r['members']:
+            nb, fs = fn(m)
+            out |= fs
+            if not nb:
+                return False, out
+        return True, out
+    if t == 'CHOICE':
+        nb, out = False, set()
+        for m in r['members']:
+            a, fs = fn(m)
+            nb |= a
+            out |= fs
+        return nb, out
+    if t == 'REPEAT':
+        return True, fn(r['content'])[1]
+    if t in ('REPEAT1', 'FIELD', 'ALIAS') or t.startswith('PREC'):
+        return fn(r['content'])
+    raise AssertionError(t)
+changed = True
+while changed:
+    changed = False
+    for k, v in rules.items():
+        nb, fs = fn(v)
+        if nb != nullable.get(k, False) or fs != first.get(k, set()):
+            nullable[k], first[k] = nb, fs
+            changed = True
+for rule in ['_expression', '_type']:
+    ks = sorted(first[rule], key=lambda n: index[(n, True)])
+    name = 'FIRST' + rule.upper()
+    out += [f'/// The keywords `{rule}` can begin with (its FIRST set\'s keywords), in `K`\'s order.', f'pub static {name}: &[K] = &[']
+    for i in range(0, len(ks), 6):
+        out.append('    ' + ' '.join(f'K::{rows[index[(n, True)]][0]},' for n in ks[i:i + 6]))
+    out += ['];', '']
+open(os.path.join(here, 'src', 'kinds.rs'), 'w').write('\n'.join(out))
+print(len(autos), 'automata,', len(accept), 'states,', len(implied_rows), 'implied,', len(end_rows), 'end,', len(rows), 'kinds,', len(fields), 'fields,', len(keys), 'dropped,', len(words), 'words,', len(phrases), 'phrases')
