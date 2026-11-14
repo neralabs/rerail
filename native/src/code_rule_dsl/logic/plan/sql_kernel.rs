@@ -124,7 +124,7 @@ pub fn component(
                 {
                     let (order, _, _) =
                         run.model
-                            .plan_rule(run.prog, &rule.head, &rule.body, Some(i))?;
+                            .plan_rule(run.prog, &run.versions.body(rule)?, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
                     let q =
                         run.model

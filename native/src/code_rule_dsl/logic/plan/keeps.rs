@@ -631,7 +631,9 @@ fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates
                         let mut vars: BTreeSet<String> = BTreeSet::new();
                         part.iter().for_each(|l| vars.extend(l.vars()));
                         let head = Atom { rel: format!("{rel}_part").into(), args: vars.into_iter().map(|v| Term::Var(v.into())).collect(), neg: false, gated: false };
-                        let rows = model.plan_rule(prog, &head, part, None).map_or(f64::INFINITY, |p| p.2);
+                        let rows = super::body::alone(&Rule { head, body: part.to_vec().into() })
+                            .and_then(|made| model.plan_rule(prog, &super::body::nth(&made, 0), None))
+                            .map_or(f64::INFINITY, |p| p.2);
                         parts_rows += rows;
                         texts.push(format!("{} [{rows:.0}]", part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
                     }
@@ -1133,7 +1135,8 @@ fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f
 /// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
     let was = super::explaining(true);
-    let got = model.plan_rule_explained(prog, &rule.head, &rule.body, first);
+    let made = super::body::alone(rule).ok()?;
+    let got = model.plan_rule_explained(prog, &super::body::nth(&made, 0), first);
     super::explaining(was);
     let ((order, _, out), Some(x)) = got.ok()? else { return None };
     let key = super::obs_rule(&rule.head, &rule.body);
@@ -1493,7 +1496,7 @@ pub mod tests {
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {
-            let (order, _, _) = model.plan_rule(&prog, &rule.head, &rule.body, None).unwrap();
+            let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(rule).unwrap(), 0), None).unwrap();
             let mut rows = 2_000.0;
             let mut counts = vec![(1u64, 2_000u64)];
             for s in &order[1..] {
@@ -1510,7 +1513,7 @@ pub mod tests {
             Literal::Atom(a) if a.rel == "binding" => 3.0,
             _ => 1.0,
         };
-        let (order, _, _) = model.plan_rule(&prog, &copy.head, &copy.body, None).unwrap();
+        let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(&copy).unwrap(), 0), None).unwrap();
         let mut rows = 2_000.0;
         let mut counts = vec![(1i64, 2_000i64)];
         for s in &order[1..] {

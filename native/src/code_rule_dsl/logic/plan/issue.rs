@@ -293,7 +293,8 @@ impl<'a> Board<'a> {
             let mut wanted = BTreeSet::new();
             let strata: Vec<usize> = issued.iter().flat_map(|&c| self.comps[c].members.clone()).collect();
             let strata: Vec<(&BTreeSet<String>, Vec<&Rule>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
-            run.model.wants_strata(strata, &mut wanted);
+            let vs = Arc::clone(&run.versions);
+            run.model.wants_strata(&vs, strata, &mut wanted)?;
             run.model.make_statistics(run.prog, &wanted)?;
         }
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).

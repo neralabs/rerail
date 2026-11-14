@@ -80,3 +80,29 @@ Leaves first. Each item leaves every caller working.
     and the coverage ledger's (2).
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 53.6 G
     instructions (54.9 G before) and warm 19.3 G (19.8 G): steps no longer clone literals.
+- **Item 2, the planner plans a rule** (2026-11-13).
+  - The planner reads a rule through `plan::body::Body`: the rule's handles in its version, its literals by position,
+    each literal's variables as a set of slots (`VarSet`). `plan_rule` and its family (`_priced`, `_explained`,
+    `_reused`, `_live`, `explain_order`), the search, its keys and its sizes take a `Body`, not a (head, body) pair.
+    The search's bound sets are slot sets and its subset masks dense slot bits, so no set of names is made.
+  - `Body`'s readings are the tree's, stated over handles: `vars`, `ready`, `cmp_binds`, `is_join`, constants, the
+    digests (`plan_key`, the observations' key) and the text (`Version::show_*`). A test checks each against the tree
+    on the pack programs, so the keys of kept and stored plans are unchanged.
+  - Where the rules come from, until `run` takes a version (item 7): `body::Versions` holds the run's programs' rules
+    encoded (the program's at `run`'s entry, each maintained form's as it is placed, a form's rules for deriving it
+    again when that is chosen), and finds a rule by its place in its program. Encoding costs about 1 ms a run on dl1
+    (32 ms over 124 cold runs, 22 ms warm). `compose` and `emit` hold their program's; `keeps` prices each rule alone
+    (its copies are of no program).
+  - The made-up bodies are rules of versions of their own (`body::made`): the set fixpoint's rest under its edge
+    table's head, the lattice fixpoint's parts, and keeps' factored parts. A view's atom is not planned (`plan_views`
+    only prices its statistics), so it needs none. The made rules are built from trees, as their readers (the SQL
+    generator, the join specs) still are; items 3 and 4 build them from handles.
+  - Tests: the agreement test (`the_planners_reading_of_a_rule_is_the_trees`), the planner's (54 pass, 5 ignored), the
+    corpus planner's (77, 10 ignored), the image and text tests and the planning tests (27), the coverage ledger's (2),
+    and the logic crate's choices, keeps and prepared tests (10).
+  - Seen once: `phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed in one of three runs of the corpus
+    set, and passed alone and in the other two. It plans nothing; open.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 57.4 G and 55.9 G
+    instructions in two runs, warm 20.2, 20.0 and 20.15 G (item 1: 53.6 G and 19.3 G, one run each). Sampled, encoding
+    is 0.5% of a cold run and 0.2% of a warm one, and the whole search 1.7% of a cold run, so most of the difference is
+    the runs' own spread, not item 2's cost.

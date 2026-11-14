@@ -119,11 +119,70 @@ pub struct Body<'v> {
     pub rule: RuleRef<'v>,
     lits: Vec<LitRef<'v>>,
     vars: OnceCell<Vec<VarSet>>,
+    args: OnceCell<Vec<Vec<TermRef<'v>>>>,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new() }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new() }
+    }
+    /// The arguments of literal `i`'s atom (its own, or its aggregate's; none for another literal).
+    pub fn args(&self, i: usize) -> &[TermRef<'v>] {
+        &self.args.get_or_init(|| self.lits.iter().map(|l| l.atom().map_or_else(Vec::new, |a| a.args().collect())).collect())[i]
+    }
+    /// The head as text, written only when shown (`{head}` in a message).
+    pub fn head_text(&self) -> HeadText<'_, 'v> {
+        HeadText(self)
+    }
+    /// The literals read by `steps`, as text (`plan::shown`).
+    pub fn shown(&self, steps: &[super::Step]) -> Vec<String> {
+        steps.iter().map(|s| self.show(s.at)).collect()
+    }
+    /// How many literals read a relation: atoms and aggregates.
+    pub fn read_count(&self) -> usize {
+        self.lits.iter().filter(|l| l.atom().is_some()).count()
+    }
+    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    pub fn demand_first(&self) -> Option<usize> {
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+    }
+    /// Whether literal `i` assigns rather than filters: an equality or an aggregate (the search halves rows by every
+    /// other filter).
+    pub fn assigns(&self, i: usize) -> bool {
+        matches!(self.view(i), Lit::Cmp { op: CmpOp::Eq, .. } | Lit::Agg { .. })
+    }
+    /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
+    pub fn same_atom(&self, i: usize, j: usize) -> bool {
+        match (self.atom(i), self.atom(j)) {
+            (Some(a), Some(b)) => a.gated() == b.gated() && self.show_atom(a) == self.show_atom(b),
+            _ => false,
+        }
+    }
+    /// The variable named `name`.
+    pub fn slot(&self, name: &str) -> Option<Slot> {
+        self.rule.vars().position(|a| self.v.text(a) == name).map(|k| Slot(k as u32))
+    }
+    /// The relations the planner reads statistics of (`Model::read_by`): none for a body of one positive atom of
+    /// distinct variables, which is planned without them.
+    pub fn reads_statistics(&self) -> Vec<&'v str> {
+        let pos: Vec<usize> = (0..self.len()).filter(|&i| self.atom(i).is_some_and(|a| !a.neg())).collect();
+        let plain = pos.len() == 1 && {
+            let args = self.args(pos[0]);
+            let vars: Vec<Slot> = args.iter().filter_map(|t| t.var()).collect();
+            vars.len() == args.len() && VarSet::of(vars.iter().copied()).len() == vars.len()
+        };
+        if plain {
+            return Vec::new();
+        }
+        (0..self.len()).filter_map(|i| self.atom(i)).map(|a| self.rel(a)).collect()
+    }
+    /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (`plan::atom_sig`).
+    pub fn sig(&self, i: usize, bound: &VarSet) -> super::Sig {
+        let cols = self.args(i).iter().enumerate().filter_map(|(c, &t)| match t {
+            TermRef::Var(v) if bound.contains(v) => Some((c, None)),
+            _ => self.constant(t).map(|k| (c, Some(k))),
+        }).collect();
+        (self.rel(self.atom(i).expect("an atom")).to_owned(), cols)
     }
     pub fn len(&self) -> usize {
         self.lits.len()
@@ -335,6 +394,15 @@ impl<'v> Body<'v> {
     }
 }
 
+/// A rule's head as text (`Body::head_text`).
+pub struct HeadText<'a, 'v>(&'a Body<'v>);
+
+impl std::fmt::Display for HeadText<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.show_head())
+    }
+}
+
 /// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
 fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -367,17 +435,17 @@ impl Versions {
     /// Adds `prog`'s rules, encoded (the planner reads its rules alone; the rest of a program it reads from the tree
     /// until item 7, and a maintained form's parts have no image).
     pub fn add(&mut self, prog: &Program) -> Result<()> {
-        let v = made(&prog.rules)?;
-        self.add_version(prog, v);
-        Ok(())
+        self.add_rules(&prog.rules)
     }
-    /// Adds `prog` as version `v`: its rules, in order, are `v`'s first.
-    pub fn add_version(&mut self, prog: &Program, v: Arc<Version>) {
-        let start = prog.rules.as_ptr() as usize;
-        if prog.rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
-            return;
+    /// Adds `rules` (a program's, or a maintained form's), encoded, unless they are held already.
+    pub fn add_rules(&mut self, rules: &[Rule]) -> Result<()> {
+        let start = rules.as_ptr() as usize;
+        if rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
+            return Ok(());
         }
-        self.0.push((start, start + prog.rules.len() * std::mem::size_of::<Rule>(), v));
+        let v = made(rules)?;
+        self.0.push((start, start + std::mem::size_of_val(rules), v));
+        Ok(())
     }
     /// The version `r` is a rule of, and its id there.
     pub fn find(&self, r: &Rule) -> Option<(&Arc<Version>, RuleId)> {
@@ -402,4 +470,14 @@ pub fn made(rules: &[Rule]) -> Result<Arc<Version>> {
         b.add(r).map_err(Error::Plan)?;
     }
     Ok(b.finish().map_err(Error::Plan)?.0)
+}
+
+/// Rule `k` of a version `made` made, as the planner reads it.
+pub fn nth(v: &Version, k: usize) -> Body<'_> {
+    Body::of(v, v.rule(RuleId(k as u32)).expect("a made rule"))
+}
+
+/// `rule` alone, a version of its own (a rule of no program the run holds: a copy a pass prices before it makes it).
+pub fn alone(rule: &Rule) -> Result<Arc<Version>> {
+    made(std::slice::from_ref(rule))
 }

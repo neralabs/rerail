@@ -55,22 +55,22 @@
         let row = StoredPlan::row(key, &stored);
         assert_eq!(StoredPlan::of_row(&row), Some((key, stored.clone())));
         // The work its line last ran is kept with it (decision 0122), and a row stored without it reads as not run.
-        assert_eq!(StoredPlan::of_row(&row).and_then(|(_, p)| p.kept(body)).and_then(|k| k.5), Some(40.0));
-        assert_eq!(StoredPlan::of_row(&row[..row.len() - 1]).and_then(|(_, p)| p.kept(body)).map(|k| k.5), Some(None));
+        assert_eq!(StoredPlan::of_row(&row).and_then(|(_, p)| p.kept(body.len())).and_then(|k| k.5), Some(40.0));
+        assert_eq!(StoredPlan::of_row(&row[..row.len() - 1]).and_then(|(_, p)| p.kept(body.len())).map(|k| k.5), Some(None));
         // Within 2x of that work it is the same plan, not written again; past it, written.
         let ran = |r: f64| StoredPlan::of(&(kept.0.clone(), kept.1, None, kept.3, kept.4.clone(), Some(r))).unwrap();
         assert!(stored.same(&ran(70.0)) && !stored.same(&ran(90.0)));
-        let back = stored.kept(body).expect("rebuilt over its body");
+        let back = stored.kept(body.len()).expect("rebuilt over its body");
         let same = |a: &[Step], b: &[Step]| a == b;
         assert!(same(&back.0, &order) && (back.1, back.3) == (0.25, 1.5));
         let price = back.4.expect("its price");
         assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));
-        assert!(stored.kept(&body[..2]).is_none(), "a step past the body");
+        assert!(stored.kept(2).is_none(), "a step past the body");
         // A run at another scale takes the plan stored at the nearest one (O-replan-churn), to re-price it.
         let mut plans = super::super::RunPlans { kept: Default::default(), stored: Arc::new([(key, stored.clone())].into_iter().collect()) };
-        let near = plans.find(&key.0, body, 55_000.0).expect("the plan stored two scales down");
+        let near = plans.find(&key.0, body.len(), 55_000.0).expect("the plan stored two scales down");
         assert!(same(&near.0, &order));
-        assert!(plans.find(&(key.0 ^ 1), body, 3700.0).is_none(), "another rule's plan is not taken");
+        assert!(plans.find(&(key.0 ^ 1), body.len(), 3700.0).is_none(), "another rule's plan is not taken");
         let dir = std::env::temp_dir().join(format!("rerail-kept-plans-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();

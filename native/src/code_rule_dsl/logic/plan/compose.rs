@@ -103,6 +103,8 @@ pub fn accepts(prog: &Program) -> Result<bool> {
 }
 
 pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
+    // The program's rules, read by the planner by their handles (t36 item 2).
+    let vs = super::body::Versions::of(prog)?;
     // SQLite folds identifier case, whereas rule relations are case-sensitive.
     // Bind physical names on the typed query; never replace substrings in rendered SQL.
     let mut counts = HashMap::<String, usize>::new();
@@ -290,7 +292,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         } else {
             for rule in rules {
                 let ((order, _, _), _) =
-                    model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
+                    model.plan_rule_reused(prog, &vs.body(rule)?, None)?;
                 let mut q = model.checked_query(prog, &rule.head, super::Order::new(&rule.body, &order), None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
