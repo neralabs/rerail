@@ -184,7 +184,7 @@ function copyBack(taken: string, path: string): void {
     // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
     // any other reason leaves the lines under this hook's name, where status still counts them until a later move
     // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
-    // own line.
+    // own line, and a second read that fails loses those written since the first.
   } finally {
     if (lock !== null) lock.release();
     closeSync(descriptor);
@@ -232,13 +232,15 @@ function firstOf<T>(take: () => T | null, deadline: number): T | null {
  * window is left: a hook that writes into the log after the second read below loses its line.
  */
 function copyLines(descriptor: number, taken: string, path: string): void {
+  // Read while the log still has its name: a read that fails leaves the lines there, where status counts them.
+  const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
+  const lines = readFrom(descriptor, 0);
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
   unlinkSync(taken);
   // Still under another name, as when another hook gave it back while this one moved it on, or a hook's removal of its
   // own name was refused: the lines are there, and status counts them under that name. Copied as well, they would count
   // twice.
-  if (heldElsewhere(descriptor, taken, path)) return;
-  const lines = readFrom(descriptor, 0);
+  if (heldElsewhere(id, taken, path)) return;
   appendFileSync(path, lines, { mode: 0o600 });
   // A hook that opened the log to append before this one took it can write after the read above: that goes back too.
   // One that writes later still, after this read, loses its line.
@@ -247,14 +249,12 @@ function copyLines(descriptor: number, taken: string, path: string): void {
 }
 
 /**
- * Whether a name of the log other than `taken` holds the file open as `descriptor`: the live log at `path`, `.1`, or a
- * log another hook took. Another hook can move that name on while this one looks, as it takes the live log: when a name
- * the listing found is gone by the time it is looked at, the files of the log are listed again, as a status read does
- * ({@link readLogParts}). On a file system with no file numbers each name counts as a file of its own ({@link fileId}),
- * so none does.
+ * Whether a name of the log other than `taken` holds the file whose {@link fileId} is `id`: the live log at `path`, `.1`,
+ * or a log another hook took. Another hook can move that name on while this one looks, as it takes the live log: when a
+ * name the listing found is gone by the time it is looked at, the files of the log are listed again, as a status read
+ * does ({@link readLogParts}). On a file system with no file numbers each name counts as a file of its own, so none does.
  */
-function heldElsewhere(descriptor: number, taken: string, path: string): boolean {
-  const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
+function heldElsewhere(id: string, taken: string, path: string): boolean {
   const home = dirname(path);
   for (let listing = 0; listing < HELD_ELSEWHERE_LISTINGS; listing += 1) {
     const names = listLog(home);

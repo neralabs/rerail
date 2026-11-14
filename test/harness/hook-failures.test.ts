@@ -410,6 +410,31 @@ describe("the hook failure log", () => {
     expect(statusCount(rerailHome)).toBe(full + 3);
   });
 
+  // A hook gives the full log back by copy, as another hook began a live log since it took it, and the read of its lines
+  // fails, as on an I/O error: they stay under the hook's name, where status counts them.
+  it("keeps the lines of a log it gives back by copy when it cannot read them", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    await recordWithWrapped(rerailHome, 2, {
+      renameSync: `rename => (from, to) => {
+        if (to.endsWith(".1")) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+        rename(from, to);
+        if (to.endsWith(".old")) fs.appendFileSync(from, ${lineSource(3, "began a live log")});
+      }`,
+      openSync: `open => (path, ...rest) => {
+        const descriptor = open(path, ...rest);
+        if (String(path).endsWith(".old")) globalThis.taken = descriptor;
+        return descriptor;
+      }`,
+      readSync: `read => (descriptor, ...rest) => {
+        if (descriptor === globalThis.taken) throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
+        return read(descriptor, ...rest);
+      }`,
+    });
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)]);
+    expect(statusCount(rerailHome)).toBe(full + 2);
+  });
+
   // On Windows a rename opens the file by name and renames what it opened, so a hook can move a log on from the name a
   // give-back left it under while another hook takes the live name the give-back made: two hooks then hold one log under
   // their own names. Here each hook takes the same part, waits until the other has it too, finds the full live log
@@ -630,7 +655,7 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 }
 
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
-type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync", string>>;
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync", string>>;
 
 /**
  * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
