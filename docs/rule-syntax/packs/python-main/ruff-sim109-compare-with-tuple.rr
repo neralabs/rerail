@@ -9,7 +9,7 @@
 // SIM109(n): a finding at node n, from clause `compare-with-tuple`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM109(at: node, first: loc, n: loc) "Use `{n} in (...)` instead of multiple equality comparisons"
+.violation SIM109(at: node, first: loc, n_mv: loc) "Use `{n_mv} in (...)` instead of multiple equality comparisons"
     suppress noqa "SIM109"
 SIM109(n, FIRST, N) :- kind(n, "boolean_operator"), sim109_or_op(n), !sim109_alt_1(n),
     within_stop(c11, n, sim109_stop_10),

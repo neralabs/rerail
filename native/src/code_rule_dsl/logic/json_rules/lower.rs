@@ -76,6 +76,13 @@ fn underscores(s: &str) -> String {
     out
 }
 
+/// A util's relation: its name in snake case, and `_util` after a name core.rr declares (a util `field` is not the
+/// core `field(p, f, c)` the rules beside it read).
+pub fn util_name(name: &str) -> String {
+    let s = snake(name);
+    if crate::code_rule_dsl::logic::rr::lower::is_core(&s) { format!("{s}_util") } else { s }
+}
+
 pub fn snake(name: &str) -> String {
     let cs: Vec<char> = name.chars().collect();
     let mut s = String::new();
@@ -428,7 +435,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "capture" && val.is_str() {
             lits.push(format!("{} = {v}", cap(val.as_str().expect("a string"))));
         } else if k == "compare" && vo.is_some_and(|o| o.has("left") && o.has("op") && o.has("right")) {
-            lits.extend(compare(vo.expect("an object"), vs));
+            lits.extend(compare(prog, vo.expect("an object"), vs));
         } else if k == "count" && vo.is_some() {
             lits.extend(count(px, prog, vo.expect("an object"), v, vs)?);
         } else if k == "layout" && vo.is_some() && main_terms::layout(prog, vo.expect("an object"), v, &mut Vars::default()).is_some() {
@@ -452,7 +459,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let o = vo.expect("an object");
             let r = vs.fresh("r");
             lits.push(format!("parsed({v}, {}, {r})", q_val(o.get("grammar").expect("grammar"))));
-            lits.extend(lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[])?);
+            // A `host` inside reads the node parsed, not an embedded program's file node.
+            let outer = prog.embedded.take();
+            let inner = lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[]);
+            prog.embedded = outer;
+            lits.extend(inner?);
         } else if k == "pattern" && vo.is_some_and(|o| o.has("context")) {
             let o = vo.expect("an object");
             let sel = o.get("selector").map_or(String::new(), |s| format!(" at {}", q_val(s)));
@@ -472,6 +483,9 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "$option" && val.is_str() && (ro.has("cases") || ro.has("default")) {
             lits.extend(option_cases(px, prog, val, ro, v, false)?);
         } else if (k == "cases" || k == "default") && ro.has("$option") {
+            continue;
+        } else if k == "stored" && ro.has("regex") {
+            // Main's note on why the regex reads a stored token's text: the `regex` beside it is the test.
             continue;
         } else if k == "value" && vo.is_some_and(|o| o.len() == 1) {
             let (op, arg) = vo.expect("an object").0[0].clone();
@@ -538,6 +552,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
         } else if k == "resolves" && vo.is_some() {
             lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "host" && vo.is_some() && prog.embedded.is_some() {
+            lits.extend(super::embedded::host(px, prog, val, v, vs)?);
+            prog.host_reads.extend(host_reads(px, val));
+        } else if k == "embedded" && vo.is_some() {
+            lits.extend(super::embedded::term(px, prog, val, v)?);
         } else if k == "host" && vo.is_some() {
             // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
             // it reads is the guest node, compared by its text
@@ -560,7 +579,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
     Ok(lits)
 }
 
-fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
+fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     let op = c.get("op").expect("op");
     if !op.is_str() {
         return vec![format!("ast({}, {})", mv_v(c.get("left").expect("left")), compact(&Value::obj(vec![("compare", Value::Obj(c.clone()))])))];
@@ -568,7 +587,16 @@ fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
     let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
-    let reader = if matches!(text.as_str(), Some("node" | "text")) { "text" } else { "value" };
+    let reader = match text.as_str() {
+        Some("node" | "text") => "text",
+        // ESLint's static property name and the quote-stripped text, which a key or identifier has with no value
+        // (decision 0222): a library's, for the ECMAScript languages.
+        Some(mode @ ("key" | "unquoted")) if matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue") => {
+            prog.use_("compare");
+            if mode == "key" { "cmp_key" } else { "cmp_unquoted" }
+        }
+        _ => "value",
+    };
     if op == "eq" {
         return vec![format!("{reader}({l}, {a}), {reader}({r}, {a})")];
     }
@@ -723,9 +751,17 @@ fn nth_child(px: &Patterns, prog: &mut Program, c: &Obj, v: &str, vs: &mut Vars)
 
 fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &mut Vars) -> R<Vec<String>> {
     let mut lits = Vec::new();
+    // Main's `directives: "eslint"` is no filter of its own: `builtin` and `exported` also read ESLint's `/* global */`
+    // and `/* exported */` comments (the names library's `site_builtin_directives`, `site_exported_directives`).
+    let directives = filters.get("directives").is_some_and(|d| d.as_str() == Some("eslint"));
     for (bk, bv) in filters.iter() {
         let bo = bv.as_obj();
-        if bk == "form" && bv.is_str() {
+        if bk == "directives" && directives {
+            continue;
+        } else if directives && (bk == "builtin" || bk == "exported") && matches!(bv, Value::Bool(_)) {
+            let not = if bv.is_true() { "" } else { "!" };
+            lits.push(format!("{not}site_{bk}_directives({s})"));
+        } else if bk == "form" && bv.is_str() {
             lits.push(format!("main_form({s}, {})", q_val(bv)));
         } else if bk == "form" && bv.is_list() {
             lits.push(one_of(prog, vs, &format!("main_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
@@ -782,6 +818,23 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
                 _ => lits.push(format!("binding({sc}, {x}, {s2}, _)")),
             }
             lits.push(format!("{s2} < {s}"));
+        } else if bk == "redefines"
+            && let Some(o) = bo.filter(|o| o.keys_within(&["every", "site", "form", "scope", "used", "referenced", "exported", "builtin", "directives", "value", "annotation"]))
+        {
+            // The variable's other definitions: some earlier one the term accepts (its filters and sub-rules on it),
+            // or with `every`, each other one (main's TypeScript `redefines`; vacuous where there is no other).
+            let every = o.get("every").is_some_and(Value::is_true);
+            let accepts = prog.helper("redefined", "the definitions the JSON `binds.redefines` accepts");
+            let mut body = vec!["binding(_, _, n, _)".to_owned()];
+            body.extend(site_filters(px, prog, &o.without(&["every"]), "n", &mut Vars::default())?);
+            prog.add_rule(format!("{accepts}(n)"), body);
+            let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
+            lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            if every {
+                lits.push(format!("count : {{ binding({sc}, {x}, {s2}, _), {s2} != {s}, !{accepts}({s2}) }} = 0"));
+            } else {
+                lits.push(format!("binding({sc}, {x}, {s2}, _), {s2} < {s}, {accepts}({s2})"));
+            }
         } else {
             let term = Value::obj(vec![("binds", Value::obj(vec![(bk, bv.clone())]))]);
             lits.push(ast_atom(prog, s, term));
@@ -1337,15 +1390,31 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
             }
         } else if k == "prefix" {
             continue;
+        } else if (k == "directives" || k == "scriptDeclarations") && r.has("global") {
+            // They widen `global` (below): no filter of their own.
+            continue;
         } else if k == "directives" && val.is_str() {
             lits.push(format!("global_directives({v}, {})", q_val(val)));
         } else if k == "global" {
             prog.use_("names");
+            // Main's `directives: "eslint"` adds `/* global */` comments' names (less those turned off), and
+            // `scriptDeclarations` a script's top-level declarations, which are the global variables themselves.
+            let dir = r.get("directives").and_then(Value::as_str) == Some("eslint");
+            let script = r.get("scriptDeclarations").is_some_and(Value::is_true);
+            let rel = |g: &str| if dir || script { format!("global_ref_with({v}, {g}, {}, {})", dir as u8, script as u8) } else { format!("global_ref({v}, {g})") };
             if let Value::List(l) = val {
-                lits.push(one_of(prog, vs, &format!("global_ref({v}, {{}})"), l, "g", "names from the JSON `resolves.global`"));
+                lits.push(one_of(prog, vs, &rel("{}"), l, "g", "names from the JSON `resolves.global`"));
             } else {
-                lits.push(format!("global_ref({v}, _)"));
+                lits.push(rel("_"));
             }
+        } else if k == "sloppyFunctions" && r.get("this").and_then(Value::as_str) == Some("global") {
+            continue;
+        } else if k == "this" && val.as_str() == Some("global") {
+            // `this` is the global object: a script's top level, and with `sloppyFunctions` a sloppy function
+            // called plainly (tsx/eslint-a-globals).
+            prog.use_("eslint-a-globals");
+            let sloppy = r.get("sloppyFunctions").is_some_and(Value::is_true);
+            lits.push(if sloppy { format!("global_this({v})") } else { format!("global_this_top({v})") });
         } else if k == "unresolved" && (matches!(val, Value::Bool(true) | Value::Int(1)) || matches!(val, Value::Float(f) if *f == 1.0) || val.as_str() == Some("star")) {
             prog.use_("names");
             if prog.lang == "python" {
@@ -1454,12 +1523,21 @@ pub fn transform_lits(prog: &mut Program, tr: &Value, vs: &mut Vars, defined: &B
         let (op, a) = single.0[0].clone();
         let ao = a.as_obj();
         let src = ao.map(|ao| mv_v(ao.get("source").unwrap_or(&Value::Str(String::new())))).unwrap_or_default();
+        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0222): main's `value: true`.
+        let ecma = matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue");
+        if ecma && truthy(a.get("value")) {
+            prog.use_("compare");
+        }
         let read = |lits: &mut Vec<String>, vs: &mut Vars| -> String {
             if defined.contains(&src) {
                 return src.clone();
             }
             let x = vs.fresh("t");
-            let reader = if truthy(a.get("value")) { "value" } else { "text" };
+            let reader = match (truthy(a.get("value")), ecma) {
+                (true, true) => "cmp_value",
+                (true, false) => "value",
+                (false, _) => "text",
+            };
             lits.push(format!("{reader}({src}, {x})"));
             x
         };
@@ -1614,14 +1692,14 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
         let mut sorted: Vec<&String> = cols.iter().collect();
         sorted.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
         for c in sorted {
-            let rep = format!("{{{}}}", c.to_lowercase());
+            let rep = format!("{{{}}}", col(c));
             m = sub(&re(&format!(r"\$\$?\$?{}\b", esc(c))), &m, |_| rep.clone());
         }
         msg = Value::Str(m);
     }
     let colsig: String = cols
         .iter()
-        .map(|c| format!(", {}: {}", c.to_lowercase(), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
+        .map(|c| format!(", {}: {}", col(c), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
         .collect();
     let mut head = format!(".violation {rel}(at: node{colsig})");
     if code.as_str() != Some(rel) {
@@ -1631,7 +1709,7 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
     let anchor = viol.get("anchor").filter(|a| a.truthy()).map(py_str);
     if let Some(a) = &anchor {
         if let Some(c) = a.strip_prefix("capture.") {
-            lines.push(format!("    anchor {}", c.to_lowercase()));
+            lines.push(format!("    anchor {}", col(c)));
         } else if a != "witness.span" {
             lines.push(format!("    anchor {}", a.replace("witness.", "")));
         }

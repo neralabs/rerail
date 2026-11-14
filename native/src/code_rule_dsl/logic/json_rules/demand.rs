@@ -170,10 +170,19 @@ impl Demand<'_> {
                     for &i in &pos[h] {
                         want.push(args.get(i).cloned().ok_or("IndexError: list index out of range")?);
                     }
+                    // A metavariable column the call leaves `_` (its caller binds none) asks for the unset row.
+                    let mut unset_wild = Vec::new();
+                    for (k, w) in want.iter_mut().enumerate().skip(1) {
+                        if w == "_" {
+                            *w = format!("UNSET_{k}");
+                            unset_wild.push(format!("unset({w})"));
+                        }
+                    }
                     if want.iter().any(|a| a == "_") {
                         return Ok(false);
                     }
                     let mut lits: Vec<String> = scope.into_iter().filter(|l| !reaches(l)).collect();
+                    lits.extend(unset_wild);
                     if gset.contains(&owner) {
                         let hp = head_params(&prog.arena[e].head);
                         let d = pos[&owner].iter().map(|&i| hp[i].clone()).collect::<Vec<_>>().join(", ");
@@ -182,6 +191,20 @@ impl Demand<'_> {
                         return Ok(false);
                     }
                     let head = format!("{dname}({})", want.join(", "));
+                    // A metavariable the callee reads that this call site never binds, and its owner is not passed,
+                    // is unset there (ast-grep's empty metavariable): main's `early-enough` holds of an unset `$LATE`.
+                    if ungrounded(px, &wrap(&head, &lits, None))? {
+                        let own = self.inputs.get(&owner).cloned().unwrap_or_default();
+                        let word = |x: &str| Regex::new(&format!(r"(^|[^\w]){x}([^\w]|$)")).expect("a word");
+                        let unbound: Vec<String> = want
+                            .iter()
+                            .filter(|x| is_full(UPPER, x) && !own.contains(*x) && !lits.iter().any(|l| matches(&word(x), l)))
+                            .cloned()
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect();
+                        lits.extend(unbound.iter().map(|x| format!("unset({x})")));
+                    }
                     if ungrounded(px, &wrap(&head, &lits, None))? || lits.is_empty() {
                         return Ok(false);
                     }

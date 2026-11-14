@@ -109,6 +109,13 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
     out
 }
 
+/// The embedding a grammar name names for `host` (decision 0222): one its dialect embeds programs through
+/// (`GrammarDialect::embeds`), by its registry id (`script-block` for a `.vue` file).
+fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
+}
+
 /// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`): a
 /// fragment the registry declares (decision 0082), or a dialect's label.
 fn grammar(name: &str) -> Option<(&'static str, bool)> {
@@ -199,7 +206,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
                     pieces.extend(p[..p.len() - 1].iter().map(|p| syntax::normalized::Piece { d: p.d + at, ..*p }));
                     tail = p.last().map_or(tail, |p| p.s);
                 }
-                Placement::At(_) => return None,
+                Placement::At(_) | Placement::Segments(_) => return None,
             }
             value.push_str(&text);
         }
@@ -306,6 +313,9 @@ impl Guests {
     fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
+        if let Some(via) = embedding(host, grammar_name) {
+            return self.program(host, at, via, role, cache);
+        }
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
@@ -342,6 +352,41 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape: None,
+        }))
+    }
+
+    /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it
+    /// (`embed::Embedder`; a Vue component's view, `vue::view`) writes its text and its segments from the host's
+    /// tree, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
+    /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
+    /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
+    fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
+        use ast_grep_language::LanguageExt;
+        let host_key = (at >> 32) as u32;
+        let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
+        let source = host.facts.source.as_str();
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&dialect.get_ts_language()).is_err() {
+            return Ok(None);
+        }
+        let Some(tree) = parser.parse(source, None) else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(tree.root_node(), source) else { return Ok(None) };
+        let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
+        let place = Placement::Segments(Arc::new(program.segments));
+        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };
+        let range = if label == self.run { Range::Code } else { Range::Hidden };
+        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &mut self.taken);
+        self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
+        let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
+        Ok(Some(Document {
+            key,
+            path: host.path.clone(),
+            core: format!("{}#guest:{}:{at}", host.core, via.id()),
+            digest,
+            facts,
+            guest: Some(Arc::new(Guest { host: host_key, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            module: host.module.clone(),
+            tape,
         }))
     }
 
@@ -470,6 +515,29 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     kept.1.insert(key, parsed.clone());
     Ok(parsed)
 }
+
+/// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0222): the rules over
+/// a view read W's values (`value`, a key's text) as over a file, and a value is read off the document's tape. Not
+/// memoised: a host embeds one program, and a file's tape is the store's.
+fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
+    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, None, true)) {
+        Some(Ok(built)) => Ok(built),
+        Some(Err(_)) => {
+            crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
+            core::build_with_tape(&file, true)
+        }
+        None => core::build_with_tape(&file, true),
+    }
+    .map_err(|e| format!("{path}: {e}"))?;
+    let (Built::Facts(facts), tape) = built else { return Ok(None) };
+    let digest = core::digest(&facts);
+    let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+    Ok(Some(((Arc::new(facts), 0, digest), tape)))
+}
+
+/// A document's tape in its file's context (`Document::tape`).
+type Tape = Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>;
 
 /// The root of a wrapped expression `( e )`: `e`, the one named child of the parenthesized expression the module's
 /// one statement is, when the text parses so; else the module's first named child (a partial tree's).

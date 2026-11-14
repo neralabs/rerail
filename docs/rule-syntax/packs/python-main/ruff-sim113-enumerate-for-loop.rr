@@ -11,7 +11,7 @@
 // SIM113(n): a finding at node n, from clause `enumerate-for-loop`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM113(at: node, n: loc) "Use `enumerate()` for index variable `{n}` in `for` loop"
+.violation SIM113(at: node, n_mv: loc) "Use `enumerate()` for index variable `{n_mv}` in `for` loop"
     suppress noqa "SIM113"
 SIM113(n, N) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n), child(n, c9, _),
     kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9), child(n, c17, _),

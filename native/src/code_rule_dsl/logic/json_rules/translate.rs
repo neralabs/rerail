@@ -30,6 +30,41 @@ fn empty_obj() -> &'static Obj {
     &E
 }
 
+/// An `ast` that is itself `{"$option": O, "cases": {v: ast}, "default": ast}`, where each case is only a
+/// `language`, an empty `languageOptions` and a `rule`: the one `ast` whose `rule` is the `$option` over the cases'
+/// rules, which the rule lowering guards per configured value. Any other form is left as it is (`None`).
+fn option_ast(a: &Obj) -> Option<Obj> {
+    let name = a.get("$option").filter(|n| n.is_str())?;
+    let plain = |c: &Value| {
+        c.as_obj().is_some_and(|o| {
+            o.has("rule")
+                && o.iter().all(|(k, v)| k == "rule" || k == "language" || (k == "languageOptions" && !v.truthy()))
+        })
+    };
+    let cases = a.get("cases").and_then(Value::as_obj);
+    let default = a.get("default");
+    if !cases.is_some_and(|c| c.iter().all(|(_, v)| plain(v))) || !default.is_none_or(plain) {
+        return None;
+    }
+    let first = cases.and_then(|c| c.iter().next().map(|(_, v)| v)).or(default)?;
+    let mut rule = Obj::default();
+    rule.insert("$option", name.clone());
+    let mut cs = Obj::default();
+    for (k, v) in cases.expect("cases").iter() {
+        cs.insert(k, v.get("rule").expect("a rule").clone());
+    }
+    rule.insert("cases", Value::Obj(cs));
+    if let Some(d) = default {
+        rule.insert("default", d.get("rule").expect("a rule").clone());
+    }
+    let mut out = Obj::default();
+    if let Some(l) = first.get("language") {
+        out.insert("language", l.clone());
+    }
+    out.insert("rule", Value::Obj(rule));
+    Some(out)
+}
+
 fn obj_of<'a>(v: Option<&'a Value>) -> &'a Obj {
     v.and_then(Value::as_obj).unwrap_or(empty_obj())
 }
@@ -246,8 +281,14 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
 
     let mut body: Vec<Item> = Vec::new();
     let mut seen_rel = Set::new();
+    // The embedding the policy's clauses read (decision 0222): a shared util's `host` is a program node's.
+    let reads_program = super::embedded::reads_program(&lang, clauses);
     for c in clauses {
         let cid = c.get("id").map_or("clause".to_owned(), py_str);
+        prog.embedded = super::embedded::clause_via(&lang, c).or_else(|| c.has("define").then(|| reads_program.clone()).flatten());
+        if prog.embedded.is_some() {
+            prog.use_("view");
+        }
         if let Some(d) = c.get("define") {
             prog.scope = Default::default();
             let mut utils = Vec::new();
@@ -286,11 +327,12 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
             prog.untranslated += 1;
             continue;
         }
-        let a = obj_of(forbid.get("ast"));
+        let a_owned = option_ast(obj_of(forbid.get("ast")));
+        let a = a_owned.as_ref().unwrap_or_else(|| obj_of(forbid.get("ast")));
         let utils = obj_of(a.get("utils").filter(|u| u.truthy()));
         let mut sc = indexmap::IndexMap::new();
         for name in utils.keys() {
-            let s = snake(name);
+            let s = super::lower::util_name(name);
             let v = if prog.util_rels.contains(&s) { format!("{s}_{}", snake(&cid)) } else { s };
             sc.insert(name.to_owned(), v);
         }
@@ -304,7 +346,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         if !cols.is_empty() {
             note.push("// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.".to_owned());
         }
-        let opts = a.without(&["language", "rule", "utils", "constraints", "transform"]);
+        let opts = a.without(&["language", "rule", "utils", "constraints", "transform", "embedded"]);
         let mut vs = Vars::default();
         let tr_v = a.get("transform").filter(|t| t.is_obj() && t.truthy());
         let tlits = match tr_v {
@@ -367,8 +409,13 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
                 .collect(),
             _ => Vec::new(),
         };
+        let entry = match a.get("embedded").and_then(Value::as_str) {
+            Some(via) => Some(super::embedded::entry(&lang, via, "n", &mut vs)?),
+            None => None,
+        };
         for b in bodies {
             let mut lits = b;
+            lits.splice(0..0, entry.iter().cloned());
             lits.extend(cons.iter().cloned());
             if targets.is_empty() {
                 lits.extend(tlits.iter().cloned());
@@ -377,7 +424,13 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
                 // there, in its own frame) is not computed here: grounding its source would range it over every
                 // node. The helper that reads it computes it itself (transform_defs_for), so it stays local there.
                 // ast-grep leaves such a target unset where the rule's own match does not bind it.
-                let bound = binders(px, &lits.join(", "), false);
+                let mut bound = binders(px, &lits.join(", "), false);
+                // And, in a clause over an embedded program, what a util called here outside a negation or an
+                // aggregate binds (`matches: item` binds K). Elsewhere it is left as decision 0201 has it: counted
+                // there, it would change nine of the Python pack's rules, which the Ruff comparison has not checked.
+                if entry.is_some() {
+                    bound.extend(util_binds(px, &prog, &local, &lits));
+                }
                 let defs = prog.transform_defs.as_ref().expect("transform defs");
                 for (t, root) in &targets {
                     if root.is_empty() || bound.contains(root) {
@@ -619,6 +672,30 @@ struct Emit<'a> {
     inputs: &'a BTreeMap<String, Set>,
     declared: Set,
     out: Vec<String>,
+}
+
+/// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
+/// (decision 0222): before the shared columns are added, a call is `item_p(n)`, and the rule's K is the util's. The
+/// utils are the program's and the clause's own (`local`, rendered but not yet added).
+fn util_binds(px: &Patterns, prog: &Program, local: &[(String, Vec<String>)], lits: &[String]) -> Set {
+    let called = |text: &str| -> Vec<String> {
+        let outside = super::text::drop_aggregates(px, text);
+        let positive = re(r"(?<![!\w.@])([a-z_]\w*)\(");
+        findall(&positive, &masked(px, &outside))
+    };
+    let (mut out, mut seen, mut todo) = (Set::new(), Set::new(), called(&lits.join(", ")));
+    while let Some(name) = todo.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let own = local.iter().filter(|(h, _)| h.split('(').next() == Some(name.as_str())).map(|(_, l)| l);
+        for body in prog.arena.iter().filter(|e| e.name() == name).map(|e| &e.lits).chain(own) {
+            let text = body.join(", ");
+            out.extend(binders(px, &text, false));
+            todo.extend(called(&text));
+        }
+    }
+    out
 }
 
 fn check(px: &Patterns, text: &str, inputs: &[String]) -> R<Vec<String>> {

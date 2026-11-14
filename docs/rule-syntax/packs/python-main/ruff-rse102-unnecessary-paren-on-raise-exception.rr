@@ -35,14 +35,14 @@ rse102_win_error(n) :- sym_of(n, "ctypes.WinError").
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
 .decl rse102_class_of(n: node, e: node, k: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
 // K: not bound by this rule, so empty (unset) here, as in ast-grep.
-rse102_class_of(n, E, K, I, N, ND, O, P, Q) :- rse102_demand_class_of(n), node(_, n, _, _, _), E = n,
+rse102_class_of(n, E, K, I, N, ND, O, P, Q) :- rse102_demand_class_of(n, P), node(_, n, _, _, _), E = n,
     rse102_alt_2(n, E, I, N, ND, O, P, Q), unset(K).
 
 // member_class(n, …): the JSON util `member-class`, called with `matches` and arguments E, S
 //   P: metavariable of the calling rule, passed in (bound by the caller)
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
 .decl rse102_member_class(n: node, e: node, s: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
-rse102_member_class(n, E, S, I, N, ND, O, P, Q) :- rse102_demand_member_class(n),
+rse102_member_class(n, E, S, I, N, ND, O, P, Q) :- rse102_demand_member_class(n, P),
     kind(n, "attribute"), node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1,
     rse102_class_of(c1, O, P, I, N, ND, O, P, Q), field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
     inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4,
@@ -110,32 +110,33 @@ rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifi
     ).
 
 
-// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
-.decl rse102_demand_alt_2(n: node)
-rse102_demand_alt_2(n) :- rse102_demand_class_of(n), node(_, n, _, _, _), E = n.
+// demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_alt_2(n: node, e: loc, p: loc)
+rse102_demand_alt_2(n, E, P) :- rse102_demand_class_of(n, P), node(_, n, _, _, _), E = n.
 
-// demand_class_of: the nodes class_of is asked at (its recursion looks at every descendant)
-.decl rse102_demand_class_of(n: node)
-rse102_demand_class_of(c1) :- node(_, P, _, _, _), rse102_demand_member_class(n),
+// demand_class_of: the rows of class_of its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_class_of(n: node, p: loc)
+rse102_demand_class_of(c1, P) :- rse102_demand_member_class(n, P), kind(n, "attribute"), node(_, n, _, _, _), E = n,
+    field(n, "object", c1), node(_, c1, _, _, _), O = c1, field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
+    inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5),
+    text(P, t5), within_stop(c7, c4, rse102_stop_14), kind(c7, "class_definition"),
+    field(c7, "name", c8), node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), bind_name(c8, b11),
+    site_latest(b11), node(_, c7, _, _, _), S = c7, @doc(Q) = @doc(P).
+rse102_demand_class_of(c1, P) :- node(_, P, _, _, _), rse102_demand_member_def(n),
     kind(n, "attribute"), node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1,
     field(n, "attribute", c2), node(_, c2, _, _, _), N = c2, inside(n, p3, "module"),
     has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5), text(P, t5),
-    within_stop(c7, c4, rse102_stop_14), kind(c7, "class_definition"), field(c7, "name", c8),
-    node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), bind_name(c8, b11), site_latest(b11),
-    node(_, c7, _, _, _), S = c7, @doc(Q) = @doc(P).
-rse102_demand_class_of(c1) :- node(_, P, _, _, _), rse102_demand_member_def(n), kind(n, "attribute"),
-    node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1, field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
-    inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5),
-    text(P, t5), within_stop(c7, c4, rse102_stop_14), kind(c7, "function_definition"),
+    within_stop(c7, c4, rse102_stop_14), kind(c7, "function_definition"),
     field(c7, "name", c8), node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), bind_name(c8, b11),
     site_latest(b11), @doc(Q) = @doc(P).
-rse102_demand_class_of(c3) :- rse102_demand_alt_2(n), kind(n, "parenthesized_expression"),
+rse102_demand_class_of(c3, P) :- rse102_demand_alt_2(n, E, P), kind(n, "parenthesized_expression"),
     child(n, c3, _), node(_, c3, _, _, _), I = c3.
 
-// demand_member_class: the nodes member_class is asked at (its recursion looks at every descendant)
-.decl rse102_demand_member_class(n: node)
-rse102_demand_member_class(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n.
-rse102_demand_member_class(n) :- rse102_demand_alt_2(n), kind(n, "attribute").
+// demand_member_class: the rows of member_class its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_member_class(n: node, p: loc)
+rse102_demand_member_class(n, UNSET_1) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n,
+    unset(UNSET_1).
+rse102_demand_member_class(n, P) :- rse102_demand_alt_2(n, E, P), kind(n, "attribute").
 
 // set_11: node kinds from a JSON `any`
 .decl rse102_set_11(v: symbol)
@@ -155,9 +156,14 @@ rse102_stop_1(n) :- node(_, n, _, _, _), !kind(n, "line_continuation").
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
 .decl rse102_alt_2(n: node, e: loc, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
 // I, N, ND, O, Q: not bound by this rule, so empty (unset) here, as in ast-grep.
-rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _),rse102_demand_alt_2(n),kind(n, "identifier"),ref_site(n, b1),site_stop_at_global(b1),(st2 = b1 ; within(b1, st2)),kind(st2, "class_definition"),text(st2, t_k1),text(K, t_k1),unset(I),unset(N),unset(ND),unset(O),unset(Q),@doc(st2) = @doc(K), unset(E), unset(P).
-rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n),kind(n, "parenthesized_expression"),child(n, c3, _),node(_, c3, _, _, _),I = c3,rse102_class_of(c3, I, K, I, N, ND, O, P, Q), unset(E).
-rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n), kind(n, "attribute"),
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _), rse102_demand_alt_2(n, E, P),
+    kind(n, "identifier"), ref_site(n, b1), site_stop_at_global(b1),
+    (st2 = b1 ; within(b1, st2)), kind(st2, "class_definition"),
+    text(st2, t_k1), text(K, t_k1), unset(I), unset(N), unset(ND), unset(O), unset(Q), @doc(st2) = @doc(K).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n, E, P),
+    kind(n, "parenthesized_expression"), child(n, c3, _), node(_, c3, _, _, _), I = c3,
+    rse102_class_of(c3, I, K, I, N, ND, O, P, Q).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n, E, P), kind(n, "attribute"),
     rse102_member_class(n, E, K, I, N, ND, O, P, Q).
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
