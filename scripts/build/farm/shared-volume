@@ -26,9 +26,12 @@ server)
   network=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1] + "/" + sys.argv[2]).network.network_address)' "$address" "$prefix")
   sudo networksetup -setmanual "$service" "$address" "$mask"
   line="$exported -alldirs -maproot=nobody -network $network -mask $mask"
-  # One line per filesystem: replace the farm's line, keep every other export.
+  # One line per filesystem: replace the farm's line (the one after its marker), keep every other
+  # export. exports(5) has no comments at the end of a line; a line ending in the marker is an
+  # earlier version's, and goes too.
   tmp=$(mktemp)
-  { grep -v '# rerail-farm$' /etc/exports 2>/dev/null || true; echo "$line # rerail-farm"; } > "$tmp"
+  { awk '/^# rerail-farm$/ {skip = 1; next} skip {skip = 0; next} !/# rerail-farm$/' /etc/exports 2>/dev/null || true
+    echo "# rerail-farm"; echo "$line"; } > "$tmp"
   sudo cp "$tmp" /etc/exports
   rm -f "$tmp"
   sudo nfsd checkexports
