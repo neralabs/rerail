@@ -473,6 +473,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.scan(ws.repo);
       await service.settled();
       const handed = vi.spyOn(service, "pendingNotes");
+      const scans = vi.spyOn(service, "openSession");
       const suspended = new Map<string, SessionSuspension>();
       const suspendedSessions: SuspendedSessions = {
         keep: suspension => void suspended.set(suspension.descriptor.sessionId, suspension),
@@ -495,27 +496,32 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         deliveries.push(...await target.ingest({ kind: "user-prompt", eventId: "later", sessionId, session, text: "And on." }));
         return deliveries.filter(delivery => delivery.content.includes("overlaps open work"));
       };
-      return { ws, service, runtime, suspendedSessions, notesGiven };
+      /** Closes `target` and waits for the checkout scans each open of the session started, whose Git reads the folder. */
+      const closed = async (target: RerailRuntime): Promise<void> => {
+        await target.dispose();
+        await Promise.allSettled(scans.mock.results.map(result => result.value as Promise<void>));
+      };
+      return { ws, service, runtime, suspendedSessions, notesGiven, closed };
     }
 
     it("gives the note once at the session's next event after the daemon restarts", async () => {
-      const { ws, service, runtime, suspendedSessions, notesGiven } = await noted("restart-session");
+      const { ws, service, runtime, suspendedSessions, notesGiven, closed } = await noted("restart-session");
       await runtime.dispose();
       const next = sessionRuntime(ws, service, { suspendedSessions });
       try {
         expect(await notesGiven(next)).toHaveLength(1);
       } finally {
-        await next.dispose();
+        await closed(next);
       }
     });
 
     it("lets the session go quiet while only its note waits, and gives the note once at its next event", async () => {
-      const { runtime, notesGiven } = await noted("quiet-session");
+      const { runtime, notesGiven, closed } = await noted("quiet-session");
       try {
         expect(await runtime.closeIdleSession("quiet-session")).toMatchObject({ kind: "suspended" });
         expect(await notesGiven(runtime)).toHaveLength(1);
       } finally {
-        await runtime.dispose();
+        await closed(runtime);
       }
     });
   });
