@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 673 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #673</div>
+  <h1>Hooks: a session&#x27;s start says nothing is recorded when <code>RERAIL_AUTOSTART</code> is off</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does each host&#x27;s session start say that nothing is recorded, exactly when nothing will be recorded?</p>
+  <ol><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Cursor&#x27;s hook asks the agent to begin its first reply with the <code>rerail status</code> line. <b>Changes the intent.</b></li><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Claude Code and Codex show that line as the session starts. <b>Changes the intent.</b></li></ol></div>
+  <p class="rec"><b>We recommend:</b> approve it once a maintainer answers in #660: 6 of 6 starts with no daemon now say it, and <a href="#gaps">&quot;What is not covered&quot;</a> names the one case left as on <code>main</code>.</p>
+  <div class="big">
+    <div><b class="w">232 lines</b><span>in 13 files. 90 ship, 142 are tests and text.</span></div><div><b class="w">Careful lane</b><span>A maintainer approves: it changes what a session is told.</span></div><div><b class="w">Waits on #660, a review</b><span>No maintainer answer; only the automated reviewer approved.</span></div><div><b class="w">3 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/673">GitHub</a> on 14 November 2026, at head e5656482d.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr class="intent"><td class="k"><span class="lb">A</span><b>Cursor&#x27;s start</b></td><td class="in" data-l="Intended">Cursor&#x27;s agent &quot;is asked to relay each steer&#x27;s one line itself&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">Cursor&#x27;s start hook printed <code>{}</code>, and Cursor shows nothing a hook returns. <span class="tagx">hooks started directly</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 1.</b> The hook asks the agent to begin its first reply with the line. A maintainer must agree.</td></tr><tr class="intent"><td class="k"><span class="lb">A</span><b>Claude Code, Codex</b></td><td class="in" data-l="Intended">The footer, or Codex&#x27;s start, says <code>not running</code>. A hook &quot;logs nothing, since that is what you asked for&quot;; <code>rerail status</code> says why. <span class="tagx">docs</span></td><td class="fo" data-l="Found">0 of 6 starts said nothing is recorded, or why. Since #503, <code>false</code> keeps the daemon off too. <span class="tagx">hooks started directly</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 2.</b> Both show the line <code>rerail status</code> prints. A maintainer must agree.</td></tr><tr><td class="k"><span class="lb">B</span><b>Error text</b></td><td class="in" data-l="Intended">For the setting, &quot;each spelling means the same to all&quot;; <code>rerail status</code> writes it as set. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">Both errors hard-coded <code>RERAIL_AUTOSTART=0</code>: wrong under <code>false</code>, and with autostart on. <span class="tagx">four failing cases</span></td><td class="now" data-l="Now"><b>Closes the gap.</b> Each error names the setting as set, or none with autostart on.</td></tr></tbody></table>
+<figcaption>Reported in #660 on 13 November 2026, from hooks started directly on Linux x64.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Cursor&#x27;s start</td><td data-l="Where main states the intent"><code>src/hosts/cursor/cursor-hook-adapter.ts</code> lines 162 and 163, the comment above <code>relayedSteer</code>: &quot;Cursor shows the person nothing from a hook, so the model is asked to relay each steer&#x27;s one line itself.&quot; Nothing at <code>main</code> asks Cursor&#x27;s agent to relay anything but a steer.</td><td data-l="The cause, and what was measured"><code>runCursorHook</code> (<code>src/hosts/cursor/cursor-hook.ts</code> line 20) passes the start&#x27;s failure on, and the hook&#x27;s entry answers <code>{}</code> and exits 0 whatever fails (lines 24 and 25). Cursor shows a person nothing a hook returns, so only the agent can say the line.</td></tr><tr><td class="k">A. Claude Code, Codex</td><td data-l="Where main states the intent"><code>docs/troubleshooting.md</code> lines 435 to 437: &quot;a hook that finds none logs nothing, since that is what you asked for. <code>rerail status</code> then says the daemon is not running&quot; and why. <code>src/harness/hook-host.ts</code> lines 111 and 112 and <code>docs/reference.md</code> line 611 say the same. <code>docs/in-session-surfaces.md</code> line 266: &quot;the footer says `not running`&quot;. <code>src/hosts/codex/codex-hook.ts</code> line 12: a Codex start &quot;says so once&quot;.</td><td data-l="The cause, and what was measured">Measured at f277c6e29 on Linux, three agents under <code>0</code> and <code>false</code>, 10 starts per case. Claude Code&#x27;s start printed <code>{}</code> and wrote the error to stderr, which named <code>=0</code> under <code>false</code> too. Codex showed <code>Rerail ✕ not running · start it with: rerail daemon start</code>, with no cause. Before #503 the session-start hook read only <code>0</code>, so under <code>false</code> every session was recorded.</td></tr><tr><td class="k">B. Error text</td><td data-l="Where main states the intent"><code>src/runtime/daemon-control.ts</code> line 765, in the comment above <code>autostartOff</code>: &quot;Every reader of the setting asks here, so each spelling means the same to all.&quot; Line 782, in <code>daemonNotRunningMessage</code>, writes the setting from the environment. Lines 804 and 806 write <code>RERAIL_AUTOSTART=0</code> into the two errors.</td><td data-l="The cause, and what was measured">Line 804 throws the no-daemon error and line 806 the other-package error, each with <code>=0</code> written in. With autostart on, <code>startedDaemon</code> (line 828) waits for a busy daemon it may not replace; when that daemon answers late from another package, line 806 throws. A second run from a separate clone found that 89513b9f0 printed <code>=undefined</code> or <code>=1</code> there. fea0d916d fixes it.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 262" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Session start says it, medium risk, 70 lines; B, Error text names the setting, low risk, 20 lines. Read first: hook-host.ts, cursor-hook-adapter.ts, daemon-control.ts. To skim: 132 lines of tests and 10 lines of two docs pages and a release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk med"/><text x="49" y="38" class="t s">Medium risk, 70 lines</text><text x="128" y="59" text-anchor="end" class="t s">hook-host.ts</text><g><title>hook-host.ts: 19 changed lines, medium risk</title><path d="M134 50h1.7a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-1.7z" class="rk med"/></g><text x="144.7" y="59" class="t n">19</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">cursor-hook-adapter.ts</text><g><title>cursor-hook-adapter.ts: 10 changed lines, medium risk</title><path d="M134 67h0a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3h-0z" class="rk med"/></g><text x="142" y="76" class="t n">10</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">2</text><text x="128" y="93" text-anchor="end" class="t s">3 host hooks</text><g><title>3 host hooks: 41 changed lines, medium risk</title><path d="M134 84h8.3a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-8.3z" class="rk med"/></g><text x="151.3" y="93" class="t n">41</text><rect x="4.5" y="107.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="121" text-anchor="middle" class="t b">B</text><rect x="30" y="112" width="14" height="10" rx="2" class="rk low"/><text x="49" y="121" class="t s">Low risk, 20 lines</text><text x="128" y="142" text-anchor="end" class="t s">daemon-control.ts</text><g><title>daemon-control.ts: 20 changed lines, low risk</title><path d="M134 133h2a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-2z" class="rk low"/></g><text x="145" y="142" class="t n">20</text><text x="336" y="142" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="138" r="8.5" class="nc"/><text x="254" y="142" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="156" x2="336" y2="156" class="ar thin"/><text x="4" y="176" class="t b">Skim: tests and text</text><text x="128" y="196" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 92 changed lines, skim</title><path d="M134 187h23.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-23.6z" class="rk skim"/></g><text x="166.6" y="196" class="t n">92</text><text x="128" y="213" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 40 changed lines, skim</title><path d="M134 204h8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-8z" class="rk skim"/></g><text x="151" y="213" class="t n">40</text><text x="128" y="230" text-anchor="end" class="t s">docs, release note</text><g><title>Two docs pages and a release note: 10 lines</title><path d="M134 221h0a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3h-0z" class="rk skim"/></g><text x="142" y="230" class="t n">10</text><rect x="4" y="246" width="14" height="10" rx="2" class="rk high"/><text x="22" y="255" class="t s">High</text><rect x="62.8" y="246" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="255" class="t s">Medium</text><rect x="133" y="246" width="14" height="10" rx="2" class="rk low"/><text x="151" y="255" class="t s">Low risk</text><rect x="214.6" y="246" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="255" class="t s">Skim</text></svg>
+<figcaption>B is one file and can leave.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>hook-host.ts</code>: <code>answerAutostartOff</code></b><span class="min">4 min</span><span class="x">Can any other hook or failure get the line?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>cursor-hook-adapter.ts</code>: <code>cursorRelayedLine</code></b><span class="min">2 min</span><span class="x">Is this all the agent is told?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon-control.ts</code>: <code>daemonEngineEndpoint</code>, <code>otherPackageDaemon</code></b><span class="min">3 min</span><span class="x">Can either error name a value nobody set?</span></div></li><li><div><b>A: <code>claude-hook.ts</code>, <code>codex-hook.ts</code>, <code>cursor-hook.ts</code></b><span class="min">4 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">4 min</span><span class="x">Two assertions of <code>main</code> change, in <code>resident-engine.test.ts</code> and <code>claude-hook.test.ts</code>.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 214" role="img" aria-label="The changes by risk, high on top, against six checks. A, Start says it, medium risk: independent review holds with a limit, users lose nothing holds with a limit. B, Error text, low risk: independent review holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Start says it</text><g><title>Start says it, fails without the fix: Over `main`&#x27;s source on Linux the six session-start cases fail, and the Codex integration case. The three later-hook cases fail at ffbcc345d, where each wrote the session-start line. With one host&#x27;s catch removed, 2 cases fail; with the guard in `answerAutostartOff` removed, 6.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Start says it, independent review: A second run from a separate clone repeated the measurement at 28c23949f and removed each fix line in turn. The automated reviewer found that a later hook could get the session-start line in a race; 9d532d70f fixes it, and it approved that commit with no finding. The limit: no person on the team has reviewed it.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Start says it, users lose nothing: Hooks started directly at `main` and at 28c23949f, on Linux and Windows 11: a later hook answers `{}`, no daemon starts and no hook failure is logged, as at `main`. Hook times stayed within the runs&#x27; spread. The limit: the six starts were not measured again at 9d532d70f, where six test cases check the same answers.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Start says it, rules scan: nothing new: The scan as the automated reviewer runs it, at 9d532d70f against f277c6e29: 0 findings. No function in the six source files counts over 6: `answerAutostartOff` 3, `runCodexHook` 6 as on `main`.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Start says it, Windows 11: no new failure: The 21 test files that import a changed module pass on Windows 11 at 9d532d70f: 353 passed, 47 skipped, 0 failed. The three later-hook cases and the squatted-socket case ran and passed there. Hooks started directly at 28c23949f gave the Linux outputs.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Start says it, CI at this head: Run 43544083164 at e5656482d, read on 14 November 2026: of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails. The limit: `Unit tests (Windows, 2/2)` failed in the first attempt on two tests, in `claude-status.test.ts` and `merge-assist/runtime-notes.test.ts`; this branch changes neither file. The job was rerun once and passed.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><rect x="1" y="75" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="80" width="14" height="10" rx="2" class="rk low"/><text x="28" y="89" class="t s b">Low risk</text><rect x="8.5" y="97.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="111" text-anchor="middle" class="t b">B</text><text x="34" y="111" class="t b">Error text</text><g><title>Error text, fails without the fix: Each case fails before its commit, on Linux: the `false` case with `=0` over a00714a41&#x27;s source, the other-package case over bcb467316&#x27;s, and both late-answering cases at ffbcc345d. Over `main`&#x27;s source the late-answering cases get `RERAIL_AUTOSTART=0`. With fea0d916d&#x27;s source change reverted, both fail and the other 44 cases pass.</title><circle cx="150" cy="107" r="8" class="mh"/><path d="M146 107l3 3l5 -6" class="mt"/></g><g><title>Error text, independent review: A second run from a separate clone found that 89513b9f0 printed `RERAIL_AUTOSTART=undefined` or `=1` with autostart on. The automated review found the same. fea0d916d fixes it, and the reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it.</title><circle cx="184" cy="107" r="7.4" class="ml"/><path d="M184 99.6A7.4 7.4 0 0 0 184 114.4Z" class="mlf"/></g><g><title>Error text, users lose nothing: Error text only: when each error is thrown does not change. With change A, none of #660&#x27;s six session starts prints either error; at `main` each wrote the no-daemon error to stderr. With each text set back to `main`&#x27;s at 28c23949f, only its own case failed and every hook-host case passed.</title><circle cx="218" cy="107" r="8" class="mh"/><path d="M214 107l3 3l5 -6" class="mt"/></g><g><title>Error text, rules scan: nothing new: The same scan: 0 findings. `otherPackageDaemon` counts 2, and `daemonEngineEndpoint` 5 as on `main`.</title><circle cx="252" cy="107" r="8" class="mh"/><path d="M248 107l3 3l5 -6" class="mt"/></g><g><title>Error text, Windows 11: no new failure: `daemon-control.test.ts` is among the 21 files that pass on Windows 11 at 9d532d70f. The two late-answering cases ran and passed there. The two `false` cases passed there at 28c23949f.</title><circle cx="286" cy="107" r="8" class="mh"/><path d="M282 107l3 3l5 -6" class="mt"/></g><g><title>Error text, CI at this head: Run 43544083164 at e5656482d, read on 14 November 2026: of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails. The limit: `Unit tests (Windows, 2/2)` failed in the first attempt on two tests, in `claude-status.test.ts` and `merge-assist/runtime-notes.test.ts`; this branch changes neither file. The job was rerun once and passed.</title><circle cx="320" cy="107" r="7.4" class="ml"/><path d="M320 99.6A7.4 7.4 0 0 0 320 114.4Z" class="mlf"/></g><text x="8" y="144" class="t s">1  fails without the fix</text><text x="168" y="144" class="t s">2  independent review</text><text x="8" y="160" class="t s">3  users lose nothing</text><text x="168" y="160" class="t s">4  rules scan: nothing new</text><text x="8" y="176" class="t s">5  Windows 11: no new failure</text><text x="168" y="176" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="200" r="8" class="mh"/><path d="M10 200l3 3l5 -6" class="mt"/></g><text x="28" y="204" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="200" r="7.4" class="ml"/><path d="M92 192.6A7.4 7.4 0 0 0 92 207.4Z" class="mlf"/></g><text x="106" y="204" class="t s">holds with a limit</text></svg>
+<figcaption>Half marks: no person&#x27;s review, the six starts measured five commits back, CI passed on a rerun.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. Start says it</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A second run from a separate clone repeated the measurement at 28c23949f and removed each fix line in turn. The automated reviewer found that a later hook could get the session-start line in a race; 9d532d70f fixes it, and it approved that commit with no finding. The limit: no person on the team has reviewed it.</td></tr><tr><td class="k">A. Start says it</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">Hooks started directly at <code>main</code> and at 28c23949f, on Linux and Windows 11: a later hook answers <code>{}</code>, no daemon starts and no hook failure is logged, as at <code>main</code>. Hook times stayed within the runs&#x27; spread. The limit: the six starts were not measured again at 9d532d70f, where six test cases check the same answers.</td></tr><tr><td class="k">B. Error text</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A second run from a separate clone found that 89513b9f0 printed <code>RERAIL_AUTOSTART=undefined</code> or <code>=1</code> with autostart on. The automated review found the same. fea0d916d fixes it, and the reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">Run 43544083164 at e5656482d, read on 14 November 2026: of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails. The limit: <code>Unit tests (Windows, 2/2)</code> failed in the first attempt on two tests, in <code>claude-status.test.ts</code> and <code>merge-assist/runtime-notes.test.ts</code>; this branch changes neither file. The job was rerun once and passed.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Session start says it</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">Starts that say nothing is recorded: 0 of 6 at <code>main</code>, 6 of 6 here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A person who turned autostart off starts a session while no daemon runs. Rerail records and checks nothing in it. Claude Code&#x27;s and Cursor&#x27;s start hooks answer <code>{}</code>. Claude Code&#x27;s footer and Codex&#x27;s start line say <code>not running</code>, with no cause.</dd>
+<dt>Who meets it</dt><dd>Every session start under <code>RERAIL_AUTOSTART=0</code> or <code>false</code> with no daemon. Since #503, on <code>main</code> and in no published version, <code>false</code> keeps hooks from starting one too. How many people set the variable is not known. Source: #660.</dd>
+<dt>What it does</dt><dd><code>answerAutostartOff</code> turns the failure of a session&#x27;s start into an answer with the line <code>rerail status</code> prints, only when autostart is off and no daemon runs. Any other hook or failure is rethrown. <code>runClaudeHook</code> and <code>runCodexHook</code> return the line as <code>systemMessage</code>. <code>runCursorHook</code> returns <code>cursorRelayedLine</code>&#x27;s request to the agent. Two docs pages and the unreleased release note say so.</dd>
+<dt>Risk</dt><dd>Medium. It changes what a session is told, and in Cursor what the agent is asked to say. A wrong guard would answer a real failure as if it were the person&#x27;s choice.</dd>
+<dt>Check</dt><dd>Does <code>answerAutostartOff</code> rethrow everything but a session start&#x27;s <code>AutostartOffError</code>? In <code>runCodexHook</code> the new catch sits inside the old one: a daemon gone for any other reason must still give <code>Rerail ✕ not running</code>. <code>runHostHook</code> still logs no failure for an off autostart. Claude Code sends a session start on a resume, <code>/clear</code> and a compaction too, so the line shows again there.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Session starts that say nothing is recorded, with autostart off and no daemon running: 0 of 6 at main, 6 of 6 with this change. The six starts are three coding agents under two settings." class="dg pic"><text x="4" y="17" class="t b">Session starts that say it</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Session starts that say it, main: 0 of 6</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">0 of 6</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Session starts that say it, this change: 6 of 6</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">6 of 6</text></svg><figcaption>Method: after <code>npm run build:js</code>, each agent&#x27;s registered hook file was started with <code>node</code>, the event on stdin and no daemon running, under <code>false</code> and under <code>0</code>, 10 starts per case, at <code>main</code> (f277c6e29) and at 28c23949f on Linux. A second run from a separate clone repeated it on Linux and Windows 11 with the same outputs.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Error text names the setting</b><span class="chip low"><i></i>Low risk</span><span class="sx">Off-autostart error under <code>false</code>: names <code>RERAIL_AUTOSTART=0</code> at <code>main</code>, <code>RERAIL_AUTOSTART=false</code> here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>The error a hook gets when autostart keeps it from a daemon names <code>RERAIL_AUTOSTART=0</code> whatever the person set. With autostart on, the error for a late-answering daemon of another package names it too.</dd>
+<dt>Who meets it</dt><dd>A person who reads the hook failure log, a hook&#x27;s stderr or <code>rerail events</code>: under <code>false</code>, or with autostart on while another package&#x27;s busy daemon answers late. With change A, none of #660&#x27;s six starts prints either error.</dd>
+<dt>What it does</dt><dd><code>daemonEngineEndpoint</code> writes the setting as set into the no-daemon error. <code>otherPackageDaemon</code> writes it into the other-package error only when autostart is off. With autostart on that error reads &quot;the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start&quot;.</dd>
+<dt>Risk</dt><dd>Low. Error text only: when each error is thrown does not change, and the hooks decide as before.</dd>
+<dt>Check</dt><dd>Can either error print <code>undefined</code>? The no-daemon error is thrown only after the lookup an off autostart makes, so the setting is <code>0</code> or <code>false</code> there. <code>otherPackageDaemon</code> names the setting only under <code>autostartOff</code>. This change is three commits (bcb467316, 89513b9f0, fea0d916d) and four test cases. Tell us, and it leaves as its own pull request.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Tested cases where the error names a value the person did not set: 4 of 4 at main, 0 of 4 with this change. The cases: no daemon under false, another package&#x27;s daemon under false, and a late-answering daemon of another package with autostart unset and set to 1." class="dg pic"><text x="4" y="17" class="t b">Errors naming a value not set</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Errors naming a value not set, main: 4 of 4</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">4 of 4</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Errors naming a value not set, this change: 0 of 4</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 of 4</text></svg><figcaption>Method: the branch&#x27;s <code>daemon-control.test.ts</code> over <code>main</code>&#x27;s source on Linux, one run each. At 28c23949f the two <code>false</code> cases fail with <code>=0</code>. At 9d532d70f the two late-answering cases fail with <code>RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package</code>. All four pass at 9d532d70f.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Cursor: ask the agent to relay the line, or stay silent? <span class="chip intent"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> the request, as Rerail already asks Cursor&#x27;s agent to relay a steer.</p>
+<p><b>Would change our mind:</b> an answer in #660 that the request is out of bounds.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Ask Cursor&#x27;s agent to begin its first reply with the line <span class='tag new'>chosen</span></td><td data-l="What a user gets">The person reads the line in the first reply, when the agent follows the request.</td><td data-l="Cost">One more instruction in the agent&#x27;s context, on that start only.</td><td data-l="What it breaks">Nothing measured. No real Cursor session ran with autostart off and no daemon, so whether the agent follows the request is not shown.</td></tr><tr><td class="k">Cursor&#x27;s start stays silent</td><td data-l="What a user gets">Nothing in Cursor. Claude Code and Codex still say it.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">2 of the 6 starts stay silent.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: Cursor&#x27;s session start, autostart off, no daemon</div><svg viewBox="0 0 340 122" role="img" aria-label="At main, with autostart off and no daemon, Cursor&#x27;s start hook throws, its entry answers {} and exits 0, and Cursor shows the person nothing." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the start hook finds no daemon and throws</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">the hook&#x27;s entry answers {} and exits 0</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">Cursor shows the person nothing</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 142" role="img" aria-label="With this change, runCursorHook catches the failure of a session&#x27;s start and returns additional_context, which asks Cursor&#x27;s agent to begin its first reply with the line rerail status prints. Whether the agent follows the request was not run." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the start hook finds no daemon and throws</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="63.5" text-anchor="middle" class="t s">runCursorHook catches it and returns</text><text x="170" y="76.5" text-anchor="middle" class="t s">additional_context</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="112.5" text-anchor="middle" class="t s">it asks the agent to begin its first reply with</text><text x="170" y="125.5" text-anchor="middle" class="t s">the line</text></svg></div></div><p><b>Evidence.</b> The hook returns <code>additional_context</code>: &quot;Rerail checks nothing in this session, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:&quot; and the line. Two hook-host cases check it, and both fail with <code>runCursorHook</code>&#x27;s catch removed. <code>relayedSteer</code> in the same file asks Cursor&#x27;s agent the same way for a steer. The automated review of 28c23949f passed the question to three maintainers. #660 asks it, and nobody has answered there.</p></details></div>
+<div class="dblock"><h3>Where is the person told that nothing is recorded?</h3>
+<p><b>We chose</b> a line at the session&#x27;s start, the one <code>rerail status</code> prints.</p>
+<p><b>Would change our mind:</b> evidence that people set <code>false</code> expecting a daemon.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A line at the session&#x27;s start <span class='tag new'>chosen</span></td><td data-l="What a user gets">The person learns as the session starts, with no command to run.</td><td data-l="Cost">Nothing on the event path: the answer runs only when the start hook fails for an off autostart.</td><td data-l="What it breaks">Nothing measured. The start no longer writes its error to stderr: the line replaces it.</td></tr><tr><td class="k"><code>false</code> starts the daemon again for hooks</td><td data-l="What a user gets">Recording under <code>false</code>, as before #503.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">One setting with two meanings, and a daemon for someone who asked for none.</td></tr><tr><td class="k">Only <code>rerail status</code> says it, as on <code>main</code></td><td data-l="What a user gets">Nothing new.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">No start says that nothing is recorded until the person runs a command.</td></tr><tr><td class="k">Claude Code&#x27;s footer names the cause</td><td data-l="What a user gets">The cause beside <code>not running</code>, in Claude Code only, for as long as the daemon stays down.</td><td data-l="Cost">Nothing at the session&#x27;s start.</td><td data-l="What it breaks">Codex and Cursor have no footer, so 4 of the 6 starts still need a line. Not built.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a session&#x27;s start, autostart off, no daemon</div><svg viewBox="0 0 340 142" role="img" aria-label="At main, a session&#x27;s start with autostart off finds no daemon, throws, logs no failure and starts no daemon. Claude Code and Cursor get {}, and Codex shows not running with no cause." class="dg "><rect x="20" y="8" width="300" height="38" rx="8" class="bx "/><text x="170" y="24.5" text-anchor="middle" class="t s">the start hook looks for a running daemon and</text><text x="170" y="37.5" text-anchor="middle" class="t s">finds none</text><line x1="170" y1="47" x2="170" y2="56" class="ar " marker-end="url(#ah)"/><rect x="20" y="57" width="300" height="28" rx="8" class="bx "/><text x="170" y="75" text-anchor="middle" class="t s">it throws, logs no failure and starts no daemon</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="38" rx="8" class="bx "/><text x="170" y="112.5" text-anchor="middle" class="t s">Claude Code, Cursor: {}. Codex: not running, with</text><text x="170" y="125.5" text-anchor="middle" class="t s">no cause</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 190" role="img" aria-label="With this change the host asks whether the failed hook is a session&#x27;s start that autostart kept from a daemon. If so it answers with the line rerail status prints. Any other hook or failure is rethrown, as on main." class="dg "><rect x="20" y="8" width="300" height="38" rx="8" class="bx "/><text x="170" y="24.5" text-anchor="middle" class="t s">the start hook looks for a running daemon and</text><text x="170" y="37.5" text-anchor="middle" class="t s">finds none</text><line x1="170" y1="47" x2="170" y2="56" class="ar " marker-end="url(#ah)"/><rect x="20" y="57" width="300" height="28" rx="8" class="bx "/><text x="170" y="75" text-anchor="middle" class="t s">it throws, logs no failure and starts no daemon</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="112.5" text-anchor="middle" class="t s">a session&#x27;s start, and autostart kept the daemon</text><text x="170" y="125.5" text-anchor="middle" class="t s">off?</text><line x1="95" y1="135" x2="95" y2="151" class="ar " marker-end="url(#ah)"/><line x1="245" y1="135" x2="245" y2="151" class="ar " marker-end="url(#ah)"/><text x="101" y="147" class="t s">yes</text><text x="251" y="147" class="t s">otherwise</text><rect x="20" y="152" width="146" height="30" rx="8" class="bx good"/><text x="93" y="171" text-anchor="middle" class="t s">answers with the line</text><rect x="174" y="152" width="146" height="30" rx="8" class="bx "/><text x="247" y="171" text-anchor="middle" class="t s">rethrown, as on main</text></svg></div></div><p><b>Evidence.</b> 0 of 6 starts say it at <code>main</code>, 6 of 6 at 28c23949f, each with exactly the line <code>rerail status</code> prints (<code>daemonNotRunningMessage</code>), on Linux and on Windows 11. Later hooks answer <code>{}</code>, no daemon starts and no failure is logged, as on <code>main</code>. Pi and OMP sessions start their daemon whatever the setting says, so they record and need no line.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="Pull request #673 is based on main at f277c6e29 and merges clean with main at c89f068ed. Nothing waits on it. In trial merges the drafts #674 and #657 each conflict in one test file, the release #631 deletes the release note this edits, and #672 and nine more open pull requests that share a file merge clean." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at f277c6e29</text><text x="14" y="38" class="t s">its base</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#673 Session start says it</text><text x="170" y="116" text-anchor="middle" class="t s">two changes, six code files</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="171" class="t b">#674, #657</text><text x="12" y="187" class="t s">one test file</text><text x="12" y="201" class="t s">each: conflict</text><rect x="116" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="124" y="171" class="t b">release #631</text><text x="124" y="187" class="t s">deletes the note</text><text x="124" y="201" class="t s">this edits</text><rect x="228" y="154" width="108" height="58" rx="8" class="bx good"/><text x="236" y="171" class="t b">#672, 9 more</text><text x="236" y="187" class="t s">shared files:</text><text x="236" y="201" class="t s">clean</text></svg></figure>
+<div><p>It stands on <code>main</code> alone and merges clean at c89f068ed. Drafts #674 and #657 conflict in one test file each.</p>
+<p>B is here because its errors are the same setting&#x27;s messages, each wrong on <code>main</code>. Tell us, and it leaves.</p>
+<details class="ev"><summary>Shared files, and what could leave</summary><p>#672 shares <code>docs/reference.md</code> and <code>daemon-control.ts</code>: clean in either order, same tree. #674 shares <code>hook-host.ts</code>, clean; <code>hook-host.test.ts</code> conflicts where both add imports and cases. #657 shares <code>daemon-control.ts</code>, clean; <code>daemon-control.test.ts</code> conflicts where both add a case. The second to land keeps both sets of cases. If #631 merges first, this branch&#x27;s words move to an entry file of their own. Nine more open pull requests share a file, #678 and #667 <code>daemon-control.ts</code> too, and merge clean. Change B can leave as three commits (bcb467316, 89513b9f0, fea0d916d) with its four cases.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>Another package&#x27;s daemon runs, autostart off:</b> nothing is recorded and the start does not say so, as on <code>main</code>. Outside #660.</li>
+<li><b>No real session</b> ran with autostart off and no daemon, so Cursor&#x27;s relay is not shown.</li>
+<li><b>macOS:</b> none of our runs.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, seven limits that stay</summary><ul class="facts">
+<li><b>CI&#x27;s real-session job.</b> <code>Real Claude Code, Codex, and Cursor sessions</code> passed at e5656482d, on macOS. Its sessions name an engine socket (<code>scripts/host/host-smoke.ts</code> line 416 at <code>main</code>), and a hook with a named socket never reaches the new answer.</li>
+<li><b>A 16-thread Linux machine under a load test.</b> <code>event-adapter-parity</code> timed out at 5 s twice at 9d532d70f (6.1 s and 6.9 s), and the same way at 28c23949f (8.5 s). It takes 0.36 to 0.57 s on a quiet machine and runs nothing this branch changes.</li>
+<li><b>Hook times at the head.</b> Timed at 28c23949f only. The next four commits add one boolean test in the catch of a failed hook and a helper on an error path. The head, e5656482d, takes &quot;once&quot; out of two docs sentences and changes no code.</li>
+<li><b>The merge with today&#x27;s <code>main</code>.</b> No test ran on it, beyond the trial merge.</li>
+<li><b>A test commit that fails on purpose.</b> ffbcc345d holds the cases for the automated review&#x27;s two follow-ups before their fixes: 5 failed and 90 passed there on Linux. fea0d916d and 9d532d70f make them pass.</li>
+<li><b>The automated review of 28c23949f.</b> Two follow-ups and one nit. fea0d916d answers the first, 9d532d70f the second, and 352668892 the nit: off Windows the squatted-socket case now asks for the daemon error by name. Its review of 9d532d70f, its latest, has 0 blockers, 0 follow-ups and 0 nits.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>Later hooks, the hook failure log, <code>rerail status</code>, when a daemon starts, and Codex&#x27;s <code>not running</code> line for any other cause stay as on <code>main</code>.</li>
+<li>The line shows at every session start while the daemon stays down. Nothing remembers that it was said.</li>
+<li>Whether a person in Cursor reads the line depends on the agent following the request.</li>
+<li>With autostart off and no daemon, a session&#x27;s start no longer writes its error to stderr: the line replaces it. <code>RERAIL_ENGINE_SOCKET</code>, which that error named, stays in <code>docs/reference.md</code>.</li>
+<li>On Windows, with autostart off, a start whose recorded engine pipe another program holds now answers with the line, where <code>main</code> rejected. <code>claude-hook.test.ts</code> pins it. Off Windows that start still fails for the daemon that does not answer.</li>
+<li>Pi and OMP sessions start their daemon whatever the setting says, so they record and get no line.</li>
+<li>A script that matches the old error text meets new words. No rule file, API, pack or stored data changes.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Asks 1 and 2 rule on answers 1 and 2.</p>
+<ol class="lines">
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/660">#660</a>: may the hook ask Cursor&#x27;s agent to relay the line?</b> We recommend yes: it relays steers the same way.</div></li>
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/660">#660</a>: may Claude Code&#x27;s and Codex&#x27;s start show the line?</b> We recommend yes: today no start says why.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the measurements and the failing runs.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43544083164 at e5656482d, merged by GitHub into <code>main</code> at 4cea86aaa, read on 14 November 2026</td><td data-l="Result">Of the 22 checks on the pull request, 19 pass, 3 are skipped and none fails, on the run&#x27;s second attempt. In the first, <code>Unit tests (Windows, 2/2)</code> failed on two tests: one in <code>test/hosts/claude/claude-status.test.ts</code>, and one in <code>test/runtime/merge-assist/runtime-notes.test.ts</code>, which <code>main</code> holds and this branch does not. This branch changes neither file. The job was rerun once and passed. At 9d532d70f, run 43514746410 passed on its second attempt too.</td></tr><tr><td class="k">Linux, 32 threads</td><td data-l="What ran">The 21 test files that import a changed module, at 9d532d70f</td><td data-l="Result">20 files pass and 1 skips (<code>windows-daemon-launch</code>, Windows only): 398 passed, 2 skipped, 0 failed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The same 21 files at 9d532d70f</td><td data-l="Result">21 files pass: 353 passed, 47 skipped, 0 failed.</td></tr><tr><td class="k">Linux, 32 threads</td><td data-l="What ran"><code>integration/resident-engine</code>, <code>event-adapter-parity</code> and <code>hook-bundle-cost</code> at 9d532d70f</td><td data-l="Result">18 passed. On a 16-thread machine under a load test, 17 passed and 1 failed, twice: <code>event-adapter-parity</code> timed out at 5 s, as it did there at 28c23949f.</td></tr><tr><td class="k">Linux and Windows 11</td><td data-l="What ran">Each agent&#x27;s registered hook started with <code>node</code>, no daemon running, under <code>false</code> and under <code>0</code>, 10 starts per case, at <code>main</code> (f277c6e29) and at 28c23949f; then a later hook and <code>rerail status</code>. Repeated from a separate clone</td><td data-l="Result">0 of 6 starts say nothing is recorded at <code>main</code>, 6 of 6 at 28c23949f, with the same outputs on both platforms. A later hook answers <code>{}</code>, no daemon starts and no hook failure is logged, at both.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The branch&#x27;s tests over <code>main</code>&#x27;s source, at 28c23949f and at 9d532d70f. The tests at ffbcc345d</td><td data-l="Result">At 28c23949f: 8 of 100 unit cases fail, and the Codex integration case. At 9d532d70f the three later-hook cases pass over <code>main</code>&#x27;s source and both late-answering cases fail. At ffbcc345d: 5 failed, 90 passed.</td></tr><tr><td class="k">Linux, a separate clone</td><td data-l="What ran">Each fix line removed or changed in turn, at 28c23949f and at 9d532d70f</td><td data-l="Result">One host&#x27;s catch removed fails 2 hook-host cases; the guard in <code>answerAutostartOff</code>, 6. fea0d916d&#x27;s source change reverted fails both late-answering cases. <code>!startsSession ||</code> removed fails the three later-hook cases. A <code>TypeError</code> thrown in place of <code>LiveDaemonError</code> fails the squatter check.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The rules scan as the automated reviewer runs it (Rerail 0.1.1, complexity pack 0.1.7), at 9d532d70f against f277c6e29</td><td data-l="Result">0 findings. No function in the six source files counts over 6.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>The intent at <code>main</code>, quoted.</b> The description quotes no intent. At <code>main</code> the docs say a hook that finds no daemon &quot;logs nothing, since that is what you asked for&quot;, and a code comment limits what Cursor&#x27;s agent relays to steers. The pull request rewrites both docs passages. Part 2 gives the quotes, and its folds their lines.</li>
+<li><b>A held engine pipe on Windows now gets the line.</b> The description says the squatted-socket case reaches its check on Windows. A read of the test adds what a person gets: with autostart off, a start whose recorded engine pipe another program holds answers with the line, where <code>main</code> rejected. Off Windows the start still fails for the daemon that does not answer.</li>
+<li><b>CI&#x27;s real-session job does not reach the new answer.</b> The description says no real session was run. CI&#x27;s job <code>Real Claude Code, Codex, and Cursor sessions</code> passed at e5656482d on macOS, but its sessions name an engine socket, read in <code>scripts/host/host-smoke.ts</code> at <code>main</code>. A real session with autostart off and no daemon stays not run.</li>
+<li><b>Our answers to the three read-first questions.</b> A read of the diff. The line goes only to a session&#x27;s start whose lookup, under an off autostart, found no daemon running, busy or refusing; a named engine socket, a busy daemon and another package&#x27;s daemon are rethrown. <code>cursorRelayedLine</code> adds two fixed sentences and the line, whose only variable part is <code>0</code> or <code>false</code>. Neither error can print <code>undefined</code>.</li>
+<li><b>Claude Code&#x27;s footer reads <code>not running</code> at <code>main</code>.</b> #660 says a person in Claude Code sees nothing. At <code>main</code>, <code>docs/in-session-surfaces.md</code> line 266 says &quot;the footer says `not running`&quot; when the daemon is down, and <code>withoutDaemon</code> in <code>session-presentation.ts</code> returns it for a started checkout, with no cause. Read, not run. Line 273 there gives Codex&#x27;s <code>not running</code> line for a start with no daemon, and this pull request does not edit it.</li>
+<li><b>At <code>main</code> the six starts wrote the no-daemon error.</b> The description says that with this change none of #660&#x27;s six starts prints either error. At <code>main</code> each start wrote the no-daemon error to stderr, with <code>=0</code> under <code>false</code>: the description&#x27;s own table shows it for Claude Code. Read in <code>serveHook</code> (<code>hook-adapter.ts</code>) and <code>runCodexHook</code>.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #673, its diff, CI and reviews, and issue #660, read on GitHub on 14 November 2026. Rerail at <code>main</code> (4cea86aaa) for each quoted intent and its line. The description for the runs and the timings, each at the commit it names. Each open pull request&#x27;s files and head for the shared files and trial merges.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
