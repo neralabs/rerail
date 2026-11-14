@@ -174,18 +174,34 @@ Measured after, profiling build: the hook at 1, 30, 100, 300, 1000, 3000 and 300
 over one store, cold then warm: on the last build, 2 trials, 15 of 16 runs give their solo findings and one warm run
 hung (below); every run that finished, on any build of this step, gave its solo findings.
 
+## The fourth step: the open points closed
+
+1. **The hung warm run.** Sampled at 45 s: the main thread waited in `ContentStore::written` for queued jobs while
+   the writer sat idle in its queue's `recv`. A batch rolled back (a fork part way, item 3 above, or a busy commit)
+   runs again; its first run may have taken the next unbatched job (a wait for the writer, `commit_now`) off the
+   queue, and the second run took another and overwrote it. The lost job's count never left the queue, so `written`
+   waited for ever. A run already holding the next job ends there now (`write_back.rs`; test
+   `a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile`, which timed out before).
+2. **The phase 0 test in the template's process.** `bootstrap.rr` names `core.rr` only for file seeds, and
+   `p0_absent` has no includer: the template's run, which seeds every library module, gave KEPT graphs that differ
+   from one text's own derive. A seed's graph is now its own, whatever run derived it (`phase0.rs` `Graph::of`;
+   test `a_seeds_graph_is_its_own_whatever_run_derived_it`).
+3. **A granule the store no longer holds.** The cone's rounds read the last run's inputs granule by granule
+   (`read_input`), and a missing one failed the run (`phase 0: done_p0_file_t_shape_b: granule 9 of its stored rows
+   is missing`). It is a miss now: the rounds give up and the gated fixpoint derives the part again. No read is added;
+   K4's admission already took a missing granule as a miss (test `an_inputs_missing_granule_is_a_miss_not_a_failure`).
+
+Measured after, profiling build: 10 trials of four concurrent strict runs over one store (hogql, models, api,
+temporal), cold then warm: all 80 runs give their solo findings (1629, 494, 1057, 1063), none hangs (before: a hang in
+about every other warm trial). The replay that failed on a deleted granule gives 494.
+
 ## Departures and open points
 
-- One warm run of four concurrent ones hangs, in 3 of 5 warm trials across this step's builds (no output, 170 MB,
-  killed at 120 s), the last on the final build. Not yet sampled: the trial after it, whose watchdog samples a run
-  still going at 45 s, did not hang.
-- The phase 0 test (`bootstrap_resolves_as_the_builtin_reader_does`) fails in the process that makes its build's
-  test-store template, every time (remove `rerail-store-templates/<build>.*` and run it alone), and passes in every
-  other. Not a fork: in that process the template's thread ran phase 0 over all the library's modules first, and
-  the test's later `derive` of one text then misses `env.rr`'s include of `core.rr` and every absent file. Some state
-  kept in the process across stores is reused; which is not found.
-- A missing granule of the retained part is an error (`granule 9 of its stored rows is missing`), not a part
-  derived again. Seen only with frames deleted by hand.
+- The memo's foreign id (`the memo's entries: symbol 2767 is no atom of this process's (it holds 2760)`), seen once,
+  in a concurrent trial before the third step: a forked process's entry held, in a symbol column, a value past its
+  own atoms, so not one of its ids (likely a store id carried in from a read). Not seen since, in the hook sweeps
+  and the 80 concurrent runs above. The mapping takes any value past the fork point as the process's own: a store id
+  below the process's atom count would be mapped to the wrong string without an error. Not reproduced; open.
 - A forked process's memo misses every entry whose relation has no registered symbol columns: a cost of the fork,
   not of correctness.
 - The kept statistics' sketches (estimated distinct counts) and the retained part's statistics by constant
