@@ -751,3 +751,28 @@ For `.rr` the six first bytes (`:` `=` `!` `<` `>` `-`) are six bits
 Measured (`jit_against_aot`): tier 1 ahead of time 222 instructions and 65 cycles a node,
 from 213 and 73. The word costs its block more than the loads cost its tokens, but no token
 waits on a load for its end. The JIT 292 and 67, from 306 and 79.
+
+## The gap marks fold at the refill
+
+A gap mark (`.rr`'s form feed between tokens) marks the next grammar token where its bit is
+anywhere from the byte after the grammar token before's first to the token's own. The loop
+tested that range at each token, from the block's registers when the range began in the
+token's block. At a block's first token it began in an earlier block, so the loop called the
+mark's window function once a block, from there to the token, the token's own block
+included: bytes the refill had just classified.
+
+The lean lexer keeps its masks in its window and asks nothing of a block it has left.
+
+Now the refill folds. Each block it passes with no start gives its bits from `from` to the
+bits so far (`pending`). Bits before the cursor's block (a token across blocks, a comment the
+next grammar token is after) are read once by the bytes, cold. Then `from` moves to the new
+block. Every token's range starts in its own block, so its test is the registers alone: no
+bounds compare, no call. `unless after` is applied to the bits so far as before, so folding
+changes no code. The fold needs words that wait on no block (made from the bytes); a loop
+that waits keeps the per-token test.
+
+`the_marks_tests_are_the_masks` has form feeds in gaps across blocks: after spaces past a
+block, in a backtick literal, in a comment. A fold left out fails it.
+
+Measured (`jit_against_aot`): tier 1 ahead of time 193 instructions and 55 cycles a node,
+from 222 and 65; the JIT 269 and 61, from 292 and 67.

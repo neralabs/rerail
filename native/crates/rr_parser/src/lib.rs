@@ -1802,6 +1802,14 @@ pub mod tests {
                 inputs.push(format!("{}{c}", " ".repeat(pad)).into_bytes());
             }
         }
+        // A form feed in a gap across blocks: the refill folds a passed block's bits, and the
+        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes.
+        for pad in [0usize, 30, 60] {
+            let p = " ".repeat(pad);
+            inputs.push(format!("{p}r(x) :- x = {{\"a\":\x0c{}1}}.\n", " ".repeat(70)).into_bytes());
+            inputs.push(format!("{p}r(x) :- x = `\x0c{}`, y = 1.\n", "a".repeat(80)).into_bytes());
+            inputs.push(format!("{p}r(x) :- x = {{\"a\": /* \x0c{} */ 1}}.\n", "c".repeat(80)).into_bytes());
+        }
         let files = corpus();
         inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
