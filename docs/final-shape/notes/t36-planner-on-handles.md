@@ -87,6 +87,52 @@ split's rounds, a refused inlining) is a candidate overlay, dropped when refused
 Each pass is checked against its tree form while it is ported, as items 3 and 4 were: the overlay, decoded, equals
 the tree pass's program, over the planner's, corpus, session, `rr` and keeps tests and dl1. Then the tree form goes.
 
+## Item 7, step by step
+
+Surveyed 2026-11-14, at commit `f0ab6f6ab`. Every caller passes `run` a tree, and no corpus, typing or session code
+makes a version yet. Inside `run` (about 1,680 lines) the rule lists are trees (`&Rule`, made into a `Body` only to
+plan one, found by address), and the program's fields are read from the tree about 110 times. About 35 helpers read
+only the tree. Eight have version forms already, unused on this path: `passes::normalize` and `stated_apart`, and
+`analyses::accepts`, `needed`, `strata` and `projections`. `About::produced` and `Version::decl_of` are also unused
+here. `Fields` covers most field reads.
+
+Leaves first, as before. Each step leaves every caller working, and is checked against its tree form while it is
+ported, over the targeted tests and dl1.
+
+1. **The image holds the whole program.** `Again`, `together` and shapes, the gates' details (`level`, `src`,
+   `quiet`, `deps`), `kindsets` and tapes become about rows, read by `About`. `Builder::of_program` stops refusing a
+   maintained program, and `Placed::of_program` is whole for every program.
+2. **`run` starts from a version.** It makes its input's version once, at the top, and normalizes it with
+   `passes::normalize` and `stated_apart`, as derivations. The tree passes are decoded from the result (until step
+   9). `Lowered`'s domains, ops and dialect travel beside the version, not in a cloned tree.
+3. **The run's rule lists are ids.** The strata (`analyses::strata`), `rules_by`, `by_stratum`, `rules_by_stratum`,
+   the strands and `issue`'s `Members` hold `RuleId`s (or `RuleKey`s), not `&Rule`s. `Versions::key` by address
+   goes. `needed`, `projections`, `produced` and `accepts` read the version.
+4. **The fields from the version.** `Run` holds the run's `Placed` and its `Fields`, not `prog`. `make_plan`,
+   `Stats::read`, the `Run` helpers (indexes, deferred rows, `again`, the native relations), `sql_kernel::component`
+   and `drive` read them there.
+5. **The stratum readers on handles:**
+   - `stratum_reads`, `first_reads`, `last_reads`, `retainable_stratum`, `with_answers`, `identities`, `plan_views`
+     and `decoded_outputs`;
+   - `native_stratum_`, `seed_specs` and `issue::Board`;
+   - `native_fixpoint` and `native_set_fixpoint`, whose made rules (`rest` under `sfx_…`) become rules of a run-local
+     overlay, as the keeps parts did.
+6. **Compose on handles.** `compose::planned`, `compile` and `finish` read the version.
+7. **The maintained forms by edits.** `maintain::rewrite_with` and `Driver::form` write their rules with `RuleBuilder`
+   over the run's version, an overlay (E3 and E5). `supports` and `maintained_cross` follow, and the `Forms` arena
+   goes.
+8. **`run` takes a version.** Its signature takes the program's `Placed` and the lowering's domains. `run_atoms*`
+   pass the version they were given. `choices` keeps only the version.
+9. **The callers pass versions (E1 to E3).**
+   - The split's parts are views with their inputs and outputs overlaid (E1). This needs a view whose fields are
+     overlaid, and a fold that does not count a view's removals.
+   - A run's edits are overlays (E2): the cross memo, the request cone and the run constants. This needs an input
+     added alone, and a literal edit made as a remove plus an add.
+   - A session's cut is an overlay (E3).
+   - The prepared program read from the store keeps its image, rather than decoding it.
+   The trees on that path go. The digests that still read the tree (`memo::program_digest`, `retain::key`,
+   `choices::key`, `prepared_key`, `cross_digest`) are decision 0173's step 6. They keep a decode until then.
+
 ## Done
 
 - **Item 1, a step names its literal by position** (2026-11-13).
