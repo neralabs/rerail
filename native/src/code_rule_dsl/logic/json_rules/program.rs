@@ -58,6 +58,8 @@ pub struct Program {
     pub transform_defs: Option<IndexMap<String, (String, Vec<String>)>>,
     pub arg_rels: Vec<(ArgKey, (String, String))>,
     pub arena: Vec<Entry>,
+    /// The guest captures a `host` rule reads (`host_reads`), compared by text across documents.
+    pub host_reads: BTreeSet<String>,
 }
 
 impl Program {

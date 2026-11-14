@@ -382,6 +382,13 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
         } else if k == "resolves" && vo.is_some() {
             lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "host" && vo.is_some() {
+            // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
+            // it reads is the guest node, compared by its text
+            let (d, h) = (vs.fresh("d"), vs.fresh("h"));
+            lits.push(format!("docof({v}, {d}), guest({d}, _, {h}, _)"));
+            lits.extend(lower(px, prog, val, &h, vs, &[])?);
+            prog.host_reads.extend(host_reads(px, val));
         } else if k == "formatArgs" && is_format_args(prog, val) {
             lits.extend(format_args(px, prog, val.as_obj().expect("an object"), v, vs)?);
         } else {
@@ -468,6 +475,36 @@ fn nth_position(pos: Option<&Value>) -> Option<Nth> {
         }
         _ => None,
     }
+}
+
+/// `host_reads`: the guest captures a `host` rule reads (the metavariables it names, `$K` passed to a util, a
+/// comparison's sides) that it does not capture itself (a pattern's `$KN`, `capture`).
+fn host_reads(px: &Patterns, val: &Value) -> BTreeSet<String> {
+    fn walk(px: &Patterns, o: &Value, named: &mut BTreeSet<String>, bound: &mut BTreeSet<String>) {
+        match o {
+            Value::Obj(ob) => {
+                for (k, x) in ob.iter() {
+                    match x {
+                        Value::Str(s) if (k == "left" || k == "right") && super::pyre::is_full("[A-Z_][A-Z0-9_]*", s) => {
+                            named.insert(s.clone());
+                        }
+                        Value::Str(s) if k == "pattern" => bound.extend(findall(&px.text_mv_ref, s)),
+                        Value::Str(s) if k == "capture" => {
+                            bound.insert(s.clone());
+                        }
+                        Value::Str(s) => named.extend(findall(&px.text_mv_ref, s)),
+                        _ => {}
+                    }
+                    walk(px, x, named, bound);
+                }
+            }
+            Value::List(l) => l.iter().for_each(|x| walk(px, x, named, bound)),
+            _ => {}
+        }
+    }
+    let (mut named, mut bound) = (BTreeSet::new(), BTreeSet::new());
+    walk(px, val, &mut named, &mut bound);
+    named.difference(&bound).cloned().collect()
 }
 
 /// `is_format_args`: a `formatArgs` term the library python/format-args reads (Python's `brace` or `percent` style).

@@ -8,7 +8,7 @@ use super::pyre::{captures, esc, findall, g, is_meta, re, sub};
 use super::text::{Set, binders, calls, drop_aggregates, mask_ticks, masked, rename_vars, split_alts, split_args, strip_strings, top_binders, upper_vars};
 use fancy_regex::Regex;
 use indexmap::IndexMap;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What `share_metavariables` found: each helper's columns (in order), and which of them are passed in.
 #[derive(Default, Clone)]
@@ -369,13 +369,37 @@ pub fn drop_dead_columns(px: &Patterns, prog: &mut Program, entries: &[usize], h
         let t = head_tail(&prog.arena[e].head);
         split_args(&t[..t.len().saturating_sub(1)])
     };
-    let binds_in = |prog: &Program, gname: &str, x: &str| -> bool {
+    // a param the util's body captures (a pattern's `$X`, `X = …`, a regex group), or passes to a column of a rule
+    // it calls that captures it: an output. One it only passes on to a column that reads it (a helper's input) is
+    // read, not captured: the caller's value goes through.
+    fn binds_in(px: &Patterns, prog: &Program, heads: &IndexMap<String, Vec<usize>>, g: &str, x: &str, seen: &mut BTreeSet<(String, String)>) -> bool {
+        if !seen.insert((g.to_owned(), x.to_owned())) {
+            return false;
+        }
         let r = re(&format!(r"\$\$?\$?{}\b", esc(x)));
-        heads[gname].iter().any(|&e| {
+        for &e in &heads[g] {
             let t = prog.arena[e].lits.join(", ");
-            upper_vars(px, &t).contains(x) || super::pyre::search(&r, &t)
-        })
-    };
+            if binders(px, &t, false).contains(x) || binders(px, &t, true).contains(x) || super::pyre::search(&r, &t) {
+                return true;
+            }
+            for (g2, es2) in heads {
+                let names = {
+                    let h = head_tail(&prog.arena[es2[0]].head);
+                    split_args(&h[..h.len().saturating_sub(1)])
+                };
+                for (a, b) in calls(px, &t, g2) {
+                    let args = split_args(&t[a + g2.len() + 1..b]);
+                    for (j, arg) in args.iter().enumerate() {
+                        if arg == x && j < names.len() && binds_in(px, prog, heads, g2, &names[j], &mut seen.clone()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+    let binds_in = |prog: &Program, gname: &str, x: &str| binds_in(px, prog, &heads, gname, x, &mut BTreeSet::new());
     let empty = Set::new();
     let input_col = |prog: &Program, gname: &str, j: usize| -> bool {
         let names = head_args(prog, heads[gname][0]);

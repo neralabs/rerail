@@ -1,7 +1,7 @@
 //! The JSON translator's tests (decision 0175): parity with the Python translator on main's 537 rules, and the
 //! Python semantics the port keeps.
 
-use super::{pyre, souffle, textglob, value};
+use super::{patterns, pyre, souffle, textglob, value};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -50,14 +50,15 @@ fn json_rules_sub_matches_python_on_empty_matches() {
 #[test]
 fn json_rules_whole_and_check_rule() {
     use souffle::{check_rule, whole};
-    assert_eq!(whole("^foo$"), "foo");
-    assert_eq!(whole("foo"), ".*foo.*");
-    assert_eq!(whole("^(a|b)"), "(a|b).*");
-    assert_eq!(whole("a|^b"), ".*(?:a|^b).*");
+    let px = patterns::Patterns::new();
+    assert_eq!(whole(&px, "^foo$"), "foo");
+    assert_eq!(whole(&px, "foo"), ".*foo.*");
+    assert_eq!(whole(&px, "^(a|b)"), "(a|b).*");
+    assert_eq!(whole(&px, "a|^b"), ".*(?:a|^b).*");
     let none = BTreeSet::new();
-    assert_eq!(check_rule("r(n) :- kind(n, \"x\").", &none, &[]).unwrap(), Vec::<String>::new());
-    assert_eq!(check_rule("r(n, X) :- kind(n, \"x\").", &none, &[]).unwrap(), vec!["X".to_owned()]);
-    assert_eq!(check_rule("r(n) :- !kind(n, \"x\").", &none, &[]).unwrap(), vec!["n".to_owned()]);
+    assert_eq!(check_rule(&px, "r(n) :- kind(n, \"x\").", &none, &[]).unwrap(), Vec::<String>::new());
+    assert_eq!(check_rule(&px, "r(n, X) :- kind(n, \"x\").", &none, &[]).unwrap(), vec!["X".to_owned()]);
+    assert_eq!(check_rule(&px, "r(n) :- !kind(n, \"x\").", &none, &[]).unwrap(), vec!["n".to_owned()]);
 }
 
 #[test]

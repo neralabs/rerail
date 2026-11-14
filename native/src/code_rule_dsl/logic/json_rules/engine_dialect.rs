@@ -295,6 +295,11 @@ fn aggregate_spans(body: &str) -> Vec<(usize, usize)> {
 
 /// A body that joins two nodes by equal text gets `@doc(A) = @doc(B)`.
 fn same_document_joins(px: &Patterns, text: String) -> String {
+    // a guest capture a `host` rule reads (translate names them) is in the guest's document, its host's node not
+    let crossing: BTreeSet<String> = captures(&px.engine_dialect_host_reads, &text)
+        .iter()
+        .flat_map(|m| g(m, 1).split(',').map(|x| x.trim().to_owned()).collect::<Vec<_>>())
+        .collect();
     sub(&px.engine_dialect_rule, &text, |m| {
         let mut body = g(m, 0).to_owned();
         if body.contains("parsed(") {
@@ -322,7 +327,7 @@ fn same_document_joins(px: &Patterns, text: String) -> String {
         for uses in by_t.values() {
             let first = &uses[0].0;
             for (node, sc) in &uses[1..] {
-                if node == first {
+                if node == first || crossing.contains(node) || crossing.contains(first) {
                     continue;
                 }
                 let s0 = uses[0].1;

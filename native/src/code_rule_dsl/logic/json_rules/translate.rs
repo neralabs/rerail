@@ -448,6 +448,12 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
     let mut out: Vec<String> = head;
     out.push("// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.".to_owned());
     out.push(String::new());
+    if !prog.host_reads.is_empty() {
+        // engine_dialect's same_document_joins reads this line: these are compared by text across documents
+        let names: Vec<&str> = prog.host_reads.iter().map(String::as_str).collect();
+        out.push(format!("// Guest captures a host rule reads, by text (another document): {}", names.join(", ")));
+        out.push(String::new());
+    }
     if !prog.uses.is_empty() {
         out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rr\"")));
         out.push(String::new());
