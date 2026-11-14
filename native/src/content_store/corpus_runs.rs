@@ -680,17 +680,23 @@ impl ContentStore {
     }
 
     /// Collects the frames the last keep decision left unreachable (decision 0227), and records that decision as
-    /// swept: one write transaction. What it collected, and the seconds it took.
-    pub fn sweep_frames(&self) -> StoreResult<(super::frames::Unreachable, f64)> {
+    /// swept: one write transaction. What it collected, and the seconds it took; `None` when `stop` interrupted it
+    /// (a run began: a progress handler's `SQLITE_INTERRUPT`, the transaction rolled back, the sweep still due).
+    pub fn sweep_frames(&self, stop: impl Fn() -> bool + Send + Sync + 'static) -> StoreResult<Option<(super::frames::Unreachable, f64)>> {
+        let stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync> = std::sync::Arc::new(stop);
         // Its writes delete rows and set a mark, naming no atom: a forked process sweeps too (decision 0170).
         super::atoms::mapped(|| {
             let started = std::time::Instant::now();
-            let out = self.immediate_transaction(|tx| {
+            let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
                 let out = super::frames::collect_unreachable_frames(tx)?;
                 tx.execute("UPDATE frames_swept SET run=(SELECT run FROM corpus_decided WHERE singleton=1) WHERE singleton=1", [])?;
                 Ok(out)
-            })?;
-            Ok((out, started.elapsed().as_secs_f64()))
+            });
+            match out {
+                Ok(out) => Ok(Some((out, started.elapsed().as_secs_f64()))),
+                Err(StoreError::Database(e)) if super::upkeep::interrupted(&e) => Ok(None),
+                Err(e) => Err(e),
+            }
         })
     }
 

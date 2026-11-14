@@ -38,7 +38,7 @@ const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_segment", "atom_key", "atom_key_end", "hashes", "paths", "store_state", "store_identity", "object_pins",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
-    "corpus_decided", "corpus_swept", "corpus_state",
+    "corpus_decided", "corpus_swept", "frames_swept", "corpus_state",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 

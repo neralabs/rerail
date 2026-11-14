@@ -1968,6 +1968,12 @@ fn run_handed(
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
+    // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
+    // statistics, stop at their next check, their work left due, until the run ends.
+    let store_file = tape_cache_path();
+    let costs_file = crate::code_rule_dsl::logic::costs::file();
+    let files: Vec<&Path> = store_file.iter().chain(&costs_file).map(std::path::PathBuf::as_path).collect();
+    let mut under_way = Some(rerail_accel::upkeep::run_begins(&files));
     let lifecycle_start = usage();
     // Library and test callers do not pass through the CLI/Node pool setup.
     // Initialize before phase 0 or a parallel read can create rayon's default pool.
@@ -2068,6 +2074,13 @@ fn run_handed(
             "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
             "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
     });
+    // The run is over: upkeep may go on. What the outermost run left due as utility work (the frames its keep
+    // decision left unreachable, decision 0227) is done before it returns, unless another run has begun.
+    drop(under_way.take());
+    if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && store_file.is_some() {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's utility upkeep (decision 0227)".into());
+        crate::code_rule_dsl::logic::profile::behind(rerail_accel::upkeep::finish_soon);
+    }
     if report.is_ok() && crate::code_rule_dsl::logic::profile::on() && !phase0::active()
         && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0
         && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
@@ -7569,12 +7582,6 @@ fn run_observed(
                 Err(e) => format!("{passes} passes, then stopped: {e}"),
             });
         }
-    }
-    // The utility upkeep jobs the run left due (the frames its keep decision left unreachable, decision 0227), done
-    // before the outermost run returns: the scheduler's thread may not have run them yet.
-    if durable.is_some() && !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none() {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's utility upkeep (decision 0227)".into());
-        crate::code_rule_dsl::logic::profile::behind(rerail_accel::upkeep::finish_soon);
     }
     // The run ends with its writes in the store: what the writer did beside the run, and the first write that failed
     // (decision 0102).

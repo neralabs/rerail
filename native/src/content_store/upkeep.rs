@@ -166,37 +166,53 @@ impl Job for SqliteFile {
         }
     }
 
+    fn file(&self) -> Option<PathBuf> {
+        Some(self.path.clone())
+    }
+
     fn step(&mut self, slice: &Slice) -> Result<Step, String> {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         let err = |e: rusqlite::Error| format!("{}: {e}", self.path.display());
-        let db = self.connect(slice.memory).map_err(err)?;
-        // Pages given back reach the disk at the checkpoint after (the file is truncated there, under WAL).
-        if self.work.free_pages > 0 {
-            let n = self.work.free_pages.min(VACUUM_PAGES);
-            super::reclamation::incremental_vacuum(&db, n as u32).map_err(|e| format!("{}: {e}", self.path.display()))?;
-            self.work.free_pages -= n;
-            self.work.checkpoint = true;
-        } else if self.work.vacuum {
-            db.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM").map_err(err)?;
-            self.work.vacuum = false;
-            self.work.checkpoint = true;
-        } else if self.work.checkpoint {
-            // TRUNCATE waits for no reader (busy: it checkpoints what it can, and is tried again at a later poll).
-            let busy: i64 = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).map_err(err)?;
-            self.work.checkpoint = false;
-            if busy != 0 {
-                return Ok(Step::Done);
+        let mut db = self.connect(slice.memory).map_err(err)?;
+        // A run that begins interrupts the action (a `VACUUM` holds the file's writers for its length): rolled back,
+        // and the work left as it was, still due.
+        db.progress_handler(1000, Some(slice.stopper()));
+        let done = (|| -> rusqlite::Result<Option<Step>> {
+            // Pages given back reach the disk at the checkpoint after (the file is truncated there, under WAL).
+            if self.work.free_pages > 0 {
+                let n = self.work.free_pages.min(VACUUM_PAGES);
+                let mut statement = db.prepare(&format!("PRAGMA incremental_vacuum({n})"))?;
+                let mut rows = statement.query([])?;
+                while rows.next()?.is_some() {}
+                self.work.free_pages -= n;
+                self.work.checkpoint = true;
+            } else if self.work.vacuum {
+                db.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM")?;
+                self.work.vacuum = false;
+                self.work.checkpoint = true;
+            } else if self.work.checkpoint {
+                // TRUNCATE waits for no reader (busy: it checkpoints what it can, and is tried again at a later poll).
+                let busy: i64 = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+                self.work.checkpoint = false;
+                if busy != 0 {
+                    return Ok(Some(Step::Done));
+                }
+            } else if let Some(t) = self.work.analyze.first().cloned() {
+                db.pragma_update(None, "analysis_limit", ANALYSIS_LIMIT)?;
+                db.execute_batch(&format!("ANALYZE main.\"{}\"", t.replace('"', "\"\"")))?;
+                self.work.analyze.remove(0);
+                if self.work.analyze.is_empty() {
+                    self.analyzed = Some(Instant::now());
+                }
             }
-        } else if let Some(t) = self.work.analyze.first().cloned() {
-            db.pragma_update(None, "analysis_limit", ANALYSIS_LIMIT).map_err(err)?;
-            db.execute_batch(&format!("ANALYZE main.\"{}\"", t.replace('"', "\"\""))).map_err(err)?;
-            self.work.analyze.remove(0);
-            if self.work.analyze.is_empty() {
-                self.analyzed = Some(Instant::now());
-            }
+            Ok(None)
+        })();
+        match done {
+            Ok(Some(step)) => Ok(step),
+            Ok(None) => Ok(if self.work.is_empty() { Step::Done } else { Step::More }),
+            Err(e) if interrupted(&e) => Ok(Step::More),
+            Err(e) => Err(err(e)),
         }
-        let _ = slice;
-        Ok(if self.work.is_empty() { Step::Done } else { Step::More })
     }
 }
 
@@ -236,6 +252,10 @@ impl Job for Collect {
         Due::No
     }
 
+    fn file(&self) -> Option<PathBuf> {
+        self.store.upgrade().map(|s| s.database_path().to_path_buf())
+    }
+
     fn step(&mut self, slice: &Slice) -> Result<Step, String> {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
@@ -249,6 +269,12 @@ impl Job for Collect {
         }
         Ok(Step::More)
     }
+}
+
+/// Whether `e` is SQLite's interrupt: a step's progress handler stopped the statement, for a run that began
+/// (`Slice::stopper`). Its transaction is rolled back.
+pub fn interrupted(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::OperationInterrupted)
 }
 
 /// The frames the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
@@ -296,10 +322,18 @@ impl Job for Frames {
         Qos::Utility
     }
 
-    fn step(&mut self, _: &Slice) -> Result<Step, String> {
+    fn file(&self) -> Option<PathBuf> {
+        Some(self.path.clone())
+    }
+
+    fn step(&mut self, slice: &Slice) -> Result<Step, String> {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
+        if slice.over() {
+            return Ok(Step::More);
+        }
         let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
-        let (u, seconds) = store.sweep_frames().map_err(|e| e.to_string())?;
+        // Stopped by a run that began: rolled back, and still due.
+        let Some((u, seconds)) = store.sweep_frames(slice.stopper()).map_err(|e| e.to_string())? else { return Ok(Step::More) };
         rerail_prof::code_rule_dsl::logic::profile::decision("unreachable frames collected (decision 0227)", || {
             format!("{} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names), {:.3} s", u.memo, u.maintained, u.programs, u.unnamed, seconds)
         });

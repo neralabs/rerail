@@ -64,18 +64,117 @@ pub struct Slice<'a> {
     pub until: Instant,
     pub memory: usize,
     stop: &'a AtomicBool,
+    /// The file the job works on ([`Job::file`]): a run over it, in any process, stops the step.
+    file: Option<std::path::PathBuf>,
 }
 
-impl Slice<'_> {
-    /// Whether the step should return now: its time is up, or the process is stopping.
+impl<'a> Slice<'a> {
+    /// Whether the step should return now: its time is up, the process is stopping, or a run began (in this
+    /// process, or over the job's file in another: [`runs_active`]). A step stopped by a run leaves its work due.
     pub fn over(&self) -> bool {
-        Instant::now() >= self.until || self.stop.load(Ordering::Acquire)
+        Instant::now() >= self.until || self.stop.load(Ordering::Acquire) || runs_active(self.file.as_deref())
+    }
+
+    /// Whether a run began, or the process is stopping, as an owned check for what outlives a borrow of the slice
+    /// and does not split at the step's time bound: a SQLite progress handler interrupting a transaction that is one
+    /// piece (`SQLITE_INTERRUPT`, rolled back), a training given up between its phases.
+    pub fn stopper(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let file = self.file.clone();
+        move || STOP.load(Ordering::Acquire) || runs_active(file.as_deref())
     }
 
     /// A slice of `d` from now (tests, and jobs run by hand).
     pub fn for_test(d: Duration, memory: usize, stop: &AtomicBool) -> Slice<'_> {
-        Slice { until: Instant::now() + d, memory, stop }
+        Slice { until: Instant::now() + d, memory, stop, file: None }
     }
+
+    /// The slice of a job over `file`: it yields to the runs over that file too ([`run_begins`]).
+    pub fn over_file(self, file: &std::path::Path) -> Slice<'a> {
+        Slice { file: Some(file.to_path_buf()), ..self }
+    }
+}
+
+/// Runs under way in this process ([`run_begins`]).
+static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A run under way, from [`run_begins`] to its drop. While one is, upkeep yields to it: a step in progress stops at
+/// its next check ([`Slice::over`]), and no step starts. Its work stays due, for after the run.
+pub struct RunGuard {
+    _locks: Vec<std::fs::File>,
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        RUNS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The lock file beside `file` that the runs over it hold shared (`<file>.runs.lock`).
+fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".runs.lock");
+    std::path::PathBuf::from(name)
+}
+
+/// A run begins: upkeep in this process yields until it ends, and upkeep in other processes over `files` (its store,
+/// the cost statistics) yields too, through a shared lock on each one's `.runs.lock`. A file whose directory is
+/// missing is skipped.
+pub fn run_begins(files: &[&std::path::Path]) -> RunGuard {
+    RUNS.fetch_add(1, Ordering::AcqRel);
+    let mut locks = Vec::new();
+    #[cfg(unix)]
+    for f in files {
+        use std::os::fd::AsRawFd as _;
+        if let Ok(lock) = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(f)) {
+            // Shared: runs do not wait for each other. A probe holds the lock exclusively for an instant.
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) } == 0 {
+                locks.push(lock);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = files;
+    RunGuard { _locks: locks }
+}
+
+/// Whether a run is under way: in this process, or (with `file`) in another over that file. The other processes'
+/// answer is a non-blocking exclusive probe of `file`'s `.runs.lock`, asked at most every 25 ms a file.
+pub fn runs_active(file: Option<&std::path::Path>) -> bool {
+    RUNS.load(Ordering::Acquire) > 0 || file.is_some_and(others_run_over)
+}
+
+/// Whether a run over `file` holds its `.runs.lock` (another process's, or this one's through [`run_begins`]).
+fn others_run_over(file: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd as _;
+        static PROBES: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>> = Mutex::new(Vec::new());
+        let mut probes = PROBES.lock().unwrap_or_else(|p| p.into_inner());
+        let at = match probes.iter().position(|(p, ..)| p == file) {
+            Some(i) => i,
+            None => {
+                let lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(file)).ok();
+                probes.push((file.to_path_buf(), lock, Instant::now() - Duration::from_secs(1), false));
+                probes.len() - 1
+            }
+        };
+        let (_, lock, asked, active) = &mut probes[at];
+        if asked.elapsed() >= Duration::from_millis(25) {
+            *asked = Instant::now();
+            *active = lock.as_ref().is_some_and(|l| {
+                let fd = l.as_raw_fd();
+                if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                    unsafe { libc::flock(fd, libc::LOCK_UN) };
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        *active
+    }
+    #[cfg(not(unix))]
+    false
 }
 
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
@@ -92,6 +191,11 @@ pub trait Job: Send {
     /// Its shape ([`Qos`]): background work by default.
     fn qos(&self) -> Qos {
         Qos::Background
+    }
+    /// The file it works on (a store, the cost statistics): a run over it in another process stops its steps, as
+    /// any run in this process does ([`runs_active`]). `None`: only this process's runs.
+    fn file(&self) -> Option<std::path::PathBuf> {
+        None
     }
 }
 
@@ -313,7 +417,6 @@ pub fn power() -> (bool, Option<f64>) {
 }
 
 /// Low power mode, and the thermal state (`NSProcessInfo`).
-#[allow(unexpected_cfgs)] // objc 0.2's macros test a `cargo-clippy` feature.
 pub fn heat() -> (bool, u8) {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -532,6 +635,10 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if pass == Pass::Utility && !utility {
                 continue;
             }
+            // A run under way comes first: the job's work waits for it, still due.
+            if runs_active(e.job.file().as_deref()) {
+                continue;
+            }
             let due = e.job.due();
             let since = match due {
                 Due::No => {
@@ -558,10 +665,13 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if STOP.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            let Some(step) = step_job(id, s, pass != Pass::Utility) else { break };
+            let Some((step, file)) = step_job(id, s, pass != Pass::Utility) else { break };
             ran = true;
             if step != Step::More {
                 break;
+            }
+            if runs_active(file.as_deref()) {
+                return ran;
             }
             // Idle work stops once the machine is busy again.
             if !all && !urgent && read_conditions(ticks).busy >= s.idle_busy {
@@ -574,7 +684,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
 
 /// One step of job `id` (taken out of the list while it runs), at its priority, then the CPU share's pause (with
 /// `pause`). `None`: the job is gone, or failed.
-fn step_job(id: u64, s: &Settings, pause: bool) -> Option<Step> {
+fn step_job(id: u64, s: &Settings, pause: bool) -> Option<(Step, Option<std::path::PathBuf>)> {
     let stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
     let mut e = {
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
@@ -590,7 +700,8 @@ fn step_job(id: u64, s: &Settings, pause: bool) -> Option<Step> {
         set_thread_qos(qos);
     }
     let (c0, t0) = (crate::score::thread_cpu(), Instant::now());
-    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP };
+    let file = e.job.file();
+    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP, file: file.clone() };
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
     if scheduler && qos != Qos::Background {
@@ -606,7 +717,7 @@ fn step_job(id: u64, s: &Settings, pause: bool) -> Option<Step> {
             if step == Step::Done {
                 e.due_since = None;
             }
-            Some(step)
+            Some((step, file))
         }
         Err(err) => {
             e.report.failures += 1;
@@ -618,7 +729,7 @@ fn step_job(id: u64, s: &Settings, pause: bool) -> Option<Step> {
         }
     };
     if s.log {
-        eprintln!("rerail upkeep: {} step {:.1} ms wall {:.1} ms CPU: {:?}", e.report.name, wall * 1e3, cpu * 1e3, out.map_or_else(|| e.report.last_error.clone().unwrap_or_default(), |o| format!("{o:?}")));
+        eprintln!("rerail upkeep: {} step {:.1} ms wall {:.1} ms CPU: {:?}", e.report.name, wall * 1e3, cpu * 1e3, out.as_ref().map_or_else(|| e.report.last_error.clone().unwrap_or_default(), |o| format!("{:?}", o.0)));
     }
     JOBS.lock().unwrap_or_else(|p| p.into_inner()).push(e);
     drop(stepping);
@@ -757,6 +868,28 @@ mod tests {
         assert!(seen.iter().all(|(n, q)| n == "rerail-upkeep" && q.is_some()), "{seen:?}");
     }
 
+    /// Another process's run over a file stops upkeep over it: a shared lock on its `.runs.lock` (here held through
+    /// a second open file, as another process holds it), seen by the exclusive probe; released, the probe sees none.
+    #[cfg(unix)]
+    #[test]
+    fn a_run_in_another_process_is_seen_through_its_lock() {
+        use std::os::fd::AsRawFd as _;
+        let dir = std::env::temp_dir().join(format!("rerail-upkeep-runs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("store.sqlite");
+        assert!(!others_run_over(&store), "no run yet");
+        let other = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(&store)).unwrap();
+        assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_SH) }, 0);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(others_run_over(&store), "the other run's shared lock is seen");
+        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &STOP, file: Some(store.clone()) };
+        assert!(slice.over() && slice.stopper()(), "a step over the file stops");
+        drop(other);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!others_run_over(&store), "released");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn jobs_step_to_the_end_within_the_cpu_share() {
         let idle = Due::Idle { starve: Duration::from_secs(3600) };
@@ -774,6 +907,11 @@ mod tests {
         assert_eq!((steps("test-a one"), steps("test-b one"), steps("test-c one")), (Some(0), Some(2), Some(2)));
         // Utility work left to the process's end is finished there, with no scheduler; not the background work.
         let _d = register(Box::new(Counter { name: "test-d one", left: 2, due: idle, qos: Qos::Utility }));
+        // A run under way comes first: nothing steps, and the work stays due for after it.
+        let run = run_begins(&[]);
+        finish_soon();
+        assert_eq!(steps("test-d one"), Some(0), "a run is under way");
+        drop(run);
         finish_soon();
         assert_eq!((steps("test-d one"), steps("test-e one")), (Some(2), Some(0)));
         let r = run_now();
