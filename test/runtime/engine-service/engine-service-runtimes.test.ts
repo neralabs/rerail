@@ -386,10 +386,10 @@ describe("the engine service's idle close", () => {
       await Promise.race([sweeping, delay(2_000)]);
       auditing.resolve();
       await sweeping;
+      expect(service.openRuntimes()).toBe(1);
       await vi.waitFor(() => {
         expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
       }, { timeout: 10_000, interval: 50 });
-      expect(service.openRuntimes()).toBe(1);
       expect(ended("a")).toBeNull();
     } finally {
       reading.release();

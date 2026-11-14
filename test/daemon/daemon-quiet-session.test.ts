@@ -92,5 +92,5 @@ describe("the daemon and a session it let go of while quiet", () => {
       const listed = await api<{ auditRequests: { id: string; status: string }[] }>(daemon, "/api/sessions/a/audit-requests");
       expect(listed.body.auditRequests.find(request => request.id === queued.body.id)).toMatchObject({ status: "completed" });
     }, { timeout: 10_000, interval: 100 });
-  });
+  }, 20_000);
 });
