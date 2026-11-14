@@ -215,4 +215,11 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
     waits for the writer's delete first, so nothing forgotten is read back.
   - On dl10, a run reads three parts (the work tree, the phase-0 root, the Git directory); the warm batch is as
     before (6.4 G instructions, the same findings, no fault).
+- **An inner root is asked as the stored root above it** (`Observer::outermost`), on the same volume. A journal's
+  cursor is the volume's, so the outer root's answers for what is under it. Phase 0 asked its rule libraries
+  (`docs/rule-syntax/lib`, then `docs/rule-syntax`) before the work tree, each as a root of its own: the first
+  started a stream whose cookie missed its 2 s wait, the second had no cursor; both were lost, settled and written
+  again every warm run, with their canonical forms resolved again. Now neither is lost: a warm dl10 run with the
+  cutoff off has no settled root, no answer recorded and no canonical form resolved (outputs as before), and the
+  2 s wait is gone. A real loss (a fresh Watchman, a dropped stream) is still checked by each answer's `stat`.
 

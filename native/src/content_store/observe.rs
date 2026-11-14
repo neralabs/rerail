@@ -637,7 +637,7 @@ impl Observer {
             return;
         }
         for root in roots {
-            let root = self.abs(root);
+            let root = self.outermost(&self.abs(root));
             if self.roots.iter().any(|r| r.asked == self.flushes && root.starts_with(&r.path)) {
                 continue;
             }
@@ -649,14 +649,7 @@ impl Observer {
             if !self.stored_roots.contains(&root) {
                 self.stored_roots.push(root.clone());
             }
-            let volume = match self.volumes.iter().find(|(r, _)| *r == root) {
-                Some((_, v)) => *v,
-                None => {
-                    let v = super::journal::volume(&root);
-                    self.volumes.push((root.clone(), v));
-                    v
-                }
-            };
+            let volume = self.volume(&root);
             // A cursor is of the volume it was taken on: kept under the volume's id with the root.
             let cursor = volume.and_then(|v| self.db.as_ref()?.meta.get(&cursor_key(&root, v)).cloned());
             // A cursor is the journal's own text (an FSEvents id, a Watchman clock); one kept as a number is an id.
@@ -676,6 +669,27 @@ impl Observer {
                 }
             }
         }
+    }
+
+    /// The root `root` is asked as: the widest stored root above it on the same volume, else itself. A journal's
+    /// cursor is the volume's (an FSEvents id), so the outer root's answers for what is under it too: an inner root
+    /// asked on its own started a stream of its own, whose cookie could miss its wait (2 s, then lost), or had no
+    /// cursor of its own (lost at once), and each lost root was settled and written again every run.
+    fn outermost(&mut self, root: &Path) -> PathBuf {
+        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| root.starts_with(r) && r.as_path() != root).cloned().collect();
+        above.sort_by_key(|r| r.as_os_str().len());
+        let here = self.volume(root);
+        above.into_iter().find(|r| here.is_some() && self.volume(r) == here).unwrap_or_else(|| root.to_path_buf())
+    }
+
+    /// `root`'s volume, asked once a process.
+    fn volume(&mut self, root: &Path) -> Option<[u8; 16]> {
+        if let Some((_, v)) = self.volumes.iter().find(|(r, _)| r == root) {
+            return *v;
+        }
+        let v = super::journal::volume(root);
+        self.volumes.push((root.to_path_buf(), v));
+        v
     }
 
     /// Watches `roots` and gives the journal's cursor for each as it was asked: a record made after this, of what is
@@ -1442,6 +1456,43 @@ mod tests {
         assert!(third.forgotten >= 1 && third.hashed == 1, "the edited file is read again: {third}");
         assert_ne!(after[2], digests[2]);
         assert_eq!([after[0], after[1], after[3], after[4]], [digests[0], digests[1], digests[3], digests[4]]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An inner root is asked as the stored root above it (`outermost`): answered from that root's cursor, trusted,
+    /// with no cursor or settling of its own.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_inner_root_is_answered_by_the_root_above_it() {
+        let base = std::env::temp_dir().join(format!("rerail-inner-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = std::fs::canonicalize({
+            std::fs::create_dir_all(base.join("root/lib")).unwrap();
+            base.join("root")
+        })
+        .unwrap();
+        let file = root.join("lib/a.rr");
+        std::fs::write(&file, "x.\n").unwrap();
+        aged(&file);
+        let store = base.join("store.files");
+        let run = |watch: &Path| {
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            o.watch(&[watch.to_path_buf()]);
+            let asked: Vec<(PathBuf, bool)> = o.roots.iter().map(|r| (r.path.clone(), r.trusted)).collect();
+            o.digest(&file).unwrap();
+            o.flush();
+            o.written();
+            asked
+        };
+        run(&root);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        run(&root);
+        assert_eq!(run(&root.join("lib")), [(root.clone(), true)], "asked as the root above it, and trusted");
+        let db = Connection::open(&store).unwrap();
+        let cursors: Vec<String> = db.prepare("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'").unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        assert!(cursors.iter().all(|k| !k.ends_with("/lib")), "no cursor of its own: {cursors:?}");
+        drop(db);
         let _ = std::fs::remove_dir_all(&base);
     }
 
