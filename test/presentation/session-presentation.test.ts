@@ -399,6 +399,24 @@ describe("a live daemon that does not answer in time", () => {
     }
   });
 
+  it("ends the start state's read when its caller stops it, as null, long before its time runs out", async () => {
+    // On Windows the read waits on the engine's proof, elsewhere on the request itself; the stop reaches either.
+    const engine = testEngineEndpoint(home);
+    const closeEngine = await silentEngine(engine);
+    try {
+      await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
+      const stop = new AbortController();
+      const begun = performance.now();
+      const hookState = readRepositoryState(cwd, "omp", stop.signal);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      stop.abort();
+      expect(await hookState).toBeNull();
+      expect(performance.now() - begun).toBeLessThan(1_000);
+    } finally {
+      await closeEngine();
+    }
+  });
+
   it("still says not running where the recorded pid is alive but nothing listens", async () => {
     await holdRequests();
     const server = held!;
