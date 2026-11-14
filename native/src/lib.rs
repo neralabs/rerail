@@ -25,6 +25,7 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;

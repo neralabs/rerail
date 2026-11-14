@@ -40,13 +40,15 @@ struct Dictionary {
     bytes: &'static [u8],
 }
 
+// The path is this file's (`native/dictionaries`), not the crate's directory: a build in another
+// checkout then compiles the same crate, which a shared compiler cache can reuse.
 macro_rules! dictionary {
     ($id:expr, $tags:expr, $content:ident, $file:literal) => {
         Dictionary {
             id: $id,
             tags: $tags,
             content: Content::$content,
-            bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dictionaries/", $file)),
+            bytes: include_bytes!(concat!("../../dictionaries/", $file)),
         }
     };
 }

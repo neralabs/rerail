@@ -82,7 +82,7 @@ pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
     std::env::var_os("RERAIL_RR_LIB")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/lib"))
+        .unwrap_or_else(|| rerail_store::source_tree::native().join("../docs/rule-syntax/lib"))
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
