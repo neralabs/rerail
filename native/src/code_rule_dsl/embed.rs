@@ -84,8 +84,9 @@ pub fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'
     let _ = EMBEDDERS.set(embedders);
 }
 
-/// `via`'s embedder. Every `Via` the build has is registered as the engine loads.
-pub(crate) fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedder {
+/// `via`'s embedder. Every `Via` the build has is registered as the engine loads. The logic engine's guests build
+/// the programs through it too (decision 0202).
+pub fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedder {
     EMBEDDERS
         .get()
         .and_then(|embedders| embedders.iter().find(|(known, _)| *known == via))

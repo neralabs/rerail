@@ -1060,6 +1060,8 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
+    // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0202): read once, it is no program's.
+    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| l.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     for (unit, mut prog) in units {

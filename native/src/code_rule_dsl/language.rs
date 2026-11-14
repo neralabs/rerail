@@ -477,10 +477,11 @@ pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
     FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
 }
 
-/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
-/// a fragment (decision 0082). A dialect this build leaves out is still a name.
+/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
+/// fragment (decision 0082), or an embedding's id (`script-block`: the program its embedder writes, decision 0202).
+/// A dialect this build leaves out is still a name.
 pub fn is_grammar(name: &str) -> bool {
-    fragment(name).is_some() || dialect_by_label(name).is_some()
+    fragment(name).is_some() || dialect_by_label(name).is_some() || GrammarDialect::ALL.iter().any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
 }
 
 /// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the

@@ -21,6 +21,7 @@
 //! overrides; the test `json_rules::tests::json_rules_pack_is_current` holds it current.
 
 mod demand;
+mod embedded;
 mod engine_dialect;
 mod fold;
 mod lower;

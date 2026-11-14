@@ -459,7 +459,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let o = vo.expect("an object");
             let r = vs.fresh("r");
             lits.push(format!("parsed({v}, {}, {r})", q_val(o.get("grammar").expect("grammar"))));
-            lits.extend(lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[])?);
+            // A `host` inside reads the node parsed, not an embedded program's file node.
+            let outer = prog.embedded.take();
+            let inner = lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[]);
+            prog.embedded = outer;
+            lits.extend(inner?);
         } else if k == "pattern" && vo.is_some_and(|o| o.has("context")) {
             let o = vo.expect("an object");
             let sel = o.get("selector").map_or(String::new(), |s| format!(" at {}", q_val(s)));
@@ -548,6 +552,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
         } else if k == "resolves" && vo.is_some() {
             lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "host" && vo.is_some() && prog.embedded.is_some() {
+            lits.extend(super::embedded::host(px, prog, val, v, vs)?);
+            prog.host_reads.extend(host_reads(px, val));
+        } else if k == "embedded" && vo.is_some() {
+            lits.extend(super::embedded::term(px, prog, val, v)?);
         } else if k == "host" && vo.is_some() {
             // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
             // it reads is the guest node, compared by its text
@@ -578,15 +587,21 @@ fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
     let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
-    // `name` is the name the language resolves the node to. SQL's is PostgreSQL's (`ident_pg`: unquoted names fold
-    // to lower case); its identifiers have no `value`.
-    let reader = if matches!(text.as_str(), Some("node" | "text")) {
-        "text"
-    } else if text.as_str() == Some("name") && prog.lang == "sql" {
-        prog.use_("names");
-        "ident_pg"
-    } else {
-        "value"
+    let reader = match text.as_str() {
+        Some("node" | "text") => "text",
+        // `name` is the name the language resolves the node to. SQL's is PostgreSQL's (`ident_pg`: unquoted names
+        // fold to lower case); its identifiers have no `value`.
+        Some("name") if prog.lang == "sql" => {
+            prog.use_("names");
+            "ident_pg"
+        }
+        // ESLint's static property name and the quote-stripped text, which a key or identifier has with no value
+        // (decision 0202): a library's, for the ECMAScript languages.
+        Some(mode @ ("key" | "unquoted")) if matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue") => {
+            prog.use_("compare");
+            if mode == "key" { "cmp_key" } else { "cmp_unquoted" }
+        }
+        _ => "value",
     };
     if op == "eq" {
         return vec![format!("{reader}({l}, {a}), {reader}({r}, {a})")];
@@ -1528,12 +1543,21 @@ pub fn transform_lits(prog: &mut Program, tr: &Value, vs: &mut Vars, defined: &B
         let (op, a) = single.0[0].clone();
         let ao = a.as_obj();
         let src = ao.map(|ao| mv_v(ao.get("source").unwrap_or(&Value::Str(String::new())))).unwrap_or_default();
+        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0202): main's `value: true`.
+        let ecma = matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue");
+        if ecma && truthy(a.get("value")) {
+            prog.use_("compare");
+        }
         let read = |lits: &mut Vec<String>, vs: &mut Vars| -> String {
             if defined.contains(&src) {
                 return src.clone();
             }
             let x = vs.fresh("t");
-            let reader = if truthy(a.get("value")) { "value" } else { "text" };
+            let reader = match (truthy(a.get("value")), ecma) {
+                (true, true) => "cmp_value",
+                (true, false) => "value",
+                (false, _) => "text",
+            };
             lits.push(format!("{reader}({src}, {x})"));
             x
         };

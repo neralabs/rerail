@@ -135,11 +135,15 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         reaches = reaching(prog, &seeds);
         carried = carry(prog, &base_locations, &seeds, &view, &reaches);
         let snapshot = prog.rules.clone();
+        // The relations rules derive: a relation of stated facts alone is a kind set when a kind is read through it.
+        let ruled: BTreeSet<String> = snapshot.iter().map(|r| r.head.rel.to_string()).collect();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
         // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
         let mut axes: Vec<String> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
+        // Kind sets read by value over a guest's kinds, copied in its grammar: (copy, original, kinds).
+        let mut kind_facts: Vec<(String, String, Vec<String>)> = Vec::new();
         let mut changed = false;
         for (i, rule) in prog.rules.iter_mut().enumerate() {
             if view(&rule.head.rel) {
@@ -162,7 +166,57 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 changed = true;
             }
             let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
+            // A kind read off a guest's node is its grammar's (decision 0202): `kind(f, k), fn_scope(k)` over a view's
+            // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
+            // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
+            // read over a Vue component's view) finds none of its kinds.
+            let kind_of: BTreeMap<String, String> = rule
+                .body
+                .iter()
+                .filter_map(|l| match l {
+                    Literal::Atom(a) if !a.neg => match (a.rel.as_str(), a.args.as_slice()) {
+                        ("kind", [Term::Var(x), Term::Var(k)]) | ("node", [_, Term::Var(x), Term::Var(k), _, _]) => grammar_of(x).map(|g| (k.clone(), g)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
             for l in &mut rule.body {
+                if !kind_of.is_empty() {
+                    match l {
+                        Literal::Cmp { l: Term::Var(k), r: Term::Str(s), .. } | Literal::Cmp { l: Term::Str(s), r: Term::Var(k), .. }
+                            if qualified(s).is_none() && kind_of.contains_key(k.as_str()) =>
+                        {
+                            *s = format!("{}:{s}", dialect_label(&kind_of[k.as_str()]));
+                            changed = true;
+                            continue;
+                        }
+                        Literal::Atom(a)
+                            if !a.rel.starts_with("rr_in_")
+                                && !ruled.contains(a.rel.as_str())
+                                && let [Term::Var(k)] = a.args.as_slice()
+                                && let Some(g) = kind_of.get(k.as_str())
+                                && let Some(rows) = prog.facts.get(a.rel.as_str()) =>
+                        {
+                            // Not `rr_in_<g>_<set>`, `nearest`'s copy of the set: that one is a kind set the transducer
+                            // answers, and holds no rows.
+                            let name = format!("rr_in_{}_rows_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
+                            if made.insert(name.clone()) {
+                                let label = dialect_label(g);
+                                let names = rows.iter().filter_map(|row| match row.as_slice() {
+                                    [crate::code_rule_dsl::logic::front::Value::Str(k)] => Some(k),
+                                    _ => None,
+                                });
+                                let kinds: Vec<String> = names.map(|k| if qualified(k).is_some() { k.clone() } else { format!("{label}:{k}") }).collect();
+                                kind_facts.push((name.clone(), a.rel.to_string(), kinds));
+                            }
+                            a.rel = name.into();
+                            changed = true;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
                 if let Literal::Nearest { n, kindset, .. } = l {
                     if let Some(g) = grammar_of(n)
                         && !kindset.starts_with("rr_in_")
@@ -211,8 +265,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     _ => continue,
                 };
                 let Some(cols) = carried.get(a.rel.as_str()) else { continue };
+                // A column scoped already is copied too where it knows no grammar, or another: a util whose node
+                // reaches a guest relation (`host_node(p, h)` over a view's node, decision 0202) is scoped there, and
+                // read with a view's node of a known grammar it must name that grammar's kinds.
                 let spec = a.args.iter().enumerate().find_map(|(c, t)| match t {
-                    Term::Var(v) if !cols.get(c).is_some_and(|f| f.scoped) => grammar_of(v).map(|g| (c, g)),
+                    Term::Var(v) => grammar_of(v).filter(|g| !cols.get(c).is_some_and(|f| f.scoped && f.grammar.as_deref() == Some(g.as_str()))).map(|g| (c, g)),
                     _ => None,
                 });
                 let Some((c, g)) = spec else { continue };
@@ -253,6 +310,12 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         prog.decls.extend(decls);
         prog.kindsets.extend(kindsets);
+        for (name, orig, kinds) in kind_facts {
+            if let Some(d) = prog.decls.get(&orig).cloned() {
+                prog.decls.insert(name.clone(), d);
+            }
+            prog.facts.insert(name, kinds.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.clone())]).collect());
+        }
         for axis in axes {
             if !prog.inputs.contains(&axis) {
                 prog.inputs.push(axis);
@@ -277,10 +340,19 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
         for l in &mut rule.body {
             let Literal::Atom(a) = l else { continue };
+            let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
+            // A negation over a guest's node names its kind in the guest's grammar too (`!kind(d, "import_specifier")`
+            // over a view's node, decision 0202); it bounds nothing.
             if a.neg {
+                let grammar = cols.iter().find_map(|&c| match a.args.get(c) {
+                    Some(Term::Var(v)) => facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
+                    _ => None,
+                });
+                if let Some(g) = grammar {
+                    qualify(a, dialect_label(&g));
+                }
                 continue;
             }
-            let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
             let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
             if atom_scoped {
@@ -636,8 +708,11 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
     for a in positive() {
         if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
+                // A column rules fill from guests of several grammars (`""`: a rule per dialect of a view, decision
+                // 0202) says nothing of this rule's: a guest relation here names it.
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
-                    facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
+                    let grammar = f.grammar.clone().filter(|g| !g.is_empty());
+                    facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, grammar, ..f.clone() });
                 }
             }
         }
