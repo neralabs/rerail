@@ -1659,6 +1659,15 @@ impl<'a> P<'a> {
     }
 
     fn object_pattern(&mut self, s: Slot) -> R<()> {
+        // A pattern nests as an expression does (`{ a: [ { a: [ …`): refused past `MAX_DEPTH`, not
+        // read until the stack runs out.
+        self.deeper()?;
+        let r = self.object_pattern_body(s);
+        self.depth -= 1;
+        r
+    }
+
+    fn object_pattern_body(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::ObjectPattern, s);
         self.bump()?;
         let saved = self.asi;
@@ -1723,8 +1732,11 @@ impl<'a> P<'a> {
     }
 
     fn array_pattern(&mut self, s: Slot) -> R<()> {
+        self.deeper()?;
         let n = self.open_in(K::ArrayPattern, s);
-        self.bracket_list(n, Self::array_pattern_element)?;
+        let r = self.bracket_list(n, Self::array_pattern_element);
+        self.depth -= 1;
+        r?;
         self.close(n);
         Ok(())
     }
