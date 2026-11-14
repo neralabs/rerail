@@ -80,6 +80,17 @@ export const data = {
   followGitignore: null,
   /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
   recommendations: null,
+  /** Merge Assist for the scoped checkout (`GET /api/merge-assist`, `MergeAssistStatus`); `null` until loaded. */
+  mergeAssist: null,
+  /** Why the last Merge Assist read failed; `null` once one succeeds. */
+  mergeAssistError: null,
+  /**
+   * Whether the daemon runs Merge Assist's experiment: `null` until a Merge Assist read answers (a failed read leaves
+   * it as it was), `false` once one answered `404 experimental-off` (the sidebar then shows no Merge Assist and nothing
+   * reads it again), `true` once one succeeded.
+   * The daemon's, so a scope change keeps it.
+   */
+  mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
   /** Freshness: last successful poll, and whether the last attempt failed. */
@@ -135,6 +146,17 @@ export const ui = {
   closedEvents: new Set(),
   openFolds: new Set(),
   resumeOpen: false,
+  /** Merge Assist conflicts being dismissed, by id, while their write is out (`merge-model.js` `conflictSections`). */
+  mergeDismissing: new Set(),
+  /** Merge Assist's open disclosures: "problems", "dismissed", "settings". */
+  mergeOpen: new Set(),
+  /** The Settings form while the person edits it: `{ command, timeout, problem, field }`, or `null` for the saved values. */
+  mergeSettings: null,
+  /** Merge Assist's settings being saved, while their request is out for the repository shown. */
+  mergeSaving: false,
+  /** Merge Assist being turned on or off, and a Scan now, while their request is out for the repository shown. */
+  mergeSwitching: false,
+  mergeScanning: false,
   theme: "",
 };
 

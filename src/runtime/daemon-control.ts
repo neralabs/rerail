@@ -571,7 +571,7 @@ export function mainInstanceHolderRuns(directory: string, pid: number, machine: 
  * What a reader of a state file may make of the daemon it records ({@link recordedDaemon}): it may be this user's and
  * be sent the capability (`alive`), it cannot be (`gone`), or its engine said nothing to the proof in time (`silent`).
  */
-type RecordedDaemon = "alive" | "gone" | "silent";
+export type RecordedDaemon = "alive" | "gone" | "silent";
 
 /** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
 const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
@@ -609,11 +609,20 @@ async function windowsRecordedDaemon(
 }
 
 /**
- * Whether the daemon `state` records may be sent the capability now ({@link recordedDaemon}); one whose engine is
- * silent may not. `stop` ends the check early, as not alive, for a caller that no longer needs the answer.
+ * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
+ * (`silent`, sent nothing) from one that is gone. `stop` ends the check early, as gone, for a caller that no longer
+ * needs the answer.
  */
-export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE, stop?: AbortSignal): Promise<boolean> {
-  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS, stop) === "alive";
+export async function recordedDaemonStatus(state: DaemonState, machine: DaemonMachine = THIS_MACHINE, stop?: AbortSignal): Promise<RecordedDaemon> {
+  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS, stop);
+}
+
+/**
+ * Whether the daemon `state` records may be sent the capability now ({@link recordedDaemon}); one whose engine is
+ * silent may not.
+ */
+export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
+  return await recordedDaemonStatus(state, machine) === "alive";
 }
 
 /**

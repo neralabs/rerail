@@ -277,6 +277,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 - `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
+- `rerail install --remove --delete-data` removes Rerail and deletes its data, backups and home.
 
 <details>
 <summary>Launcher, PATH and removal details</summary>
@@ -284,6 +285,8 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
 `rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
+
+`rerail install --remove --delete-data` deletes instead of backing up, then deletes the rest of the Rerail home. [What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind) lists what stays after each.
 
 </details>
 
@@ -434,7 +437,7 @@ Without the native addon the daemon still runs: `status`, `/healthz` and the UI 
 
 ### API operations
 
-Every operation is both an HTTP route under `/api` and an MCP tool of the same name. Each is defined once (id, route, zod schemas, handler) in `src/api/operations.ts` or `src/api/repository-operations.ts`, so a new operation needs no other wiring.
+Every operation is both an HTTP route under `/api` and an MCP tool of the same name. Each is defined once (id, route, zod schemas, handler) in `src/api/operations.ts`, `src/api/repository-operations.ts` or `src/api/merge-assist-operations.ts`, so a new operation needs no other wiring.
 
 <details>
 <summary>All operations, wiring and error codes</summary>
@@ -473,6 +476,11 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
+| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
+| `merge_assist_settings_get` | `GET /api/merge-assist/settings?repository=&checkout=` | Internal testing; experimental. The person's Merge Assist settings for the checkout's repository: `{ hook }`, the conflict hook command `{ command, timeoutSeconds }` or null. Reads only; a coding agent may read them. |
+| `merge_assist_scan` | `POST /api/merge-assist/scan` | Internal testing; experimental. Find the checkout's in-flight conflicts now: overlapping changes with open pull requests, listed afresh through `gh`, and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). A coding agent may scan only its own checkout. |
+| `merge_assist_settings_set` | `PUT /api/merge-assist/settings` | Internal testing; experimental. `{ enabled?, hook? }`, at least one: `enabled` turns Merge Assist on or off for the checkout's repository (off fires `closed` for every open conflict, then clears every checkout's conflicts, last scan and `gh` readiness; the settings stay); `hook` sets the conflict hook command, `{ command: string[], timeoutSeconds? }` (an argv array of 1–64 non-empty strings, run without a shell; 1–60 seconds, 10 by default), or `null` removes it. Answers the status. People only. |
+| `merge_assist_conflict_dismiss` | `POST /api/merge-assist/conflicts/dismiss` | Internal testing; experimental. `{ repository?, checkout?, conflictId }`: dismiss an open in-flight conflict as not a conflict. It stays dismissed for its question and that branch, and the conflict hook hears `closed` once. Answers the status. People only: a coding agent reads conflicts through `merge_assist_get` and gets `403 agent-not-permitted` here; a conflict already dismissed is `409 invalid-state`, an unknown one `404 not-found`, and with Merge Assist off `409 disabled`. |
 
 `src/api/http.ts` mounts the operations with Hono and emits OpenAPI; `src/api/mcp.ts` registers them as MCP tools.
 
@@ -497,7 +505,7 @@ After that check a request costs one file read, and the bridge re-checks only on
 
 ### Targets and what a coding agent may change
 
-`/api` callers are people; `/mcp` callers are coding agents. This scopes agent tools; it is not authentication, since any local process can call `/api`.
+`/api` callers are people; `/mcp` callers are coding agents. This scopes agent tools; it is not authentication, since any local process can call `/api`. The CLI runs as the person too: a coding agent with shell access can run any `rerail` command, the people-only ones included, so the people-only rules here cover the `/mcp` surface.
 
 An agent reaches only its checkout's repository and checkouts nested in its own, and may change little there. Anything else is `403 agent-not-permitted` with the dashboard URL to do it there: `<origin>/?repository=<key>&checkout=<path>#rules`. See [Rule scoping](rule-scoping.md).
 
@@ -633,6 +641,28 @@ Cursor Read and Write hook phases may share a native tool-call ID but keep disti
 
 </details>
 
+### Merge Assist
+
+Merge Assist is experimental, in [internal testing](../README.md#internal-testing), and off by default: nothing of it runs unless `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` (or `RERAIL_EXPERIMENTAL=1`) is set for the Rerail daemon and for the shell running `rerail merge-assist` ([Internal testing](internal-testing.md#merge-assist)), and then only in a repository where a person turned it on. Without the variable, `rerail merge-assist` exits 1 naming it and the operations answer `404 experimental-off`. It watches the branches and pull requests in flight and tells the person and their coding agent when their work collides with someone else's, before it merges: it compares this checkout's work, committed and not, with open pull requests the repository holds and with branches checked out in its other worktrees (recently committed remote-tracking branches when pull requests cannot be read), and reports each overlap as an in-flight conflict. An in-flight conflict is not a Git merge conflict: it is a possible one, changes within a few lines of each other that often still merge cleanly, and it says both sides are working on the same code. [docs/merge-assist-v1-build.md](merge-assist-v1-build.md) describes it, with its security model.
+
+```sh
+rerail merge-assist [status] [--repo <dir>] [--json]   # this checkout: on or off, readiness, the last scan, and its conflicts
+rerail merge-assist on | off [--repo <dir>]            # the person's; off clears every checkout's conflicts, last scan and gh readiness
+rerail merge-assist scan [--repo <dir>] [--json]       # find conflicts now, with open pull requests listed afresh; waits for the hook command's answer
+rerail merge-assist conflicts [--repo <dir>] [--json]  # in-flight conflicts with other branches: summary, whether quiet, both hunks, and a failed hook
+rerail merge-assist dismiss <conflict-id> [--repo <dir>] [--json]   # Not a conflict: the person's only action on one; waits for the hook command's answer
+rerail merge-assist settings [--repo <dir>] [--json]   # the person's conflict hook for this repository
+rerail merge-assist settings --hook-command '["/bin/sh","/Users/me/bin/conflict-hook.sh"]' [--hook-timeout <s>]
+rerail merge-assist settings --hook-timeout <s>        # the current command's timeout; fails when none is set
+rerail merge-assist settings --no-hook                 # remove the command
+```
+
+The command runs in its own process against the Rerail database, on the checkout `--repo` (or the current folder) is in, and prints the dashboard's Merge Assist page when the daemon is running. `scan` and `dismiss` wait for the conflict hook command's answer and print the status with it; Ctrl-C stops the command. Every Merge Assist operation names a checkout as the repository operations do; naming only a repository picks its main checkout. Turning Merge Assist on or off, changing its settings and dismissing a conflict are people's: each changes what reaches a coding agent or what runs on the person's machine, so `/mcp` answers them `403 agent-not-permitted`. A coding agent may read Merge Assist and its settings in its own repository, and scan only its own checkout and the checkouts inside it. The service's refusals keep their codes: `not-a-checkout` and `not-found` are `404`, `invalid-state` and `disabled` are `409`. As with every people-only operation, this holds for `/mcp`: `rerail merge-assist` runs as the person, so an agent with shell access can run `on` or `dismiss`.
+
+In-flight conflicts ([detection](merge-assist-v1-build.md#detection) in the build document) list each conflict with a one-line summary, `<their label> (<author>) is changing <symbol or file>`, set at detection, and `(quiet)` when every contested file is a lockfile, a changelog document, generated output or under `docs/`: a quiet conflict is listed here and on the dashboard only, never told to the agent or shown in the footer. The person's only action is Dismiss (Not a conflict), and a coding agent is refused it. `settings` holds the conflict hook command per repository, kept in the Rerail database on this machine, never in a committed file. `--hook-command` sets it, a JSON array of non-empty strings run without a shell from the checkout's root on each `detected` and `closed` event, with the conflict as JSON on stdin; it may answer `{ "note"?, "status"? }` on stdout: `note` joins the agent's note, and `status` replaces the conflict's summary in the footer (Claude Code's status line, OMP's and Pi's widget) and in Codex's person's line, since Codex has no footer. `--hook-timeout` is 1 to 60 seconds, 10 by default. A failing command is recorded on the conflict and never changes delivery; the contract is in [the conflict hook](merge-assist-v1-build.md#the-conflict-hook).
+
+Open pull requests are read through the person's own `gh` sign-in, read-only. [Privacy](privacy.md) lists what that sends.
+
 ### Scan and settings controls
 
 An audit runs code rules at one of three scopes, in one of two independent run modes. Full-repository scanning (`rerail scan`, explicit audit requests, the automatic first repository audit, repository audit operations) is in [internal testing](../README.md#internal-testing).
@@ -740,7 +770,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 | `/rerail-start` | Start in this checkout and its worktrees, attached to the session; runs set-up's questions first if needed. |
 | `/rerail-stop` | Stop recording, evaluation, steering and daemon autostart here and in its worktrees. |
 | `/rerail-update` | Install the newest version. |
-| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history. Asks first. |
+| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history, or `--remove --delete-data`, deleting everything. Asks first. |
 | `/rerail-help` | Same as `/rerail`. |
 | `/rerail-show-me` | One-minute demo: the agent breaks a demo rule, is steered and fixes it. |
 | `/rerail-bug-report` | The agent reads a support bundle to tell an engine bug, a shipped-rule bug or your rule's bug. |
@@ -753,7 +783,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 - **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
-- **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
+- **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
 - **`/rerail-show-me`**: `rerail show-me` adds rule `local:rerail-show-me`, scoped to `rerail-show-me.js`. The agent writes that file breaking the rule, is steered, and fixes it. `rerail show-me --cleanup` removes both (a concurrent demo elsewhere keeps the rule). It needs Rerail on and set up, never starts or sets up Rerail, and touches only what it wrote. The steer stays in History.
 - **`/rerail-bug-report`**: following `skills/rerail-bug-report`, the agent reads `rerail support-bundle` output (allowlisted, scrubbed diagnostics). It fixes your rule via `/rerail-create`'s Tune. Otherwise it checks the bundle with you and offers a filled-in issue, or files it if asked. Nothing is sent without you ([what the bundle holds](troubleshooting.md#reporting-a-problem)). Claude Code pre-approves the bundle's fixed invocations, `rerail update check` and `rerail rules test`; `--output`, `rerail rules add` and filing ask first.
 
@@ -880,7 +910,7 @@ Full-repository work is capped by a five-minute execution budget, a 100,000-file
 <details>
 <summary>Per-file failures and large files</summary>
 
-A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`.
+A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`. A scan reads files in path order, the order Git sorts paths in. Where Rerail walks the folders itself (a folder that is not a Git checkout, a checkout whose repository storage did not attach, and the folders a touched-files audit is given), a scan that stays within its budgets lists the same failures for the same files on every machine. In a Git checkout, failures to list a folder, read a `.gitignore` or read a name that is not UTF-8 still come in the order the filesystem lists folders, and the 100,000-file budget keeps the files the filesystem listed first.
 
 Large files have no fixed cut-off:
 

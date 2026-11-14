@@ -39,6 +39,10 @@ export const sessionHudSchema = z.object({
     .describe("Labels of the rule overlays in force in the session's checkout, e.g. worktree while its .rerail/rules holds rules."),
   awaitingApproval: z.number().int().nonnegative().nullable().optional()
     .describe("How many rules and packs that are on run in Log in the session's checkout, waiting for a person's approval; null when the rule count is not current."),
+  mergeAssist: z.object({
+    conflicts: z.number().int().nonnegative(),
+    summary: z.object({ id: z.string(), text: z.string() }).describe("The newest open conflict's status line text: the hook's status, else its summary."),
+  }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open but quiet ones."),
 });
 
 /** The latest audit's counts the footer shows. */

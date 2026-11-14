@@ -152,7 +152,8 @@ async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandCont
   notifyResult(ctx, "rerail-stop", result);
 }
 
-const REMOVE = "Yes, remove Rerail";
+const REMOVE = "Remove, keep a backup";
+const DELETE_EVERYTHING = "Remove and delete everything";
 const STOP_HERE = "Only stop it in this repo";
 
 type CommandAction = (ctx: HostCommandContext, args: string) => Promise<void>;
@@ -186,12 +187,15 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       : await readPresentation({ sessionId, host, cwd, onDemand: true, startState });
     // No session is attached where Rerail is stopped or never started.
     const repositoryState = presentation === null ? await readSummaryState(cwd, host, startState) : presentation.repositoryState;
+    // A daemon that just gave no answer in time is not asked again for the dashboard link: that read would wait out its
+    // own 2 seconds, and the summary shows no link then.
+    const notAnswering = (presentation === null ? repositoryState : presentation.status) === "not-answering";
     ctx.ui.notify(renderRerailSummary({
       presentation,
       repositoryState,
       ruleCount: null,
       awaitingApproval: null,
-      rulesUrl: (await readRulesDashboard({ cwd })).url,
+      rulesUrl: notAnswering ? null : (await readRulesDashboard({ cwd })).url,
       repositoryName: repositoryName(cwd),
       sigil: "/",
     }), "info");
@@ -236,32 +240,49 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       : result);
   });
 
-  // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes.
+  // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes. Deleting everything
+  // cannot be undone, so its dry run is shown and confirmed before anything changes.
   register("rerail-uninstall", async ctx => {
     const choice = await ctx.ui.select([
       "Remove Rerail from this computer?",
       "",
       "Removes /rerail commands, hooks and the status line from every coding agent; Rerail stops in every repo.",
       "Removes Rerail itself: its installed versions, the rerail command, rule packs and cache.",
-      "Keeps your rules and history, in a backup folder.",
       "",
-      "You can reinstall anytime and restore your rules from the backup.",
-    ].join("\n"), [REMOVE, STOP_HERE, "Cancel"]);
+      `${REMOVE}: your rules and history move to a backup folder; reinstall and restore them anytime.`,
+      `${DELETE_EVERYTHING}: also deletes your rules, history, backups, settings and the Rerail home. This cannot be undone.`,
+    ].join("\n"), [REMOVE, DELETE_EVERYTHING, STOP_HERE, "Cancel"]);
     if (choice === STOP_HERE) {
       await stopFromCommand(options, ctx);
       return;
     }
-    if (choice !== REMOVE) return;
-    await options.detach?.();
-    // A removal that fails leaves Rerail installed and on, so the session gets its rule checks back.
-    let result: LauncherResult;
-    try {
-      result = await runLauncher(options, ["install", "--remove"]);
-    } catch (error) {
-      await options.reattach?.();
-      throw error;
-    }
-    if (result.code !== 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-uninstall", result);
+    if (choice === REMOVE) await removeRerail(options, ctx, ["install", "--remove"]);
+    else if (choice === DELETE_EVERYTHING) await deleteEverything(options, ctx);
   });
+}
+
+/** `--delete-data`, once the person has seen its dry run, which names what it deletes and what it cannot reach, and said yes. */
+async function deleteEverything(options: HostCommandOptions, ctx: HostCommandContext): Promise<void> {
+  const preview = await runLauncher(options, ["install", "--remove", "--delete-data", "--dry-run"]);
+  if (preview.code !== 0) {
+    notifyResult(ctx, "rerail-uninstall", preview);
+    return;
+  }
+  if (!await ctx.ui.confirm("Delete Rerail and everything it kept? This cannot be undone.", preview.stdout.trim())) return;
+  await removeRerail(options, ctx, ["install", "--remove", "--delete-data"]);
+}
+
+/** Runs the removal `args` name, releasing the session's handles first; a removal that fails gives them back. */
+async function removeRerail(options: HostCommandOptions, ctx: HostCommandContext, args: readonly string[]): Promise<void> {
+  await options.detach?.();
+  // A removal that fails leaves Rerail installed and on, so the session gets its rule checks back.
+  let result: LauncherResult;
+  try {
+    result = await runLauncher(options, args);
+  } catch (error) {
+    await options.reattach?.();
+    throw error;
+  }
+  if (result.code !== 0) await options.reattach?.();
+  notifyResult(ctx, "rerail-uninstall", result);
 }

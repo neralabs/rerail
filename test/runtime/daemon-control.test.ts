@@ -33,6 +33,7 @@ import {
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
+  recordedDaemonStatus,
   runningDaemonEngineEndpoint,
   startDaemon,
   startDaemonForPackage,
@@ -523,7 +524,7 @@ describe("a state file Windows left behind", () => {
       given.push(signal);
       return "refused" as const;
     } };
-    expect(await recordedDaemonAlive(state, machine, stop.signal)).toBe(false);
+    expect(await recordedDaemonStatus(state, machine, stop.signal)).toBe("gone");
     expect(given).toEqual([stop.signal]);
   });
 

@@ -2,12 +2,13 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn() }));
-// `readSummaryState` stays real: with an empty Rerail home no daemon answers, which is the case under test.
-vi.mock("../../src/presentation/session-presentation.js", async () => ({
-  readSummaryState: (await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js")).readSummaryState,
-  readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard,
-}));
+const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn(), summaryState: vi.fn() }));
+// `readSummaryState` stays real unless a test says otherwise: with an empty Rerail home no daemon answers.
+vi.mock("../../src/presentation/session-presentation.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js");
+  mocks.summaryState.mockImplementation(actual.readSummaryState);
+  return { readSummaryState: mocks.summaryState, readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard };
+});
 vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   openDashboard: mocks.openDashboard,
@@ -36,7 +37,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
-function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string) {
+function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string, confirmed = false) {
   const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
   const sent: string[] = [];
   registerHostCommands({
@@ -50,15 +51,16 @@ function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: stri
   });
   const notices: Array<{ message: string; level: string }> = [];
   const selections: string[][] = [];
+  const confirmations: Array<{ title: string; message: string }> = [];
   const ctx: HostCommandContext = {
     ui: {
       notify(message, level) { notices.push({ message, level }); },
       select: async (_title, labels) => { selections.push(labels); return choice; },
       input: async () => undefined,
-      confirm: async () => false,
+      confirm: async (title, message) => { confirmations.push({ title, message }); return confirmed; },
     },
   };
-  return { commands, run: (name: string, args = "") => commands.get(name)!.handler(args, ctx), notices, sent, selections };
+  return { commands, run: (name: string, args = "") => commands.get(name)!.handler(args, ctx), notices, sent, selections, confirmations };
 }
 
 /** A package root whose launcher, `dist/cli/cli.js <args>`, runs `script` as `sh` with those arguments. */
@@ -170,6 +172,26 @@ describe("/rerail", () => {
       "○ Rerail is on in acme-web, which is not set up yet: no rules are checked.",
       "  Set it up with /rerail-start (rerail start).",
     ]);
+  });
+
+  it("says a daemon that did not answer in time is running, and does not ask it again for the dashboard link", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "not-answering", text: "R E R A I L ● not answering", url: null, parts: [], presence: "compact", repositoryState: null, counts: null,
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    const withSession = commandHarness();
+    await withSession.run("rerail");
+    mocks.summaryState.mockResolvedValueOnce("not-answering");
+    const withoutSession = commandHarness({ sessionId: () => undefined });
+    await withoutSession.run("rerail");
+    for (const { notices } of [withSession, withoutSession]) {
+      expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual([
+        "● Rerail is running, but its daemon did not answer in time.",
+        "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
+      ]);
+    }
+    // The dashboard read would wait out its own 2 seconds too, for a link these lines do not show.
+    expect(mocks.rulesDashboard).not.toHaveBeenCalled();
   });
 
   it("hands the session read the launcher's start state for when no daemon answers", async () => {
@@ -286,7 +308,7 @@ describe("/rerail-uninstall", () => {
     const detach = vi.fn();
     const { run, notices, selections } = commandHarness({ detach }, "Cancel");
     await run("rerail-uninstall");
-    expect(selections).toEqual([["Yes, remove Rerail", "Only stop it in this repo", "Cancel"]]);
+    expect(selections).toEqual([["Remove, keep a backup", "Remove and delete everything", "Only stop it in this repo", "Cancel"]]);
     expect(detach).not.toHaveBeenCalled();
     expect(notices).toEqual([]);
   });
@@ -295,18 +317,47 @@ describe("/rerail-uninstall", () => {
     const root = await launcherPackage("[ \"$*\" = 'install --remove' ]\nprintf 'Backup: /home/me/.rerail-clean-20261005\\n'");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(detach).toHaveBeenCalledOnce();
     expect(reattach).not.toHaveBeenCalled();
     expect(notices).toEqual([{ message: "Backup: /home/me/.rerail-clean-20261005", level: "info" }]);
   });
 
+  /** A launcher that answers the dry run of `--delete-data` with a plan, and its run with what it deleted. */
+  const deletingLauncher = () => launcherPackage([
+    "case \"$*\" in",
+    "  'install --remove --delete-data --dry-run') printf 'Would delete /home/me/.rerail (the Rerail home).\\n' ;;",
+    "  'install --remove --delete-data') printf 'Deleted /home/me/.rerail (the Rerail home).\\n' ;;",
+    "  *) printf 'unexpected %s\\n' \"$*\"; exit 1 ;;",
+    "esac",
+  ].join("\n"));
+
+  it("deletes everything only once the person has seen the dry run and confirmed it", async () => {
+    const root = await deletingLauncher();
+    const detach = vi.fn();
+    const { run, notices, confirmations } = commandHarness({ packageRoot: root, cwd: () => root, detach }, "Remove and delete everything", true);
+    await run("rerail-uninstall");
+    expect(confirmations).toEqual([{ title: "Delete Rerail and everything it kept? This cannot be undone.", message: "Would delete /home/me/.rerail (the Rerail home)." }]);
+    expect(detach).toHaveBeenCalledOnce();
+    expect(notices).toEqual([{ message: "Deleted /home/me/.rerail (the Rerail home).", level: "info" }]);
+  });
+
+  it("changes nothing when the person declines deleting everything after its dry run", async () => {
+    const root = await deletingLauncher();
+    const detach = vi.fn();
+    const { run, notices, confirmations } = commandHarness({ packageRoot: root, cwd: () => root, detach }, "Remove and delete everything", false);
+    await run("rerail-uninstall");
+    expect(confirmations).toHaveLength(1);
+    expect(detach).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
   it("gives the session its runtime back when the removal fails, as Rerail is still installed", async () => {
     const root = await launcherPackage("printf 'could not write ~/.claude/settings.json\\n' >&2\nexit 1");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(reattach).toHaveBeenCalledOnce();
     expect(reattach.mock.invocationCallOrder[0]).toBeGreaterThan(detach.mock.invocationCallOrder[0]!);
@@ -318,7 +369,7 @@ describe("/rerail-uninstall", () => {
     const unlaunchable = join(tmpdir(), "rerail\0checkout");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ cwd: () => unlaunchable, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ cwd: () => unlaunchable, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(notices).toEqual([expect.objectContaining({ message: expect.stringMatching(/^\/rerail-uninstall: /u), level: "error" })]);
     expect(detach).toHaveBeenCalledOnce();

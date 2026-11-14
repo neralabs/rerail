@@ -212,7 +212,11 @@ npm run package:check     # build and dry-run the npm pack
 `npm ci` and `npm install` (`prepare`) install a Git pre-commit hook that runs `scripts/check/pre-commit.sh`, the
 checks of CI's "Lint and type-check" job: the Justfile's format, the release notes your branch adds against your local
 `origin/main`, `npm run check`, `check:ui-tokens` and `check:reference`. It checks the working tree, not only what is
-staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is left in place.
+staged. CI checks a pull request merged into main, so when your branch is behind your local `origin/main` the hook
+checks your working tree merged into it, in a throwaway worktree (about a second more): main's newer files then count,
+as they do in CI (a folder over its file limit, a migration both sides added). It never fetches, so `git fetch` first
+for the newest main. When the merge would conflict, it says so and checks your branch alone. `git commit --no-verify`
+skips it. A `pre-commit` hook of your own is left in place.
 
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 
@@ -299,7 +303,7 @@ The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists th
 | `just rerail-setup` | Reserves this checkout's dev instance (`.rerail/dev/instance.json`: a stable loopback port in 35000–35999 and the home `.rerail/dev/home`) without starting anything. |
 | `just rerail-dev [--install-bridge] [--restore [dir]]` | Rebuilds whatever is stale and (re)starts this checkout's dev daemon on its own home and port, serving `ui/` live. `--install-bridge` registers this checkout's build with every coding agent (`rerail install --root`); hooks always use the default home, so a bridged checkout's dev daemon runs on `~/.rerail` until another `rerail setup` replaces the bridge. `--restore` loads a `nuke-rerail` backup's database. |
 | `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
-| `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore` and `install --remove` in a sandbox `HOME` (`KEEP=1` keeps it). |
+| `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore`, `install --remove` and `install --remove --delete-data` in a sandbox `HOME` (`KEEP=1` keeps it). |
 | `just rerail-env-matrix run --tarball <file> [--env <ids>]` | Installs a package on throwaway Azure VMs (Linux and Windows, x64 and arm64) and checks it there as a user meets it; `--npm <spec>` installs from npmjs instead, `list` names the environments, `sweep` deletes leftovers. Needs `az login` ([docs/environment-matrix.md](docs/environment-matrix.md)). |
 | `just rerail-language-conformance` | Language-pack conformance (`--pack <id>`, `--check`). |
 | `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |

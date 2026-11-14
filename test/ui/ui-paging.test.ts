@@ -28,7 +28,7 @@ beforeEach(() => {
   setScope({ repository: "A" });
   data.repository = { setUp: true, repositoryKey: "A" };
   data.rules = new Map([["r", { rule: { id: "r" } }]]);
-  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList() });
+  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList(), mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, loaded: false });
   data.sessionDetail.clear();
   ui.panel = null;
   ui.selectedSession = null;
@@ -53,6 +53,7 @@ function emptyDaemon(url: URL): unknown {
   if (url.pathname === "/api/sessions") return { sessions: [], total: 0, nextCursor: null };
   if (url.pathname === "/api/sessions/s1") return { session };
   if (url.pathname === "/api/sessions/s1/events") return { events: [], nextAfter: 0, pageLimit: 500 };
+  if (url.pathname === "/api/merge-assist") return { enabled: false, conflicts: [] };
   throw new Error(`unexpected ${url.pathname}`);
 }
 
@@ -67,6 +68,7 @@ describe("a poll", () => {
 
     await refresh();
 
+    // The sidebar's Merge Assist count is not read in the first poll, which the page waits on.
     expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
     expect(requested.filter(url => url.pathname === "/api/violations").map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
   });
@@ -79,24 +81,51 @@ describe("a poll", () => {
     expect(paths()).not.toContain("/api/violations");
   });
 
-  it("reads only the sessions list and the selected session on Sessions, besides the sidebar's rules and packs", async () => {
+  it("reads only the sessions list and the selected session on Sessions, besides the sidebar's rules, packs and Merge Assist", async () => {
+    data.loaded = true;
     ui.view = "sessions";
     ui.selectedSession = "s1";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
+    expect(paths()).toEqual(["/api/merge-assist", "/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
     const violations = requested.find(url => url.pathname === "/api/violations")!;
     expect(violations.searchParams.get("sessionId")).toBe("s1");
     expect(violations.searchParams.get("since")).toBe("0");
   });
 
-  it("reads nothing beyond the shared reads and the sidebar's rules and packs on Settings", async () => {
+  it("reads nothing beyond the shared reads and the sidebar's rules, packs and Merge Assist on Settings", async () => {
+    data.loaded = true;
     ui.view = "settings";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/healthz"]);
+    expect(paths()).toEqual(["/api/merge-assist", "/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/healthz"]);
+  });
+
+  it("reads Merge Assist for the sidebar's count at most every 30 s, and on every poll on its own page", async () => {
+    const mergeReads = () => requested.filter(url => url.pathname === "/api/merge-assist").length;
+    data.loaded = true;
+    ui.view = "settings";
+
+    await refresh();
+    await refresh();
+    expect(mergeReads()).toBe(1);
+
+    ui.view = "merge";
+    await refresh();
+    await refresh();
+    expect(mergeReads()).toBe(3);
+  });
+
+  it("keeps polling when Merge Assist cannot be read, and says why on the page", async () => {
+    ui.view = "merge";
+    answer = url => (url.pathname === "/api/merge-assist" ? new Response("{}", { status: 500 }) : emptyDaemon(url));
+
+    await refresh();
+
+    expect(data.disconnected).toBe(false);
+    expect(data.mergeAssistError).toMatch(/answered 500$/u);
   });
 
   it("reads only the shared reads without a repository, whatever the view", async () => {

@@ -6,15 +6,19 @@ import {
   presentationDaemonSchema,
   presentationReadSchema,
   rulesDashboardUrl,
+  sessionHudSchema,
   type PresentationRead,
   type PresentedSession,
   type RulesDashboardScope,
 } from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, type DaemonState } from "../runtime/daemon-control.js";
+import {
+  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
+} from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
-import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -23,10 +27,11 @@ export type { PresentationPresence } from "../engine/storage/presentation-presen
 /**
  * The footer's state (design A1f): on here, not on here (stopped in this checkout, or never started; the ambient
  * footer draws nothing then, only reads on demand say so), not set up (started, but the repository has no rules
- * configured yet), not running (no live daemon), starting (on, but this session's start is not recorded yet), or on
- * but missing what it needs to count (a session that does not match).
+ * configured yet), not running (no live daemon), not answering (the live daemon took the read but gave no answer in
+ * time), starting (on, but this session's start is not recorded yet), or on but missing what it needs to count (a
+ * session that does not match).
  */
-export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "starting" | "unavailable";
+export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "not-answering" | "starting" | "unavailable";
 
 export interface PresentationCounts {
   /** Rules on for this session; null when coverage is unknown. */
@@ -76,7 +81,7 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
 const STATUS_MARKS: Record<PresentationStatus, string> = {
-  on: "●", starting: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕",
+  on: "●", starting: "●", unavailable: "●", "not-answering": "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕",
 };
 /** Between the footer's items (plan §3): single spaces, so a stacked footer stays short. */
 const ITEM_SEPARATOR = " · ";
@@ -137,19 +142,48 @@ function unavailable(
   return presentation({ status, items: [{ text: reason, url: null }], presence, repositoryState });
 }
 
-/** The read's time limit, ended early as well by `stop` when the caller gives one. */
-function readSignal(stop: AbortSignal | undefined): AbortSignal {
-  const limit = AbortSignal.timeout(READ_TIMEOUT_MS);
+/**
+ * The daemon took the read but gave no answer within `READ_TIMEOUT_MS`, or its engine said nothing in time to the proof
+ * that comes before any read on Windows (`readableDaemon`): it is busy, not gone, so telling the person to start it is
+ * wrong.
+ */
+class NotAnswering extends Error {}
+
+/**
+ * Whether the daemon `state` records may be read now (`recordedDaemonStatus`): false when it is gone. One whose engine
+ * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`. `stop` ends the
+ * proof early, as gone.
+ */
+async function readableDaemon(state: DaemonState, stop?: AbortSignal): Promise<boolean> {
+  const recorded = await recordedDaemonStatus(state, undefined, stop);
+  if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
+  return recorded === "alive";
+}
+
+/** `limit`, ended early as well by `stop` when the caller gives one. */
+function endedBy(limit: AbortSignal, stop: AbortSignal | undefined): AbortSignal {
   return stop === undefined ? limit : AbortSignal.any([limit, stop]);
 }
 
-/** Validate responses with the same contracts used by the daemon, without opening a database. `stop` ends the read early. */
+/**
+ * Validate responses with the same contracts used by the daemon, without opening a database. Throws `NotAnswering`
+ * once the read's time runs out, whatever the transport threw then. `stop` ends the read early.
+ */
 async function get<Schema extends z.ZodType>(
   daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema, stop?: AbortSignal,
 ): Promise<z.infer<Schema>> {
-  const response = await daemonFetch(daemon.state)(new URL(path, daemon.origin), {
-    headers: daemonAccessHeaders(daemon.state), signal: readSignal(stop), redirect: "error",
-  });
+  const signal = AbortSignal.timeout(READ_TIMEOUT_MS);
+  try {
+    return await readAnswer(daemon, new URL(path, daemon.origin), schema, endedBy(signal, stop));
+  } catch (error) {
+    throw signal.aborted ? new NotAnswering("The Rerail daemon did not answer in time", { cause: error }) : error;
+  }
+}
+
+async function readAnswer<Schema extends z.ZodType>(
+  daemon: Pick<VerifiedDaemon, "state">, url: URL, schema: Schema, signal: AbortSignal,
+): Promise<z.infer<Schema>> {
+  const response = await daemonFetch(daemon.state)(url, { headers: daemonAccessHeaders(daemon.state), signal, redirect: "error" });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -169,10 +203,22 @@ async function get<Schema extends z.ZodType>(
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
+/** The longest conflict line the footer shows: as long as the conflict hook's status may be. */
+const FOOTER_CONFLICT_CHARS = 90;
+
+/**
+ * Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, cut to
+ * {@link FOOTER_CONFLICT_CHARS}, with `(+N)` for the others open.
+ */
+function conflictSegment(dashboard: URL, { conflicts, summary }: NonNullable<z.infer<typeof sessionHudSchema>["mergeAssist"]>): SessionPresentation["parts"][number] {
+  return { text: `◐ ${cappedLine(summary.text, FOOTER_CONFLICT_CHARS)}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
+}
+
 /**
  * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
- * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it), and
- * `steered N×` only once Rerail has steered in this session (A1f).
+ * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it),
+ * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has an
+ * open conflict that is not quiet (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,
@@ -195,6 +241,11 @@ function onPresentation(
   if ((hud.awaitingApproval ?? 0) > 0) items.push({ text: `${hud.awaitingApproval} to approve`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
+  if (hud.mergeAssist !== undefined) {
+    const dashboard = new URL(rulesDashboardUrl(origin, scope));
+    dashboard.hash = "";
+    items.push(conflictSegment(dashboard, hud.mergeAssist));
+  }
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({
     status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",
@@ -214,15 +265,20 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 
 /**
  * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
- * person's `why?` opens. The runtime records no link; each coding agent's adapter links the rules as it hands them over,
- * and without a dashboard leaves them unlinked.
+ * person's `why?` opens; and the conflict a note surfaces linked to its card on the Merge Assist page (`open`). The
+ * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
+ * leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
   // Hooks call this on every event, and most events deliver nothing: only a rule to link is worth asking the daemon.
   const linksRules = deliveries.some(delivery => delivery.rules.length > 0);
   const dashboard = cwd === undefined || !linksRules ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
+  return deliveries.map(delivery => ({
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
+    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
+  }));
 }
 
 /**
@@ -382,24 +438,42 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * found out by itself that the daemon would say stopped (`hookRerailStarted`).
  */
 export async function readRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<RepositoryStartState | null> {
+  const state = await daemonRepositoryState(cwd, host, stop);
+  return state === "not-answering" ? null : state;
+}
+
+/**
+ * What `/rerail` says of a repository without a session: its start state, `not-answering` where the live daemon gave no
+ * answer in time, or null where no daemon runs (`/rerail` says not running).
+ */
+export type SummaryState = RepositoryStartState | "not-answering" | null;
+
+/**
+ * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`).
+ * `stop` ends the request, as null.
+ */
+async function daemonRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state, undefined, stop))) return null;
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, stop))) return null;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema, stop);
     return response.repositoryState;
-  } catch {
-    return null;
+  } catch (error) {
+    return error instanceof NotAnswering ? "not-answering" : null;
   }
 }
 
-const NOT_RUNNING = "not running";
+/** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
+type Silence = "not-running" | "not-answering";
+const SILENCE_TEXT: Record<Silence, string> = { "not-running": "not running", "not-answering": "not answering" };
+const NOT_RUNNING = SILENCE_TEXT["not-running"];
 
 /**
- * No daemon answered. Nothing autostarts where Rerail is off, so that is only "not running" in a started
- * checkout; elsewhere the caller's own reading of the start state says "not on here".
+ * No daemon answered. Nothing autostarts where Rerail is off, so that is only `silence` (not running, or not
+ * answering) in a started checkout; elsewhere the caller's own reading of the start state says "not on here".
  */
 async function withoutDaemon(
-  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean,
+  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean, silence: Silence,
 ): Promise<SessionPresentation> {
   let state: RepositoryStartState | undefined;
   try {
@@ -407,7 +481,7 @@ async function withoutDaemon(
   } catch {
     state = undefined;
   }
-  if (state === undefined || state === "started") return unavailable("not-running", NOT_RUNNING, presence);
+  if (state === undefined || state === "started") return unavailable(silence, SILENCE_TEXT[silence], presence);
   if (state === "not-set-up") return presentation({
     status: "not-set-up", items: [{ text: NOT_SET_UP, url: null }, { text: SET_UP_HINT, url: null }], presence, repositoryState: state,
   });
@@ -416,18 +490,19 @@ async function withoutDaemon(
 
 /**
  * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
- * reading. A started checkout with no daemon answering stays null, which `/rerail` reports as not running.
+ * reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
  */
 export async function readSummaryState(
   cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
-): Promise<RepositoryStartState | null> {
-  const answered = await readRepositoryState(cwd, host);
-  if (answered !== null) return answered;
+): Promise<SummaryState> {
+  const fromDaemon = await daemonRepositoryState(cwd, host);
+  if (fromDaemon !== null && fromDaemon !== "not-answering") return fromDaemon;
+  // In a started checkout, or one whose state cannot be read, what the daemon gave decides: nothing, or no answer in time.
   try {
     const local = await startState();
-    return local === undefined || local === "started" ? null : local;
+    return local === undefined || local === "started" ? fromDaemon : local;
   } catch {
-    return null;
+    return fromDaemon;
   }
 }
 
@@ -445,7 +520,7 @@ type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
 async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
-  if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return undefined;
+  if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
   const response = await get(daemon, `/api/presentation?${new URLSearchParams({
     repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
   })}`, presentationReadSchema);
@@ -491,12 +566,13 @@ export async function readPresentation(request: PresentationRequest): Promise<Se
   let presence: PresentationPresence | undefined;
   try {
     const answer = await readLiveResponse(request);
-    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand);
+    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand, "not-running");
     presence = answer.response.presence;
     return await answeredPresentation(answer, request);
-  } catch {
-    // The locator named a live process, but nothing answered as the daemon.
-    return presence !== undefined ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, "compact", onDemand);
+  } catch (error) {
+    if (presence !== undefined) return unavailable("not-running", NOT_RUNNING, presence);
+    // The locator named a live process, but nothing answered as the daemon: none listens, or it is busy.
+    return await withoutDaemon(startState, "compact", onDemand, error instanceof NotAnswering ? "not-answering" : "not-running");
   }
 }
 

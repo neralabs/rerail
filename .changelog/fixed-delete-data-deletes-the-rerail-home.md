@@ -1,0 +1,1 @@
+`rerail install --remove --delete-data` now deletes everything Rerail wrote in its home, then the home, instead of keeping your settings, logs and device secrets. What it cannot reach, such as agent config backups, is named with the command that deletes it. `/rerail-uninstall` offers this full deletion beside removing with a backup.

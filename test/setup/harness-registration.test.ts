@@ -942,10 +942,12 @@ describe("Claude Code commands", () => {
     expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.
     const uninstall = await read("rerail-uninstall");
-    expect(uninstall).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} stop)\n`);
+    expect(uninstall).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} install --remove --delete-data --dry-run), Bash(${command} stop)\n`);
     expect(uninstall).toContain(`\n${command} install --remove\n`);
+    expect(uninstall).toContain(`\n${command} install --remove --delete-data\n`);
     expect(uninstall).toContain("Remove Rerail from this computer?\n\n  Removes   /rerail commands, hooks and the status line\n");
-    expect(uninstall).toContain("  2. Only stop it in this repo    Rerail stays everywhere else\n");
+    expect(uninstall).toContain("  2. Remove and delete everything cannot be undone; also deletes:\n");
+    expect(uninstall).toContain("  3. Only stop it in this repo    Rerail stays everywhere else\n");
     expect(uninstall).toContain("  Restart your coding agents to finish.\n");
     const showMe = await read("rerail-show-me");
     expect(showMe).toContain(`allowed-tools: Bash(${command} show-me --json), Bash(${command} show-me --cleanup)\n`);
