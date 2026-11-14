@@ -180,10 +180,9 @@ b615_truthy_value(n, "true") :- value(n, x),
 
 // demand_segment: the nodes segment is asked at (its recursion looks at every descendant)
 .decl b615_demand_segment(n: node)
-b615_demand_segment(c1) :- b615_demand_segment(n), b615_segment_case(q1),
-    kind(n, "parenthesized_expression"), child(n, c1, _).
-b615_demand_segment(c3) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
-    field(n, "object", c3).
+b615_demand_segment(c1) :- b615_demand_segment(n), kind(n, "parenthesized_expression"),
+    child(n, c1, _).
+b615_demand_segment(c3) :- b615_demand_segment(n), kind(n, "attribute"), field(n, "object", c3).
 b615_demand_segment(n) :- b615_named(n, "from_pretrained").
 b615_demand_segment(n) :- b615_named(n, "load_dataset").
 b615_demand_segment(n) :- b615_named(n, "hub_download").

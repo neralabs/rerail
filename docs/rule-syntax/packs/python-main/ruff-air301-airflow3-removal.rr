@@ -1944,8 +1944,8 @@ air301_demand_from_inlet_events(c11) :- air301_alt_64(n), air301_up_7(n, p7), fi
 
 // demand_callee_of: the nodes callee_of is asked at (its recursion looks at every descendant)
 .decl air301_demand_callee_of(n: node)
-air301_demand_callee_of(c7) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
-    kind(n, "parenthesized_expression"), child(n, c7, _).
+air301_demand_callee_of(c7) :- air301_demand_callee_of(n), kind(n, "parenthesized_expression"),
+    child(n, c7, _).
 air301_demand_callee_of(n) :- air301_class_case(q1), air301_last(n, q1).
 
 // demand_alt_29: the nodes alt_29 is asked at (its recursion looks at every descendant)
@@ -1962,13 +1962,12 @@ air301_demand_dataset_tail(c14) :- field(n, "attribute", c13),
 
 // demand_head_of_of: the nodes head_of_of is asked at (its recursion looks at every descendant)
 .decl air301_demand_head_of_of(n: node)
-air301_demand_head_of_of(c3) :- air301_demand_head_of_of(n), air301_class_case(q1), kind(n, "attribute"),
+air301_demand_head_of_of(c3) :- air301_demand_head_of_of(n), kind(n, "attribute"),
     field(n, "object", c3).
-air301_demand_head_of_of(c4) :- air301_demand_head_of_of(n), air301_class_case(q1),
-    kind(n, "parenthesized_expression"), child(n, c4, _).
-air301_demand_head_of_of(c2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
-    kind(n, "attribute"), sym_of(n, q4), match("(airflow\\.providers)(\\.|$).*", q4),
-    field(n, "object", c2).
+air301_demand_head_of_of(c4) :- air301_demand_head_of_of(n), kind(n, "parenthesized_expression"),
+    child(n, c4, _).
+air301_demand_head_of_of(c2) :- air301_demand_callee_of(n), kind(n, "attribute"), sym_of(n, q4),
+    match("(airflow\\.providers)(\\.|$).*", q4), field(n, "object", c2).
 
 // demand_in_task: the nodes in_task is asked at (it looks at every ancestor of every node)
 .decl air301_demand_in_task(n: node)
@@ -2443,8 +2442,8 @@ air301_demand_operator_class(p2) :- kind(n, "function_definition"), field(n, "na
 
 // demand_tail: the nodes tail is asked at (its recursion looks at every descendant)
 .decl air301_demand_tail(n: node)
-air301_demand_tail(c12) :- air301_demand_tail(n), air301_tail_case(q1, s1, s2),
-    kind(n, "parenthesized_expression"), child(n, c12, _).
+air301_demand_tail(c12) :- air301_demand_tail(n), kind(n, "parenthesized_expression"),
+    child(n, c12, _).
 air301_demand_tail(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("execution_date", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _), kind(p2, "argument_list"),
     child(p3, p2, _), kind(p3, "call"), field(p3, "function", c4).

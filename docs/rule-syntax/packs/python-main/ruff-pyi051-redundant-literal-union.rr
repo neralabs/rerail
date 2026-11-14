@@ -148,8 +148,7 @@ pyi051_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,)
 
 // demand_has_of: the nodes has_of is asked at (its recursion looks at every descendant)
 .decl pyi051_demand_has_of(n: node)
-pyi051_demand_has_of(c1) :- pyi051_demand_has_of(n), pyi051_has_of_case(q1, s1), pyi051_union(n),
-    within_stop(c1, n, pyi051_stop_3).
+pyi051_demand_has_of(c1) :- pyi051_demand_has_of(n), pyi051_union(n), within_stop(c1, n, pyi051_stop_3).
 pyi051_demand_has_of(p2) :- pyi051_elem_str(n), node(_, n, _, _, _), E = n, pyi051_up_1(n, p1), within_stop(p1, p2, pyi051_stop_12),
     pyi051_top_union(p2).
 pyi051_demand_has_of(p4) :- pyi051_elem_bytes(n), node(_, n, _, _, _), E = n, pyi051_up_2(n, p3),
