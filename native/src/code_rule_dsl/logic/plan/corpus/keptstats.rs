@@ -176,6 +176,18 @@ impl Keeper {
                     // statistics are its own rows', so this is exact; within a relation the rows are counted out and
                     // in whole, as its per-document statistics need.
                     let (before, now_rows) = changed_only(&before, entry);
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                        // What a row-level count would leave out: the rows the old and new share at either end.
+                        for (rel, (w, new)) in &now_rows.rows {
+                            let Some((_, old)) = before.rows.get(rel) else { continue };
+                            let (a, b): (Vec<&[i64]>, Vec<&[i64]>) = (old.chunks_exact((*w).max(1)).collect(), new.chunks_exact((*w).max(1)).collect());
+                            let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                            let tail = a[head..].iter().rev().zip(b[head..].iter().rev()).take_while(|(x, y)| x == y).count();
+                            let set: std::collections::HashSet<&[i64]> = a.iter().copied().collect();
+                            let kept = b.iter().filter(|r| set.contains(*r)).count();
+                            eprintln!("statkeep diff {path} {rel}: old {} new {} rows, same at the ends {head}+{tail}, new rows also old {kept}", a.len(), b.len());
+                        }
+                    }
                     crate::code_rule_dsl::logic::profile::decision("statistics kept by file (decision 0096 §3)", || {
                         format!("an edited file's unchanged relations not counted again: {} of {} changed", now_rows.rows.len(), entry.rows.len())
                     });
@@ -202,9 +214,19 @@ impl Keeper {
     fn patch_exports(&mut self, path: &str, entry: &memo::Entry, sign: i64) {
         let Some(counted) = self.exports.as_mut() else { return };
         let exports_span = crate::code_rule_dsl::logic::profile::span(|| "statistics: exports counted".into());
-        let mut ok = self.export_rels.iter().all(|rel| match entry.rows.get(rel) {
-            Some((width, values)) => counted.patch(rel, *width, values, sign),
-            None => true,
+        // A file's rows are grouped by the document they name (its location column): its own document's, and each
+        // guest's it holds (the same rows in every file that holds that guest). Each group is counted as one
+        // (`patch_own`): compared with the rows kept for that document, not hashed a row at a time.
+        // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0206.
+        static OWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let by_file = *OWN.get_or_init(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
+        let doc_at = &self.doc_at;
+        let mut ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
+            (Some((width, values)), Some(at)) if by_file && at < *width => {
+                by_document(values, *width, |row| memo::document_of(row[at]), None).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
+            }
+            (Some((width, values)), _) => counted.patch(rel, *width, values, sign),
+            (None, _) => true,
         });
         drop(exports_span);
         let _base = crate::code_rule_dsl::logic::profile::span(|| "statistics: base columns counted".into());
@@ -214,8 +236,13 @@ impl Keeper {
                 ok = false;
                 break;
             }
-            let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
-            ok &= self.base.patch(rel, from.len(), &projected, sign);
+            // A base relation's row names its document in its first column.
+            if by_file {
+                ok &= by_document(values, *width, |row| memo::document_of(row[0]), Some(from.as_slice())).iter().all(|(d, rows)| self.base.patch_own(rel, from.len(), *d, None, rows, sign));
+            } else {
+                let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
+                ok &= self.base.patch(rel, from.len(), &projected, sign);
+            }
         }
         drop(_base);
         let _own = crate::code_rule_dsl::logic::profile::span(|| "statistics: own counted".into());
@@ -521,6 +548,34 @@ pub mod tests {
         assert_eq!(again[&r].columns().len(), 3);
         assert_eq!(again[&r].rows(), 30, "counted from scratch: one file");
     }
+}
+
+/// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
+/// come, each row taken at the columns `from` (all, when `None`). A document's rows mostly come together, so its
+/// group is looked up once a run of them.
+fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Option<&[usize]>) -> Vec<(i64, Vec<i64>)> {
+    let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
+    let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
+    let mut last: Option<(i64, usize)> = None;
+    for row in flat.chunks_exact(width) {
+        let d = doc(row);
+        let g = match last {
+            Some((l, g)) if l == d => g,
+            _ => {
+                let g = *at.entry(d).or_insert_with(|| {
+                    groups.push((d, Vec::new()));
+                    groups.len() - 1
+                });
+                last = Some((d, g));
+                g
+            }
+        };
+        match from {
+            Some(from) => groups[g].1.extend(from.iter().map(|&c| row[c])),
+            None => groups[g].1.extend_from_slice(row),
+        }
+    }
+    groups
 }
 
 /// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.

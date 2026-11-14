@@ -102,8 +102,5 @@ The relations' statistics cost 45% less (cold) and 46% less (step 08). Their all
 
 ## Open
 
-- The counted exports and base columns (`Counted::patch`, 0.06 s cold together) cost a hash probe a row, which
-  is inherent to a multiset of rows held by files.
-- An edited file's changed relations are counted out and in whole (`changed_only` works by relation, not by row).
-  Counting only the rows that differ would need each (document, value) count from before the edit, which costs
-  the same pass.
+- The counted exports and base columns, then a hash a row, are kept by document since decision 0206; an edit's
+  changed rows alone are not counted (0206 measures why).
