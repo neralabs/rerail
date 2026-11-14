@@ -860,6 +860,7 @@ describe("the hook start check", () => {
   afterEach(() => {
     vi.doUnmock("../../src/engine/git.js");
     vi.doUnmock("../../src/runtime/repository-start.js");
+    vi.doUnmock("../../src/engine/storage/database.js");
     vi.resetModules();
     vi.unstubAllEnvs();
   });
@@ -875,6 +876,30 @@ describe("the hook start check", () => {
       const host = await hookHostCountingGit(ran);
       expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), git: ran, requests: daemon.requests })
         .toEqual({ started: false, git: [], requests: [] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("opens no database in a repository Rerail never recorded, which only its remote can place", async () => {
+    const root = await temporaryDirectory({ started: false });
+    startedApp(root);
+    const never = gitRepository(join(root, "never"));
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    const opened: string[] = [];
+    vi.resetModules();
+    vi.doMock("../../src/engine/storage/database.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+      const openRerailDatabase: typeof actual.openRerailDatabase = (path, options) => {
+        opened.push(path);
+        return actual.openRerailDatabase(path, options);
+      };
+      return { ...actual, openRerailDatabase };
+    });
+    try {
+      const host = await import("../../src/harness/hook-host.js");
+      expect({ started: await host.hookRerailStarted("claude-code", never), opened, requests: daemon.requests })
+        .toEqual({ started: false, opened: [], requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }

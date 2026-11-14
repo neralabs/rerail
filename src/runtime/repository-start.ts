@@ -3,7 +3,13 @@ import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
-import { gitSearchEnds, repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import {
+  gitSearchEnds,
+  readCloneIdAt,
+  repositoryFolderName,
+  repositoryIdentityLocation,
+  type RepositoryIdentityLocation,
+} from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   createCheckoutResolver,
@@ -97,8 +103,16 @@ export function readOnlyStartState(workspace: string, databasePath = defaultRera
  */
 export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   const ends = gitSearchEnds(workspace);
-  return ends !== undefined
+  return ends !== undefined && !ends.some(placedByRemote)
     && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false)) === true;
+}
+
+/**
+ * A Git checkout with no clone id yet, as a repository Rerail never recorded and a new clone are: the daemon places it by
+ * its remote, which only Git reads, so the database is not opened to answer there.
+ */
+function placedByRemote(end: RepositoryIdentityLocation): boolean {
+  return end.git && readCloneIdAt(end.identityPath) === undefined;
 }
 
 /** `read` over a read-only connection; undefined when the database cannot be opened or read. */
