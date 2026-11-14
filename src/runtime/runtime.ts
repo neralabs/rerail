@@ -1569,47 +1569,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         followGitignore: followsGitignore,
         steerShell: steerShell(session.host),
       });
-      bridge = new CodeRuleBridge(checkout.cwd, auditor, {
-        observations: this.#sourceObservations,
-        ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
-        // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
-        onDiscoveryPending: boundary => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
-        ),
-        // What a boundary's walks could not check goes on the session's record, once per gap; the agent is not told of it.
-        onDiscoveryGap: gap => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordDiscoveryGap(descriptor, gap, attribution),
-        ),
-        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
-        onIgnoredEdit: edit => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
-        ),
-        ...(followsGitignore ? {
-          onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
-            session.sessionId,
-            (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
-          ),
-        } : {}),
-        onRevision: (sessionId, revision, paths) => {
-          const current = this.#sessions.get(sessionId);
-          if (current !== opened || current.closed || paths.length === 0) return;
-          current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
-          for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
-          current.pendingSteers = current.pendingSteers.filter(pending => {
-            if (this.#isCurrentSteer(current, pending)) return true;
-            this.#recordUndelivered(current, pending);
-            return false;
-          });
-          current.missedFindings = current.missedFindings.filter(finding => {
-            if (this.#isCurrentSteer(current, finding)) return true;
-            this.#recordUndelivered(current, finding);
-            return false;
-          });
-        },
-      });
+      bridge = this.#codeRuleBridge({ session, cwd: checkout.cwd, auditor, opened, followsGitignore });
       opened.codeRuleBridge = bridge;
       await this.#beforeSessionPublish?.(session);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
@@ -1657,6 +1617,56 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     void workspace.then(released, released);
     this.#scanMergeAssist(opened);
     return { processedEventIds: [...opened.processed] };
+  }
+
+  /**
+   * The code-rule bridge of `opened`, the session's state as it opens, over `auditor` in the session's folder `cwd`. What
+   * its walks and its tool edits leave unchecked goes on the session's record; a revision drops what it makes stale.
+   */
+  #codeRuleBridge({ session, cwd, auditor, opened, followsGitignore }: {
+    session: AdapterSession; cwd: string; auditor: CodeRuleAuditor; opened: RuntimeSessionState; followsGitignore: boolean;
+  }): CodeRuleBridge {
+    return new CodeRuleBridge(cwd, auditor, {
+      observations: this.#sourceObservations,
+      ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
+      // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
+      onDiscoveryPending: boundary => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
+      ),
+      // What a boundary's walks could not check goes on the session's record, once per gap; the agent is not told of it.
+      onDiscoveryGap: gap => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryGap(descriptor, gap, attribution),
+      ),
+      // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
+      onIgnoredEdit: edit => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
+      ),
+      ...(followsGitignore ? {
+        onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
+        ),
+      } : {}),
+      onRevision: (sessionId, revision, paths) => {
+        const current = this.#sessions.get(sessionId);
+        if (current !== opened || current.closed || paths.length === 0) return;
+        current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
+        for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
+        current.pendingSteers = current.pendingSteers.filter(pending => {
+          if (this.#isCurrentSteer(current, pending)) return true;
+          this.#recordUndelivered(current, pending);
+          return false;
+        });
+        current.missedFindings = current.missedFindings.filter(finding => {
+          if (this.#isCurrentSteer(current, finding)) return true;
+          this.#recordUndelivered(current, finding);
+          return false;
+        });
+      },
+    });
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
