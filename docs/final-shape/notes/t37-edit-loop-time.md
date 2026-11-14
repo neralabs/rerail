@@ -98,33 +98,83 @@ Failures seen in this worktree:
 ## 3. Relax
 
 Relax is makepad/relax, first shown in public on 2026-11-12. It has its own front end, type and
-borrow checker, IR and AArch64 backend, and patches edited function bodies into a running process.
-It does not use rustc. Its build scripts run confined, and they may pass no `rustc-link-arg`.
-C code is built only with `--allow-c`, through cargo.
+borrow checker, IR, AArch64 backend and std, and does not use rustc. It runs a crate from source
+and patches edited function bodies into the running process. C is built only with `--allow-c`,
+through cargo. It runs on the host only, so the wasm build stays on cargo.
 
-Tried on the leaf crates:
+### What it took to run the engine
 
-| Crate | Result |
-|---|---|
-| rerail-tape-format | `check` passes in 0.1 s. `test` passes once `--allow-c` is given, because `sha2-asm` compiles C. |
-| rerail-simd8 | `test` passes, and its NEON backend runs. |
-| rerail-rr-syntax | `check` passes on the second try; the first spent 150 s building the native dependencies. `test` passes 11 tests but was still running at 150 s. |
+The whole engine runs under Relax: `relax check`, `relax test` and `relax run` of the CLI. The
+CLI's outputs on the smoke corpus are the same bytes as the cargo build's. Getting there took four
+changes, about 30 lines in all:
 
-A one-line edit in rr-syntax compared with incremental cargo:
+| Blocker | Whose | Fix | Size |
+|---|---|---|---|
+| E0252 on `logic::rr`'s `pub use print::print` | Relax: a path import binds another crate's `pub(in …)` fn that rustc skips as invisible | import the module alone, `rr::print::{self}` (b88a6d272) | 2 lines |
+| Every session test hung | **the engine's**: the tests' store template was made from inside a run, and its filling thread's runs queued behind a test waiting to `set` the switches | the template is made before a test takes the switches (b038664e6) | 25 lines |
+| `relax run` of the CLI: E0425 `vdup_lane_u32` (sha1dc), E0277 `AsRef<[T]>` for `vec::IntoIter` and `slice::Iter` (roaring), `core::array::IntoIter::new` (dary_heap) | Relax's std lacks them | added to Relax's std (below) | 23 lines |
+| `--unattended` | none: it is an option of `run`, so it goes before the package | — | — |
 
-| | Wall | CPU |
-|---|---|---|
-| `relax check` | 13.5 s | 27 s |
-| `cargo check -p rerail-rr-syntax` | 2.9 s | 0.8 s |
+The std additions are in Relax's source tree, not in this repository (`tmp/relax-src`, uncommitted):
+an `AsRef<[T]>` impl on each of the two iterators, the deprecated `IntoIter::new` of an array, and
+`vdup_lane_u32` as `uint32x2_t([a.0[N as usize]; 2])`. Relax reads its std from source, so they
+need no rebuild of Relax.
 
-Its cache reached 6.4 GB for these two crates. It needs a working rustc for `--allow-c`, and it
-cached a failed probe of the broken Homebrew rustc until `relax clean`.
+The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
+It may be the cause of 0204's phase 0 race too.
 
-The engine's crates need several things Relax does not document: bundled SQLite, tree-sitter's C,
-simdjson's C++, jemalloc, Objective-C and Metal, Cranelift's JIT, and napi.
+The bundled SQLite, tree-sitter's C, simdjson's C++, jemalloc, Objective-C and Metal, Cranelift's
+JIT and napi all worked under `--allow-c`.
 
-**Verdict: not for this workspace now.** On the code it can compile, it is slower than incremental
-cargo. Look again when it builds C natively and is faster than `cargo check` on large crates.
+### Timings
+
+All on the engine, at a load of 60–90. The cargo figures are incremental O0 builds with sccache.
+
+| Loop | Relax | | cargo | |
+|---|---|---|---|---|
+| | wall | CPU | wall | CPU |
+| `check` of the engine, cold | 206 s | 418 s | | |
+| `check` after a one-line edit in logic | 57 s | 49 s | 14 s | 9 s |
+| one session test, first run (JIT cold) | 94 s | 92 s | | |
+| the same test, warm (cache filled) | 14–23 s (the test: 1.8 s) | 20–30 s | 8.8 s run (the test: 3.7 s) | 3 s |
+| that test after a body edit in `corpus.rs`, plain `relax test` | 65 s | 119 s | 48 s (build and run) | 38 s |
+| **that test after a body edit, `relax test --live`** | **2–9 s** | **about 6 s** | 48 s | 38 s |
+| the same, after adding a function (a non-body edit) | 8 s | | | |
+| the CLI on the smoke corpus, warm | 7.8 s | 12 s | 10–32 s run, after a 54–116 s build | |
+| the CLI after a body edit, plain `relax run` | 121 s | 98 s | 64 s (build and run) | 42 s |
+| the 15 session tests, first run after an edit to `switches` | 147 s | 247 s | 93 s (build and run, 17 tests) | 111 s |
+
+In live mode the patch goes in within 0.1–2.5 s. A test that entered the changed function reruns
+(`selected=affected`); a non-body edit reruns all the selected tests. A deliberate panic showed in
+the next verdict, 1 s after the save, and undoing it passed 2 s later.
+
+### What it costs
+
+- **Memory:** the live test process held 6.2 GB.
+- **Disk:** `target/relax` reached 13 GB for the engine, on top of `target/`.
+- **Cold starts:** a first run compiles every function lazily and is slow (86 s for a test that
+  runs in 3.7 s under cargo). The cache makes the next run faster than cargo's code (1.8 s).
+- **Plain `check`, `test` and `run` after an edit are slower than cargo**, in wall and in CPU.
+  They re-check whole crates (6,223 bodies for a one-line edit in logic).
+- **It is experimental.** Its std is its own. It shares nothing with cargo's `target/`, and one
+  std gap stops a run. Its gaps list is `libs/relax/KNOWN_GAPS.md`.
+
+### Verdict
+
+**Use `relax test --live` for the inner loop of one area's tests. Keep cargo for everything else.**
+A body edit reaches a verdict in 2–9 s and about 6 s of CPU, against 48 s and 38 s for a cargo
+rebuild and run: 5–10 times shorter and about 6 times less CPU. Plain `check`, `test` and `run`
+lose to cargo after an edit, and builds for wasm, release, the gate and CI stay on cargo.
+
+What adoption needs:
+
+1. Send the std additions and the visibility bug upstream, or keep them as a patch on a pinned
+   Relax commit.
+2. A script, `scripts/dev/live-test.sh <filter>`, that starts `relax test --live rerail-engine
+   --lib -- <filter>` at `nice -n 19`, with `RUSTC_WRAPPER=` and `RELAX_ALLOW_C=1`. It prints each
+   `testverdict`, and the session stops it when the work is done.
+3. A check, before a commit, that the same tests pass under cargo. Relax's std is not rustc's.
+4. A disk budget: `target/relax` is 13 GB per worktree. `relax clean` when a worktree's work ends.
 
 ## 4. Building on other machines
 
@@ -147,27 +197,40 @@ What the idle machines can do:
 
 ## 5. The environment
 
-- **The toolchain.** Homebrew's rustc 1.97.1 aborts since the LLVM 23 upgrade, and runs only with
-  `DYLD_LIBRARY_PATH` set to LLVM 22. `rust-toolchain.toml` pins 1.95.0, but Homebrew's cargo
-  comes first on PATH, so the pin is ignored. Sessions mix Homebrew and rustup 1.97.1. Their
-  builds share no sccache entries, and switching rebuilds everything (17 min).
+- **The toolchain (fixed 2026-11-14).** Homebrew's rustc 1.97.1 aborts since the LLVM 23 upgrade,
+  and Homebrew's cargo came first on PATH, so `rust-toolchain.toml`'s pin (1.95.0) was ignored.
+  The shells' profiles also sourced a rustup env file in another project's scratch directory. Now
+  every new shell puts rustup's `~/.cargo/bin` first. A worktree then builds with its pin, 1.95.0,
+  which has `wasm32-wasip1`. The browser build checks and builds again (39a3a3cde; 161 s, after
+  `source native/wasm/env.sh`, which still uses Homebrew's clang and lld for the C). Shells started
+  before the fix keep the old PATH, and each worktree rebuilds once on 1.95.0.
 - **One `target/` per worktree.** There are 20 of them, at 60–174 GB each, and each builds the
   same crates. On 2026-11-14 the disk filled to ENOSPC during this work, which stopped every tool.
 
 ## What to do, in order of value
 
-1. **Make the session per run or per thread, not a process global, and drop `SESSION_TESTS`.**
-   This removes about half of the suite's wall time.
-2. **Put the tests of 60 s or more (about 50) in a slow tier,** run at the gate. Either ignore
+Done on this branch:
+
+- **The session is its caller's, not the process's** (decision 0204, 10a1fdef3). `SESSION_TESTS`
+  is gone. The 129 corpus and typing tests run in parallel: 82–123 s wall, against the serial chain
+  that was about half of the suite.
+- **The engine's self dev-dependency is gone** (197f2de81). The test build no longer links the
+  365 MB cdylib.
+- **One toolchain** (§5): rustup first, the pin holds, and wasm builds.
+- **The tests' template deadlock is fixed** (b038664e6, §3).
+
+Still to do:
+
+1. **Put the tests of 60 s or more (about 50) in a slow tier,** run at the gate. Either ignore
    them with a reason and run them with `--include-ignored`, or give them a test binary of their
    own. The everyday run is then the other 2,500 tests.
-3. **Run the slow tier at O1** (`[profile.test-o1]`, or `--profile profiling`): 3–4 times less CPU.
+2. **Run the slow tier at O1** (`[profile.test-o1]`, or `--profile profiling`): 3–4 times less CPU.
+3. **`relax test --live` for the inner loop** (§3), with cargo checking before each commit.
 4. **Use cargo-nextest.** It gives:
    - a process per test, so a crash costs one test, not the run;
    - per-test times;
-   - test groups, so only the session tests are serialized;
+   - test groups;
    - a slow-test timeout.
-5. **Drop the engine's self dev-dependency** and name the sub-crates' `test-hooks` directly.
-6. **Fix the stack overflow.**
-7. **One toolchain:** rustup only, so the pin holds. Then add a shared sccache backend on the mac
-   mini, and run the gates on the idle Macs.
+5. **Fix the stack overflow** in `syntax_detection_reads_a_deeply_nested_top_level`.
+6. **A shared sccache backend on the mac mini, and the gates on the idle Macs** (§4).
+7. **Update AGENTS.md's figures:** a CLI rebuild after a one-file edit is now about 20 s, not 135 s.
