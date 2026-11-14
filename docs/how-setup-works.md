@@ -530,7 +530,9 @@ writes the file again when it is gone or differs, so a start or a stop that find
 waits for it and then uses or stops that daemon, instead of starting another. Asking the lock loads the native engine,
 so a start or a stop asks it only when `locks/daemon.json`, the record the holder keeps beside the lock, names a process
 that runs, and on Windows only while the home's engine pipe is there too: Windows keeps a loaded engine from being
-deleted, and `rerail install --remove` stops the daemon before it removes `versions/`.
+deleted, and `rerail install --remove` stops the daemon before it removes `versions/`. Where the lock cannot be asked or
+taken (the engine does not load, or the lock file does not open), no start or stop waits on it, and the daemon runs
+without it, kept to one by its engine socket or pipe, as before the lock.
 
 </details>
 

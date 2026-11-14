@@ -62,22 +62,24 @@ export function forgetHomeDaemonHolder(home: string, pid: number): void {
 
 /**
  * Makes this process the daemon of `home` for the rest of its life, or throws {@link HomeDaemonConflictError} when
- * another process still holds the home after {@link ACQUIRE_WAIT_MS}. Undefined where the native binding does not
- * load: the lock cannot be tried, and the engine pipe's or socket's own check is then all that keeps a second daemon out.
+ * another process still holds the home after {@link ACQUIRE_WAIT_MS}. Undefined where the lock cannot be tried (the
+ * native binding does not load, or the lock file does not open): the engine pipe's or socket's own check is then all
+ * that keeps a second daemon out, as on a build without the lock.
  */
 export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease | undefined> {
   if (held !== undefined) throw new Error("This process already holds a Rerail home's daemon lock");
   mkdirSync(join(home, LOCKS_DIR), { recursive: true, mode: 0o700 });
   const path = join(home, LOCKS_DIR, LOCK_FILE);
   let tryLock: () => NativeExclusiveFileLock | null;
+  let lock: NativeExclusiveFileLock | null;
   try {
     const native = loadNativeBinding();
     tryLock = () => native.tryLockExclusive(path);
+    lock = tryLock();
   } catch {
     return undefined;
   }
   const deadline = Date.now() + ACQUIRE_WAIT_MS;
-  let lock = tryLock();
   while (lock === null) {
     if (Date.now() >= deadline) throw new HomeDaemonConflictError(home, homeDaemonHolder(home));
     await sleep(ACQUIRE_POLL_MS);
