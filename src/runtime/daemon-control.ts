@@ -518,7 +518,7 @@ export interface DaemonMachine {
   mainInstanceLockHeld(directory: string): boolean | undefined;
   /**
    * Whether a daemon holds the Rerail home `home` (`homeDaemonLockHeld`), its daemon.json or not; undefined when the
-   * native binding does not load.
+   * lock cannot be asked.
    */
   homeDaemonLockHeld(home: string): boolean | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
@@ -761,12 +761,14 @@ function homeHolderMayRun(home: string, pid: number, machine: DaemonMachine): bo
  * removes the record when it lets go, so a home whose daemon stopped, was killed or never ran is answered without the
  * engine. Asking the lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
  * deleted: the uninstall, which stops the daemon before it removes `versions/`, could not have removed it. Only a holder
- * that may run is asked about by its lock, which tells it from a process that took its pid since.
+ * that may run is asked about by its lock, which tells it from a process that took its pid since. A lock that cannot be
+ * asked (the engine does not load, or the lock file does not open) counts as free, so no start or stop waits on it: the
+ * daemon a start launches asks the lock itself and exits, naming the holder, when another daemon holds it.
  */
 function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
   const pid = homeDaemonHolder(home);
   if (pid === undefined || !homeHolderMayRun(home, pid, machine)) return false;
-  return machine.homeDaemonLockHeld(home) ?? true;
+  return machine.homeDaemonLockHeld(home) ?? false;
 }
 
 /**

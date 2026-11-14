@@ -116,7 +116,8 @@ function recordHolder(home: string): void {
 
 /**
  * Whether a daemon holds `home`, asked by taking its lock and giving it straight back. False where there is no lock
- * file, which is left unmade; undefined when the native binding does not load, for the caller to go on as if none did.
+ * file, which is left unmade; undefined when the lock cannot be asked (the native binding does not load, or the lock
+ * file does not open), for the caller to go on as if none did.
  */
 export function homeDaemonLockHeld(home: string): boolean | undefined {
   const path = join(home, LOCKS_DIR, LOCK_FILE);
