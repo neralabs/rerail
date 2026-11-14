@@ -804,7 +804,7 @@ Rerail is off in every repository until started. Rules belong to the repository;
 <details>
 <summary>What stopping does, inheritance and the footer</summary>
 
-A stopped checkout records nothing, runs no rules, delivers no guidance, and its hooks never autostart the daemon. A hook reads the checkout's state from the database itself, so a daemon busy with other checkouts does not slow hooks where Rerail is stopped or was never started. It asks a running daemon only where its own read could differ from the daemon's: Git gives it no answer, the coding agent's environment sets a `GIT_*` variable that can change Git's answer (any but those for prompts, editors, pagers, SSH and commit authors, so `GIT_DIR`, `GIT_CEILING_DIRECTORIES` and `GIT_CONFIG_GLOBAL` among them), or it cannot read the database.
+A stopped checkout records nothing, runs no rules, delivers no guidance, and its hooks never autostart the daemon. A hook there reads the checkout's state from the database and the folders on disk, without running Git, so a daemon busy with other checkouts does not slow it. It asks a running daemon wherever those cannot show that the daemon would say stopped: a repository Rerail never recorded, such as a new clone (only its remote, which Git reads, places it), a database it cannot read, or a `.git` that Git reads in another way (a `core.worktree` setting, a damaged `.git`).
 
 A checkout without its own value inherits from the nearest containing checkout of the same repository with one, else the repository. Starting or stopping a checkout reaches the checkouts inside it, which follow it again.
 
