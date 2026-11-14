@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CheckoutCatalogs, codeRuleSchema, SqliteAuditControlStore, type AdapterEvent, type AuditRecorder, type CodeRuleAuditor,
+  CheckoutCatalogs, CodeRuleBridge, codeRuleSchema, SqliteAuditControlStore, type AdapterEvent, type AuditRecorder, type CodeRuleAuditor,
   type RuleSteerDelivery,
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
@@ -40,6 +40,22 @@ function holdOpen(path: string) {
   }]);
   heldOpens.releases.push(released.resolve);
   return { entered: entered.promise, release: () => released.resolve() };
+}
+
+/**
+ * Holds the next read of where a session's walks stand (`CodeRuleBridge.walkResume`), which the idle close makes before
+ * it suspends the session, until `release`; `entered` settles once it has begun.
+ */
+function holdWalkResume() {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const walkResume = CodeRuleBridge.prototype.walkResume;
+  const spy = vi.spyOn(CodeRuleBridge.prototype, "walkResume").mockImplementationOnce(async function (this: CodeRuleBridge) {
+    entered.resolve();
+    await released.promise;
+    return await walkResume.call(this);
+  });
+  return { entered: entered.promise, release: () => released.resolve(), restore: () => spy.mockRestore() };
 }
 
 const roots: string[] = [];
@@ -331,6 +347,56 @@ describe("the engine service's idle close", () => {
     await service.close();
     expect(ended("a")).toBe(quietAt);
     expect(live("a")).toBe(false);
+  });
+
+  // The session's next event opens it and takes its suspension back. A suspension left in the service would end the
+  // record again at the stop, at the time the session first went quiet, though the session was at work after it.
+  it("ends a session that opened again after the quiet at the service's stop, not at the time it went quiet", async () => {
+    const { clock, service, start, prompt, ended } = await idleService();
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    await prompt("a", "back");
+    services.splice(services.indexOf(service), 1);
+    const stoppedAt = Date.now();
+    await service.close();
+    expect(ended("a")).toBeGreaterThanOrEqual(stoppedAt);
+  });
+
+  // The open session's control timer can claim a queued scan while the idle close reads where the session's walks
+  // stand. A close that went on then would cut the scan off: "Session closed during scan".
+  it("keeps a quiet session open when it takes a scan while the idle close reads its walks, and runs the scan", async () => {
+    const auditing = Promise.withResolvers<void>();
+    const { create, scans, looked } = recordingAuditor({ auditing: auditing.promise });
+    const { first, clock, service, start, ended, databasePath } = await idleService({ createAuditor: create });
+    await writeFile(join(first, "app.py"), "x = 1\n");
+    await start("a");
+    // The evaluator is open, so the idle close reads where the walks stand.
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    const reading = holdWalkResume();
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      clock.now += 60_000;
+      const sweeping = service.closeIdleSessions();
+      await reading.entered;
+      const request = controls.requestAudit("a", { scope: "repository" });
+      await vi.waitFor(() => expect(scans).toEqual(["repository"]), { timeout: 10_000, interval: 20 });
+      reading.release();
+      // The scan runs on until the sweep is done: a close that waited for it would wait here.
+      await Promise.race([sweeping, delay(2_000)]);
+      auditing.resolve();
+      await sweeping;
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(service.openRuntimes()).toBe(1);
+      expect(ended("a")).toBeNull();
+    } finally {
+      reading.release();
+      reading.restore();
+      auditing.resolve();
+      controls.close();
+    }
   });
 
   // At base a scan asked for an open session was claimed within 250 ms and ran; the idle close failed it with
@@ -910,6 +976,27 @@ describe("the engine service's idle close", () => {
     if (end === "stopped") startTestRepository(first, databasePath);
     const delivered = await sendAgain({ kind: "user-prompt", eventId: "a:resumed", sessionId: "a", session: session("a"), text: "resumed" });
     expect(delivered.map(delivery => delivery.content)).toEqual(end === "none" ? ["Fix a.py."] : []);
+  });
+
+  // A stopped repository records nothing. The daemon's stop there wrote the steer its session owed to the ledger all the
+  // same, and once the repository started again the session's next event gave the agent a steer from before the stop.
+  it("keeps no steer a session owed when the daemon stops in a repository stopped before", async () => {
+    const { first, service, session, start, steer, databasePath } = await steeringService();
+    await start("a");
+    await steer("a", "Fix a.py.");
+    stopTestRepository(first, databasePath);
+    services.splice(services.indexOf(service), 1);
+    await service.close();
+    startTestRepository(first, databasePath);
+    const root = dirname(databasePath);
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-again-${process.pid}-${Date.now()}` : join(root, "engine-again.sock");
+    const again = await startEngineService({
+      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0,
+      createAuditor: quietAuditor,
+    });
+    services.push(again);
+    const delivered = await ingestEngineEvent({ socketPath }, { kind: "user-prompt", eventId: "a:resumed", sessionId: "a", session: session("a"), text: "resumed" });
+    expect(delivered).toEqual([]);
   });
 
   // Suspended and opened again by its next event, the session would check the agent's next edit only at the turn end.

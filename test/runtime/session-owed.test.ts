@@ -459,4 +459,39 @@ describe("what a session owes its agent while it is closed", () => {
       await owing.runtime.dispose();
     }
   });
+
+  // Two answers collecting at once each took the steer the session owed before either had read its file, and both gave
+  // it out.
+  it("gives a steer a session owed once when two answers collect what it owes at once", async () => {
+    const owing = await owingSession();
+    const { sessionId } = owing.session;
+    try {
+      await owing.steer();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      // A scan opens the session with no event, so the steer its ledger gave back stays owed.
+      await owing.runtime.resumeSession(owing.session);
+      const collected = await Promise.all([owing.runtime.collectDeliveries(sessionId), owing.runtime.collectDeliveries(sessionId)]);
+      expect(collected.flat().map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The answer that gave out an owed steer left the ledger saying it was still owed until a close wrote it again, so a
+  // daemon that died in between gave the same steer again at the session's next open.
+  it("gives a steer owed across a close once, also when the daemon dies after giving it out", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      expect((await owing.prompt("after-restart")).map(delivery => delivery.content)).toEqual([STEER]);
+      // The ledger as a daemon that died here leaves it: the close of the runtime below would write it again.
+      const leftByCrash = await readFile(owing.ledger, "utf8");
+      await owing.reopen();
+      await writeFile(owing.ledger, leftByCrash);
+      expect(await owing.prompt("after-crash")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
 });
