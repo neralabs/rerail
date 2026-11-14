@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 652 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #652</div>
+  <h1>Daemon: a stop cuts a stalled request and ends without the kill</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>May a stop cut a request that sent nothing for a second or two, so a stall no longer costs 10 s and a kill?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>During a stop, a client pausing a second or two inside one request is cut.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> approve it once you agree to answer 1: side by side with <code>main</code> on Linux x64 and Windows 11 every hook <code>main</code> answers is answered here, and Rerail&#x27;s clients send each request in one write.</p>
+  <div class="big">
+    <div><b class="w">752 lines</b><span>in 5 files. 119 ship, 633 are tests and text.</span></div><div><b class="w">Fast lane</b><span>No high-risk path; the automated reviewer approved ffd9a7e3a.</span></div><div><b class="w">Waits on a maintainer&#x27;s review</b><span>CI passed at ffd9a7e3a, first attempt; no person has reviewed.</span></div><div><b class="w">5 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/652">GitHub</a> on 14 November 2026, at head ffd9a7e3a.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>The stop</b></td><td class="in" data-l="Intended"><code>rerail daemon stop</code> is &quot;a graceful stop (SIGTERM, or on Windows a request over its API); forced termination after 10 s&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">One request that stalls partway holds the close with no limit: the stop waits, then kills the daemon, which runs no clean-up. 3 of 3 runs. <span class="tagx">#609&#x27;s steps, Linux x64</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> The closing service cuts a request that has not all arrived, after a second or two of silence. One whose body arrived is kept, whatever its client sent after it.</td></tr></tbody></table>
+<figcaption>Reported in #609 on 12 November 2026; its steps reproduce it on Linux x64.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">The stop</td><td data-l="Where main states the intent"><code>docs/reference.md</code> line 405: &quot;a graceful stop (SIGTERM, or on Windows a request over its API); forced termination after 10 s, and an error if the process outlives that by 5 s.&quot; <code>src/runtime/daemon-control.ts</code> lines 1108 to 1109, a code comment: in the daemon&#x27;s own shutdown &quot;requests from other sessions finish, and it removes its state file and main-instance record.&quot;</td><td data-l="The cause, and what was measured"><code>close</code> (<code>src/runtime/engine-service.ts</code> line 576) calls <code>server.close()</code> and waits for every connection. Line 587 gives a request 30 s, but once the server closes, Node 24 stops the check that enforces it, so a stalled request holds the close with no limit. Linux x64, 3 runs each: 10.16 s with a SIGKILL every run on <code>main</code>, 1.11 s with none here. After a SIGTERM with no kill behind it, <code>main</code> still ran 25 s later in all 9 cases.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>engine-service.ts</code>: <code>awaitsRequest</code>, the <code>finish</code> handler in <code>trackConnections</code>, <code>cutStalledRequests</code>, then <code>close()</code></b><span class="min">12 min</span><span class="x">Can a request whose body arrived, or an answer still being written, ever be cut?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">6 min</span><span class="x">No assertion of <code>main</code> is removed: each test file changes two import lines and adds tests, fourteen in all. Read the docs line: it now says what a stop answers.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Stalled cut, medium risk: users lose nothing holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><text x="12" y="56" class="t b">Stalled cut</text><g><title>Stalled cut, fails without the fix: On `main` at c89f068ed on Linux x64, the two test files of ffd9a7e3a fail 8 of 58: the stop test ends in one SIGKILL, five stalls stay open, and the two list tests have no `trackConnections` to call. The two tests added in 08de63843 fail on Linux x64 and Windows 11 with either fix line removed.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Stalled cut, independent review: Reads of the branch at seven heads found behaviour defects at 6bd876ba6, efbe031ef and 2d0b58a8a and a wrong answer of ours at 1eda50da2; each has its fix and a test. The read of ffd9a7e3a found none in 20 cases against `main` on Linux x64 and Windows 11. The automated reviewer approved ffd9a7e3a with no blocker, follow-up or nit.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Stalled cut, users lose nothing: Beside `main` on Linux x64 and Windows 11 at ffd9a7e3a, 0, 1 or 20 hooks waiting on events of 1 s, 9 s or never ending, a stalled request or none: every hook `main` answers is answered, at most 46 ms later on Linux x64 and 63 ms on Windows 11. The limit: answer 1 is cut on purpose.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Stalled cut, rules scan: nothing new: The automated reviewer&#x27;s rules scan over the diff against `main`, on Linux, at ffd9a7e3a: no new finding. It found none at 4b2cea09e, c28ec2b8f and 404f30d31 either.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Stalled cut, Windows 11: no new failure: At ffd9a7e3a, 9 test files (the change&#x27;s and those of the engine service&#x27;s importers), the close tests&#x27; file run 10 times: 265 passed, 18 skipped (Unix-socket and POSIX-only tests), 0 failed, none outside `main`&#x27;s baseline. #609&#x27;s steps stop in 1.08 to 1.10 s with no kill. CI&#x27;s two Windows unit jobs pass at ffd9a7e3a on the first attempt (check 6).</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Stalled cut, CI at this head: Run 43589689351 at ffd9a7e3a, read on 14 November 2026: 24 checks, 19 pass, 5 are skipped, none fails, and every job passed on the run&#x27;s first attempt.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>One half mark, none open. Start at check 3: one request <code>main</code> answers is cut here, on purpose.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Stalled cut</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">Beside <code>main</code> on Linux x64 and Windows 11 at ffd9a7e3a, 0, 1 or 20 hooks waiting on events of 1 s, 9 s or never ending, a stalled request or none: every hook <code>main</code> answers is answered, at most 46 ms later on Linux x64 and 63 ms on Windows 11. The limit: answer 1 is cut on purpose.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip medium"><i></i>Medium risk</span> <b>The close cuts stalled requests</b>: #609&#x27;s steps, Linux x64, 3 runs each: 10.16 s and a SIGKILL on <code>main</code>; 1.11 s and none here.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>What may the close cut? <span class="chip answer"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> only a request that stalls: cutting every connection resets a running event&#x27;s hook.</p>
+<p><b>Would change our mind:</b> a Rerail client that streams its request body or pauses inside it.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Keep requests that arrived; cut ones that stall, and connections that sent none <span class='tag new'>chosen</span></td><td data-l="What a user gets">Every hook whose request arrived gets its answer. A stop with one stalled request ends in 1.1 s, with no kill.</td><td data-l="Cost">A look a second while the service closes, and a map of open connections.</td><td data-l="What it breaks">A client that pauses over a second inside one request during a stop is cut: <a href="#decision">answer 1</a>.</td></tr><tr><td class="k">Cut every connection as the close begins (07d749d7a)</td><td data-l="What a user gets">The shortest stop.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">The running event&#x27;s hook gets a reset, and queued events are neither run nor recorded.</td></tr><tr><td class="k">Refuse queued events some seconds into a stop (built and set aside)</td><td data-l="What a user gets">A refusal a hook can read, in place of a reset at the kill.</td><td data-l="Cost">About 1,100 more lines. #609&#x27;s first comment describes it.</td><td data-l="What it breaks">It refuses events <code>main</code> runs in the time left, and every queued event after an operating system&#x27;s SIGTERM.</td></tr><tr><td class="k">Do nothing (<code>main</code>)</td><td data-l="What a user gets">Every event runs until the kill.</td><td data-l="Cost">The full wait and a SIGKILL for each stop with a stalled request.</td><td data-l="What it breaks">The daemon&#x27;s clean-up is skipped.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a stop with one stalled request</div><svg viewBox="0 0 340 132" role="img" aria-label="At main the close calls server.close() and waits for every connection. A stalled request holds it with no limit, so rerail daemon stop sends SIGKILL at 10 s and the daemon runs no clean-up." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">close: server.close()</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="38" rx="8" class="bx "/><text x="170" y="63.5" text-anchor="middle" class="t s">wait for every connection: a stalled request</text><text x="170" y="76.5" text-anchor="middle" class="t s">holds it, no limit</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="28" rx="8" class="bx "/><text x="170" y="114" text-anchor="middle" class="t s">rerail daemon stop: SIGKILL at 10 s, no clean-up</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 191" role="img" aria-label="With this change the close calls server.close(), then looks every second and cuts a request that sent nothing since the last look. It runs every event whose request arrived and answers each hook. When the last connection ends, the runtimes close, the clean-up runs and the daemon exits." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">close: server.close()</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="63.5" text-anchor="middle" class="t s">a look every second: cut a request silent since</text><text x="170" y="76.5" text-anchor="middle" class="t s">the last look</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="38" rx="8" class="bx "/><text x="170" y="112.5" text-anchor="middle" class="t s">run every event whose request arrived, answer</text><text x="170" y="125.5" text-anchor="middle" class="t s">each hook</text><line x1="170" y1="135" x2="170" y2="144" class="ar " marker-end="url(#ah)"/><rect x="20" y="145" width="300" height="38" rx="8" class="bx "/><text x="170" y="161.5" text-anchor="middle" class="t s">last connection ends: runtimes close, clean-up,</text><text x="170" y="174.5" text-anchor="middle" class="t s">exit</text></svg></div></div><p><b>Evidence.</b> On <code>main</code>&#x27;s source the stall test reads &quot;still open&quot; and the stop test counts one SIGKILL after 10.7 s (Linux x64). At 07d749d7a, which cut every connection, the three close tests fail with <code>socket hang up</code> where <code>answered</code> was expected. With the guard line removed at 4b2cea09e, both guard tests fail the same way. The description&#x27;s &quot;Decision 1&quot; holds the same table.</p></details></div>
+<div class="dblock"><h3>How long may a request send nothing? <span class="chip answer"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> one second between looks: five makes a stalled stop 5.0 s.</p>
+<p><b>Would change our mind:</b> a hook seen pausing over a second inside a request.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">1 s between looks <span class='tag new'>chosen</span></td><td data-l="What a user gets">A stop with one stalled request takes 1.115 to 1.118 s, with no kill. A 0.5 s pause inside a request is answered.</td><td data-l="Cost">Pauses of 1.6, 4 and 6 s inside one request are cut at 1.01 s, where <code>main</code> answers them.</td><td data-l="What it breaks">Nothing a Rerail client does: every hook and the event stream hand the socket the headers and the whole body in one <code>end(body)</code>, and the engine proof sends headers only.</td></tr><tr><td class="k">5 s between looks</td><td data-l="What a user gets">Pauses of 0.5, 1.6 and 4 s are answered. A 6 s pause is cut at 5.01 s.</td><td data-l="Cost">A stop with one stalled request takes 5.040 to 5.047 s, with no kill.</td><td data-l="What it breaks">Nothing found.</td></tr><tr><td class="k">No cut (<code>main</code>)</td><td data-l="What a user gets">All four pauses are answered.</td><td data-l="Cost">A stop with one stalled request takes 10.169 to 10.192 s, with one SIGKILL each run.</td><td data-l="What it breaks">The daemon&#x27;s clean-up is skipped.</td></tr></tbody></table></div><p><b>Evidence.</b> Measured at d34fe2f94 on Linux x64; the first request&#x27;s cut is unchanged since. The stop: <code>stopDaemon</code> against a daemon from the built package, 3 runs. A pausing client sends half its request, waits, then sends the rest. A cut needs two looks a second apart that both find nothing new, so it comes one to two seconds after the last byte. Windows 11: the 0.5 s pause is answered, the 1.6 s and 4 s pauses are cut.</p></details></div>
+<div class="dblock"><h3>On a connection its client keeps open, what marks a next request?</h3>
+<p><b>We chose</b> bytes read since an answer: a whole request sent late is still answered.</p>
+<p><b>Would change our mind:</b> a Rerail client that keeps engine connections open.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Bytes read since the answer to a whole request <span class='tag new'>chosen</span></td><td data-l="What a user gets">A next request that stalls in its headers is cut: the connection ends at 6.00 s and at 1.0 s in the two cases measured. A whole request sent late is answered, as on <code>main</code>.</td><td data-l="Cost">18 code lines added and 6 removed, one union type, then one condition, then a queue per connection: 10 code lines added and 2 removed.</td><td data-l="What it breaks">Nothing against <code>main</code> in 30 cases at 4b2cea09e and 20 at ffd9a7e3a, on Linux x64 and Windows 11; the 20 have a client that sends ahead or keeps its connection. Three cases stay as on <code>main</code>: <a href="#gaps">part 8</a>.</td></tr><tr><td class="k">Leave it to Node&#x27;s keep-alive timeout (<code>main</code>)</td><td data-l="What a user gets">A whole request sent late is answered.</td><td data-l="Cost">No code.</td><td data-l="What it breaks">A next request that stalls in its headers is not cut: 10.6 s in one case, past the kill, and still open at 17 s in the other.</td></tr><tr><td class="k">Clear the entry once the answer is written (the automated review&#x27;s first fix)</td><td data-l="What a user gets">A next request that stalls in its headers is cut.</td><td data-l="Cost">One line.</td><td data-l="What it breaks">A whole request sent late is lost: the connection is gone 2.0 s in and the request is never sent.</td></tr></tbody></table></div><p><b>Evidence.</b> <code>main</code> at c89f068ed against 4b2cea09e, Linux x64 and Windows 11, two to four rows a case, times from the close&#x27;s start. Part of a next request&#x27;s headers 0.1 s after an answer 4.5 s into the close: 10.60 to 10.66 s on <code>main</code>, 6.00 to 6.13 s here. One header byte every 2 s: open at 17 s on <code>main</code>, cut at 1.00 to 1.04 s here. A whole request 2.5 s after an answer is answered on both.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>It stands on <code>main</code> alone and merges clean at c89f068ed; nothing waits on it.</p>
+<p>Of ten open pull requests sharing a file, two conflict in a trial merge: #680 in <code>close()</code>, #657 in one test&#x27;s import lines.</p>
+<details class="ev"><summary>Trial merges and shared files</summary><p><code>git merge-tree</code> of ffd9a7e3a with each head on GitHub on 14 November 2026. #680 (ours, a draft) at 961848254 conflicts in the body of <code>close()</code> in <code>src/runtime/engine-service.ts</code>: each wraps a different call in <code>try</code>/<code>finally</code>. #657 (ours, in review) at cf986a055 conflicts in the import lines of <code>test/runtime/daemon-control.test.ts</code>. Whichever lands second keeps both, and that fix is ours to make. Clean: the team&#x27;s #667, #640 and #562, and our #665, #672, #673, #674 and #678, which edit <code>docs/reference.md</code>, <code>engine-service.ts</code> (#667) or the daemon-control test (#673, #678) in other lines.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>How often a request stalls in the field:</b> not known. #609&#x27;s two field stops could have had this cause or #689&#x27;s.</li>
+<li><b>Events still running at the kill:</b> the daemon is killed, as on <code>main</code>. That cause is #689, which this change leaves open.</li>
+<li><b>Three kept-connection cases stay as on <code>main</code>:</b> each is left to Node&#x27;s keep-alive timeout and can hold the close past the kill (the limits below).</li>
+<li><b>Two lines have no test:</b> <code>stopLooking()</code> in the close&#x27;s <code>finally</code>, and the <code>finish</code> listener&#x27;s guard for a connection already closed.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Five smaller gaps, seven limits that stay</summary><ul class="facts">
+<li><b>A second stop, a session start.</b> A second <code>rerail daemon stop</code> while a first waits ends the daemon at once, on <code>main</code> and here. A session start 5 or 9 s into a stop with a stalled request fails on <code>main</code>; at 6bd876ba6 it was served (Linux x64).</li>
+<li><b>Windows 11 under load.</b> Two cases of 20 hooks queued behind a 9 s event lost 12 and 14 hooks to the kill in one run. One has no stalled request, so it runs <code>main</code>&#x27;s path: alternating runs, 16 a side, answered 14.6 of 20 on <code>main</code> and 14.9 here.</li>
+<li><b>The stop test&#x27;s clean-up.</b> It failed in 6 of 40 rounds at 18a6c39e3 on Linux x64, after its body passed: its folder went while a thread of the stopped daemon still ran. Since 2d0b58a8a it waits until its daemon is gone: 0 of 40. The cause is <code>main</code>&#x27;s (#688).</li>
+<li><b>The automated reviewer&#x27;s two nits at 2d0b58a8a, both in tests.</b> A wait in the stop test&#x27;s <code>finally</code> could hide the test&#x27;s own failure, and a test helper unsubscribed a microtask late. 294dd8403 and 404f30d31 answer them, and the reviewer&#x27;s review of ffd9a7e3a counts both as fixed.</li>
+<li><b>One commit message is wrong.</b> 1eda50da2 says of a connection its client keeps open that &quot;it never holds a stop to its 10 s kill&quot;. It can: decision 3. 8b02c7d74&#x27;s message says so, and its code replaces that comment. Pushed commits are not rewritten.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li><code>stopDaemon</code> and its 10 s before the kill, <code>daemon.ts</code>, <code>daemon-exit.ts</code>, <code>daemon-control.ts</code>, the start path and the daemon&#x27;s HTTP server are unchanged.</li>
+<li>A kept connection that sends nothing after its answer ends about 6 s after that answer (Node&#x27;s keep-alive timeout). One answered more than 4 s into the close holds it past the kill, as on <code>main</code>.</li>
+<li>Part of a next request&#x27;s headers sent before the answer was written counts with the answered request, so that connection is left to the same timeout.</li>
+<li>After a request answered on its headers alone whose body then came, a next request that stalls in its headers is left to the same timeout.</li>
+<li>An event that never ends still holds the close: <code>rerail daemon stop</code> kills the daemon at 10 s and every waiting hook gets a reset, on <code>main</code> and here.</li>
+<li>A client of the engine socket can see one new thing: during a close, a connection whose request stalls is destroyed. No rule file, command, API or stored data changes.</li>
+<li>At run time a hook&#x27;s connection and its request cost two listeners, four map writes and a queue entry, and the closing service looks once a second.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>May a stop cut a request that has sent nothing for a second or two?</b> We recommend yes: Rerail&#x27;s clients send each request in one write.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs, the cases beside <code>main</code> and each review&#x27;s findings.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43589689351 at ffd9a7e3a, read on 14 November 2026</td><td data-l="Result">24 checks: 19 pass, 5 are skipped, none fails, all on the first attempt. At 404f30d31, run 43575929402 failed on each of three attempts, only in <code>Unit tests (Windows, 2/2)</code> and <code>CI result</code>, on tests of <code>main</code> this change does not touch (#683 in all three, #691 in the first, #681 in the third). At 2d0b58a8a, run 43569053686 passed on its third attempt after the #681 test failed twice.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Failing first: the two test files of ffd9a7e3a on <code>main</code> at c89f068ed; before that, the first tests on <code>main</code>&#x27;s source</td><td data-l="Result">8 of 58 fail: the stop test ends in one SIGKILL, five stalls stay open, and the two list tests have no <code>trackConnections</code> to call. With the first tests, 2 fail: the stalled request stays open, and the stop ends in one SIGKILL after 10.7 s.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">ffd9a7e3a: the 9 test files of the change and of the modules importing the engine service, the close tests run 20 times on Linux x64 and 10 on Windows 11; then a second run with 20 on each</td><td data-l="Result">Linux x64: 419 passed and 4 failed, each a 5 s timeout under a load of 13.5 in <code>hook-host</code> and <code>engine-service-runtimes</code> tests; those two files then passed 27 of 27 on a second machine, and the second run passed 423 of 423. The close tests: 280 of 280 in each. Windows 11: 265 passed, 18 skipped, 0 failed; then 405 passed, 18 skipped, 0 failed.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">ffd9a7e3a beside <code>main</code>: #609&#x27;s steps against a daemon from the built package, 3 runs each. Then 0, 1 or 20 hooks waiting on events of 1 s, 9 s or never ending, with and without a stalled request</td><td data-l="Result">Linux x64: <code>main</code> 10.16 s with a SIGKILL every run, this branch 1.11 s with none. Windows 11: <code>main</code> 10.04 to 10.05 s with a kill, this branch 1.08 to 1.10 s with none. An idle daemon: 0.10 to 0.13 s on both. Every hook <code>main</code> answers is answered here, at most 46 ms later on Linux x64 and 63 ms on Windows 11.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The case fixed in 08de63843, at 404f30d31 and at ffd9a7e3a beside <code>main</code> at c89f068ed. Then 20 cases with a client that sends ahead or keeps its connection</td><td data-l="Result">A whole first request whose event runs, then a next request&#x27;s headers and one byte of its body. 404f30d31: cut 1.0 s into the close, the first request unanswered. ffd9a7e3a: answered 1.5 s in, when its event ends, and the stalled request cut 3.0 s in. <code>main</code> answers it and never cuts. In the 20 cases every request whose body arrived is answered wherever <code>main</code> answers it.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The stop test, 40 rounds at each of three commits</td><td data-l="Result">It failed 6 of 40 at 18a6c39e3, 4 of 40 at c28ec2b8f and 0 of 40 at 2d0b58a8a. Each failure came in the test&#x27;s clean-up, after its body passed (#688).</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran"><code>main</code> at c89f068ed against 4b2cea09e, Node 24.21: four kept-connection cases, two to four rows a case</td><td data-l="Result">Part of a next request&#x27;s headers 0.1 s after an answer 4.5 s into the close: <code>main</code> ends at 10.60 to 10.66 s, this branch at 6.00 to 6.13 s. One header byte every 2 s: open at 17 s on <code>main</code>, cut at 1.00 to 1.04 s here. A whole request sent late, in two cases: answered on both, with no difference measured.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The automated reviewer&#x27;s rules scan over the diff against <code>main</code>, at ffd9a7e3a and at three earlier heads: 4b2cea09e, c28ec2b8f and 404f30d31</td><td data-l="Result">No new finding.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b><code>main</code> writes the intent down.</b> The description quotes no intent. Part 2 adds the docs&#x27; line: <code>rerail daemon stop</code> is &quot;a graceful stop&quot;, with forced termination behind it. Its fold adds a comment in <code>daemon-control.ts</code>: in the daemon&#x27;s own shutdown &quot;requests from other sessions finish&quot;. So this closes a gap between those texts and the code, and changes one answer: a request that pauses partway during a stop no longer finishes.</li>
+<li><b>Our answer to the read-first question.</b> No, at ffd9a7e3a: <code>awaitsRequest</code> is false for a request whose <code>complete</code> is true, and 08de63843 holds a connection at its oldest request still owed an answer, so no look cuts it. A read at 2d0b58a8a found one exception: a next request sent ahead of its answer replaced the entry, and when its body stalled the look cut the connection, the first request unanswered. An answer still being written stays.</li>
+<li><b>#609&#x27;s latest comment asks this report&#x27;s one question.</b> May a stop cut a request that has sent nothing for a second or two, and at which threshold: 1 s as built, 5 s, or no cut? The three questions its first comment asked moved to #689: keep <code>main</code>&#x27;s 10 s or wait longer, a refusal a hook can read for events queued at the kill, and sending a refused event again. No maintainer has answered either.</li>
+<li><b>Two lines have no test.</b> The description names neither. <code>stopLooking()</code> in the close&#x27;s <code>finally</code>: a read of the tests at 2d0b58a8a finds none that fails without it; without it a timer looks over an empty list each second until the process exits. The <code>finish</code> listener&#x27;s guard for a connection already closed: with it removed at ffd9a7e3a the close tests&#x27; file still passes 14 of 14 on Linux x64.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #652, its diff, checks and reviews, issue #609 with its comments, issues #681, #683, #688, #689 and #691, read on GitHub, 14 November 2026. Rerail at <code>main</code> (c89f068ed) for each quoted intent. The description for the runs and timings. The heads of the ten open pull requests sharing a file, for the trial merges at ffd9a7e3a. The automated reviewer&#x27;s reviews of 2d0b58a8a and ffd9a7e3a for its nits.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
