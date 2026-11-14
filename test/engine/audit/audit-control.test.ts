@@ -96,7 +96,6 @@ describe("audit controls", () => {
       const spelled = join(dirname(stored).replace(/^[A-Z]:/u, drive => drive.toLowerCase()), "app");
       sessionStore.openSession({ host: "claude-code", sessionId: "spelled", cwd: spelled });
       const earlierKey = realpathSync(spelled);
-      expect(earlierKey).not.toBe(stored);
       const rows = () => {
         const database = openRerailDatabase(sessionStore.path);
         try {
@@ -112,33 +111,38 @@ describe("audit controls", () => {
       return { stored, spelled, earlierKey, controls, sessionStore, rows, saveAsEarlier };
     }
 
-    it("reads the audit mode 0.1.4 saved there, for the session and by the folder", async () => {
-      const { spelled, controls, sessionStore, saveAsEarlier } = await spelledFixture();
+    /** `check` on a fresh {@link spelledFixture}, its stores closed however it ends, so the folder can be removed. */
+    async function inSpelledFolder(check: (folder: Awaited<ReturnType<typeof spelledFixture>>) => void): Promise<void> {
+      const folder = await spelledFixture();
+      try {
+        expect(folder.earlierKey).not.toBe(folder.stored);
+        check(folder);
+      } finally {
+        folder.controls.close(); folder.sessionStore.close();
+      }
+    }
+
+    it("reads the audit mode 0.1.4 saved there, for the session and by the folder", () => inSpelledFolder(({ spelled, controls, saveAsEarlier }) => {
       saveAsEarlier({ scope: "ai-output", mode: "log" });
       expect(controls.getSettings("spelled").settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "message" });
       expect(controls.hasUserSettings("spelled")).toBe(true);
       expect(controls.getWorkspaceSettings(spelled)?.mode).toBe("log");
-      controls.close(); sessionStore.close();
-    });
+    }));
 
-    it("reads a row saved under the stored spelling before the one 0.1.4 saved", async () => {
-      const { stored, controls, sessionStore, saveAsEarlier } = await spelledFixture();
+    it("reads a row saved under the stored spelling before the one 0.1.4 saved", () => inSpelledFolder(({ stored, controls, saveAsEarlier }) => {
       saveAsEarlier({ scope: "ai-output", mode: "log" });
       controls.updateWorkspaceSettings(stored, { mode: "steer" });
       expect(controls.getSettings("spelled").settings.mode).toBe("steer");
-      controls.close(); sessionStore.close();
-    });
+    }));
 
-    it("saves a change under the stored spelling over what 0.1.4 saved, and leaves 0.1.4's row as it was", async () => {
-      const { stored, earlierKey, controls, sessionStore, rows, saveAsEarlier } = await spelledFixture();
+    it("saves a change under the stored spelling over what 0.1.4 saved, and leaves 0.1.4's row as it was", () => inSpelledFolder(({ stored, earlierKey, controls, rows, saveAsEarlier }) => {
       saveAsEarlier({ scope: "repository", mode: "log" });
       controls.updateSettings("spelled", { steerStrategy: "rewind" });
       expect(rows()).toEqual({
         [stored]: { scope: "repository", mode: "log", steerStrategy: "rewind" },
         [earlierKey]: { scope: "repository", mode: "log" },
       });
-      controls.close(); sessionStore.close();
-    });
+    }));
   });
 
   it("retries an interrupted repository audit in a later session, and never a completed one", async () => {
