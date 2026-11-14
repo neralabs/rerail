@@ -186,3 +186,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177: marks from checks at the token (`at`/`after KIND when …`): `float_after` and `json_bad`; the `\u` checks tier 2's at the string by its kind, no `f_str`; the CPU reads no region, its form calls no walk; 57 operations | | | |
 | 0177: the end rule by a jump table (`br_table`, a `match` in the Rust); the pairs one table, all punctuation one rule; 11 rules to 7; tier 1's Rust 260 KB to 250 KB | | | |
 | 0177: the token loop in the block loop: no call a block, its state the block loop's values; tier 1's Rust 3 functions (block loop, general body, the file's end), 250 KB to 253 KB | | | |
+| 0177: a loop over a block's starts: the starts left (`cand`) and the run words in registers at the loop's head; a token `base + ctz(cand)`, the block loaded once when none is left; no skip load a token | | | |

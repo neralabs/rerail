@@ -51,7 +51,7 @@ by its own reader, its checks made at it. The CPU's tier 1 is generated to that 
 |---|---|---|---|
 | A block's masks | space, word, rare, pair | `skip`, the runs, the pair (1, 1 and 9, 31 operations) | yes (2c) |
 | The token loop | in the block loop | in the block loop, after each block, over the blocks whose outputs are final; its state the loop's values | yes |
-| A token's start | the first non-space after the one before | `skip`'s words after the token before (`records::walk`) | yes (2a) |
+| A token's start | the first non-space after the one before | the block's starts in a register, the first left (`records::walk`) | yes (2a, then registers) |
 | A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
 | A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
 | The checks | at the token | the fallback and the marks, masks at every byte | no |
@@ -334,6 +334,25 @@ to the next block. Its four state words are the block loop's values, passed roun
 carries are. Only the file's end (its counts, the marks of any word) is still a call, once a
 file. Tier 1's Rust is three functions, from four.
 
-Next: the loop reads the masks from the block's rows in memory. A mask with no delay is in a
-register at the loop; a delayed one is the word before and this one, joined.
+## A loop over a block's starts
+
+The lean lexer takes a block's starts as one mask and each token as its first bit left
+(`trailing_zeros`); a token's run is the word mask's ones in a register. The token loop
+searched the skip mask from the token before, a load a token, and each run rule loaded its
+word. Now the loop's head holds, in registers, as the lean lexer's window does:
+
+```text
+cand   the block's starts left: not skip, from the cursor
+runs   each run rule's word of the block (the word's, the number's)
+```
+
+A token is `base + ctz(cand)`; after it, `cand` keeps its bits past the token's end while
+the end is in the block, and is zero when it is not. With `cand` zero the loop loads the
+cursor's block once (its skip word and run words), a word at a time past a block with no
+start, as far as the blocks whose outputs are final. A run rule reads its word from the
+register, but for a token at the block's last byte, whose run starts in the next block (a
+cold block, as the lean lexer's word on past the block).
+
+Next: the readers' openers and the tests still load a mask word at their token; the lean
+lexer reads those tokens' bytes.
 
