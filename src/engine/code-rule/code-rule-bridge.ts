@@ -1774,9 +1774,16 @@ export class CodeRuleBridge {
   /**
    * Lists `checkout` again once it holds a slot to ask Git. Only Git holds the slot: it goes to the next listing once Git
    * has answered or has run `LISTING_AGAIN_WAIT_MS`, so reading and keeping the files it lists run beside the next.
+   * A listing whose session closed before it got its slot hands the slot on at once and asks Git nothing, answering as
+   * a read the session's close stopped does: the close waits for the bridge's queue before it stops the session's Git
+   * reads, and an audit can hold that queue for seconds.
    */
   async #gitListingInSlot(discovery: SourceDiscovery, checkout: string): Promise<ChangedPathsListing> {
     await slotTaken(discovery.listingSlots);
+    if (this.#abandoned(discovery)) {
+      slotHandedOn(discovery.listingSlots);
+      return { ended: "timed-out" };
+    }
     const listing = this.#gitListingAgain(discovery, checkout);
     void settledOrAfter(listing, LISTING_AGAIN_WAIT_MS).then(() => { slotHandedOn(discovery.listingSlots); });
     return await listing;

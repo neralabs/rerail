@@ -880,6 +880,43 @@ describe("CodeRuleBridge", () => {
     expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThanOrEqual(handedOn + 100);
   }, 30_000);
 
+  it("asks Git nothing for the listings asked again still waiting for a slot once the session closes, while an audit holds the bridge's queue", async () => {
+    // Four listings in the slots and six behind them: four take a slot a second after the first ones were asked, the
+    // last two a second after that, so some still wait when the session closes, even on a slow machine.
+    const { root, checkouts, sourceRoot } = await changedCheckouts(2 * LISTINGS_AGAIN_AT_ONCE + 2);
+    const audited = Promise.withResolvers<void>();
+    const audit = Promise.withResolvers<void>();
+    releases.push(audit.resolve);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => {
+      audited.resolve();
+      await audit.promise;
+      return response(batch);
+    });
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. Each listing asked again waits until the
+    // session is closing, then answers as a Git its time limit ended, starting none.
+    listings.late.push(...checkouts);
+    listings.lateAgain.push(...checkouts);
+    const asking = holdListingsAgain();
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("edit-1", "write", { path: "src/held.py" });
+    await writeFile(join(root, "src", "held.py"), "held\n");
+    const edited = bridge.finish("edit-1");
+    await audited.promise;
+    // The close cancels the session at once, then waits for the audit to leave the bridge's queue before it stops the
+    // session's Git reads. Meanwhile the listings in the slots answer and hand their slots on.
+    const askedBefore = listings.calls.length;
+    const closed = bridge.close();
+    asking.release();
+    await bridge.settleListingsAgain();
+    const askedAfter = listings.calls.slice(askedBefore);
+    audit.resolve();
+    await edited;
+    await closed;
+    expect(askedAfter).toEqual([]);
+  });
+
   it("keeps the first sight of a file a later walk saw first, whose listing ran late while the one asked again waited", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
