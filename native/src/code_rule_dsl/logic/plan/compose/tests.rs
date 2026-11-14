@@ -18,8 +18,9 @@ fn compile_program(p: Program) -> (Program, Compiled) {
         given: Some(Stats::empty(&p)),
         kept: BTreeSet::new(),
     };
-    let mut model = make_plan(&p, &db, inputs).unwrap();
-    let q = compile(&p, &mut model).unwrap();
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let q = compile(&p, &placed, &mut model).unwrap();
     (p, q)
 }
 
@@ -233,8 +234,9 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
     use crate::code_rule_dsl::logic::native::component;
     component::retain(&db,"seed",vec![vec![1],vec![2]],vec![b'i']).unwrap();
     stages::bind(&p,&db,&mut inputs,"seed",component::derived(&db,"seed").unwrap()).unwrap();
-    let mut model=make_plan(&p,&db,inputs.clone()).unwrap();
-    let unbounded=compile(&p,&mut model).unwrap();
+    let placed=crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
+    let mut model=make_plan(&placed,&db,inputs.clone()).unwrap();
+    let unbounded=compile(&p,&placed,&mut model).unwrap();
     assert!(unbounded.boundary().is_some(),"the expansion must require a boundary");
     assert!(!unbounded.prepares(&db).unwrap(),"SQLite must reject the unbounded graph before staging repairs it");
     let statements=super::super::corpus::Statements::on(&db);

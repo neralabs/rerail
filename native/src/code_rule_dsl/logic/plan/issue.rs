@@ -279,7 +279,7 @@ impl<'a> Board<'a> {
             let mut est = self.estimate(run, &rules_of(j));
             let mut local: HashMap<usize, u32> = HashMap::new();
             let mut chain: BTreeSet<usize> = BTreeSet::new();
-            let mut grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
+            let grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
                 for &r in &this.readers[m] {
                     let n = local.entry(r).or_default();
                     *n += 1;
@@ -342,7 +342,7 @@ impl<'a> Board<'a> {
             let strata: Vec<(&BTreeSet<String>, Vec<&Rule>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
             let vs = Arc::clone(&run.versions);
             run.model.wants_strata(&vs, strata, &mut wanted)?;
-            run.model.make_statistics(run.prog, &wanted)?;
+            run.model.make_statistics(vs.whole(run.version), &wanted)?;
         }
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
         let mut wants: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();

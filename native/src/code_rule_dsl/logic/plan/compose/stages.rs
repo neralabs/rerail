@@ -8,7 +8,7 @@ const REFERENCES: usize = 8192;
 const STAGES: usize = 32;
 
 pub(super) fn bind(prog: &Program, db: &Connection, inputs: &mut Inputs, rel: &str, source: Arc<dyn vtab::Source>) -> Result<()> {
-    if inputs.given.is_none() { inputs.given = Some(Stats::read(db,prog,inputs,false)?); }
+    if inputs.given.is_none() { inputs.given = Some(Stats::read(db,&super::super::body::Placed::of_program(prog)?,inputs,false)?); }
     let stats = inputs.given.as_mut().unwrap();
     stats.measured(rel,vtab::syntax::statistics(source.as_ref()).into_iter().map(|(c,r,n,s,d)|(c,[r,n,s,d])),[]);
     stats.card.insert(rel.to_owned(),source.len() as f64);
@@ -44,7 +44,7 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
             if prog.inputs.contains(rel) || prog.natives.contains_key(rel) || prog.facts.get(rel).is_some_and(|f|!f.is_empty()) { continue; }
             let rules: Vec<_> = prog.rules.iter().filter(|r|r.head.rel==*rel).collect();
             if let [rule] = rules.as_slice() {
-                if let Some((old,gone)) = survivors(rule,&scc,&native) {
+                if let Some((old,gone)) = survivors_alone(rule,&scc,&native) {
                     if empty.contains(&gone) {
                         if let Some(held)=component::held(db,&old).filter(|h|h.none_stored()) { quiet.push((rel.clone(),held)); }
                     }
@@ -100,10 +100,10 @@ fn changes(prog: &Program, inputs: &Inputs) -> BTreeSet<String> {
         if prog.inputs.contains(&rel) || prog.facts.get(&rel).is_some_and(|f|!f.is_empty()) { continue; }
         let scc=BTreeSet::from([rel.clone()]);
         let rules: Vec<_> = prog.rules.iter().filter(|r|r.head.rel==rel).collect();
-        let Some(gone)=rules.iter().find_map(|r|survivors(r,&scc,&native).map(|(_,g)|g)) else { continue };
+        let Some(gone)=rules.iter().find_map(|r|survivors_alone(r,&scc,&native).map(|(_,g)|g)) else { continue };
         let mut demands=BTreeSet::from([gone]);
         let simple=rules.iter().all(|r| {
-            if survivors(r,&scc,&native).is_some() { return true; }
+            if survivors_alone(r,&scc,&native).is_some() { return true; }
             let [Literal::Atom(a)]=r.body.as_slice() else { return false };
             if a.neg || a.args!=r.head.args { return false; }
             demands.insert(a.rel.to_string()); true

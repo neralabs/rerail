@@ -119,9 +119,12 @@ const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT 
 
 pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
-    let mut model = make_plan(prog, db, inputs)?;
-    // The program's rules, read by the planner by their handles (t36 item 2).
-    let vs = super::body::Versions::of(prog)?;
+    // The program's version (its image): its rules, read by the planner by their handles (t36 item 2), and its
+    // fields, which the planner reads (t36 item 7).
+    let placed = super::body::Placed::of_program(prog)?;
+    let mut model = make_plan(&placed, db, inputs)?;
+    let vs = super::body::Versions::with(prog, placed);
+    let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its fields are read from its version".into()))?;
     let sccs = components_of(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     // The same, by key: a stratum's rules are read by their handles.
@@ -131,7 +134,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         keys_by.entry(r.head.rel.as_str()).or_default().push(RuleKey::program(k));
     }
     let mut setup = vec![RDL_INT.to_owned()];
-    let planned_views = plan_views(prog, &vs, &mut model, &rules_by)?;
+    let planned_views = plan_views(f, &vs, &mut model, &rules_by)?;
     let mut views = HashSet::new();
     for (rel, view) in &planned_views {
         setup.push(view_sql(rel, view));
@@ -212,7 +215,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         for &rule in &rules {
             let b = vs.at(rule);
             let started = profile_key.as_ref().map(|_|super::super::profile::now());
-            let ((order, _, _), explain) = model.plan_rule_explained(prog, &b, None)?;
+            let ((order, _, _), explain) = model.plan_rule_explained(f, &b, None)?;
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((b, order));
         }
@@ -220,7 +223,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         let recursive = scc.len() > 1 || planned.iter().any(|(b, o)| Order::new(b, o).lits().any(|l| own_lit(b, l)));
         for (b, order) in &planned {
             let order = Order::new(b, order);
-            let query = model.checked_query(prog, b, order.steps, None, None)?;
+            let query = model.checked_query(f, b, order.steps, None, None)?;
             // Positive own atoms have delta variants. An aggregate needs the complete
             // current input, so wake the full query when that recursive input changes.
             let aggregates=order.lits().filter_map(|l|match l {Lit::Agg{atom,..}=>Some(b.rel(atom)),_=>None}).collect::<BTreeSet<_>>();
@@ -233,10 +236,10 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                 for i in 0..b.len() {
                     let Some(a) = b.plain_atom(i).filter(|&a| own_lit(b, Lit::Atom(a))) else { continue };
                     let started = profile_key.as_ref().map(|_|super::super::profile::now());
-                    let ((order, _, _), explain) = model.plan_rule_explained(prog, b, Some(i))?;
+                    let ((order, _, _), explain) = model.plan_rule_explained(f, b, Some(i))?;
                     record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", b.head_text())))?;
-                    let query = model.checked_query(prog, b, &order, Some(at), None)?;
+                    let query = model.checked_query(f, b, &order, Some(at), None)?;
                     step(b.rel(b.head()), stratum, vec![b.rel(a).to_string()], &query.render(), Some(query));
                 }
             }
@@ -379,5 +382,7 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
+    let prog = &lowered.program;
+    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
+    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
 }

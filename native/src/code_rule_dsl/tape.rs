@@ -762,7 +762,7 @@ impl FileImage {
 /// What tests restore (`TapeDoc::restore`): a file's documents, or a lone tape, the documents of
 /// a file that derives none.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) trait Documents {
+pub trait Documents {
     fn file_image(&self) -> Cow<'_, FileImage>;
 }
 

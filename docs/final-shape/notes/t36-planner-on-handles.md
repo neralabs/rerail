@@ -402,3 +402,27 @@ ported, over the targeted tests and dl1.
     engine's keeps, demand, negation, inline, choices, cone, phase0, session, maintain, again, retain, edit,
     `corpus::`, `rr::`, program_image, strata, answer, native and setfix tests, and dl1 cold and warm. The check is
     gone; `fields_are_read_once_and_say_the_trees` checks a form's version (`add`, `index_of`).
+
+- **Item 7, steps 4 and 5 in part: the Model's fields and the stratum readers on handles** (2026-11-14).
+  - The Model reads the program's `Fields`, not the tree: `make_plan` (from the run's `Placed`), `Stats::read` and
+    `input_stats`, `make_statistics`, `late`, `resolve`, `fork` and `absorb`, `is_input`, `select.rs`'s `relation`
+    and `declared`, `prior_stats` and `prior_now`, and `join_spec`'s value types. `plan_rule*` and `explain_order`
+    take the fields beside the rule's `Body`; `view_stats` takes the view's `Body`.
+  - The stratum readers read rules by their handles in the run's `Versions` (`body_of`): `stratum_reads`,
+    `first_reads`, `last_reads`, `identities` and `leaf_identity`, `survivors`, `cyclic_relations`, `solving_of`,
+    `recursive`, `reads_change`, `read_by`, `runnable`, `retainable_stratum`'s rule test, `plan_views` and
+    `decoded_outputs`, and `Model::wants_strata`. A caller holding only a tree (compose's trimmed copies, the kept
+    strata's and the cut's identities) makes the version for them (`identities_of`, `Leaves`, `survivors_alone`).
+  - The identities stay digests of the tree's text (decision 0103), now written from the handles (`plan::tree_text`:
+    a mirror of each tree type whose derived `Debug` writes what the tree's writes).
+    `the_tree_text_from_handles_is_the_trees` (engine, program_image) checks it byte for byte, for every rule and
+    every relation's fields of the sampled pack programs, `every_field` with a native of each kind, and `analysed`.
+  - Still on the tree: `native_stratum_`'s own rule reads (the empty-delta and unfilled filters, the gates' readers,
+    the waiting reads), `seed_specs`, `issue::Board`, the fixpoints' made rules, the again and together paths, the
+    composed path and the rule lists themselves (step 3); `prog.` field reads outside the run (the compose path,
+    `emit`'s callers).
+  - Checked: logic `plan::` (110), the engine's keeps, demand, negation, inline, choices, cone, phase0, session,
+    maintain, again, retain, edit, `corpus::`, `rr::`, program_image, strata, emit and answer.
+  - Open (found while building, not this item's): the crate split left about twenty warnings of dead code and of
+    private types in public interfaces in the store, prof, java_lean and w crates (items only another crate's tests
+    use); the logic and engine ones were fixed here.

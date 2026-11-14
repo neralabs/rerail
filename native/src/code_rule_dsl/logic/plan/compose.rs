@@ -43,8 +43,9 @@ pub(super) fn planned(prog: &Program, db: &Connection, inputs: &mut Inputs) -> R
     let given = inputs.given.take();
     let mut owned = inputs.clone();
     owned.given = given;
-    let mut model = make_plan(prog, db, owned)?;
-    let plan = compile(prog, &mut model)?;
+    let placed = super::body::Placed::of_program(prog)?;
+    let mut model = make_plan(&placed, db, owned)?;
+    let plan = compile(prog, &placed, &mut model)?;
     inputs.given = Some(model.stats);
     CACHE.with(|c| c.borrow_mut().insert(key, plan.clone()));
     Ok(plan)
@@ -102,9 +103,11 @@ pub fn accepts(prog: &Program) -> Result<bool> {
     Ok(true)
 }
 
-pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
+/// `prog`'s composed query, its rules and fields read from `placed`, its whole version (`Placed::of_program`).
+pub(super) fn compile(prog: &Program, placed: &super::body::Placed, model: &mut Model) -> Result<Compiled> {
     // The program's rules, read by the planner by their handles (t36 item 2).
-    let vs = super::body::Versions::of(prog)?;
+    let vs = super::body::Versions::with(prog, placed.clone());
+    let pf = placed.fields()?;
     // SQLite folds identifier case, whereas rule relations are case-sensitive.
     // Bind physical names on the typed query; never replace substrings in rendered SQL.
     let mut counts = HashMap::<String, usize>::new();
@@ -289,8 +292,8 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             arms.push(format!("SELECT DISTINCT {cols} FROM {} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE frame=demanded.handle{target}{parameters}",frames[input]));
         } else {
             for b in rules {
-                let ((order, _, _), _) = model.plan_rule_reused(prog, &b, None)?;
-                let mut q = model.checked_query(prog, &b, &order, None, None)?;
+                let ((order, _, _), _) = model.plan_rule_reused(pf, &b, None)?;
+                let mut q = model.checked_query(pf, &b, &order, None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
                 bind_names(&mut q.body, &names);

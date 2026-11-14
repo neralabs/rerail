@@ -5,7 +5,7 @@ use super::body::{Body, VarSet, binds_right, term_vars};
 use super::{
     Error, Inputs, Mode, Model, Result, Step, TOP, bin, call, col, eq, integer, kinds, length, string, substr, symbol_of, text_of,
 };
-use super::super::front::Program;
+use super::fields::Fields;
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
 use super::super::sql::select::{Cte, FromItem, Join, Query, Relation, Select};
 use super::super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator};
@@ -194,19 +194,19 @@ impl Model {
     /// fixpoint's vtabs).
     pub fn sql_select(
         &self,
-        prog: &Program,
+        pf: Fields<'_>,
         b: &Body<'_>,
         steps: &[Step],
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<String> {
-        Ok(self.checked_query(prog, b, steps, delta_at, tables)?.render())
+        Ok(self.checked_query(pf, b, steps, delta_at, tables)?.render())
     }
 
     /// `sql_select`'s query, checked, before it is rendered.
     pub fn checked_query(
         &self,
-        prog: &Program,
+        pf: Fields<'_>,
         b: &Body<'_>,
         steps: &[Step],
         delta_at: Option<usize>,
@@ -214,18 +214,18 @@ impl Model {
     ) -> Result<Query> {
         // A rule whose SQL cannot be built says which rule and body it is, not only the variable: the cause first
         // (what a one-line reader, the executor coverage ledger, keeps), the rule after.
-        let query = self.sql_query(prog, b, steps, delta_at, tables).map_err(|e| match e {
+        let query = self.sql_query(pf, b, steps, delta_at, tables).map_err(|e| match e {
             Error::Plan(m) => Error::Plan(format!("{m}, in the SQL for {} :- {}", b.head_text(), b.shown(steps).join(", "))),
             e => e,
         })?;
-        query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {}: {e}", b.head_text())))?;
+        query.check(&|relation| self.declared(pf, relation)).map_err(|e| Error::Plan(format!("the SQL for {}: {e}", b.head_text())))?;
         Ok(query)
     }
 
     /// `sql_select`'s query, before it is checked.
     pub fn sql_query(
         &self,
-        prog: &Program,
+        pf: Fields<'_>,
         b: &Body<'_>,
         steps: &[Step],
         delta_at: Option<usize>,
@@ -265,7 +265,7 @@ impl Model {
                     let args = b.args(s.at);
                     let relation = match tables.and_then(|t| t.get(rel)) {
                         Some((full, delta)) => Relation::Bound { rel: rel.to_owned(), table: if Some(idx) == delta_at { delta.clone() } else { full.clone() } },
-                        None => self.relation(prog, rel, Some(idx) == delta_at),
+                        None => self.relation(pf, rel, Some(idx) == delta_at),
                     };
                     let mut conds = Vec::new();
                     if s.mode == Some(Mode::Range) {
@@ -315,7 +315,7 @@ impl Model {
                     // A negation of a component's own (gated) relation reads its full table there.
                     let relation = match tables.and_then(|t| t.get(rel)) {
                         Some((full, _)) => Relation::Bound { rel: rel.to_owned(), table: full.clone() },
-                        None => self.relation(prog, rel, false),
+                        None => self.relation(pf, rel, false),
                     };
                     let query = subquery(integer(1), relation, al, conds);
                     wh.push(Expr::Exists { negated: true, query: Box::new(query) });
@@ -433,7 +433,7 @@ impl Model {
                     }
                     let column = |v: Slot| {
                         let c = column_of(args, v).expect("the aggregated column");
-                        let symbol = prog.decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
+                        let symbol = pf.column_type(rel, c) == Some("sym");
                         (col(&al, &self.col(rel, c)), symbol)
                     };
                     let what = match (op, over) {
@@ -458,7 +458,7 @@ impl Model {
                             inputs.symbol_of(call("coalesce", vec![call("rr_join", args), string("")]))
                         }
                     };
-                    let query = subquery(what, self.relation(prog, rel, false), al, conds);
+                    let query = subquery(what, self.relation(pf, rel, false), al, conds);
                     let value = Expr::Scalar(Box::new(query));
                     // Planning may bind the result first (`n = 0` before the count): the aggregate then tests that
                     // binding, which replacing it would drop.
@@ -474,7 +474,7 @@ impl Model {
                 Lit::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
                     let from = env.get(n).ok_or_else(|| Error::Plan(format!("${} is unbound in SQL", b.var(n))))?.clone();
-                    let near = call("tape_nearest", vec![from, string(&prog.kindsets[b.v.text(kindset)].join(","))]);
+                    let near = call("tape_nearest", vec![from, string(&kindset_texts(pf, b.v.text(kindset)).join(","))]);
                     if let Some(e) = env.get(a) {
                         wh.push(eq(near, e.clone()));
                     } else {
@@ -485,7 +485,7 @@ impl Model {
                 Lit::Nearest { n, a, kindset } => {
                     let (n_name, a_var) = (b.var(n), b.var(a));
                     // A lowered program's members are kind atoms.
-                    let ks = kinds(&prog.kindsets[b.v.text(kindset)]);
+                    let ks = kinds(&kindset_texts(pf, b.v.text(kindset)));
                     let member = |e: Expr| Expr::In { input: Box::new(e), values: ks.clone() };
                     let input = |rel: &str| Relation::Input { schema: inputs.facts.clone(), rel: rel.to_owned() };
                     let on = |rel: &str, alias: &str, on: Vec<Expr>| FromItem { relation: input(rel), alias: alias.to_owned(), join: Join::On(on) };
@@ -613,4 +613,9 @@ impl Model {
         let body = Select { distinct: true, columns, from, predicates: conds.into_iter().flatten().chain(wh).collect() };
         Ok(Query { ctes, body })
     }
+}
+
+/// Kind set `set`'s kinds, as text (`Program::kindsets[set]`), failing where it has none.
+fn kindset_texts(pf: Fields<'_>, set: &str) -> Vec<String> {
+    pf.kindset(set).unwrap_or_else(|| panic!("no kind set {set}")).iter().map(|&k| pf.text(k).to_owned()).collect()
 }

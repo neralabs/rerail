@@ -14,7 +14,7 @@ pub struct Analysis {
     pub partitions: Vec<Partition>,
 }
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Partition {
+pub struct Partition {
     pub members: Vec<usize>,
     pub reason: &'static str,
 }

@@ -756,7 +756,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
         // One positive atom with its documents projected away: a union of each document's rows.
         let union = matches!(rule.body.as_slice(), [Literal::Atom(a)] if !a.neg && !carriers(&a.rel).is_empty() && carriers(&a.rel).iter().all(|&c| matches!(a.args.get(c), Some(Term::Wild))));
         let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
-        let mut bump = |c: &'static str, worst: &mut &'static str| {
+        let bump = |c: &'static str, worst: &mut &'static str| {
             if rank(c) > rank(*worst) {
                 *worst = c;
             }
@@ -3148,7 +3148,7 @@ fn run_observed(
     let t_stats = match &t {
         Some(t) => {
             atomized_statistics(t, &db, &store, &first, dialect)?;
-            super::Stats::of_schema(&db, &lowered.program, "s")?
+            super::Stats::of_schema(&db, &super::body::Placed::of_program(&lowered.program)?, "s")?
         }
         None => {
             // A document's nodes are `d << 32 | index`: the SQL strata's range reads compute its interval (no table).
@@ -3173,7 +3173,7 @@ fn run_observed(
     // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
     let mut guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
     // The stored tree counts this run read or wrote, for its manifest.
-    let mut own_sources: Vec<crate::content_store::SourceId> = Vec::new();
+    let own_sources: Vec<crate::content_store::SourceId> = Vec::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
@@ -5024,7 +5024,7 @@ fn run_observed(
             let mut publish: Vec<(memo::Content, String, i64, memo::Entry)> = Vec::with_capacity(chunk_docs.len());
             for (d, path, source_id, _, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
-                if let (Some(k), Some(entry), Some(memo)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
+                if let (Some(k), Some(entry), Some(_)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
                     let rows: usize = entry.rows.values().map(|(_, v)| v.len()).sum();
                     let _keep = crate::code_rule_dsl::logic::profile::span(|| format!("keep a file's entry ({rows} values)"));
                     own_seen.add(&Own::taken(&entry.rows));
@@ -5099,7 +5099,7 @@ fn run_observed(
         let counted_view: Option<Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>> = {
             let k = keeper.borrow();
             match (k.as_ref().filter(|k| k.exports_held() && !held_by_count.borrow().is_empty()), memo) {
-                (Some(k), Some(memo)) => {
+                (Some(k), Some(_)) => {
                     let mut minus = exports::Counted::default();
                     let whole = k.unseen().into_iter().all(|(path, c, key)| match counted_entry(&path, c, key) {
                         Some(e) => per_file.iter().all(|rel| e.rows.get(rel).is_none_or(|(w, v)| minus.patch(rel, *w, v, 1))),
@@ -5335,7 +5335,6 @@ fn run_observed(
                 for ask in r.asks() {
                     asks.insert(ask.clone(), held_rows(&db2, &got, ask, decls[ask.as_str()].len())?);
                 }
-                drop(recording);
                 let mut refuse = |rel: &str, _: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
                 match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
                     Ok(done) => {
@@ -6818,7 +6817,7 @@ fn run_observed(
                         if let Ok(sccs) = crate::code_rule_dsl::logic::front::components_of(&part.program) {
                             let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
                             let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(&part.program, &sccs);
-                            for (scc, rules) in sccs.iter().zip(&by_stratum) {
+                            for rules in &by_stratum {
                                 let reads: BTreeSet<&str> = rules.iter().flat_map(|r| r.body.iter().filter_map(|l| match l {
                                     crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
                                     _ => None,
@@ -7587,7 +7586,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             model.stats.lazy.0.remove(rel);
             bind_kept(self.binder, self.modules, self.db, &mut model.stats, rel.clone(), source, Some(held), false)?;
             if !model.stats.lazy.0.contains_key(rel) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &self.cross.program, rel);
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, self.cross.program.decls.get(rel.as_str()).map(|c| c.len()), rel);
             }
         }
         Ok(())
@@ -7670,7 +7669,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             }
             bind_kept(self.binder, self.modules, self.db, &mut model.stats, name.clone(), source, held, maintains)?;
             if !model.stats.lazy.0.contains_key(&name) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &form, &name);
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, form.decls.get(name.as_str()).map(|c| c.len()), &name);
             }
             self.bound_olds.insert(of);
         }
@@ -7679,7 +7678,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
         for r in form.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).map(|a| a.rel.as_str()) {
             if (r.ends_with("__plus") || r.ends_with("__minus")) && form.inputs.iter().any(|i| i == r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &form, r);
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, form.decls.get(r).map(|c| c.len()), r);
             }
         }
         if m.maintained > 0 {
@@ -7760,7 +7759,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             if patched.is_none() && b.lazy_kept
                 && let Some(h) = &held
             {
-                let maintains = rel.strip_suffix("__old").is_some_and(|of| maintains);
+                let maintains = rel.strip_suffix("__old").is_some_and(|_| maintains);
                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                 let wanted = tested_of(&b.constants, &rel).cloned();
                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
@@ -7822,7 +7821,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             // about what a measure did, once.
             let patched = patched.or_else(|| {
                 // Only a relation this run maintains (it has an overdelete): one derived again is measured.
-                let of = rel.strip_suffix("__old")?;
+                rel.strip_suffix("__old")?;
                 let h = held.as_ref().filter(|_| maintains)?;
                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                 let names = source.columns();

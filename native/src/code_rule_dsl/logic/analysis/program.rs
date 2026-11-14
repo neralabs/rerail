@@ -5,7 +5,7 @@ use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct RuleAnalysis {
+pub struct RuleAnalysis {
     pub head: String,
     pub uniqueness: keys::Proof,
     pub scalars: scalars::Analysis,
@@ -21,7 +21,7 @@ pub struct ProgramAnalysis {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct KeyInference {
+pub struct KeyInference {
     pub relation: String,
     pub columns: Vec<usize>,
     pub reason: String,

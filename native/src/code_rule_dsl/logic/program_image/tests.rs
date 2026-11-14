@@ -951,3 +951,36 @@ fn a_versions_fields_say_what_the_tree_says() {
     fields_agree(&analysed());
     fields_agree(&every_field());
 }
+
+/// A relation's identity (`plan::identities`) is a digest of the tree's `Debug` text, written now from the version's
+/// handles (`plan::tree_text`): it must be the tree's byte for byte, for every rule and every relation's fields, or
+/// every kept stratum's key would change.
+#[test]
+fn the_tree_text_from_handles_is_the_trees() {
+    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, tree_text};
+    let mut progs: Vec<Program> = pack_programs().into_iter().map(|(_, p)| p).collect();
+    let mut all = every_field();
+    all.natives.insert("reach_x".into(), Native::Reach { seed: "s".into(), edge: "e".into() });
+    progs.push(all);
+    progs.push(analysed());
+    let (mut rules, mut rels) = (0, 0);
+    for prog in &progs {
+        let vs = Versions::with(prog, Placed::of_program(prog).unwrap());
+        for r in &prog.rules {
+            assert_eq!(tree_text::rule(&vs.body(r).unwrap()), format!("{r:?}"));
+            rules += 1;
+        }
+        let f = vs.fields(0).unwrap();
+        let names: std::collections::BTreeSet<&str> = prog.decls.keys().map(|k| k.as_str())
+            .chain(prog.facts.keys().map(|k| k.as_str())).chain(prog.natives.keys().map(|k| k.as_str()))
+            .chain(prog.lattice.keys().map(|k| k.as_str())).chain(prog.nullary.iter().map(|k| k.as_str()))
+            .chain(prog.rules.iter().map(|r| r.head.rel.as_str())).chain(["no_such_relation"]).collect();
+        for rel in names {
+            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
+            assert_eq!(tree_text::shape(&f, rel), format!("{shape:?}"), "{rel}");
+            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)), "{rel}");
+            rels += 1;
+        }
+    }
+    assert!(rules > 1000 && rels > 300, "{rules} rules, {rels} relations");
+}

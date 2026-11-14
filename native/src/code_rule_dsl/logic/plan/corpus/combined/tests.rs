@@ -15,7 +15,7 @@
         // The collection another run of the batch starts: its passes, each of which ends a generation (a source is
         // collectable once a pass has ended the generation it was made in).
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
-        let passes = || (0..2).for_each(|_| drop(store.collect(now, 256).unwrap()));
+        let passes = || (0..2).for_each(|_| { let _ = store.collect(now, 256).unwrap(); });
         passes();
         assert!(lookup(&store, &key, &Default::default()).unwrap().is_some(), "kept through another run's collection");
         // Once the run that combined it ends, the pins go: named by no manifest here, the entry is collected.

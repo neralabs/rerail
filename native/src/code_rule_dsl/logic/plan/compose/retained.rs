@@ -23,7 +23,7 @@ pub fn run(prog: &Program, db: &Connection, mut inputs: Inputs, lowered: Option<
             .map(|r|ks.input(r).map(|d|(r.clone(),d))).collect()).flatten();
         provenance.insert(root.clone(),digests);
     }
-    let mut ids = identities(prog,&sccs,&rules);
+    let mut ids = identities_of(prog,&sccs,&rules)?;
     ids.retain(|r,_|provenance.get(r).is_some_and(Option::is_some));
     ks.program(&ids);
     for (root,digests) in &provenance {
