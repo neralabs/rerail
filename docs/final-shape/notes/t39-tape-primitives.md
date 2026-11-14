@@ -155,6 +155,32 @@ answer is right.
   so it takes several searches. Under the decision above, they are not part of the tape. The sweep
   is the thing to make fast (step 3: bit-packed codes compared a block at a time).
 
+### Step 3, first item: one record a node (XR) does not pay (M5, impl/sqlite)
+
+XR keeps XF's four fields (code, slot, start above the block's least, length) side by side, one
+record a node, each field at its block's own width, with each field's exceptions after the
+records. A random read then touches one cache line instead of four. Every answer is right. Run on
+the M5 under load, so compare columns:
+
+| | XF | XR |
+|---|---|---|
+| bytes a node | 4.59 | 4.50 |
+| code at random, ns | 1.5 | 3.1 |
+| subtree end at random | 3.8 | 4.8 |
+| children of every node | 8.9 | 10.6 |
+| median of 121 rules / all 121 | 3.8 / 22.5 | 6.6 / 30.5 |
+| nearest, every node (fn) | 2.4 | 3.8 |
+| has, every node, backwards (fn) | 5.0 | 6.8 |
+| has, one node (fn) | 16.8 | 24.8 |
+| code sweep, a node | 1.7 | 2.9 |
+
+- **XR is 1.3–1.7× slower everywhere, for 2% less space.** The primitives are sweeps: each reads
+  one field of every node in order, and an array of that field alone streams. In a record, a
+  sweep over codes reads all four fields' bits. A random read saves cache lines, but the field's
+  offset in the record (a sum of widths) and its exception area cost more instructions than the
+  misses saved: 40 against 28 a node for the code sweep.
+- **Dropped.** The tape keeps one array a field, per block.
+
 ## 4. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
@@ -175,8 +201,7 @@ In order. Each step is measured on all three corpora, every answer checked.
    kind K". They are the "stored answers" the decision above is wary of, so they are an option to
    price, not part of the design.
 3. **Layout.**
-   - Interleave each block's arrays (code, slot, start, length), so a random read touches one or two
-     cache lines instead of four.
+   - ~~Interleave each block's arrays~~: measured as XR, 1.3–1.7× slower; dropped.
    - Narrower codes a block: each block gets its own small code table (0.70 B a node today), so
      repeated structure gives repeated bits.
    - MF's gap end with the gap stored beside the next start.

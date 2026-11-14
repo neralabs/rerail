@@ -1873,3 +1873,200 @@ pub fn pack_costs(vals: &[u64]) -> Vec<u64> {
     out.push(vals.len() as u64);
     out
 }
+
+// ---- XR: XF's fields as one record a node ---------------------------------------------------------
+
+/// XF with a node's fields side by side: each block of `BLOCK` nodes is a run of records (code, slot,
+/// start above the block's least, length), each field at the block's own width, then each field's
+/// exceptions. A field's top codes are escapes naming its exception, as in `PFor`. So a node's fields
+/// share a cache line, where XF's four arrays touch four.
+///
+/// A block's header is three words: the bit offset and the four widths; each escaping field's escape count
+/// and exception width; the block's least start.
+pub struct XR {
+    n: usize,
+    head: Vec<[u64; 3]>,
+    words: Vec<u64>,
+}
+
+impl XR {
+    pub fn new(tree: &Tree, codes: &Codes) -> XR {
+        XR::of(&Cols::of_tree(tree, codes))
+    }
+    pub fn of(c: &Cols) -> XR {
+        let n = c.len();
+        let slot: Vec<u64> = (0..n).map(|i| {
+            if c.size[i] > 1 {
+                u64::from(c.size[i]) << 1
+            } else if i + 1 < n {
+                (((i + 1 - c.parent[i + 1] as usize) as u64) << 1) | 1
+            } else {
+                1
+            }
+        }).collect();
+        let len: Vec<u64> = c.start.iter().zip(&c.end).map(|(s, e)| e - s).collect();
+        let mut x = XR { n, head: Vec::new(), words: vec![0; 2] };
+        let mut bit = 0usize;
+        for b in 0..n.div_ceil(BLOCK) {
+            let r = b * BLOCK..((b + 1) * BLOCK).min(n);
+            let m = r.len();
+            let base = c.start[r.clone()].iter().copied().min().unwrap();
+            let wc = c.code[r.clone()].iter().map(|&v| bits_for(v)).max().unwrap();
+            let fields: [Vec<u64>; 3] = [slot[r.clone()].to_vec(), c.start[r.clone()].iter().map(|&s| s - base).collect(), len[r.clone()].to_vec()];
+            let shape: Vec<(u32, u32, u32)> = fields.iter().map(|f| esc_width(f)).collect();
+            let w = [wc, shape[0].0, shape[1].0, shape[2].0];
+            let rec: usize = w.iter().map(|&v| v as usize).sum();
+            assert!(w.iter().all(|&v| v < 64) && (bit as u64) < 1 << 40);
+            let h0 = bit as u64 | u64::from(w[0]) << 40 | u64::from(w[1]) << 46 | u64::from(w[2]) << 52 | u64::from(w[3]) << 58;
+            let mut h1 = 0u64;
+            for (k, &(_, e, ew)) in shape.iter().enumerate() {
+                h1 |= (u64::from(e) | u64::from(ew) << 9) << (15 * k);
+            }
+            x.head.push([h0, h1, base]);
+            let exc_total: usize = shape.iter().map(|&(_, e, ew)| e as usize * ew as usize).sum();
+            let end = bit + m * rec + exc_total;
+            x.words.resize(end / 64 + 2, 0);
+            // The exceptions' areas, in field order, after the records.
+            let mut exc_at = bit + m * rec;
+            let mut kth = [0u64; 3];
+            let mut areas = [0usize; 3];
+            for (k, &(_, e, ew)) in shape.iter().enumerate() {
+                areas[k] = exc_at;
+                exc_at += e as usize * ew as usize;
+            }
+            for j in 0..m {
+                let mut at = bit + j * rec;
+                or_in(&mut x.words, at, w[0], c.code[r.start + j]);
+                at += w[0] as usize;
+                for (k, f) in fields.iter().enumerate() {
+                    let (wk, e, ew) = shape[k];
+                    let lim = (1u64 << wk) - u64::from(e);
+                    let v = f[j];
+                    if v >= lim {
+                        or_in(&mut x.words, at, wk, lim + kth[k]);
+                        or_in(&mut x.words, areas[k] + kth[k] as usize * ew as usize, ew, v);
+                        kth[k] += 1;
+                    } else {
+                        or_in(&mut x.words, at, wk, v);
+                    }
+                    at += wk as usize;
+                }
+            }
+            bit = end;
+        }
+        x
+    }
+    pub fn parts(&self) -> [usize; 4] {
+        // One array: counted as structure, all of it (the parts are not apart).
+        [0, self.head.len() * 24 + self.words.len() * 8 + 8, 0, 0]
+    }
+    pub fn image(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for h in &self.head {
+            raw(&mut out, h);
+        }
+        raw(&mut out, &self.words);
+        out
+    }
+    /// Field `k` of node i (0 code, 1 slot, 2 start, 3 length).
+    #[inline(always)]
+    fn field(&self, i: usize, k: usize) -> u64 {
+        let b = i / BLOCK;
+        // SAFETY: i is a node of the tape.
+        let h = unsafe { self.head.get_unchecked(b) };
+        let off = (h[0] & ((1 << 40) - 1)) as usize;
+        let w = [(h[0] >> 40) & 63, (h[0] >> 46) & 63, (h[0] >> 52) & 63, (h[0] >> 58) & 63];
+        let rec = (w[0] + w[1] + w[2] + w[3]) as usize;
+        let j = i % BLOCK;
+        let mut at = off + j * rec;
+        for &wk in &w[..k] {
+            at += wk as usize;
+        }
+        let wk = w[k] as u32;
+        let v = extract(&self.words, at, wk);
+        let v = if k == 0 {
+            v
+        } else {
+            let e = (h[1] >> (15 * (k - 1))) & 511;
+            let lim = (1u64 << wk) - e;
+            if v >= lim {
+                let m = (self.n - b * BLOCK).min(BLOCK);
+                let mut area = off + m * rec;
+                for q in 0..k - 1 {
+                    let s = h[1] >> (15 * q);
+                    area += ((s & 511) * ((s >> 9) & 63)) as usize;
+                }
+                let ew = ((h[1] >> (15 * (k - 1) + 9)) & 63) as u32;
+                extract(&self.words, area + (v - lim) as usize * ew as usize, ew)
+            } else {
+                v
+            }
+        };
+        if k == 2 { v + h[2] } else { v }
+    }
+}
+
+impl Reader for XR {
+    fn bytes(&self) -> usize {
+        self.parts().iter().sum()
+    }
+    fn id_of(&self, p: usize) -> usize {
+        p
+    }
+    #[inline(always)]
+    fn code(&self, i: usize) -> u32 {
+        self.field(i, 0) as u32
+    }
+    #[inline(always)]
+    fn subtree_end(&self, i: usize) -> usize {
+        let v = self.field(i, 1);
+        let t = v & 1;
+        i + (((v >> 1) & t.wrapping_sub(1)) | t) as usize
+    }
+    #[inline(always)]
+    fn parent(&self, i: usize) -> Option<usize> {
+        if i == 0 {
+            return None;
+        }
+        let v = self.field(i - 1, 1);
+        let t = v & 1;
+        Some(i - (((v >> 1) & t.wrapping_neg()) | (t ^ 1)) as usize)
+    }
+    #[inline(always)]
+    fn start(&self, i: usize) -> u64 {
+        self.field(i, 2)
+    }
+    #[inline(always)]
+    fn end(&self, i: usize) -> u64 {
+        self.field(i, 2) + self.field(i, 3)
+    }
+    #[inline(always)]
+    fn first_child(&self, i: usize) -> Option<usize> {
+        (self.field(i, 1) & 1 == 0).then_some(i + 1)
+    }
+    #[inline(always)]
+    fn next_sibling(&self, i: usize, pe: usize) -> Option<usize> {
+        let j = self.subtree_end(i);
+        (j < pe && j < self.n).then_some(j)
+    }
+    #[inline(always)]
+    fn next(&self, id: usize) -> Option<usize> {
+        (id + 1 < self.n).then_some(id + 1)
+    }
+    fn len(&self) -> usize {
+        self.n
+    }
+    #[inline(always)]
+    fn prev(&self, id: usize) -> Option<usize> {
+        id.checked_sub(1)
+    }
+    #[inline(always)]
+    fn rank(&self, id: usize) -> usize {
+        id
+    }
+    #[inline(always)]
+    fn code_by_rank(&self, r: usize) -> u32 {
+        self.code(r)
+    }
+    const PREORDER_IDS: bool = true;
+}

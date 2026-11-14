@@ -1074,7 +1074,7 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
 fn cmd_inplace(path: &str, f11: bool) {
-    use rerail_tape_lab::inplace::{B, CodeMap, Codes, Cols, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF};
+    use rerail_tape_lab::inplace::{B, CodeMap, Codes, Cols, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF, XR};
     use rerail_tape_lab::measure::{Cost, cost};
     let cap = std::path::Path::new(path);
     // Pass 1: each language's codes, as the grammar would number them, and its commonest kind.
@@ -1101,8 +1101,8 @@ fn cmd_inplace(path: &str, f11: bool) {
     const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
     // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
     // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF"];
-    const C: usize = 10;
+    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR"];
+    const C: usize = 11;
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
     let mut bytes = [0usize; C];
@@ -1141,7 +1141,8 @@ fn cmd_inplace(path: &str, f11: bool) {
         let bh = B::<PredLen>::with_big(&tree, lang);
         let xf = XF::<ForLen>::new(&tree, lang);
         let mf = XF::<PredGap>::new(&tree, lang);
-        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts()].iter().enumerate() {
+        let xr = XR::new(&tree, lang);
+        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts(), xr.parts()].iter().enumerate() {
             for k in 0..4 {
                 parts[c + 1][k] += p[k];
             }
@@ -1179,7 +1180,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             cols
         };
         // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
-        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image()];
+        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image(), xr.image()];
         for (c, im) in images.iter().enumerate() {
             let z = zstd::bulk::compress(im, 3).unwrap();
             disk1[c] += z.len();
@@ -1198,6 +1199,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             { let (v, k) = best3(|| B::<PredLen>::with_big_of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XF::<ForLen>::of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XF::<PredGap>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| XR::of(&cols)); (v.image(), k) },
         ];
         for (c, (im, k)) in built.iter().enumerate() {
             if im != &images[c + 1] {
@@ -1215,6 +1217,7 @@ fn cmd_inplace(path: &str, f11: bool) {
         bench(&bh, &tree, &want, &order, set, &mut costs[7], &mut counts[7], &mut wrong[7], &mut bytes[7]);
         bench(&xf, &tree, &want, &order, set, &mut costs[8], &mut counts[8], &mut wrong[8], &mut bytes[8]);
         bench(&mf, &tree, &want, &order, set, &mut costs[9], &mut counts[9], &mut wrong[9], &mut bytes[9]);
+        bench(&xr, &tree, &want, &order, set, &mut costs[10], &mut counts[10], &mut wrong[10], &mut bytes[10]);
         nodes += n;
         files += 1;
         if f11 {
@@ -1306,7 +1309,7 @@ fn cmd_inplace_gpu(path: &str) {
 /// E12 (t39): the tree primitives rules ask for, bulk (every node, one pass) and point (one node at random),
 /// on each credible candidate, every answer checked against the tree.
 fn cmd_prim(path: &str) {
-    use rerail_tape_lab::inplace::{B, Codes, EfEf, F15, ForLen, PredGap, Reader, XF};
+    use rerail_tape_lab::inplace::{B, Codes, EfEf, F15, ForLen, PredGap, Reader, XF, XR};
     use rerail_tape_lab::measure::Cost;
     use rerail_tape_lab::prim::{self, Names, SETS, WRAP};
     use rerail_tape_lab::tree::NONE;
@@ -1327,7 +1330,7 @@ fn cmd_prim(path: &str) {
         field_of: c.table.iter().map(|t| t.1).collect(),
         fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
     })).collect();
-    const C: [&str; 4] = ["F15", "XF", "MF", "BE"];
+    const C: [&str; 5] = ["F15", "XF", "MF", "BE", "XR"];
     // Rows: (primitive, set) → per candidate cost and count.
     let mut rows: Vec<String> = Vec::new();
     for (s, _) in SETS {
@@ -1480,6 +1483,7 @@ fn cmd_prim(path: &str) {
         one(&XF::<ForLen>::new(&tree, lang), 1, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&XR::new(&tree, lang), 4, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         nodes += n;
         files += 1;
         Ok(())
