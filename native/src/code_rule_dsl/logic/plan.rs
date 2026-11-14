@@ -7699,11 +7699,13 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let chosen_key = corpus.then(|| choices::key(prog));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
+    // The chosen program's version (t36 item 6, step 5): the passes' overlay, or the kept choice's, which the run
+    // reads its rules from as it is; `None` where the run makes its program's (`Versions::of`).
+    let placed: Option<body::Placed>;
     // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
-    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
+    let inlined_rels: BTreeSet<String>;
     let prog: &Program = match reused {
         Some(c) => {
-            inlined_rels = c.inlined.iter().cloned().collect();
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
             inlined_rels = c.inlined.iter().cloned().collect();
@@ -7717,6 +7719,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // The program run is the rewritten one: its analysis is that program's, made when asked.
                 model.analysis = std::sync::OnceLock::new();
             }
+            placed = c.program.as_ref().and(c.version);
             chosen = c.program;
             chosen.as_deref().unwrap_or(prog)
         }
@@ -7725,10 +7728,17 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
             let mut inlined_names = Vec::new();
             let chose = super::profile::span(|| "inline or store".into());
-            let choice = if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None };
+            // The program's version, made once: each pass edits the one before as an overlay.
+            let base = if corpus { Some(body::Placed::made(&prog.rules)?) } else { None };
+            let choice = match &base {
+                Some(base) => keeps::choose(prog, base, &mut model).map_err(Error::Plan)?,
+                None => None,
+            };
+            let mut inlined_placed = None;
             drop(chose);
             let inlined = match choice {
-                Some((p, done)) => {
+                Some((p, done, v)) => {
+                    inlined_placed = Some(v);
                     super::version_trace::note("plan.inline", prog, &p);
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
@@ -7751,10 +7761,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
             let splitting = super::profile::span(|| "negation split".into());
-            let split_neg = if corpus { demand::split_negations(inlined.as_ref().unwrap_or(prog), &model) } else { None };
+            let split_neg = match inlined_placed.as_ref().or(base.as_ref()) {
+                Some(v) => demand::split_negations(inlined.as_ref().unwrap_or(prog), v, &model),
+                None => None,
+            };
+            let mut split_placed = None;
             drop(splitting);
             let split = match split_neg {
-                Some((p, demanded)) => {
+                Some((p, demanded, v)) => {
+                    split_placed = Some(v);
                     super::version_trace::note("plan.demand", inlined.as_ref().unwrap_or(prog), &p);
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
@@ -7767,10 +7782,13 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 None => None,
             };
             chosen = split.or(inlined).map(std::sync::Arc::new);
+            let rewritten = split_placed.or(inlined_placed);
             inlined_rels = inlined_names.iter().cloned().collect();
             if let Some(k) = chosen_key {
-                choices::remember(k, choices::Chosen { program: chosen.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
+                choices::remember(k, choices::Chosen { program: chosen.clone(), version: rewritten.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
             }
+            // Not rewritten: the program's own version, made above.
+            placed = rewritten.or(base);
             chosen.as_deref().unwrap_or(prog)
         }
     };
@@ -7828,7 +7846,10 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (mut issued_forms, mut issued_jobs, mut ran_by_jobs) = (0usize, 0usize, 0usize);
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), versions: Arc::new(body::Versions::of(prog)?), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), versions: Arc::new(match placed {
+        Some(p) => body::Versions::with(prog, p),
+        None => body::Versions::of(prog)?,
+    }), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };

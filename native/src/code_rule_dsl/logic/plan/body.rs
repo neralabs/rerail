@@ -423,7 +423,50 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 /// programs are trees, and this is how the planner reads their rules by handles. A program is added once it is
 /// final: its rules do not move after.
 #[derive(Clone, Default)]
-pub struct Versions(Vec<(usize, usize, Arc<Version>)>);
+pub struct Versions(Vec<(usize, usize, Placed)>);
+
+/// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
+/// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
+/// put them (a reader's copies after the rules it does not touch), and the program, decoded, in the tree pass's order.
+#[derive(Clone)]
+pub struct Placed {
+    pub v: Arc<Version>,
+    ids: Option<Arc<[RuleId]>>,
+}
+
+impl Placed {
+    /// `rules` made into a version of their own, in order.
+    pub fn made(rules: &[Rule]) -> Result<Placed> {
+        Ok(Placed { v: made(rules)?, ids: None })
+    }
+    /// A version whose rules are `v`'s in order (a program's image).
+    pub fn whole(v: Arc<Version>) -> Placed {
+        Placed { v, ids: None }
+    }
+    /// `v`, the program's rule `k` its rule `ids[k]`.
+    pub fn new(v: Arc<Version>, ids: Vec<RuleId>) -> Placed {
+        Placed { v, ids: Some(ids.into()) }
+    }
+    /// The id of the program's rule `k`.
+    pub fn id(&self, k: usize) -> RuleId {
+        self.ids.as_ref().map_or(RuleId(k as u32), |ids| ids[k])
+    }
+    /// The program's rules' ids, in its order.
+    pub fn order(&self) -> Vec<RuleId> {
+        match &self.ids {
+            Some(ids) => ids.to_vec(),
+            None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rule `k`.
+    pub fn rule(&self, k: usize) -> RuleRef<'_> {
+        self.v.rule(self.id(k)).expect("a rule of its version")
+    }
+    /// The program's rule `k` as the planner reads it.
+    pub fn body(&self, k: usize) -> Body<'_> {
+        Body::of(&self.v, self.rule(k))
+    }
+}
 
 /// A rule of a run: the version it is a rule of (its place in the run's `Versions`; the program's is 0) and its id
 /// there. What the run holds of a rule across waves and suspensions, in place of the rule.
@@ -447,9 +490,13 @@ impl RuleKey {
 impl Versions {
     /// The version of `prog` alone, the run's version 0 (rule numbers are its ids).
     pub fn of(prog: &Program) -> Result<Versions> {
+        Ok(Versions::with(prog, Placed::made(&prog.rules)?))
+    }
+    /// `prog`'s version as a pass left it (`placed`), the run's version 0, taken as it is: no rule is encoded.
+    pub fn with(prog: &Program, placed: Placed) -> Versions {
         let rules = &prog.rules;
         let start = rules.as_ptr() as usize;
-        Ok(Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), made(rules)?)]))
+        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)])
     }
     /// Adds `prog`'s rules, encoded (the planner reads its rules alone; the rest of a program it reads from the tree
     /// until item 7, and a maintained form's parts have no image).
@@ -462,14 +509,15 @@ impl Versions {
         if rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
             return Ok(());
         }
-        let v = made(rules)?;
+        let v = Placed::made(rules)?;
         self.0.push((start, start + std::mem::size_of_val(rules), v));
         Ok(())
     }
     /// The version `r` is a rule of, and its id there.
     pub fn find(&self, r: &Rule) -> Option<(&Arc<Version>, RuleId)> {
         let k = self.key(r)?;
-        Some((&self.0[k.v as usize].2, RuleId(k.id)))
+        let p = &self.0[k.v as usize].2;
+        Some((&p.v, p.id(k.id as usize)))
     }
     /// `r`'s key, a rule of a program the run holds.
     pub fn key(&self, r: &Rule) -> Option<RuleKey> {
@@ -483,8 +531,7 @@ impl Versions {
     }
     /// The rule `k` names, as the planner reads it.
     pub fn at(&self, k: RuleKey) -> Body<'_> {
-        let v = &self.0[k.v as usize].2;
-        Body::of(v, v.rule(RuleId(k.id)).expect("a rule of its version"))
+        self.0[k.v as usize].2.body(k.id as usize)
     }
     /// Rule `r` as the planner reads it.
     pub fn body(&self, r: &Rule) -> Result<Body<'_>> {

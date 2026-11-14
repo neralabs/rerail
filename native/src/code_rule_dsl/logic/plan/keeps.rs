@@ -44,7 +44,7 @@
 
 use super::super::front::{Atom, Literal, Program, Rule, Term, strata};
 use super::Model;
-use super::body::Body;
+use super::body::{Body, Placed};
 use super::super::program_image::{RuleId, Version};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ pub(super) mod inline;
 
 /// The choices, and the program with the inlined relations unfolded into their readers; `None` when nothing is
 /// inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
-pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Program, Vec<String>)>, String> {
+pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result<Option<(Program, Vec<String>, Placed)>, String> {
     let off = std::env::var("RERAIL_INLINE").is_ok_and(|v| v == "off");
     if off {
         if !prog.qualifiers.values().flatten().any(|w| w == "inline") {
@@ -100,14 +100,13 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     let reasons = refusals(prog, &rules_of, &sccs);
     // The rules as the planner reads them: the program's version (until the run's is passed in: t36 item 6, step 5),
     // rule `k` the program's rule `k`.
-    let base = super::body::made(&prog.rules).map_err(|e| e.to_string())?;
-    let bodies: Vec<Body<'_>> = (0..prog.rules.len()).map(|k| super::body::nth(&base, k)).collect();
+    let bodies: Vec<Body<'_>> = (0..prog.rules.len()).map(|k| base.body(k)).collect();
     let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (k, r) in prog.rules.iter().enumerate() {
         ids_of.entry(r.head.rel.as_str()).or_default().push(k);
     }
     let bodies_of: BTreeMap<&str, Vec<&Body<'_>>> = ids_of.iter().map(|(rel, ks)| (*rel, ks.iter().map(|&k| &bodies[k]).collect())).collect();
-    let src = Read { base: &base, bodies: &bodies, ids_of: &ids_of };
+    let src = Read { base, bodies: &bodies, ids_of: &ids_of };
     // Readers: (rule index, body position) of each read of a relation.
     let mut readers: BTreeMap<&str, Vec<(usize, usize)>> = BTreeMap::new();
     for (ri, r) in prog.rules.iter().enumerate() {
@@ -176,7 +175,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // readers' (the pricing below plans them).
     let read: Vec<&str> = need.iter().flat_map(|rel| rules_of.get(rel).into_iter().flatten()).flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
     model.resolve(prog, read).map_err(|e| e.to_string())?;
-    let (estimates, inserted) = estimate(prog, model, &rules_of, (&base, &ids_of), &sccs, &need, &candidates);
+    let (estimates, inserted) = estimate(prog, model, &rules_of, (base, &ids_of), &sccs, &need, &candidates);
     let mut by_estimates = price_all(prog, model, &src, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
     for (rel, rows) in &bounded_small {
         by_estimates.insert((*rel).to_owned(), Priced::Small(*rows, *rows));
@@ -250,8 +249,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         if reads.is_empty() {
             continue;
         }
-        let def_refs: Vec<_> = ids_of[rel].iter().map(|&k| base.rule(RuleId(k as u32)).expect("a def")).collect();
-        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(&base, base.rule(RuleId(ri as u32)).expect("a reader"), i, &def_refs)).sum::<Option<usize>>() else {
+        let def_refs: Vec<_> = ids_of[rel].iter().map(|&k| base.rule(k)).collect();
+        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(&base.v, base.rule(ri), i, &def_refs)).sum::<Option<usize>>() else {
             if prog.qualified(rel, "inline") {
                 refused_inline.push(format!("{rel}: a negated read is not a negation of plain literals"));
             } else if only.is_some() {
@@ -295,9 +294,10 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // The inlining, an overlay of the program's version (`inline::inline`). Each rule's origin is the program's rule
     // it was unfolded from, and the relations unfolded into it, so what a copy does when it runs is the inlined side's
     // observation of that reader (`copied`).
-    let got = inline::inline(&base, &inline)?;
-    copied(got.rules.iter().filter(|(_, _, into)| !into.is_empty()).map(|(id, o, into)| (super::body::Body::of(&got.v, got.v.rule(*id).expect("a rule")).observed_key(), super::body::Body::of(&base, base.rule(*o).expect("a base rule")).observed_key(), into)));
-    // The program as inlining left it, for the run (until the run reads the version: t36 item 6, step 5).
+    let got = inline::inline(&base.v, &base.order(), &inline)?;
+    copied(got.rules.iter().filter(|(_, _, into)| !into.is_empty()).map(|(id, o, into)| (super::body::Body::of(&got.v, got.v.rule(*id).expect("a rule")).observed_key(), super::body::Body::of(&base.v, base.v.rule(*o).expect("a base rule")).observed_key(), into)));
+    // The program as inlining left it, decoded for the rest of the run, which reads its rules from the version
+    // (`Placed`, t36 item 6, step 5) and the rest of the program from the tree (until item 7).
     let lists = crate::code_rule_dsl::logic::front::Lists::default();
     let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
     let mut out = prog.clone();
@@ -306,7 +306,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     if done.is_empty() {
         return Ok(None);
     }
-    Ok(Some((out, done)))
+    let placed = Placed::new(Arc::clone(&got.v), got.rules.iter().map(|(id, _, _)| *id).collect());
+    Ok(Some((out, done, placed)))
 }
 
 /// A candidate's price (`price_all`): too small to price, a reader copy that does not plan, or weighed.
@@ -319,7 +320,7 @@ enum Priced {
 /// The program's rules as the pricing reads them: its version, each rule's body by its index, and each relation's
 /// rules' indices.
 struct Read<'r, 'v> {
-    base: &'r Arc<Version>,
+    base: &'r Placed,
     bodies: &'r [Body<'v>],
     ids_of: &'r BTreeMap<&'r str, Vec<usize>>,
 }
@@ -348,9 +349,9 @@ fn price_all(
             continue;
         }
         let Some(reads) = readers.get(rel) else { continue };
-        let defs: Vec<RuleId> = read.ids_of[rel].iter().map(|&k| RuleId(k as u32)).collect();
-        let def_refs: Vec<_> = defs.iter().map(|&d| read.base.rule(d).expect("a def")).collect();
-        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(read.base, read.base.rule(RuleId(ri as u32)).expect("a reader"), i, &def_refs)).sum::<Option<usize>>() else { continue };
+        let defs: Vec<RuleId> = read.ids_of[rel].iter().map(|&k| read.base.id(k)).collect();
+        let def_refs: Vec<_> = defs.iter().map(|&d| read.base.v.rule(d).expect("a def")).collect();
+        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(&read.base.v, read.base.rule(ri), i, &def_refs)).sum::<Option<usize>>() else { continue };
         if copies > COPIES {
             continue;
         }
@@ -366,7 +367,7 @@ fn price_all(
         let mut inl: Vec<(f64, Option<f64>)> = Vec::new();
         let mut priced = true;
         // Every reader's copies, an overlay of the program's version made for the pricing alone.
-        let Ok((cv, made)) = inline::copies(read.base, &reads.iter().map(|&(ri, i)| (RuleId(ri as u32), i)).collect::<Vec<_>>(), &defs) else {
+        let Ok((cv, made)) = inline::copies(&read.base.v, &reads.iter().map(|&(ri, i)| (read.base.id(ri), i)).collect::<Vec<_>>(), &defs) else {
             out.insert(rel.to_owned(), Priced::Unplanned);
             continue;
         };
@@ -1187,7 +1188,7 @@ struct Inserted {
 /// keeps its measured rows, and its columns' measured distinct values and fanouts: a column's distinct values are
 /// otherwise guessed (the least of the body columns that bind it, or the rows), and a guess prices a probe of it
 /// wrongly in either direction (0099, "The regression").
-fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, (base, ids_of): (&Version, &BTreeMap<&str, Vec<usize>>), sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
+fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, (base, ids_of): (&Placed, &BTreeMap<&str, Vec<usize>>), sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
     let mut out = BTreeMap::new();
     let mut inserted = Inserted { card: Vec::new(), ndv: Vec::new(), fan: Vec::new() };
     // The relations estimated, in evaluation order. Each is planned with the estimates of those before it, so its
@@ -1224,7 +1225,7 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
         let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
             let (mut rows, mut work) = (0.0, 0.0);
             for &k in ids_of[order[i].0.as_str()].iter().filter(|_| !measured_only) {
-                if let Some((w, n)) = calibrated_rows(prog, model_now, &super::body::nth(base, k)) {
+                if let Some((w, n)) = calibrated_rows(prog, model_now, &base.body(k)) {
                     rows += n;
                     work += w;
                 }
@@ -1398,7 +1399,7 @@ pub mod tests {
                 model.stats.fan.insert((rel.to_owned(), c), rows / n);
             }
         }
-        let chosen = choose(&prog, &mut model).unwrap();
+        let chosen = choose(&prog, &Placed::made(&prog.rules).unwrap(), &mut model).unwrap();
         assert!(chosen.is_none(), "edge inlined into reach's recursion");
     }
 
@@ -1464,7 +1465,7 @@ pub mod tests {
                 model.ndv.insert((rel.into(), c), d);
             }
         }
-        let decided = |model: &mut Model| choose(&prog, model).unwrap().map(|(_, done)| done).unwrap_or_default();
+        let decided = |model: &mut Model| choose(&prog, &Placed::made(&prog.rules).unwrap(), model).unwrap().map(|(_, done, _)| done).unwrap_or_default();
         let reader = prog.rules.iter().find(|r| r.head.rel == "agg").unwrap();
         let def = prog.rules.iter().find(|r| r.head.rel == "ctx").unwrap();
         let copy = &inline::unfold_rules(reader, 0, &[def], 0).unwrap()[0];
@@ -1474,7 +1475,7 @@ pub mod tests {
             let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
             rules_of.entry("ctx").or_default().push(def);
             let (sccs, _) = strata(&prog).unwrap();
-            let def_v = super::super::body::alone(def).unwrap();
+            let def_v = Placed::made(std::slice::from_ref(def)).unwrap();
             let ids = BTreeMap::from([("ctx", vec![0])]);
             let (e, ins) = estimate(&prog, model, &rules_of, (&def_v, &ids), &sccs, &BTreeSet::from(["ctx"]), &BTreeSet::from(["ctx"]));
             let got = format!("cards {:?} ndv {:?}; ctx {:?}; reader {:?}, copy {:?}, build {:?}", ["load", "look", "binding"].map(|r| model.stats.card.get(r).copied()), model.ndv.get(&("look".to_owned(), 0)), e.get("ctx"), calibrated_rule(&prog, model, reader), calibrated_rule(&prog, model, copy), calibrated_rule(&prog, model, def));
@@ -1558,7 +1559,7 @@ pub mod tests {
         let reader = rule("o(x) :- a(y), r(x), r(y).");
         let def = rule("r(z) :- b(z, w), a(w).");
         let base = super::super::body::made(&[reader, def]).unwrap();
-        let got = super::inline::inline(&base, &BTreeSet::from(["r".to_owned()])).unwrap();
+        let got = super::inline::inline(&base, &base.rules().map(|r| r.id()).collect::<Vec<_>>(), &BTreeSet::from(["r".to_owned()])).unwrap();
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let first = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists).rule(got.v.rule(got.rules[0].0).unwrap());
         assert_eq!(first.to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
@@ -1638,7 +1639,7 @@ pub mod tests {
         let made = super::super::body::alone(&prog.rules[0]).unwrap();
         let (_, planned) = calibrated_rows(&prog, &model, &super::super::body::nth(&made, 0)).unwrap();
         assert!(planned >= SMALL, "r planned at {planned} rows");
-        let chosen = choose(&prog, &mut model).unwrap();
+        let chosen = choose(&prog, &Placed::made(&prog.rules).unwrap(), &mut model).unwrap();
         assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.1));
     }
 }

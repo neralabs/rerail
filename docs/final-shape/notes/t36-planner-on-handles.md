@@ -221,3 +221,15 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     Checked while porting: the overlay, decoded, equalled the tree's split over the planner's, demand, corpus and
     session tests and dl1; the check and the tree's split are gone. dl1: the 48 findings are equal; cold 43.6 G,
     warm 1.8 G.
+  - Steps 4 and 5 (2026-11-14): the passes hand on versions, and the run reads the chosen one as it is.
+    `body::Placed` is a program's version and where its rules are in it (rule `k` of the program is the version's
+    `ids[k]`; in order where a version was made of the rules). `plan::run` makes the program's version once; `choose`
+    edits it and gives its overlay, `split_negations` edits that, and `Versions::with` takes the last as the run's
+    version 0: no rule is encoded after the first. A kept choice holds its version (`Chosen::version`): in memory the
+    passes' overlay; read back from the store, the program's image (decision 0173), opened as it is. A choice kept as
+    text alone has none, and the run makes its version (`Versions::of`). The decoded tree is still made, once per
+    pass, for the rest of the run (item 7).
+  - Checked while porting: the version taken, rule by rule, read as an encode of the chosen program (head, literals,
+    observation key) over the planner's, keeps, demand, choices, cone, phase0, corpus and session tests and dl1; the
+    check is gone. The choices test reads a kept choice back from the store and checks its image's rules likewise.
+    dl1: the 48 findings are equal; cold 46.2 G (twice; 49.6 G after the hub merge, load about 75), warm 1.7 G.

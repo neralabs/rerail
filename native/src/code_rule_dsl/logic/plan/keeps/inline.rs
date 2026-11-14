@@ -25,10 +25,11 @@ pub(super) struct Inlined {
 /// `base` with the reads of the `inline` relations unfolded into their readers, as `unfold_reads` unfolds them (at
 /// most eight passes, a rule's first such read a pass), and the inlined relations' rules removed but where a reader
 /// still reads one.
-pub(super) fn inline(base: &Arc<Version>, inline: &BTreeSet<String>) -> Result<Inlined, String> {
+pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) -> Result<Inlined, String> {
     let inline_ids: BTreeSet<RelId> = inline.iter().filter_map(|r| base.rel(r)).collect();
-    // The program's rules in the tree pass's order (copies where their reader was), with their origins.
-    let mut seq: Vec<(RuleId, RuleId, BTreeSet<String>)> = base.rules().map(|r| (r.id(), r.id(), BTreeSet::new())).collect();
+    // The program's rules in the tree pass's order (`order`, the program's; copies where their reader was), with
+    // their origins.
+    let mut seq: Vec<(RuleId, RuleId, BTreeSet<String>)> = order.iter().map(|&id| (id, id, BTreeSet::new())).collect();
     let mut cur = Arc::clone(base);
     let first_read = |v: &Version, id: RuleId| first_read(v, id, &inline_ids).map(|(i, _)| i);
     for pass in 0..8 {
