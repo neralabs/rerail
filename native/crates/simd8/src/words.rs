@@ -36,7 +36,8 @@
 /// fold: false);`, `LIST` a constant `&'static [&'static [u8]]` (its word 0 the empty word).
 #[macro_export]
 macro_rules! keyword_switch {
-    ($vis:vis static $name:ident = $list:expr, fold: $fold:literal) => {
+    ($(#[$attr:meta])* $vis:vis static $name:ident = $list:expr, fold: $fold:literal) => {
+        $(#[$attr])*
         $vis static $name: $crate::words::Words<{ $crate::words::slots_for($list, $fold) }, { $crate::words::buckets_for($list, $fold) }, { $list.len() }, $fold> =
             $crate::words::Words::build($list);
     };

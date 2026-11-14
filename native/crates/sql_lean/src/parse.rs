@@ -92,8 +92,10 @@ struct Tok {
     w: u16,
 }
 
-// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
-rerail_simd8::keyword_switch!(static KEYWORDS = kinds::WORD_TEXT, fold: true);
+rerail_simd8::keyword_switch!(
+    /// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
+    static KEYWORDS = kinds::WORD_TEXT, fold: true
+);
 
 #[inline(always)]
 fn is_blank(c: u8) -> bool {

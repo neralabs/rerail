@@ -289,8 +289,10 @@ const WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
     t
 };
 
-/// The keyword switch (`rerail_simd8::words`) over `WORD_TEXT`.
-rerail_simd8::keyword_switch!(static WORDS = &WORD_TEXT, fold: false);
+rerail_simd8::keyword_switch!(
+    /// The keyword switch (`rerail_simd8::words`) over `WORD_TEXT`.
+    static WORDS = &WORD_TEXT, fold: false
+);
 
 /// The word `src[i..end]`'s kind and soft keyword: one probe of the keyword switch.
 #[inline(always)]

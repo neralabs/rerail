@@ -62,11 +62,17 @@ refused, and tree-sitter reads it with its own recovery.
 - `block`: stage 1. A mask a class for each 64-byte block: blanks, word bytes (`[A-Za-z0-9_$]` and
   bytes past ASCII), `/*` and `*/`, line ends, `'` and `\`, `"`. Blank runs, words, comments
   (nested) and quoted strings end at the lowest set bit of a mask.
-- `parse`: the lexer, the arena (nodes and their children, in parse order), the automata walk, and
-  the writer's pass. `parse::expr`: expressions, types, arguments. `parse::stmt`: statements.
+- `parse`: the lexer, the arena (nodes and their children, in parse order), the tokens' fates, and
+  the writer's pass. A node's tokens are left out or stored by its kind alone where the kind
+  decides them (`kinds::FATE`); only a node holding a token whose gaps differ walks its automaton. `parse::expr`: expressions, types, arguments. `parse::stmt`: statements.
 - `gen_kinds.py`: writes `kinds.rs` from tree-sitter-sql's grammar and the engine's automata
   (`automata.tsv`, `implied.tsv`): 773 kinds, 61 fields, the 517 keyword words, the automata
-  tables, and the FIRST sets of an expression and a type.
+  tables, and the FIRST sets of an expression and a type. For each automaton it finds the tokens
+  whose fate is the kind's: over every gap a token can stand in (each path of tokens from a gap's
+  first state to a named child or the end), left out in all, or stored in all. 106 of the 140
+  automata decide every token so; the others walk only for a few tokens (`(` and `)` in
+  `relation`, `field`, `subquery`; `;` in `program`). Test builds check each kind-decided node
+  against the walk.
 
 A key is `kind | field << 10 | extra << 16`.
 
@@ -193,17 +199,19 @@ tree-sitter-sql does not read.
 - `the_product_reads_sql_with_the_lean_parser`: the engine's parse route gives the lean tape, and a
   refused file gets tree-sitter's.
 
-**Cost** (`sql_parse_costs`, profiling build, over the 124 corpus files the lean parser reads:
-168,895 bytes, 25,972 nodes; with 0219's keyword switch):
+**Cost** (`sql_parse_costs`, profiling build, over the 129 corpus files the lean parser reads:
+173,348 bytes, 27,247 nodes; with 0219's keyword switch and the tokens' fates by kind):
 
 | | instructions a node | cycles a node |
 |---|---|---|
-| lean: the parser's columns | 844 | 221 |
-| lean: the tape | 881 | 244 |
-| tree-sitter-sql: parse | 4,030 | 1,099 |
-| tree-sitter-sql: the tape | 6,982 | 1,939 |
+| lean: the parser's columns | 760 | 142 |
+| lean: the tape | 796 | 148 |
+| tree-sitter-sql: parse | 4,019 | 1,118 |
+| tree-sitter-sql: the tape | 6,964 | 1,950 |
 
-(Cycles under a load average near 100.) The first measurement, before 0219, over 117 files: 990
+(Cycles under load.) Before the fates, the same files: 886 instructions a node for the lean tape;
+the walk then searched each step's move, each gap's implied word and each kept token (three binary
+searches), and ran on every node holding a token. The first measurement, before 0219, over 117 files: 990
 instructions a node for the lean tape, 6,978 for tree-sitter's.
 
 The lean tape costs a seventh of tree-sitter's in instructions, about a tenth in cycles.
@@ -218,8 +226,11 @@ and given back is not lexed again; the arena is sized from the text. The first b
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
   The clean files' refusals are a long tail of one or two files each; the largest group is
   PostgreSQL's operator definitions (7 files), extension internals.
-- **The cost.** The lean tape is a seventh of tree-sitter's in instructions, where the other lean
-  parsers reach a twentieth. tree-sitter-sql's trees are fine-grained (every keyword a leaf), so
-  tree-sitter's own cost a node is low; the parser's remaining cost is its keyword questions (several a token, by
-  call) and the automata walk a node. A generated keyword dispatch (one table lookup a token,
-  giving the set of keywords the word is) would replace most of the questions.
+- **The cost.** The lean tape is about a ninth of tree-sitter's in instructions, where the other
+  lean parsers reach a twentieth. tree-sitter-sql's trees are fine-grained (every keyword a leaf),
+  so tree-sitter's own cost a node is low. A profile of the rest: the lexer about a sixth (one read
+  a token: 1.03 reads a token, no read again after a restore), the arena's second pass (`emit`)
+  about a sixth, the remaining walks a tenth, the shared writer's setup and shrink (every lean
+  parser's) about a seventh. The arena's pass is the shape difference from the other lean
+  parsers, which write the tape in preorder as they parse; writing SQL's so would remove it, a
+  rewrite of the parser's node building.
