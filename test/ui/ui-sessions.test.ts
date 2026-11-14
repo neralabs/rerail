@@ -83,4 +83,18 @@ describe("what the timeline says Rerail did not see of the session", () => {
       "code rules were not yet running at 3 boundaries", "4 edits went unchecked because Git ignores the file", "Git's ignore rules changed 5 times",
     ].join("; "));
   });
+
+  it("says when rules could not see shell edits in part of the repository, beside the boundaries that answered before their walk ended", () => {
+    withGaps({ ...NO_GAPS, discoveryGaps: 1 });
+    expect(coverageGaps(row())).toBe("rules could not see shell edits in part of the repository (1 gap)");
+    withGaps({ ...NO_GAPS, uncheckedBoundaries: 2, discoveryGaps: 3 });
+    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not see shell edits in part of the repository (3 gaps)");
+  });
+
+  it("says nothing of a walk's gaps when the session has none, or the answer counts none", () => {
+    withGaps({ ...NO_GAPS, discoveryGaps: 0 });
+    expect(coverageGaps(row())).toBe("");
+    withGaps(NO_GAPS);
+    expect(coverageGaps(row())).toBe("");
+  });
 });

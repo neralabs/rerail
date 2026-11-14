@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
-import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
+import type { DiscoveryGap, DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
@@ -67,9 +67,13 @@ export interface SessionGaps {
   ignoredEdits: number;
   /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
+  /** What the session's walks could not check, each text once (`source-discovery-gap`). */
+  discoveryGaps: number;
 }
 
-const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+const NO_GAPS: SessionGaps = {
+  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0,
+};
 
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
@@ -305,6 +309,20 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /**
+   * Marks what a boundary's walks could not check, so shell writes there went unchecked, with the gap's text whole. A
+   * gap is recorded once per session and text, at the first boundary that meets it: its id is the text's digest, so an
+   * unreadable folder that every later turn end meets again, a daemon restart and a reopened session add no copy of it.
+   */
+  recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `source-discovery-gap:${createHash("sha256").update(gap.message).digest("hex")}`,
+      kind: "source-discovery-gap",
+      payload: { boundary: gap.boundary, message: gap.message },
+    }, session, attribution);
+  }
+
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
   recordCodeRulesPending(session: AdapterSession, boundary: CodeRulesPendingBoundary, attribution?: SessionAttribution): void {
     this.append({
@@ -497,8 +515,8 @@ export class SqliteSessionReader {
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
    * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
-   * before code rules were running, tool edits of files Git ignores, and changes to Git's ignore rules. Indexed by
-   * session and kind.
+   * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
+   * shell-write check could not check. Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
@@ -509,10 +527,11 @@ export class SqliteSessionReader {
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
-        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges
+        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap') AS discoveryGaps
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
-        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
+        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
     return row ?? { ...NO_GAPS };
   }

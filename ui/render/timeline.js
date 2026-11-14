@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -251,6 +251,7 @@ function renderEarlier(earlier) {
 const COVERAGE_CLAUSES = [
   [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
   [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
+  [discoveryGaps, n => `rules could not see shell edits in part of the repository (${fmt(n)} ${plural(n, "gap")})`],
   [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
   [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
   [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],

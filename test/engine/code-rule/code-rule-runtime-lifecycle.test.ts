@@ -457,6 +457,50 @@ describe("source-scoped steers", () => {
     }
   });
 
+  it("records on the session's history, once, what its turn ends' walks could not read, and nothing for a turn end that read it all", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const locked = join(root, "locked");
+    await mkdir(locked);
+    await writeFile(join(locked, "a.py"), "x = 1\n");
+    const databasePath = join(root, "rerail.sqlite");
+    const denial = `EACCES: permission denied, opendir '${locked}'`;
+    let denied = false;
+    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+    vi.mocked(opendir).mockImplementation(async (...args) => {
+      if (denied && args[0] === locked) throw Object.assign(new Error(denial), { code: "EACCES" });
+      return actual.opendir(...args);
+    });
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    const reader = new SqliteSessionReader(databasePath);
+    const session = { host: "claude-code" as const, sessionId: "unread", cwd: root };
+    const gapRecords = () => reader.events(session.sessionId).filter(event => event.kind === "source-discovery-gap").map(event => event.payload);
+    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      expect(await turnEnd("turn-1")).toEqual([]);
+      expect(gapRecords()).toEqual([]);
+      denied = true;
+      // The turn end's answer is what it was before: the gap goes on the record, not to the agent.
+      expect(await turnEnd("turn-2")).toEqual([]);
+      expect(await turnEnd("turn-3")).toEqual([]);
+      expect(gapRecords()).toEqual([{ boundary: "turn", message: `locked: ${denial}` }]);
+      expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 1, uncheckedBoundaries: 0 });
+    } finally {
+      await runtime.dispose();
+      reader.close();
+      vi.mocked(opendir).mockRestore();
+    }
+  });
+
   it("passes how long the session's code-rule evaluator took to open to the timing log", async () => {
     const lines: string[] = [];
     const test = await fixture({ timingLog: line => lines.push(line) });

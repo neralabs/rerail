@@ -625,9 +625,13 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
   const errors = [discovery.error, discovery.worktrees.error].filter(error => error !== undefined);
   for (const unread of [discovery.unread, discovery.worktrees.unread]) errors.push(...newlyUnread(discovery, unread));
   if (errors.length > 0) return errors.join("; ");
-  if (!discovery.baselineComplete) return "Initial source discovery is still pending";
-  return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
+  if (!discovery.baselineComplete) return BASELINE_PENDING;
+  return discovery.idle === undefined ? undefined : RECONCILIATION_PENDING;
 }
+/** What `discoveryGap` says while the session folder's walk is still to finish: no gap a walk found. */
+const BASELINE_PENDING = "Initial source discovery is still pending";
+const RECONCILIATION_PENDING = "Source reconciliation is still pending";
+const WALK_STILL_TO_FINISH: ReadonlySet<string> = new Set([BASELINE_PENDING, RECONCILIATION_PENDING]);
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
@@ -802,6 +806,16 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
 /**
+ * What the walks a checkpoint answered after could not check, as its `source-incomplete` failure says it: a folder or
+ * file they could not read, an unlisted file too large to read, a failed walk of the other worktrees. `message` is the
+ * failure's text whole; shell writes there went unchecked.
+ */
+export interface DiscoveryGap {
+  readonly boundary: Extract<CodeRuleCheckpoint, "turn" | "final">;
+  readonly message: string;
+}
+
+/**
  * A finished tool edit of a file no rule checked because Git ignores it (`CodeRuleAuditor.ignoredEdit`): the file as
  * the session folder names it, and the pattern that ignores it, with its file (as `shownIgnoreFile` names one) and line.
  */
@@ -837,6 +851,7 @@ export class CodeRuleBridge {
   #discovery: SourceDiscovery | undefined;
   readonly #discoveryWaitMs: number;
   readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
+  readonly #onDiscoveryGap: ((gap: DiscoveryGap) => void) | undefined;
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
   /**
@@ -861,6 +876,11 @@ export class CodeRuleBridge {
       discoveryWaitMs?: number;
       /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
+      /**
+       * Told at each checkpoint that answers with a gap of the walks (`DiscoveryGap`), each time it answers with one; a
+       * walk still to finish is `onDiscoveryPending`'s.
+       */
+      onDiscoveryGap?(gap: DiscoveryGap): void;
       /** Told of each file a finished tool edit wrote that no rule checked because Git ignores it. */
       onIgnoredEdit?(edit: IgnoredEdit): void;
       /** Told when the session changes Git's ignore rules; without it they are not watched. */
@@ -877,6 +897,7 @@ export class CodeRuleBridge {
     this.#observations = options.observations;
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
+    this.#onDiscoveryGap = options.onDiscoveryGap;
     this.#onIgnoredEdit = options.onIgnoredEdit;
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
@@ -1211,7 +1232,7 @@ export class CodeRuleBridge {
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
     this.#assertDiscovery(discovery);
-    return this.#discoveryResponse(discovery);
+    return this.#discoveryResponse(discovery, checkpoint);
   }
 
   async #reconcile(discovery: SourceDiscovery): Promise<readonly CodeRuleResponse[]> {
@@ -1384,6 +1405,11 @@ export class CodeRuleBridge {
   /** Recording a boundary that answered before its shell-write check is best-effort: it never fails the boundary. */
   #reportDiscoveryPending(boundary: DiscoveryPendingBoundary): void {
     reportBestEffort(() => this.#onDiscoveryPending?.(boundary));
+  }
+
+  /** Recording what a checkpoint's walks could not check is best-effort too: it never fails the checkpoint. */
+  #reportDiscoveryGap(gap: DiscoveryGap): void {
+    reportBestEffort(() => this.#onDiscoveryGap?.(gap));
   }
 
   /**
@@ -2324,10 +2350,14 @@ export class CodeRuleBridge {
     if (this.#discovery !== discovery) throw new Error("Policy workspace is not open");
   }
 
-  /** The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none. */
-  #discoveryResponse(discovery: SourceDiscovery): CodeRuleResponse {
+  /**
+   * The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none.
+   * A gap the walks found, not a walk still to finish, is told to `onDiscoveryGap` too.
+   */
+  #discoveryResponse(discovery: SourceDiscovery, boundary: DiscoveryGap["boundary"]): CodeRuleResponse {
     const message = discoveryGap(discovery);
     if (message === undefined) return this.#lastResponse;
+    if (!WALK_STILL_TO_FINISH.has(message)) this.#reportDiscoveryGap({ boundary, message });
     return {
       ...this.#lastResponse,
       failures: [...this.#lastResponse.failures, {

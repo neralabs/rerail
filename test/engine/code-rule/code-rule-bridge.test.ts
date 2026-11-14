@@ -704,6 +704,86 @@ describe("CodeRuleBridge", () => {
     }
   });
 
+  describe("a walk that cannot read part of the folder", () => {
+    /** Makes every walk fail to open `folder` as a folder the user may not read does, until the test ends. */
+    function denyFolder(folder: string): string {
+      const message = `EACCES: permission denied, opendir '${folder}'`;
+      const denied = async (): Promise<void> => { throw Object.assign(new Error(message), { code: "EACCES" }); };
+      discovery.directories.set(folder, Array.from({ length: 20 }, () => denied));
+      return message;
+    }
+
+    it("tells the gap callback what each turn's walk could not read, and nothing once a walk reads it all", async () => {
+      const root = await workspace();
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      const message = `src/locked: ${denyFolder(locked)}`;
+      const gaps: unknown[] = [];
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+        onDiscoveryGap: gap => { gaps.push(gap); },
+      });
+      await bridge.openWorkspace("session-1");
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [{ clauseId: "source-discovery", code: "source-incomplete", message, stage: "scan" }],
+      }));
+      await bridge.checkpoint("turn");
+      expect(gaps).toEqual([{ boundary: "turn", message }, { boundary: "turn", message }]);
+      discovery.directories.delete(locked);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      expect(gaps).toHaveLength(2);
+    });
+
+    it("leaves a boundary that answered before its walk finished to the pending callback alone", async () => {
+      const root = await workspace();
+      const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const pending: string[] = [];
+      const onDiscoveryGap = vi.fn();
+      const bridge = createBridge(root, auditor(auditGeneratedEdits), {
+        discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGap,
+      });
+      const baseline = holdDiscovery("directories", root);
+      await bridge.openWorkspace("session-1");
+      await baseline.entered;
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ message: "Initial source discovery is still pending" })],
+      }));
+      baseline.release();
+      await bridge.checkpoint("turn");
+      const reconciling = holdDiscovery("directories", root);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ message: "Source reconciliation is still pending" })],
+      }));
+      reconciling.release();
+      // The walk between the two may outlast its wait on a slow machine too: every boundary pending is a turn's.
+      expect(pending.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(pending)).toEqual(new Set(["turn"]));
+      expect(onDiscoveryGap).not.toHaveBeenCalled();
+    });
+
+    it("answers a turn checkpoint with its gap when recording the gap fails", async () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      const root = await workspace();
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      const message = `src/locked: ${denyFolder(locked)}`;
+      const onDiscoveryGap = vi.fn(() => { throw new Error("database is locked"); });
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      try {
+        await bridge.openWorkspace("session-1");
+
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+          failures: [expect.objectContaining({ code: "source-incomplete", message })],
+        }));
+        expect(onDiscoveryGap.mock.calls).toEqual([[{ boundary: "turn", message }]]);
+        expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed: database is locked"));
+      } finally {
+        stderr.mockRestore();
+      }
+    });
+  });
+
   it("discovers a command's shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");

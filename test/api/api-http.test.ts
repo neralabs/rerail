@@ -242,13 +242,18 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
+    // A walk's gap is recorded once per text, however many turn ends meet it.
+    const locked = { boundary: "turn" as const, message: "src/locked: EACCES: permission denied, opendir '/repo/src/locked'" };
+    sessionStore.recordDiscoveryGap(SESSION, locked);
+    sessionStore.recordDiscoveryGap(SESSION, locked);
+    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", message: "big.bin: Source exceeds 1048576 byte policy limit" });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
     }
 
     expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
-      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2 });
+      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2 });
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {

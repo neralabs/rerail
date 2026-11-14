@@ -1,0 +1,1 @@
+When a turn end's check for shell-written files cannot read part of the repository (a folder it may not read, a file too large to read, another worktree's failed walk), the session's record says so, with the reason, once per gap. The dashboard timeline shows it, and the session API counts it in `discoveryGaps`.

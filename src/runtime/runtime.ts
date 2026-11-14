@@ -1577,6 +1577,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           session.sessionId,
           (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
         ),
+        // What a boundary's walks could not check goes on the session's record, once per gap; the agent is not told of it.
+        onDiscoveryGap: gap => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordDiscoveryGap(descriptor, gap, attribution),
+        ),
         // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
         onIgnoredEdit: edit => this.#recordSessionFact(
           session.sessionId,
