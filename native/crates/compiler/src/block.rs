@@ -1780,6 +1780,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             };
             let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
         }
+        // `block N recchecked M`: a mask tier 2's local checks alone read.
+        for m in &r.check_masks {
+            let _ = writeln!(out, "  block {at} recchecked {m}");
+        }
         // `block N rectested T`: the gap marks made by token tests alone.
         if r.tested_only != 0 {
             let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);

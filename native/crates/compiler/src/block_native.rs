@@ -324,7 +324,40 @@ impl BlockNative {
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
     pub fn records_made(&self) -> Vec<usize> {
-        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).collect()
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+    }
+
+    /// The outputs the CPU's token loop makes from the file's bytes where it reads them
+    /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
+    /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
+    pub fn read_at_tokens(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let mut read: Vec<u16> = Vec::new();
+        read.extend(r.skip);
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
+        read.extend(r.checks.iter().map(|c| c.o));
+        // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
+        // still reads from its row stays stored.
+        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
+        // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
+        let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
+        read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
