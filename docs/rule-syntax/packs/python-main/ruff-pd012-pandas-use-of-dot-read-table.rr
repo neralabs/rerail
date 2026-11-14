@@ -29,9 +29,9 @@ pd012_in_string(n, FUNC) :- (kind(n, "string") ; kind(n, "concatenated_string"))
 // sep_call(n): the JSON util `sep-call`, used where the JSON says `matches: "sep-call"`
 .decl pd012_sep_call(n: node)
 pd012_sep_call(n) :- kind(n, "call"), field(n, "arguments", c1), kind(c1, "argument_list"),
-    child(c1, c2, _), kind(c2, "keyword_argument"), field(c2, "name", c3),
-    glob("sep", c3), field(c2, "value", c4), pd012_comma_string(c4),
-    count : { precedes(s5, c2), kind(s5, "keyword_argument"), field(s5, "name", c6), glob("sep", c6) } = 0.
+    child(c1, c2, _), kind(c2, "keyword_argument"), pd012_tok_has_1(c2),
+    field(c2, "value", c11), pd012_comma_string(c11),
+    count : { precedes(s12, c2), kind(s12, "keyword_argument"), pd012_tok_has_2(s12) } = 0.
 
 // slot(n): the JSON util `slot`, used where the JSON says `matches: "slot"`
 .decl pd012_slot(n: node)
@@ -42,6 +42,30 @@ pd012_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pd012_sl
 .decl pd012_read_table(n: node)
 pd012_read_table(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, "pandas.read_table"), pd012_slot(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^sep$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd012_tok_has_1(n: node)
+.stored pd012_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd012_tok_has_1(n) :- field(n, "name", c3), glob("sep", c3).
+pd012_tok_has_1(n) :- op(n, t4), match("sep", t4).
+pd012_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g5).
+pd012_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g5).
+pd012_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^sep$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd012_tok_has_2(n: node)
+.stored pd012_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd012_tok_has_2(n) :- field(n, "name", c13), glob("sep", c13).
+pd012_tok_has_2(n) :- op(n, t14), match("sep", t14).
+pd012_tok_has_2(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g15).
+pd012_tok_has_2(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g15).
+pd012_tok_has_2(n) :- node_text(n, g15), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:sep)(?:\\W.*)?)$", g15).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pd012_alt_1(n: node)

@@ -54,9 +54,9 @@ pyi051_lit_form(n) :- kind(n, "generic_type"), child(n, c2, _), pyi051_lit_ref(c
 // union(n): the JSON util `union`, used where the JSON says `matches: "union"`
 .decl pyi051_union(n: node)
 pyi051_union(n) :- kind(n, "union_type").
-pyi051_union(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
-pyi051_union(n) :- kind(n, "subscript"), field(n, "value", c2), pyi051_union_ref(c2).
-pyi051_union(n) :- kind(n, "generic_type"), child(n, c3, _), pyi051_union_ref(c3).
+pyi051_union(n) :- kind(n, "binary_operator"), pyi051_tok_has_1(n).
+pyi051_union(n) :- kind(n, "subscript"), field(n, "value", c9), pyi051_union_ref(c9).
+pyi051_union(n) :- kind(n, "generic_type"), child(n, c10, _), pyi051_union_ref(c10).
 
 // annotation_string(n): the JSON util `annotation-string`, used where the JSON says `matches: "annotation-string"`
 .decl pyi051_annotation_string(n: node)
@@ -120,31 +120,43 @@ pyi051_redundant(n, B, E) :- count : { pyi051_stop_10_within(n, p1), pyi051_inne
 .decl pyi051_inner_tuple(n: node)
 pyi051_inner_tuple(n) :- kind(n, "tuple"), within_stop(n, p1, pyi051_stop_48),
     ( kind(p1, "tuple")
-    ; (kind(p1, "subscript") ; kind(p1, "type_parameter")), pyi051_tok_has_2(p1)
+    ; (kind(p1, "subscript") ; kind(p1, "type_parameter")), pyi051_tok_has_3(p1)
     ).
 
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi051_tok_has_1(n: node)
 .stored pyi051_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi051_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
-pyi051_tok_has_1(n) :- op(n, t3), match(",", t3).
-pyi051_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-pyi051_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-pyi051_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+pyi051_tok_has_1(n) :- field(n, "operator", c1), glob("|", c1).
+pyi051_tok_has_1(n) :- op(n, t2), match("\\|", t2).
+pyi051_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi051_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi051_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi051_tok_has_2(n: node)
 .stored pyi051_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi051_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
-pyi051_tok_has_2(n) :- op(n, t2), match(",", t2).
-pyi051_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+pyi051_tok_has_2(n) :- child(n, c2, _), glob("\\,", c2).
+pyi051_tok_has_2(n) :- op(n, t3), match(",", t3).
+pyi051_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi051_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi051_tok_has_2(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi051_tok_has_3(n: node)
+.stored pyi051_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi051_tok_has_3(n) :- child(n, c1, _), glob("\\,", c1).
+pyi051_tok_has_3(n) :- op(n, t2), match(",", t2).
+pyi051_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
-pyi051_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+pyi051_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
-pyi051_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+pyi051_tok_has_3(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
 
 // demand_has_of: the nodes has_of is asked at (its recursion looks at every descendant)
 .decl pyi051_demand_has_of(n: node)

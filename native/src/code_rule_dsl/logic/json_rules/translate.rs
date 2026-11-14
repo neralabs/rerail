@@ -782,9 +782,28 @@ impl Emit<'_> {
                         .map(|b| binders(px, &sub(&px.translate_no_match_group, b, |_| String::new()), false).contains(x) || b.contains(&format!("unset({x})")) || search(&call, b))
                         .collect();
                     if branches.len() > 1 && binding.iter().any(|b| *b) {
+                        // ast-grep's `any` takes its first alternative that matches: a branch holds only where
+                        // no earlier one that binds x otherwise does (`any: [{pattern: $TI}, {regex: "^"}]` leaves
+                        // TI unset only where it cannot bind it).
+                        let mut outer: Set = lits.iter().enumerate().filter(|(j, _)| *j != i).flat_map(|(_, l)| super::demand::vars_of(px, l)).collect();
+                        outer.extend(inputs.iter().cloned());
+                        outer.insert("n".to_owned());
                         lits[i] = format!(
                             "({})",
-                            branches.iter().zip(&binding).map(|(b, ok)| if *ok { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) }).collect::<Vec<_>>().join(" ; ")
+                            branches
+                                .iter()
+                                .enumerate()
+                                .map(|(k, b)| {
+                                    let mut out = if binding[k] { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) };
+                                    for j in (0..k).filter(|j| binding[*j] != binding[k]) {
+                                        if let Some(not) = not_earlier(px, &branches[j], &outer, j) {
+                                            out.push_str(&format!(", {not}"));
+                                        }
+                                    }
+                                    out
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ; ")
                         );
                         done = true;
                         break;
@@ -811,4 +830,29 @@ impl Emit<'_> {
         self.out.push(text);
         Ok(())
     }
+}
+
+/// `count : { b } = 0` for an earlier `any` branch b, its own variables renamed so they are the aggregate's: the
+/// branch does not hold here. None where b binds a renamed variable inside a pattern (`` `$X` ``), which a rename
+/// cannot reach.
+fn not_earlier(px: &Patterns, b: &str, outer: &Set, j: usize) -> Option<String> {
+    let own: Vec<String> = super::demand::vars_of(px, b).into_iter().filter(|v| !outer.contains(v)).collect();
+    if own.is_empty() {
+        return Some(format!("count : {{ {} }} = 0", b.trim()));
+    }
+    let var = re(&format!(r"(?<![\w@$])({})\b(?!\s*\()", own.join("|")));
+    let mut out = String::new();
+    for p in split1(&px.text_pieces, b) {
+        if p.starts_with('`') {
+            if own.iter().any(|v| p.contains(&format!("${v}"))) {
+                return None;
+            }
+            out.push_str(&p);
+        } else if p.starts_with('"') {
+            out.push_str(&p);
+        } else {
+            out.push_str(&sub(&var, &p, |c| format!("{}_e{j}", g(c, 1))));
+        }
+    }
+    Some(format!("count : {{ {} }} = 0", out.trim()))
 }

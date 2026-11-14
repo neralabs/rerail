@@ -586,9 +586,17 @@ fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     }
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
-    let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
+    // Main's default is the source text. `node` is node identity (same range and kind: one node), not equal text: two
+    // components spelt alike are two components (no-dupe-keys' `compare CQ eq CP, text: node`).
+    let text = c.get("text").cloned().unwrap_or(Value::Str("source".into()));
+    // Two captures: both are nodes (an unset capture is none) and the same one, or not. A capture against itself is
+    // main's "is set", which stays the text test the passes after read as one (negated, `unset(X)`).
+    if text.as_str() == Some("node") && matches!(op.as_str(), "eq" | "ne") && l != r {
+        let is_node = |x: &str| format!("node(_, {x}, _, _, _)");
+        return vec![format!("{}, {}, {l} {} {r}", is_node(&l), is_node(&r), if op == "eq" { "=" } else { "!=" })];
+    }
     let reader = match text.as_str() {
-        Some("node" | "text") => "text",
+        Some("source" | "node" | "text") => "text",
         // `name` is the name the language resolves the node to. SQL's is PostgreSQL's (`ident_pg`: unquoted names
         // fold to lower case); its identifiers have no `value`.
         Some("name") if prog.lang == "sql" => {
@@ -788,8 +796,13 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, name:
             let kq = q_val(bv.get("kind").expect("kind"));
             lits.push(format!("({st} = {s}, kind({st}, {kq}) ; inside({s}, {st}, {kq}))"));
         } else if bk == "site" {
+            // The names library's site can sit below main's site construct (a name under its declaration), so a
+            // test that names a kind climbs to it. One that names none is main's one site node itself: climbing
+            // would let any ancestor pass a `not` (no-dupe-keys' `{pattern: $SITE, not: {matches:
+            // props-initialized}}` held at the program).
             let st = vs.fresh("st");
-            lits.push(format!("({st} = {s} ; within({s}, {st}))"));
+            let names_kind = bo.is_some_and(|o| o.has("kind") || o.get("any").and_then(Value::as_list).is_some_and(|l| l.iter().any(|a| a.get("kind").is_some())));
+            lits.push(if names_kind { format!("({st} = {s} ; within({s}, {st}))") } else { format!("{st} = {s}") });
             lits.extend(lower(px, prog, bv, &st, vs, &[])?);
         } else if bk == "value" {
             let x = vs.fresh("x");
@@ -1257,7 +1270,11 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
             lits.push(format!("within_stop({lo}, {hi}, {})", stop_set(px, prog, &stop)?));
         }
         if f_truthy && !is("neighbor") {
-            lits.push(format!("field(_, {}, {lo})", qf()));
+            // ast-grep's `field` names the step at hi: `inside` takes an ancestor whose field child is the node the
+            // path came up through, and `has` searches under hi's field child. lo is that child or below it
+            // (`data: () => ({ … })`: the object is in the parentheses that are the arrow's body).
+            let q = vs.fresh("f");
+            lits.push(format!("field({hi}, {}, {q}), ({q} = {lo} ; within({lo}, {q}))", qf()));
         }
     } else {
         if let Some(chain) = token_chain(px, prog, k, sub_, v, vs)? {
@@ -1273,8 +1290,34 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
         }
     }
     lits.extend(lower(px, prog, &Value::Obj(sub_.clone()), &c, vs, &skip)?);
-    let only_regex = sub_.keys().filter(|k| *k != "field" && *k != "stopBy").collect::<Vec<_>>() == vec!["regex"];
-    if only_regex && !f_truthy && (is("neighbor") || is("end")) && !((k == "has" || k == "inside") && is("end")) && k != "inside" {
+    // `regex`, with at most a `not: {kind: K}` that no token the regex matches can be: an anonymous token's kind is
+    // its text, so where K fails the regex the `not` holds for every token (main's `{regex: "^set$", not: {kind:
+    // property_identifier}}`, a getter's or setter's keyword). The stored-child rule keeps the `not`.
+    let not_kind_of_no_token = || {
+        let (Some(Value::Str(r)), Some(Value::Obj(no))) = (sub_.get("regex"), sub_.get("not")) else { return false };
+        let Some(Value::Str(kind)) = no.get("kind").filter(|_| no.key_set_is(&["kind"])) else { return false };
+        fancy_regex::Regex::new(r).is_ok_and(|r| r.is_match(kind).is_ok_and(|m| !m))
+    };
+    let keys = sub_.keys().filter(|k| *k != "field" && *k != "stopBy").collect::<Vec<_>>();
+    let only_regex = keys == vec!["regex"] || (keys.len() == 2 && keys.contains(&"regex") && keys.contains(&"not") && not_kind_of_no_token());
+    // A field's token (`for_in_statement`'s `operator`, `in` or `of`) has no node, and `op` rows name no field: its
+    // token rules read any of n's tokens the regex matches. The stored-child rule keeps the field.
+    let token_field = f_truthy && k == "has" && is("neighbor");
+    // A sibling search that stops at the first sibling not a comment (`stopBy: {not: {kind: comment}}`) is the
+    // neighbor test past comments: main's `precedes: {stopBy: {not: {kind: comment}}, regex: "^\\)$"}`, an object
+    // that is a call's last argument. Its token is read as the neighbor's; the stored-sibling rule keeps the stop.
+    let past_comments = (k == "precedes" || k == "follows")
+        && stop.as_obj().and_then(|o| o.get("not")).and_then(Value::as_obj).is_some_and(|n| n.key_set_is(&["kind"]) && n.get("kind").and_then(Value::as_str) == Some("comment"))
+        && stop.as_obj().is_some_and(|o| o.key_set_is(&["not"]));
+    let is = |s: &str| stop.as_str() == Some(s) || (s == "neighbor" && past_comments);
+    if only_regex && (!f_truthy || token_field) && (is("neighbor") || is("end")) && !((k == "has" || k == "inside") && is("end")) && k != "inside" {
+        if past_comments {
+            // The token relation is a library relation, which names no stop helper: its stored sibling is the
+            // neighbor (a comment between is read past only for tokens, in the gap).
+            let (a, b) = if k == "precedes" { (v.to_owned(), c.clone()) } else { (c.clone(), v.to_owned()) };
+            lits = vec![format!("next_sibling({a}, {b})")];
+            lits.extend(lower(px, prog, &Value::Obj(sub_.clone()), &c, vs, &skip)?);
+        }
         let (t, gv) = (vs.fresh("t"), vs.fresh("g"));
         let rx = sub_.get("regex").expect("regex").clone();
         let rx_str = rx.as_str().map(str::to_owned);

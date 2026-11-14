@@ -37,7 +37,7 @@ fn matches(r: &Regex, s: &str) -> bool {
 
 /// The variables a literal names: identifiers not called, not `@` functions, not aggregate words; and in a pattern
 /// (`` p ~ `$F2` ``), its metavariables, which bind the variables of their names.
-fn vars_of(px: &Patterns, l: &str) -> BTreeSet<String> {
+pub(super) fn vars_of(px: &Patterns, l: &str) -> BTreeSet<String> {
     static VAR: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?<![\w@$])[A-Za-z_][A-Za-z0-9_]*\b(?!\s*\()").expect("a variable"));
     static MV: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"\$+([A-Z_][A-Z0-9_]*)").expect("a metavariable"));
     const WORDS: &[&str] = &["_", "count", "sum", "min", "max", "mean", "join", "by", "sep", "true", "false"];

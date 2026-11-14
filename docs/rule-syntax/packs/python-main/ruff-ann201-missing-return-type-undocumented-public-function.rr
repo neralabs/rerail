@@ -101,9 +101,9 @@ ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, 
 //   FN: metavariable this relation binds for the calling rule
 .decl ann201_accessor_expr(n: node, fn: loc)
 ann201_accessor_expr(n, FN) :- kind(n, "attribute"), field(n, "object", c1),
-    ann201_accessor_object(c1, FN), field(n, "attribute", c2), glob("{setter,deleter}", c2).
-ann201_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ann201_accessor_expr(c3, FN).
+    ann201_accessor_object(c1, FN), ann201_tok_has_1(n).
+ann201_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ann201_accessor_expr(c10, FN).
 
 // underscore_named(n): the JSON util `underscore-named`, used where the JSON says `matches: "underscore-named"`
 .decl ann201_underscore_named(n: node)
@@ -227,6 +227,18 @@ ann201_accessor_object(n, FN) :- kind(n, "parenthesized_expression"), child(n, c
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME), ann201_export_string(n, DEFNAME).
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c1, _), ann201_export_entry(c1, DEFNAME).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann201_tok_has_1(n: node)
+.stored ann201_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann201_tok_has_1(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+ann201_tok_has_1(n) :- op(n, t3), match("(setter|deleter)", t3).
+ann201_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann201_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
+ann201_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_all_value: the rows of all_value its callers ask for (the metavariable columns they pass in)
 .decl ann201_demand_all_value(n: node, defname: loc)

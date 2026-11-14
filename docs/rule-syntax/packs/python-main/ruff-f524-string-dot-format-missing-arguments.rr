@@ -16,8 +16,8 @@ F524(n) :- n ~ `$S.format($$$A)`, fa_brace_tree(n, _, _), fa_brace_missing(n, f1
     kind(f1, "field").
 F524(n) :- kind(n, "call"), field(n, "arguments", c2),
     kind(c2, "generator_expression"), field(n, "function", c3), kind(c3, "attribute"),
-    field(c3, "attribute", c4), glob("format", c4), field(n, "function", c5),
-    field(c5, "object", c6), f524_reads_past_one(c6).
+    f524_tok_has_1(c3), field(n, "function", c12), field(c12, "object", c13),
+    f524_reads_past_one(c13).
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl f524_plain_string(n: node)
@@ -32,3 +32,15 @@ f524_reads_past_one(n) :- f524_plain_string(n), parsed(n, "braceFormat", r1),
     !value(c3, "0").
 f524_reads_past_one(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
     f524_reads_past_one(c4).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f524_tok_has_1(n: node)
+.stored f524_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f524_tok_has_1(n) :- field(n, "attribute", c4), glob("format", c4).
+f524_tok_has_1(n) :- op(n, t5), match("format", t5).
+f524_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g6).
+f524_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g6).
+f524_tok_has_1(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g6).

@@ -87,7 +87,7 @@ perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), within(c1, n), perf403_re
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
 .decl perf403_post_ref(n: node, for: loc)
 perf403_post_ref(n, FOR) :- perf403_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), node(_, st2, _, _, _), SITE = st2, text(SITE, t3), text(FOR, t3), @doc(SITE) = @doc(FOR).
+    st2 = b1, node(_, st2, _, _, _), SITE = st2, node(_, SITE, _, _, _), node(_, FOR, _, _, _), SITE = FOR.
 
 // has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
@@ -99,10 +99,9 @@ perf403_has_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR), within(c1, 
 //   K, TC: metavariables of the calling rule, passed in (bound by the caller)
 .decl perf403_key_element(n: node, k: loc, tc: loc)
 perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), node(_, n, _, _, _), E1 = n,
-    value(E1, t1), value(K, t1), unset(TC).
+    value(E1, t1), value(K, t1), !node(_, TC, _, _, _).
 perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), kind(n, "tuple_pattern"),
-    text(TC, t5), text(TC, t5), perf403_tok_has_7(n),
-    k16 = count : { child(n, c15, _), !perf403_alt_13(c15) }, k16 >= 1, k16 <= 1,
+    perf403_tok_has_7(n), k16 = count : { child(n, c15, _), !perf403_alt_13(c15) }, k16 >= 1, k16 <= 1,
     child(n, c17, _), node(_, c17, _, _, _), E3 = c17, !perf403_alt_13(c17), value(E3, t18), value(K, t18).
 perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), kind(n, "tuple_pattern"),
     !perf403_tok_has_8(n), child(n, c28, _), perf403_key_element(c28, K, TC).
@@ -113,8 +112,7 @@ perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), kind(n, "
 perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V), kind(n, "tuple_pattern"),
     !perf403_tok_has_9(n), child(n, c9, _), perf403_target(c9, K, TC, V).
 perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V), kind(n, "identifier"), node(_, n, _, _, _), E = n,
-    value(E, t10), value(K, t10), value(E, t12), value(V, t12),
-    unset(TC).
+    value(E, t10), value(K, t10), value(E, t12), value(V, t12), !node(_, TC, _, _, _).
 perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V),
     (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
     count : { within(c16, n), (kind(c16, "attribute") ; kind(c16, "subscript")) } = 0,
@@ -481,9 +479,9 @@ perf403_alt_3(n) :- kind(n, "function_definition"), field(n, "return_type", c9),
 .decl perf403_alt_4(n: node)
 perf403_alt_4(n) :- ref_site(n, b1), site_only(b1), (st2 = b1 ; within(b1, st2)), perf403_alt_2(st2).
 perf403_alt_4(n) :- ref_site(n, b6), site_only(b6), binding_value(b6, x7), perf403_dict_init(x7),
-    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+    st8 = b6, count : { child(st8, c9, _), kind(c9, "type") } = 0.
 perf403_alt_4(n) :- ref_site(n, b10), site_only(b10), site_annotation(b10, o11), perf403_dict_ann(o11),
-    (st12 = b10 ; within(b10, st12)),
+    st12 = b10,
     count : { child(st12, c13, _), (kind(c13, "list_splat_pattern") ; kind(c13, "dictionary_splat_pattern")) } = 0.
 perf403_alt_4(n) :- ref_site(n, b14), site_only(b14), (st15 = b14 ; within(b14, st15)),
     perf403_alt_3(st15).

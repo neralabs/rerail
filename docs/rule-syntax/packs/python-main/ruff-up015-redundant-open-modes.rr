@@ -56,10 +56,10 @@ up015_mode_after_continued_comma(n) :- child(p1, n, _), up015_counted_2(n),
     k3 = count : { child(p1, s2, _), precedes(s2, n), up015_counted_2(s2) }, k3 = 1,
     count : { precedes(s4, n), kind(s4, "list_splat") } = 0, child(p5, n, _),
     kind(p5, "argument_list"),
-    count : { child(p5, c6, _), kind(c6, "keyword_argument"), field(c6, "name", c7), glob("mode", c7) } = 0,
-    child(p8, p5, _), kind(p8, "call"), field(p8, "function", c9), up015_callee(c9),
-    precedes_stop(s10, n, up015_stop_3), glob("\\,", s10), precedes_stop(s11, s10, up015_stop_3),
-    kind(s11, "line_continuation").
+    count : { child(p5, c6, _), kind(c6, "keyword_argument"), up015_tok_has_1(c6) } = 0,
+    child(p15, p5, _), kind(p15, "call"), field(p15, "function", c16), up015_callee(c16),
+    precedes_stop(s17, n, up015_stop_3), glob("\\,", s17), precedes_stop(s18, s17, up015_stop_3),
+    kind(s18, "line_continuation").
 
 // UP015(n, detail): findings from clauses `mode-only-redundant`, `mode-has-redundant-flags`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -179,6 +179,18 @@ up015_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), up015_args_
 up015_arg_no_mode_1(n) :- kind(n, "call"), field(n, "arguments", l), !up015_args_kwp(l, "mode", _),
     !up015_args_pos(l, _, 1).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^mode$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up015_tok_has_1(n: node)
+.stored up015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up015_tok_has_1(n) :- field(n, "name", c7), glob("mode", c7).
+up015_tok_has_1(n) :- op(n, t8), match("mode", t8).
+up015_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
+up015_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
+up015_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
+
 // demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
 .decl up015_demand_alt_10(n: node, l: loc)
 up015_demand_alt_10(n, L) :- up015_empty_mode(n), node(_, n, _, _, _), L = n.
@@ -207,10 +219,10 @@ up015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 //   M: metavariable this relation binds for the calling rule
 .decl up015_alt_10(n: node, l: loc, m: loc)
 up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within(n, p1), up015_open_call(p1, M),
-    text(L, t2), text(M, t2), @doc(L) = @doc(M).
+    node(_, L, _, _, _), node(_, M, _, _, _), L = M.
 up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within_stop(n, p4, up015_stop_11),
     kind(p4, "parenthesized_expression"), node(_, p4, _, _, _), P = p4, within(p4, p5), up015_open_call(p5, M),
-    text(P, t6), text(M, t6), @doc(P) = @doc(M).
+    node(_, P, _, _, _), node(_, M, _, _, _), P = M.
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   M, S: metavariables this relation binds for the calling rule

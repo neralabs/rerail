@@ -40,12 +40,11 @@ npy201_catches_attribute_error(n) :- child(n, c1, _), kind(c1, "except_clause"),
 npy201_fallback(n, NAME, NEW) :- npy201_demand_fallback(n, NAME, NEW), kind(n, "attribute"),
     npy201_in_handler(n), npy201_up_2(n, p1), field(p1, "body", c2), has(c2, c3, "attribute"),
     sym_of(c3, q4), npy201_set_4(q4), field(c3, "attribute", c5), kind(c5, "identifier"),
-    node(_, c5, _, _, _), TID = c5, value(TID, NEW), text(NAME, t1_td),
+    node(_, c5, _, _, _), TID = c5, text(TID, NEW), text(NAME, t1_td),
     NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
 npy201_fallback(n, NAME, NEW) :- npy201_demand_fallback(n, NAME, NEW), kind(n, "identifier"),
-    ref_site(n, b8), (st9 = b8 ; within(b8, st9)), npy201_in_handler(st9),
-    within_stop(st9, p10, "try_statement"), kind(p10, "try_statement"),
-    npy201_catches_import_error(p10), field(p10, "body", c11),
+    ref_site(n, b8), st9 = b8, npy201_in_handler(st9), within_stop(st9, p10, "try_statement"),
+    kind(p10, "try_statement"), npy201_catches_import_error(p10), field(p10, "body", c11),
     has(c11, c12, "import_from_statement"), has(c12, c13, "dotted_name"),
     npy201_statement_name(c13, q14),
     ( q14 = "ast.literal_eval"
@@ -84,7 +83,7 @@ npy201_fallback(n, NAME, NEW) :- npy201_demand_fallback(n, NAME, NEW), kind(n, "
     ; q14 = "numpy.trapezoid"
     ; q14 = "numpy.vstack"
     ),
-    node(_, c13, _, _, _), IID = c13, value(IID, NEW), text(NAME, t1_td),
+    node(_, c13, _, _, _), IID = c13, text(IID, NEW), text(NAME, t1_td),
     NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
 
 // catches_import_error(n): the JSON util `catches-import-error`, used where the JSON says `matches: "catches-import-error"`
@@ -772,13 +771,12 @@ npy201_demand_in_handler(n) :- npy201_demand_fallback(n, NAME, NEW), kind(n, "at
     within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
     npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
     sym_of(c3, q4), npy201_set_4(q4), field(c3, "attribute", c5), kind(c5, "identifier"),
-    node(_, c5, _, _, _), TID = c5, value(TID, t6), value(NEW, t6).
+    node(_, c5, _, _, _), TID = c5, text(TID, t6), text(NEW, t6), @doc(TID) = @doc(NEW).
 npy201_demand_in_handler(st9) :- npy201_demand_fallback(n, NAME, NEW), kind(n, "identifier"),
-    ref_site(n, b8), (st9 = b8 ; within(b8, st9)),
-    within_stop(st9, p10, "try_statement"), kind(p10, "try_statement"),
-    npy201_catches_import_error(p10), field(p10, "body", c11),
+    ref_site(n, b8), st9 = b8, within_stop(st9, p10, "try_statement"),
+    kind(p10, "try_statement"), npy201_catches_import_error(p10), field(p10, "body", c11),
     has(c11, c12, "import_from_statement"), has(c12, c13, "dotted_name"),
-    npy201_statement_name(c13, q14), node(_, c13, _, _, _), IID = c13, value(IID, t15), value(NEW, t15).
+    npy201_statement_name(c13, q14), node(_, c13, _, _, _), IID = c13, text(IID, t15), text(NEW, t15), @doc(IID) = @doc(NEW).
 npy201_demand_in_handler(n) :- within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
     npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
     sym_of(c3, q4), npy201_set_4(q4).

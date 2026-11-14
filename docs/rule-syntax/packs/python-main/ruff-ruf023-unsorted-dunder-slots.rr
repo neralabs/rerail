@@ -62,10 +62,10 @@ ruf023_slots_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pa
 
 // slots_value(n): the JSON util `slots-value`, used where the JSON says `matches: "slots-value"`
 .decl ruf023_slots_value(n: node)
-ruf023_slots_value(n) :- ruf023_demand_slots_value(n), ruf023_up_1(n, p1), field(_, "right", n),
-    field(p1, "left", c2), ruf023_slots_name(c2),
-    count : { child(p3, p1, _), kind(p3, "assignment") } = 0,
-    within_stop(p1, p4, ruf023_stop_8), kind(p4, "class_definition").
+ruf023_slots_value(n) :- ruf023_demand_slots_value(n), ruf023_up_1(n, p1),
+    field(p1, "right", f2), (f2 = n ; within(n, f2)), field(p1, "left", c3),
+    ruf023_slots_name(c3), count : { child(p4, p1, _), kind(p4, "assignment") } = 0,
+    within_stop(p1, p5, ruf023_stop_8), kind(p5, "class_definition").
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf023_tok_has_1(n: node)

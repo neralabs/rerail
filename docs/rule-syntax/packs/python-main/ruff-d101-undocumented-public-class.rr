@@ -41,8 +41,7 @@ d101_docstring(n) :- kind(n, "expression_statement"),
 // all_stmt(n): the JSON util `all-stmt`, used where the JSON says `matches: "all-stmt"`
 .decl d101_all_stmt(n: node)
 d101_all_stmt(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
-    child(p1, n, _), kind(p1, "expression_statement"), field(n, "left", c2),
-    match("[(\\s]*__all__[\\s)]*", c2).
+    child(p1, n, _), kind(p1, "expression_statement"), d101_tok_has_2(n).
 
 // all_value(n): the JSON util `all-value`, used where the JSON says `matches: "all-value"`
 .decl d101_all_value(n: node)
@@ -90,6 +89,18 @@ d101_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
 d101_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
     match("(?s)^(?:.*(?:,).*)$", g5).
 d101_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[(\\s]*__all__[\\s)]*$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d101_tok_has_2(n: node)
+.stored d101_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d101_tok_has_2(n) :- field(n, "left", c2), match("[(\\s]*__all__[\\s)]*", c2).
+d101_tok_has_2(n) :- op(n, t3), match("[(\\s]*__all__[\\s)]*", t3).
+d101_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:[(\\s]*__all__[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+d101_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:[(\\s]*__all__[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+d101_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:.*(?:[(\\s]*__all__[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
 
 // stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl d101_stop_3(kind: symbol)

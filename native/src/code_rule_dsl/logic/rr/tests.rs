@@ -3506,3 +3506,28 @@ fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
     assert!(heads.contains("py_listed"), "the request rule is kept");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two programs run as one: each one's `has` over a guest's nodes still finds them. The merge names kind sets by
+/// their kinds; it renamed `inside`'s axis to the shared set but left `has`'s on the program's own set name, which
+/// guest hiding then could not name in the guest's grammar: no row.
+#[test]
+fn has_over_a_guest_holds_with_two_programs() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("has2");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(db):\n    db.execute(\"SELECT name FROM users\")\n").unwrap();
+    let text = |clause: &str, body: &str| {
+        let path = dir.join(format!("{clause}.rr"));
+        std::fs::write(&path, format!(
+            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+        )).unwrap();
+        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+    };
+    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let other = text("calls", "kind(n, \"call\")");
+    let out = dir.join("out");
+    let options = serde_json::json!({ "memo": "off" });
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[has.as_str(), other.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    let rows = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
+}
