@@ -52,6 +52,12 @@ export interface CheckoutContext {
   readonly git: boolean;
   /** True for a clone's main checkout, false for a linked worktree. */
   readonly main: boolean;
+  /**
+   * On Windows, for a folder outside git reached under another spelling than the disk stores (a mapped or `subst` drive
+   * letter, another letter case): the key Rerail 0.1.4 and earlier recorded it under, the folder as spelt, where the
+   * start or stop they saved for it stays. Absent where the two keys agree.
+   */
+  readonly earlierCheckoutPath?: string;
 }
 
 /** `not-set-up`: started, but the repository has no configuration, so nothing runs. */

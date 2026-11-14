@@ -40,6 +40,11 @@ export function physicalPath(path: string, platform: NodeJS.Platform = process.p
   return resolvedThrough(path, realpathOn(platform));
 }
 
+/** {@link physicalPath} as Rerail 0.1.4 and earlier gave it, through {@link earlierRealpath}: the key they recorded a checkout under. */
+export function earlierPhysicalPath(path: string): string {
+  return resolvedThrough(path, earlierRealpath);
+}
+
 /**
  * `physicalPath` spelled as the filesystem stores each name. On a case-insensitive filesystem (macOS by default)
  * `physicalPath` keeps the case `path` was typed in, while `git rev-parse --show-toplevel` gives the stored case; a path

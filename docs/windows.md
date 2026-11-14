@@ -229,6 +229,14 @@ spelt it. Where the stored spelling has no audit settings, Rerail reads the row 
 leaves it in place, so an earlier version sharing the database keeps reading and writing its own. A change saved here
 goes under the stored spelling, starting from the settings it read.
 
+They also recorded a folder outside Git under the JavaScript realpath of the folder as spelt, so `rerail stop` run
+through a mapped or `subst` drive letter saved the stop under that letter. Each start check made with the folder's own
+spelling (a hook without a daemon, the daemon's check on each event, `rerail status`, `rerail start` and `stop`) reads
+the checkout's row under the stored spelling and under that key in one statement (`earlierCheckoutPath`), the stored
+one first: a start or stop saved here decides from then on. Where a daemon answers, a hook's start check and the
+status line ask it with the folder's stored spelling, so its answer reads only that row; the daemon's check on each
+event still reads the stop, and nothing is checked or recorded there.
+
 <details>
 <summary>Other places that compare Windows paths</summary>
 

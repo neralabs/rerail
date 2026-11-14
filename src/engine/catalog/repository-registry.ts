@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse, resolve } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
-import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
+import { earlierPhysicalPath, physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
@@ -67,7 +67,19 @@ function contextOf<C extends string | null>(
   repositoryKey: RepositoryKey,
   cloneId: C,
 ): CheckoutContext & { readonly cloneId: C } {
-  return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
+  const earlierCheckoutPath = earlierKeyOf(location, checkoutPath);
+  return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main, ...(earlierCheckoutPath === undefined ? {} : { earlierCheckoutPath }) };
+}
+
+/**
+ * The key Rerail 0.1.4 and earlier recorded a folder outside git under on Windows, where it is not `checkoutPath`: the
+ * JS realpath of the folder as the caller spelt it, which keeps a mapped or `subst` drive letter and the letter case
+ * typed, where this build keys it by the spelling the disk stores. A git checkout is keyed by git's top level in both.
+ */
+function earlierKeyOf(location: RepositoryIdentityLocation, checkoutPath: string): string | undefined {
+  if (location.git || process.platform !== "win32" || location.workspaceRoot === checkoutPath) return undefined;
+  const earlier = earlierPhysicalPath(location.workspaceRoot);
+  return earlier === checkoutPath ? undefined : earlier;
 }
 
 function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): void {
@@ -373,8 +385,22 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
-  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;
+  const own = ownStarted(db, checkout);
   return statusOf(repository, own, own === null ? parentCheckouts(db, checkout) : []);
+}
+
+/**
+ * The checkout's own on/off: its row's, else the one Rerail 0.1.4 saved on the row it recorded the folder under
+ * ({@link CheckoutContext.earlierCheckoutPath}) for the same repository, so a start or stop saved here decides from then
+ * on. Both rows are read in one statement: a checkout with neither costs one read, as one with a single key does.
+ */
+function ownStarted(db: Reader, checkout: CheckoutContext): boolean | null {
+  const { checkoutPath, earlierCheckoutPath } = checkout;
+  if (earlierCheckoutPath === undefined) return db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.started ?? null;
+  const rows = db.select({ path: checkouts.checkoutPath, repositoryKey: checkouts.repositoryKey, started: checkouts.started }).from(checkouts)
+    .where(inArray(checkouts.checkoutPath, [checkoutPath, earlierCheckoutPath])).all();
+  const earlier = rows.find(row => row.path === earlierCheckoutPath && row.repositoryKey === checkout.repositoryKey);
+  return rows.find(row => row.path === checkoutPath)?.started ?? earlier?.started ?? null;
 }
 
 /** The status a checkout's own on/off, its parents' (nearest first) and its repository's row give it. */
