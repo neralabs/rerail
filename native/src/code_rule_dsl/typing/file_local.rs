@@ -240,55 +240,37 @@ pub(crate) fn reads_no_document(prog: &crate::code_rule_dsl::logic::front::Progr
 pub fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
     let index = RuleIndex::of(prog);
     let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    split_constants(prog, &index, &derived, &derived, None)
+    let rels = shape::Rels::of(prog, &index, &derived);
+    let bodies = split_memo::bodies_of(prog);
+    let all = vec![true; rels.derived];
+    let constant = split_constants(&rels, &bodies, &all, None);
+    (0..rels.derived).filter(|&r| constant[r]).map(|r| rels.names[r].to_owned()).collect()
 }
 
-/// [`constant_relations`] for the relations in `scope`; any other derived relation is a constant where `prev` holds
-/// it (`split_in`).
-fn split_constants(
-    prog: &crate::code_rule_dsl::logic::front::Program,
-    index: &RuleIndex<'_>,
-    derived: &std::collections::BTreeSet<&str>,
-    scope: &std::collections::BTreeSet<&str>,
-    prev: Option<&std::collections::BTreeSet<String>>,
-) -> std::collections::BTreeSet<String> {
-    use crate::code_rule_dsl::logic::front::Literal;
-    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
-    let candidate = |r: &str| !prog.natives.contains_key(r) && !prog.lattice.contains_key(r) && !inputs.contains(r);
-    let mut constant: std::collections::BTreeSet<String> = derived
-        .iter()
-        .filter(|r| match prev.filter(|_| !scope.contains(**r)) {
-            Some(p) => p.contains(**r),
-            None => candidate(r),
+/// [`constant_relations`] for the derived relations in `scope` (by number), as one flag per relation; any other
+/// derived relation is a constant where `prev` holds it (`split_in`).
+fn split_constants(rels: &shape::Rels<'_>, bodies: &[std::sync::Arc<split_memo::Body>], scope: &[bool], prev: Option<&std::collections::BTreeSet<String>>) -> Vec<bool> {
+    let mut constant: Vec<bool> = (0..rels.names.len())
+        .map(|r| {
+            r < rels.derived
+                && match prev.filter(|_| !scope[r]) {
+                    Some(p) => p.contains(rels.names[r]),
+                    None => rels.candidate[r],
+                }
         })
-        .map(|r| (*r).to_owned())
         .collect();
     // A greatest fixpoint: a relation stays while every rule of it reads only constants. Each relation is checked
     // again only when one it reads leaves (a pack's program has tens of thousands of rules). In rounds, each round's
     // relations checked on the pool's threads against the constants as the round began: relations only leave, so any
     // order reaches the same fixpoint.
     use rayon::prelude::*;
-    let mut round: Vec<&str> = scope.iter().copied().filter(|r| constant.contains(*r)).collect();
+    let mut round: Vec<u32> = (0..rels.derived as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
     while !round.is_empty() {
-        let leaving: Vec<&str> = round
-            .par_iter()
-            .copied()
-            .filter(|rel| {
-                !index.rules_of(rel).all(|r| {
-                    r.body.iter().all(|l| match l {
-                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                            constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !inputs.contains(a.rel.as_str()))
-                        }
-                        Literal::Cmp { .. } => true,
-                        _ => false,
-                    })
-                })
-            })
-            .collect();
-        for rel in &leaving {
-            constant.remove(*rel);
+        let leaving: Vec<u32> = round.par_iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| bodies[i].form().reads_constants(rels, &constant))).collect();
+        for &r in &leaving {
+            constant[r as usize] = false;
         }
-        round = index.heads_reading_any(leaving.iter().copied(), |reader| constant.contains(reader));
+        round = rels.heads_reading(leaving.iter().copied(), |reader| constant[reader as usize]);
     }
     constant
 }
@@ -331,6 +313,11 @@ impl<'p> RuleIndex<'p> {
         self.by_head.get(rel).map_or(&[], Vec::as_slice)
     }
 
+    /// Every relation a rule's body reads.
+    pub(crate) fn read_relations(&self) -> impl Iterator<Item = &'p str> + '_ {
+        self.by_read.keys().copied()
+    }
+
     /// The indices of the rules whose bodies read `rel`, in program order.
     pub(crate) fn reading(&self, rel: &str) -> &[usize] {
         self.by_read.get(rel).map_or(&[], Vec::as_slice)
@@ -356,10 +343,9 @@ impl<'p> RuleIndex<'p> {
 
 /// The rule's `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards): d is n's
 /// document, so the two place one document, as a document column and a node of one atom do.
-fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(String, String)> {
+fn var_equalities(body: &[crate::code_rule_dsl::logic::front::Literal]) -> Vec<(String, String)> {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
-    rule.body
-        .iter()
+    body.iter()
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.to_string(), b.to_string())),
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.to_string(), b.to_string())),
@@ -417,7 +403,7 @@ impl ValueTapes {
     }
 }
 
-fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
+fn value_tapes(body: &[crate::code_rule_dsl::logic::front::Literal]) -> ValueTapes {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     // `t = rr_tape1`: one class, named by its least variable.
     let mut class: BTreeMap<String, String> = BTreeMap::new();
@@ -428,7 +414,7 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
         }
         v
     };
-    for l in &rule.body {
+    for l in body {
         if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
             let (a, b) = (find(&class, a), find(&class, b));
             let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
@@ -440,7 +426,7 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
     let class: BTreeMap<String, String> = vars.into_iter().map(|v| (v.clone(), find(&class, &v))).collect();
     let canon = |v: &str| class.get(v).cloned().unwrap_or_else(|| v.to_owned());
     let mut out = ValueTapes { by_binder: BTreeMap::new(), splices: Vec::new(), class: class.clone() };
-    for l in &rule.body {
+    for l in body {
         let Literal::Atom(a) = l else { continue };
         if a.neg {
             continue;
@@ -448,8 +434,7 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
         match (a.rel.as_str(), a.args.as_slice()) {
             ("parse_of", [Term::Var(x), _, Term::Var(t)]) => {
                 let x = canon(x);
-                let binders: Vec<usize> = rule
-                    .body
+                let binders: Vec<usize> = body
                     .iter()
                     .enumerate()
                     .filter(|(_, l)| matches!(l, Literal::Atom(b) if !b.neg && !CHUNK_VALUES.contains(&b.rel.as_str()) && b.rel != "tape_of" && b.args.iter().any(|t| matches!(t, Term::Var(v) if canon(v) == x))))
@@ -533,103 +518,76 @@ fn split_in(
     prog: &crate::code_rule_dsl::logic::front::Program,
     index: &RuleIndex<'_>,
     derived: &std::collections::BTreeSet<&str>,
+    bodies: &[std::sync::Arc<split_memo::Body>],
     scope: &std::collections::BTreeSet<&str>,
     prev: Option<&Split>,
 ) -> Split {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use rayon::prelude::*;
     use std::collections::{BTreeMap, BTreeSet};
-    let was = |rel: &str| prev.filter(|_| !scope.contains(rel));
-    let base_locations = |rel: &str| base_locations(prog, rel);
-    let constants = split_constants(prog, index, derived, scope, prev.map(|p| &p.constants));
-    let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
-    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+    // The split's relations by number, and what it asks of each by name, asked once (`shape::Rels`).
+    let rels = shape::Rels::of(prog, index, derived);
+    let n = rels.derived;
+    let mut in_scope = vec![false; n];
+    for r in scope {
+        in_scope[rels.get(r).expect("a derived relation in scope") as usize] = true;
+    }
+    let was = |r: usize| prev.filter(|_| !in_scope[r]);
+    // The bodies in scope numbered (`shape::Form`), on the pool's threads: the run keeps each body's, so only the
+    // bodies a round rewrote are numbered here.
+    (0..prog.rules.len()).into_par_iter().filter(|&i| in_scope[rels.head[i] as usize]).for_each(|i| {
+        bodies[i].form();
+    });
+    let form = |i: usize| bodies[i].form();
+    let constant = split_constants(&rels, bodies, &in_scope, prev.map(|p| &p.constants));
     // A read that places no document whatever the round: a constant, a chunk's own value (a tape operation's rows,
     // decision 0058 §4, made in the chunk that asked), a text test.
-    let placeless = |rel: &str| {
-        let base = !derived.contains(rel);
-        (base && prog.facts.contains_key(rel) && !prog.inputs.iter().any(|x| x == rel))
-            || constants.contains(rel)
-            || run_constant(prog, rel)
-            || (base && CHUNK_VALUES.contains(&rel))
-            || test_relation(rel)
-    };
-    // The rules in scope numbered once (`shape`): the fixpoints below ask them in that form each round.
-    use rayon::prelude::*;
-    let numbered = shape::Derived::of(derived);
-    let shapes: Vec<Option<shape::Shape>> = prog
-        .rules
-        .par_iter()
-        .map(|r| scope.contains(r.head.rel.as_str()).then(|| shape::Shape::of(r, prog, &numbered, &placeless)))
-        .collect();
-    let shape_of = |i: usize| -> std::borrow::Cow<'_, shape::Shape> {
-        match &shapes[i] {
-            Some(s) => std::borrow::Cow::Borrowed(s),
-            None => std::borrow::Cow::Owned(shape::Shape::of(&prog.rules[i], prog, &numbered, &placeless)),
-        }
-    };
+    let placeless: Vec<bool> = (0..rels.names.len()).map(|r| rels.fact[r] || constant[r] || rels.run_constant[r] || rels.chunk_value[r] || rels.test[r]).collect();
     // A derived relation's location columns (by number): those every rule fills from a location.
-    let mut locs: Vec<Vec<usize>> = numbered
-        .names
-        .iter()
-        .map(|rel| {
-            let kept = was(rel).and_then(|p| p.locations.get(*rel).cloned());
-            let width = prog.decls.get(*rel).map_or(0, |c| c.len());
+    let mut locs: Vec<Vec<usize>> = (0..n)
+        .map(|r| {
+            let kept = was(r).and_then(|p| p.locations.get(rels.names[r]).cloned());
+            let width = prog.decls.get(rels.names[r]).map_or(0, |c| c.len());
             kept.unwrap_or_else(|| (0..width).collect())
         })
         .collect();
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
     // when the locations of one its rules read changed (a pack's program has tens of thousands of rules). In rounds,
     // each round's relations checked on the pool's threads against the locations as the round began.
-    let mut round: Vec<&str> = scope.iter().copied().collect();
+    let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
     while !round.is_empty() {
-        let changed: Vec<(&str, Vec<usize>)> = round
+        let changed: Vec<(u32, Vec<usize>)> = round
             .par_iter()
-            .filter_map(|&rel| {
-                let d = numbered.id[rel] as usize;
-                let rules: Vec<_> = index.rule_ids_of(rel).iter().map(|&i| shape_of(i)).collect();
-                let placed: Vec<shape::Bits> = rules.iter().map(|r| r.placed_classes(&locs)).collect();
-                let kept: Vec<usize> = locs[d].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(r, p)| r.head_placed(c, p))).collect();
-                (kept != locs[d]).then_some((rel, kept))
+            .filter_map(|&r| {
+                let rules = rels.rules[r as usize];
+                let placed: Vec<shape::Bits> = rules.iter().map(|&i| form(i).placed_classes(&rels, &locs)).collect();
+                let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&i, p)| form(i).head_placed(&prog.rules[i].head, c, p))).collect();
+                (kept != locs[r as usize]).then_some((r, kept))
             })
             .collect();
-        let next = index.heads_reading_any(changed.iter().map(|(rel, _)| *rel), |_| true);
-        for (rel, kept) in changed {
-            locs[numbered.id[rel] as usize] = kept;
+        let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |_| true);
+        for (r, kept) in changed {
+            locs[r as usize] = kept;
         }
         round = next;
     }
-    let locations: BTreeMap<String, Vec<usize>> = numbered.names.iter().map(|r| (*r).to_owned()).zip(locs.iter().cloned()).collect();
+    let locations: BTreeMap<String, Vec<usize>> = (0..n).map(|r| (rels.names[r].to_owned(), locs[r].clone())).collect();
     // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
     // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
     // every string of the chunk that passes, so a rule that joins one on a string its chunk gave stays file-local.
-    // To a fixpoint: a filter may read other filters.
-    let mut filters: BTreeSet<String> = derived.iter().filter(|r| was(r).is_none_or(|p| p.filters.contains(**r))).map(|r| (*r).to_owned()).collect();
-    // A greatest fixpoint: a relation is checked again only when one its rules read leaves. In rounds, as the
-    // locations are.
-    let mut round: Vec<&str> = scope.iter().copied().filter(|r| filters.contains(*r)).collect();
+    // A greatest fixpoint: a filter may read other filters, and a relation is checked again only when one its rules
+    // read leaves. In rounds, as the locations are.
+    let mut filtering: Vec<bool> = (0..n).map(|r| was(r).is_none_or(|p| p.filters.contains(rels.names[r]))).collect();
+    let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
     while !round.is_empty() {
-        let leaving: Vec<&str> = round.par_iter().copied().filter(|rel| {
-            !{
-                index.rules_of(rel).all(|r| {
-                    let mut strings = BTreeSet::new();
-                    let reads_only_text = r.body.iter().all(|l| match l {
-                        Literal::Atom(a) if test_relation(&a.rel) || filters.contains(a.rel.as_str()) => true,
-                        Literal::Atom(a) if !a.neg && let Some(cols) = text_columns(&a.rel) => {
-                            strings.extend(cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None }));
-                            true
-                        }
-                        Literal::Cmp { .. } => true,
-                        _ => false,
-                    });
-                    reads_only_text && r.head.args.iter().all(|t| matches!(t, Term::Var(v) if strings.contains(v)))
-                })
-            }
-        }).collect();
-        for rel in &leaving {
-            filters.remove(*rel);
+        let leaving: Vec<u32> = round.par_iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| form(i).filters(&prog.rules[i].head, &rels, &filtering))).collect();
+        for &r in &leaving {
+            filtering[r as usize] = false;
         }
-        round = index.heads_reading_any(leaving.iter().copied(), |reader| filters.contains(reader));
+        round = rels.heads_reading(leaving.iter().copied(), |reader| filtering[reader as usize]);
     }
+    let constants: BTreeSet<String> = (0..n).filter(|&r| constant[r]).map(|r| rels.names[r].to_owned()).collect();
+    let filters: BTreeSet<String> = (0..n).filter(|&r| filtering[r]).map(|r| rels.names[r].to_owned()).collect();
     // Python fact operators preserve each demanded node's document. Their proof rules must still
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
@@ -638,24 +596,24 @@ fn split_in(
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
-    let mut local: BTreeSet<String> = derived.iter().filter(|r| match was(r) { Some(p) => p.local.contains(**r), None => !cross_native(r) }).map(|r| (*r).to_owned()).collect();
-    let mut causes: BTreeMap<String, String> = derived
-        .iter()
+    // The file-local relations by number, and each cross-file one's cause.
+    let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) }).collect();
+    let mut causes: BTreeMap<String, String> = (0..n)
         .filter_map(|r| match was(r) {
-            Some(p) => p.causes.get(*r).map(|c| ((*r).to_owned(), c.clone())),
-            None => cross_native(r).then(|| ((*r).to_owned(), "made natively".to_owned())),
+            Some(p) => p.causes.get(rels.names[r]).map(|c| (rels.names[r].to_owned(), c.clone())),
+            None => cross_native(rels.names[r]).then(|| (rels.names[r].to_owned(), "made natively".to_owned())),
         })
         .collect();
-    let mut dirty: Option<BTreeSet<usize>> = None;
-    // The file-local relations and the filters by number, for the numbered check (`Shape::one_document`).
-    let mut local_now: Vec<bool> = numbered.names.iter().map(|r| local.contains(*r)).collect();
-    let filtering: Vec<bool> = numbered.names.iter().map(|r| filters.contains(*r)).collect();
+    let base_locations = |rel: &str| base_locations(prog, rel);
+    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+    let mut dirty: Option<Vec<usize>> = None;
     loop {
         // Why a rule places more than one document, from its text: asked only of a rule the numbered check fails.
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
+            let local = |rel: &str| rels.get(rel).is_some_and(|r| local_now[r as usize]);
             // Each read relation's location variables; the rule's locations must form one component.
             let mut groups: Vec<BTreeSet<String>> = Vec::new();
-            let placed = value_tapes(rule);
+            let placed = value_tapes(&rule.body);
             let tape = |v: &str| format!("rr_value_tape:{v}");
             for (n, t) in &placed.splices {
                 groups.push(BTreeSet::from([n.clone(), tape(t)]));
@@ -676,7 +634,7 @@ fn split_in(
                 if constant || chunk_value || test_relation(&atom.rel) || filters.contains(atom.rel.as_str()) || filters.contains(rule.head.rel.as_str()) {
                     continue;
                 }
-                if derived.contains(atom.rel.as_str()) && !local.contains(atom.rel.as_str()) {
+                if derived.contains(atom.rel.as_str()) && !local(&atom.rel) {
                     return Err(format!("reads cross-file {}", atom.rel));
                 }
                 let columns = if derived.contains(atom.rel.as_str()) { locations[atom.rel.as_str()].clone() } else { base_locations(&atom.rel) };
@@ -704,7 +662,7 @@ fn split_in(
                 groups.push(vars);
             }
             // `a = b` joins a's group and b's (it makes no group of its own: two symbols equal place nothing).
-            let equal = var_equalities(rule);
+            let equal = var_equalities(&rule.body);
             for g in &mut groups {
                 close_under(g, &equal);
             }
@@ -730,37 +688,38 @@ fn split_in(
                 Err(format!("joins {} documents: {{{}}}", merged.len(), parts.join("} {")))
             }
         };
-        let before = local.len();
         // In rounds, as before, so the causes are the same: a rule can newly fail only by reading a relation that left
         // in the round before; the first round checks every rule in scope.
         // Each round's rules checked on the pool's threads, their failures kept in program order.
-        let check = |i: usize| -> Option<(String, String)> {
+        let check = |i: usize| -> Option<(u32, String)> {
             let r = &prog.rules[i];
-            if shape_of(i).one_document(&local_now, &filtering, &locs) {
+            let head = rels.head[i];
+            if form(i).one_document(head, &rels, &placeless, &local_now, &filtering, &locs) {
                 debug_assert!(rule_local(r).is_ok(), "the numbered check and the text's agree on {}", r.head.rel);
                 return None;
             }
             let why = rule_local(r).err();
             debug_assert!(why.is_some(), "the numbered check and the text's agree on {}", r.head.rel);
-            let why = why.unwrap_or_else(|| "places more than one document".to_owned());
-            Some((r.head.rel.to_string(), why))
+            Some((head, why.unwrap_or_else(|| "places more than one document".to_owned())))
         };
-        let failing: Vec<(String, String)> = match &dirty {
-            None => (0..prog.rules.len()).into_par_iter().filter(|&i| scope.contains(prog.rules[i].head.rel.as_str()) && local.contains(prog.rules[i].head.rel.as_str())).filter_map(check).collect(),
-            Some(rules) => rules.iter().copied().collect::<Vec<usize>>().par_iter().copied().filter(|&i| local.contains(prog.rules[i].head.rel.as_str())).filter_map(check).collect(),
+        let failing: Vec<(u32, String)> = match &dirty {
+            None => (0..prog.rules.len()).into_par_iter().filter(|&i| in_scope[rels.head[i] as usize] && local_now[rels.head[i] as usize]).filter_map(check).collect(),
+            Some(rules) => rules.par_iter().copied().filter(|&i| local_now[rels.head[i] as usize]).filter_map(check).collect(),
         };
-        let mut next: BTreeSet<usize> = BTreeSet::new();
-        for (rel, why) in failing {
-            if let Some(&d) = numbered.id.get(rel.as_str()) {
-                local_now[d as usize] = false;
+        let mut next: Vec<usize> = Vec::new();
+        let mut left = false;
+        for (r, why) in failing {
+            if std::mem::replace(&mut local_now[r as usize], false) {
+                next.extend(rels.reading[r as usize]);
+                left = true;
             }
-            if local.remove(&rel) {
-                next.extend(index.reading(&rel));
-            }
-            causes.entry(rel).or_insert(why);
+            causes.entry(rels.names[r as usize].to_owned()).or_insert(why);
         }
+        next.sort_unstable();
+        next.dedup();
         dirty = Some(next);
-        if local.len() == before {
+        if !left {
+            let local: BTreeSet<String> = (0..n).filter(|&r| local_now[r]).map(|r| rels.names[r].to_owned()).collect();
             return Split { constants, locations, filters, local, causes };
         }
     }
@@ -1341,7 +1300,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base:
             let positive: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg).collect();
             let vars = |a: &Atom| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect::<Vec<_>>();
             // A variable equal to a held one is held; one equal to a loose one is loose (`m = n`).
-            let equal = var_equalities(rule);
+            let equal = var_equalities(&rule.body);
             let mut held: BTreeSet<String> = positive.iter().filter(|a| !key.contains_key(a.rel.as_str()) && !source(a, &tainted)).flat_map(|a| vars(a)).map(String::from).collect();
             close_under(&mut held, &equal);
             let mut loose: BTreeSet<String> = positive.iter().filter(|a| source(a, &tainted)).flat_map(|a| vars(a)).map(String::from).collect();
@@ -1485,7 +1444,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             // branch, as lowering leaves it: `(e0 = d ; …)`) names one value, so it joins the atoms on each side; apart,
             // each would be pushed alone and their join left to the cross-file part (decision 0093 §4, O140).
             let idx: Vec<usize> = (0..rule.body.len()).filter(|&j| candidate(&rule.body[j])).collect();
-            let equal = var_equalities(rule);
+            let equal = var_equalities(&rule.body);
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
             for &j in &idx {
                 let mut vars = rule.body[j].vars();
