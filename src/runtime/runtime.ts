@@ -308,6 +308,14 @@ function owedNow(state: RuntimeSessionState): number {
   return state.owed.steers.length + (state.codeRuleOffReason === undefined ? state.owed.findings.length : 0);
 }
 
+/**
+ * The steers of `steers` the session owes its agent itself: not a Merge Assist note, which records itself as given once
+ * a delivery takes it (`settled`) and which Merge Assist hands the session's next open again until one does.
+ */
+function ownSteers(steers: readonly PendingSteer[]): PendingSteer[] {
+  return steers.filter(steer => steer.settled === undefined);
+}
+
 /** Whether `item` is the steer of an edit Rerail rolled back: the agent's only word that its edit is gone. */
 function rollsBack(item: PendingSteer | MissedFinding): boolean {
   return "delivery" in item && item.delivery.rewound !== undefined;
@@ -1582,13 +1590,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * What the session owes its agent as it closes, taken from it: the steers and held findings no newer revision has
-   * overtaken, when the close keeps them (`keepsOwed`); none at its end.
+   * overtaken, when the close keeps them (`keepsOwed`); none at its end. A Merge Assist note waits with Merge Assist
+   * instead (`ownSteers`).
    */
   #owedAtClose(state: RuntimeSessionState): Owing {
     const current = <T extends PendingSteer | MissedFinding>(owed: T[]): T[] => owed.filter(item => this.#isCurrentSteer(state, item));
     const owing: Owing = {
       kept: { steers: current(state.owed.steers), findings: current(state.owed.findings) },
-      found: { steers: current(state.pendingSteers), findings: current(state.missedFindings) },
+      found: { steers: current(ownSteers(state.pendingSteers)), findings: current(state.missedFindings) },
     };
     state.owed.steers = [];
     state.owed.findings = [];
@@ -2283,16 +2292,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Whether the session still owes its agent something that would reach it later, or not at all, were it suspended and
    * opened again: a tool call of its turn waiting for its result (the result of a session opened again comes while its
-   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a steer not yet delivered
-   * or a finding held for the yield's digest, among them those its ledger gave back as it opened again (`owedNow`: a
-   * scan opens a suspended session with no event to take them), or a scan (`#owesScan`). A steer would reach the agent with
-   * the next event all the same, but the session that event opened again would hold the agent's next tool call while its
-   * rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn end in a host that does not wait:
-   * a session left in memory checks it at once.
+   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a steer of its own not yet
+   * delivered (`ownSteers`) or a finding held for the yield's digest, among them those its ledger gave back as it opened
+   * again (`owedNow`: a scan opens a suspended session with no event to take them), or a scan (`#owesScan`). A steer
+   * would reach the agent with the next event all the same, but the session that event opened again would hold the
+   * agent's next tool call while its rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn
+   * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
-      || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+      || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
   }
 
   /**
