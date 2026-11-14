@@ -1750,7 +1750,13 @@ pub mod reads {
         i
     }
 
+    /// With `E17_SITES` set, each read is also counted by its caller's source location (slow: a lock a read).
+    static SITES_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("E17_SITES").is_some());
+    type Site = (usize, &'static std::panic::Location<'static>);
+    static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> = std::sync::Mutex::new(None);
+
     #[inline]
+    #[track_caller]
     pub fn at(part: usize, node: u32) {
         if PAUSED.with(|p| p.get()) != 0 {
             return;
@@ -1766,6 +1772,10 @@ pub mod reads {
             3
         };
         PATTERNS[part][class].fetch_add(1, Relaxed);
+        if *SITES_ON {
+            let site = std::panic::Location::caller();
+            SITES.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
+        }
     }
 
     #[inline]
@@ -1803,6 +1813,14 @@ pub mod reads {
         eprintln!("read patterns (E17), counts:");
         for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
             eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12}", c.load(Relaxed))).collect::<String>());
+        }
+        if let Some(sites) = SITES.lock().expect("the sites").take() {
+            let mut sites: Vec<_> = sites.into_iter().collect();
+            sites.sort_by_key(|(_, c)| std::cmp::Reverse(c.iter().sum::<u64>()));
+            eprintln!("read patterns (E17), top sites (same, next, near, far):");
+            for ((part, site), c) in sites.iter().take(40) {
+                eprintln!("  {:<18} {:>11} {:>11} {:>11} {:>11}  {site}", PATTERN_PARTS[*part], c[0], c[1], c[2], c[3]);
+            }
         }
     }
 }

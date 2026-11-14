@@ -136,6 +136,7 @@ mod counted {
             }
             self.v.iter()
         }
+        #[track_caller]
         pub fn get(&self, i: usize) -> Option<&T> {
             if self.part != usize::MAX && i < self.v.len() {
                 reads::at(self.part, i as u32);
@@ -174,6 +175,7 @@ mod counted {
     impl<T> Index<usize> for Col<T> {
         type Output = T;
         #[inline]
+        #[track_caller]
         fn index(&self, i: usize) -> &T {
             if self.part != usize::MAX {
                 reads::at(self.part, i as u32);
@@ -694,6 +696,7 @@ fn posting<'a>(keys: &[u32], offsets: &[u32], nodes: &'a [u32], key: u32) -> &'a
 }
 
 impl Facts {
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn start_line(&self, id: u32) -> u32 {
         self.lines.line(self.start[id as usize] as usize) as u32 + 1
     }
@@ -741,12 +744,14 @@ impl Facts {
     pub fn of_class(&self, class: u32) -> &[u32] {
         posting(&self.class_keys, &self.class_offsets, &self.class_nodes, class)
     }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn text(&self, id: u32) -> &str {
         &self.source[self.start[id as usize] as usize..self.end[id as usize] as usize]
     }
     pub fn named(&self, id: u32) -> bool {
         self.flags[id as usize] & 1 != 0
     }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, id: u32) -> Option<u32> {
         let p = self.parent[id as usize];
         (p != NONE).then_some(p)

@@ -1558,6 +1558,7 @@ impl Projected {
         p
     }
     #[inline]
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, local: usize) -> u32 {
         // Only an anchor of a narrowed projection (`narrowed`) has no parent in it but the root: it hangs from the root.
         match self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize]) {
@@ -3317,7 +3318,10 @@ impl Viewed {
         };
         let l = local as usize;
         let id = p.core[l] as usize;
-        let parent = || if p.parent(l) == NONE { -1 } else { p.global(p.parent(l)) };
+        let parent = || match p.parent(l) {
+            NONE => -1,
+            q => p.global(q),
+        };
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,

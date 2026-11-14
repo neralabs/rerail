@@ -601,10 +601,21 @@ through a point API instead of a cursor.
 - **The engine must read in order through a cursor.** Rules read the next node's span 2 times a
   node and its parent 4.5 times; read as points, those would double the cost (1.5–4.3%). A cursor
   over gaps is a running sum, and one over sibling slots keeps the parent of the run.
-- **Repeated reads of the same node are many**: the heaviest rule reads the same parent 21.9
-  times a node. They cost nothing in today's arrays, which the cache holds; read through format
-  16 they would each be a point read unless hoisted. Even then, the heaviest rule adds 88 ms (0.6%).
-  Where they come from is not yet traced.
+- **Repeated reads of the same node were mostly one call site, now fixed.** The heaviest rule read
+  the same parent 21.9 times a node. With `E17_SITES=1` the count also names each read's caller
+  (`#[track_caller]` through the column, `Facts::parent` and `Projected::parent`): 9.2M of the
+  10.6M were the syntax table's parent column (`Viewed::value_at`), which read the parent twice
+  for one cell. It reads it once now; the heaviest rule's same-parent reads fall to 1.4M, and its
+  findings are unchanged. Repeats cost nothing in today's arrays, but each would be a point read
+  of format 16 unless hoisted.
+- **The rest of the "next" reads are the SQL tables' row-at-a-time columns** (`value_at`, and
+  `syntax.rs`'s start/end columns) and one decoded copy: `within.rs` copies the batch's parents
+  into an array (5.7M reads in order). On format 16 that copy is a cursor over the tape.
+- **Open: on a cold store every file is built twice.** Phase 1 (`sources.rr`, `phases.rs`) runs
+  as a nested run that builds each document (tape restored for the matchers, facts decoded), and
+  the outer run then builds each again (444 restores for 222 files, 955,731 facts nodes for
+  477,765). With the tapes already stored, each file is restored once (221). Not traced further here: it is the
+  phase machinery's, and format 16 removes both decodings anyway.
 - **The choice: sibling slots and gap positions, both at K = 8.** K = 16 saves 0.13 B a node more
   on positions (Python 2.07 → 1.94) and costs up to twice the point time. Together, at K = 8, data-layer
   Python's codes, slots and positions take about 4.19 B a node against XF's 4.60, and every
@@ -767,4 +778,5 @@ In order. Each step is measured on all three corpora, every answer checked.
    bulk-form rule mix, and write the choice into 0156.
 9. **How today's engine reads spans and parents (E17).** Done: at today's mix the new forms cost
    0.4–1.7% of a rule's CPU at K = 8, if the engine reads in order through cursors. Chosen: sibling
-   slots and gap positions at K = 8. Next: trace the repeated reads of the same node's parent.
+   slots and gap positions at K = 8. The repeated parent reads were one call site, fixed. Open: on a
+   cold store, phase 1 and the outer run each build every document.
