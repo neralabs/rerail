@@ -645,7 +645,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1084,14 +1084,15 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
     use crate::code_rule_dsl::tape::{Grammar, TapeImage};
     use std::io::Write;
-    let usage = || "usage: rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>]".to_owned();
+    let usage = || "usage: rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]".to_owned();
     let (root, out) = match args {
         [root, out, ..] => (Path::new(root), Path::new(out)),
         _ => return Err(usage()),
     };
     let mut every = 1usize;
     let mut max = usize::MAX;
-    let mut rest = args[2..].iter();
+    let all_tokens = args[2..].iter().any(|a| a == "--all-tokens");
+    let mut rest = args[2..].iter().filter(|a| *a != "--all-tokens");
     while let Some(flag) = rest.next() {
         let value = rest.next().and_then(|v| v.parse::<usize>().ok()).ok_or_else(usage)?;
         match flag.as_str() {
@@ -1109,7 +1110,7 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
             let name = name.to_string_lossy();
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_dir() {
-                if !matches!(name.as_ref(), ".git" | "node_modules" | ".venv" | "venv" | "target" | "dist" | "build" | "__pycache__") {
+                if !matches!(name.as_ref(), ".git" | "node_modules" | ".venv" | "venv" | "target" | "dist" | "build" | "__pycache__" | "tmp" | "working-data") {
                     walk(&entry.path(), files);
                 }
             } else if kind.is_file() {
@@ -1144,9 +1145,10 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
                         refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     }
+                    let parse = |grammar: std::sync::Arc<Grammar>| TapeImage::parse(&grammar, &source, &|| false);
                     let image = Grammar::new(lang)
                         .ok()
-                        .and_then(|grammar| TapeImage::parse(&grammar, &source, &|| false))
+                        .and_then(|grammar| if all_tokens { crate::code_rule_dsl::tape::with_all_tokens(|| parse(grammar)) } else { parse(grammar) })
                         .and_then(Result::ok)
                         .and_then(|file| file.primary.to_bytes().ok());
                     let Some(image) = image else {

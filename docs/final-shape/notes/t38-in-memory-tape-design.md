@@ -294,3 +294,29 @@ What this says:
 - **Next:** M and BE (positions), BH (B with explicit sizes for large subtrees); disk bytes and load
   cost for both loading shapes; the M5 built without scalar popcount, standing in for M1 and M3;
   then the questions as Metal kernels.
+
+### F11: format 11, every token stored
+
+Format 11 (06dbef22b) has format 15's columns, but stores every node, anonymous tokens included
+(named-only at rest came with format 12), and a 32-byte source digest a tape. `capture-tapes
+--all-tokens` encodes the tree-sitter tree with no token filter. JSON goes through tree-sitter-json
+rather than the Bitlex parser, and `.rr` keeps its lean parser. `tape16 inplace --f11` reads those
+images in place with F15's reader, plus the digest. The same files were captured both ways (rerail
+again, as `rerail-5b`, 1,698 files, from the current tree).
+
+| | impl/sqlite | data-layer, every 10th | rerail, every 5th (5b) |
+|---|---|---|---|
+| nodes, format 15 | 472,556 | 9,539,304 | 5,539,786 |
+| nodes, format 11 | 672,712 (1.42×) | 19,192,413 (2.01×) | 8,989,553 (1.62×) |
+| F11 bytes a node of its own | 8.79 | 9.29 | 9.27 |
+| **F11 bytes a format-15 node** | **12.5** | **18.7** | **15.0** |
+| F15 bytes a node | 8.66 | 9.00 | 9.20 |
+| X, B bytes a node (format 15's nodes) | 5.49, 4.13 | 4.88, 3.60 | 5.08, 3.71 |
+
+F11's calls cost what F15's do (the same columns; data-layer, ns): sweep 1.1, code 1.2, start and
+end 7.2, subtree end 1.5, children 3.9; parent 412 (7.0 µs on rerail), by the same backward walk. But
+every sweep and every children walk covers 1.4–2.0× the nodes. So a rule pays F11's sweeps 1.4–2.0×
+over, and F11 holds 1.4–2.1× F15's bytes for the nodes rules ask about.
+
+E7's mixes, ns a node of F11's own (data-layer): median 2.6, 121 rules 14.6, schema-introspection
+2,099, heaviest 152.

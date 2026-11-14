@@ -1057,7 +1057,7 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
-fn cmd_inplace(path: &str) {
+fn cmd_inplace(path: &str, f11: bool) {
     use rerail_tape_lab::inplace::{B, Codes, F15, X};
     use rerail_tape_lab::measure::Cost;
     let cap = std::path::Path::new(path);
@@ -1079,7 +1079,9 @@ fn cmd_inplace(path: &str) {
         (tag, c.table.iter().map(|t| t.0 == top).collect())
     }).collect();
     const Q: [&str; 7] = ["sweep: code in a set", "code at random", "start + end at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)"];
-    let names = ["F15", "X", "B"];
+    // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
+    // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
+    let names = [if f11 { "F11" } else { "F15" }, "X", "B"];
     let mut costs = vec![[Cost::default(); 7]; 3];
     let mut counts = [[0u64; 7]; 3];
     let mut bytes = [0usize; 3];
@@ -1117,6 +1119,9 @@ fn cmd_inplace(path: &str) {
         bench(&b, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
         nodes += n;
         files += 1;
+        if f11 {
+            bytes[0] += 32;
+        }
         Ok(())
     }).unwrap_or_else(|e| die(&e));
     println!("{path}: {files} files, {nodes} nodes; codes a language: {}\n", codes.iter().map(|(t, c)| format!("{} {} ({} bits)", capture::language(*t), c.table.len(), c.width())).collect::<Vec<_>>().join(", "));
@@ -1184,7 +1189,7 @@ fn main() {
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
-        "inplace" => cmd_inplace(path),
+        "inplace" => cmd_inplace(path, flag("--f11")),
         "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),
         #[cfg(target_os = "macos")]
         "columns" => {

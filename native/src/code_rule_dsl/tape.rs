@@ -878,6 +878,20 @@ impl<'a> TapeReader<'a> {
     }
 }
 
+thread_local! {
+    /// Every token kept, as formats up to 11 stored them (named-only at rest came with format 12): only for
+    /// `capture-tapes --all-tokens`, the tape lab's format-11 baseline (decision 0156, E10).
+    static ALL_TOKENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with every token kept in the tapes this thread encodes from tree-sitter trees (format 11's nodes).
+pub fn with_all_tokens<T>(f: impl FnOnce() -> T) -> T {
+    ALL_TOKENS.set(true);
+    let out = f();
+    ALL_TOKENS.set(false);
+    out
+}
+
 /// Appends `root`'s tree to `nodes` in preorder, `language` its grammar. An embedded program's
 /// placeholders its segments mark (`omitted`) are left out, with their subtrees.
 /// Tree-sitter's tree under `root` into `nodes`, in preorder. Where `filter` (the grammar's token
@@ -1219,6 +1233,7 @@ impl TapeImage {
         // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
+            && !(ALL_TOKENS.get() && grammar.kinds.grammar().is_some())
             && let Some(parsed) = parser.parse(grammar, source, &budget)
         {
             return match parsed {
@@ -1313,7 +1328,7 @@ impl TapeImage {
         }
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
-        let filter = tokens::TokenGrammar::of(grammar.lang, language);
+        let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
         encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
