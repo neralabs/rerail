@@ -64,6 +64,23 @@ and the split and magic self-checks pass.
    `absorb_with` sets the columns below the width from the fork's vector, as moving each entry did. Reads take
    `at(relation, column)` and build no key. Keying `Model` by `RelId` as a whole (0173 stage 2) waits on the
    planner taking a program version (t36 item 7), which is not started.
+10. **The split numbered for the run.** §6 numbered each rule in scope again at every split, and the constants
+    and filters fixpoints still read names. Now:
+    - A rule body's form (`shape::Form`: its variables, their classes, the value tapes and binders, each read's
+      relation by its name's address) reads only the body. So the run keeps it with the body's digest in the split
+      memo's bodies (`split_memo::Body`), made the first time a split asks for it. A split numbers only the bodies a
+      round rewrote.
+    - Each split numbers its relations by their name's address (`shape::Rels`). A `Name` is interned, one address
+      per name, so a read's relation is found with no hashing or comparing of its text. What the split asks of a
+      relation by name (a fact, an input, a run constant, a chunk's value, a text test, its text columns, its base
+      location columns, its rules, its readers) is asked once per split.
+    - The constants, locations, filters and file-local fixpoints all run on these numbers, and their rounds are lists
+      of numbers.
+    - The keys read each rule's body entry once. Each thread of the pool takes the memo's lock once for its share,
+      not once per rule. The relations' digests are keyed by `Name`.
+
+    The split's results are unchanged. A dump of every split and every `constant_relations` answer on dl1 (48 and
+    52) was the same, byte for byte, from the old code and the new.
 
 ## Measured
 
@@ -80,6 +97,7 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | strata on numbers (after the Typing merge) | 22.60 → 22.25 G (load 20–24) |
 | domains, text-kind demand, keep factors | 22.64 → 21.96 G (load 63–78) |
 | column statistics by relation | 21.71–21.78 → 21.49–21.65 G (load 26–28) |
+| the split numbered for the run | 21.61 → 21.24 G (medians of five pairs, load 78–98) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are
@@ -95,8 +113,10 @@ runs at its starter's depth (`switches::within`) and takes nothing.
 ## What remains
 
 These are open items (O-split-in-strings and the others in open-items.md):
-- `split_in`'s rule numbering runs for every rule in scope at each split; a rule's intrinsic part (its variables,
-  classes and tapes) could be kept with its body's digest across splits. `split_constants` still works on names.
+- A split still starts each relation outside its cone from the kept split's string sets, and gives its results as
+  string sets and maps (`Split`), which `split_explained` copies. `RuleIndex` is keyed by text.
+- Outside the split, the string work left is in `simplify` (congruence, canonical), the lowerer's span patterns and
+  `keeps::choose` (after 0173 stage 2).
 - `Board::finish` is 15% of the main thread, mostly waiting on the pool (`LockLatch`).
 - `memcmp` is 14.6%, spread over the string-keyed BTree lookups of many passes.
 - `keeps::choose` still keys its refusals, bounds and estimates by name (`BTreeMap<&str, …>`, `BTreeSet<String>`),
