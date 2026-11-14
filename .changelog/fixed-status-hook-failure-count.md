@@ -1,0 +1,1 @@
+Once its hook failure log passes 256 KB and moves aside, `rerail status` still counts hook events that could not be recorded in the last 24 hours, says from when once older ones are gone, and leads with those since the last recorded event. Hooks failing at once keep their failures as the log moves, unless one stalls mid-write.
