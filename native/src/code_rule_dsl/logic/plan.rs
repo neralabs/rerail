@@ -7608,10 +7608,12 @@ pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
 
 
 pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
+    let input = prog;
     let (mut normalized,sentinels)=sql_kernel::normalize(prog)?;
     // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
     // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).
-    let stated = if inputs.atoms.is_some() && !inputs.native.is_empty() { stated_apart(&mut normalized) } else { Vec::new() };
+    let apart = inputs.atoms.is_some() && !inputs.native.is_empty();
+    let stated = if apart { stated_apart(&mut normalized) } else { Vec::new() };
     super::version_trace::note("plan.normalize", prog, &normalized);
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
@@ -7694,6 +7696,12 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
     let corpus = PLANS.with(|p| p.borrow().is_some());
+    // The program's version (t36 item 7, step 2): its input's image, normalized by the version passes, which the
+    // passes below edit and the run reads its rules from.
+    let normal_v = {
+        let _span = super::profile::span(|| "the program's version".into());
+        body::Placed::of_program(input)?.normalized(apart, prog)?
+    };
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
     let chosen_key = corpus.then(|| choices::key(prog));
@@ -7719,7 +7727,11 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // The program run is the rewritten one: its analysis is that program's, made when asked.
                 model.analysis = std::sync::OnceLock::new();
             }
-            placed = c.program.as_ref().and(c.version);
+            // Not rewritten: the program's own version.
+            placed = match &c.program {
+                Some(_) => c.version,
+                None => Some(normal_v),
+            };
             chosen = c.program;
             chosen.as_deref().unwrap_or(prog)
         }
@@ -7729,7 +7741,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let mut inlined_names = Vec::new();
             let chose = super::profile::span(|| "inline or store".into());
             // The program's version, made once: each pass edits the one before as an overlay.
-            let base = if corpus { Some(body::Placed::of_program(prog)?) } else { None };
+            let base = corpus.then(|| normal_v.clone());
             let choice = match &base {
                 Some(base) => keeps::choose(prog, base, &mut model).map_err(Error::Plan)?,
                 None => None,
@@ -7788,7 +7800,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 choices::remember(k, choices::Chosen { program: chosen.clone(), version: rewritten.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
             }
             // Not rewritten: the program's own version, made above.
-            placed = rewritten.or(base);
+            placed = rewritten.or(Some(normal_v));
             chosen.as_deref().unwrap_or(prog)
         }
     };

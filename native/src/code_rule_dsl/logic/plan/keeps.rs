@@ -73,7 +73,7 @@ pub(super) mod inline;
 pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result<Option<(Program, Vec<String>, Placed)>, String> {
     // The program's fields beside its rules, read from its version; a program of no image (maintenance's parts: a
     // session's maintained program) inlines nothing, its relations each `no_inline` or a session's piece.
-    let Some(f) = Fields::of(base) else {
+    let Some(f) = Fields::of(base).filter(|_| base.maint.is_none()) else {
         super::super::profile::decision("inline or store (decision 0099)", || "a maintained program (maintenance's parts): nothing estimated".to_owned());
         return Ok(None);
     };

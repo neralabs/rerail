@@ -322,3 +322,31 @@ ported, over the targeted tests and dl1.
     - What reads trees in the passes now: nothing. They still take the tree too (`prog`): `choose` hands it to the
       planner's `plan_rule`, and both passes give a decoded program for the rest of the run (item 7). The maintained
       form's rewrite is item 7's (above).
+- **Item 7, steps 1 and 2** (2026-11-14).
+  - Step 1: every program has a whole image.
+    - Join shape directives are about rows (`shape`, `shape_after`, `shape_bound`), written and read back by
+      `program_facts`. `About` reads them, and reads the gates' details, the kind sets and the tape columns
+      (`GateRef`, `ShapeRef`). `Builder::of_program` no longer refuses a program with shapes.
+    - A maintained program's `again` and `together` are a typed form beside its version (decision 0215,
+      `body::Maint`). Each stratum's rules and deltas are rules of an overlay of the version, and its relation sets
+      are relation ids there. `Placed::of_program` is whole for every program (`Builder::of_program_less_maintenance`).
+    - `keeps::choose` and `split_negations` give nothing for a program with `Maint`, as before. A program with shapes
+      alone is passed again, as it was before item 6 made it a version of rules alone.
+  - Step 2: `run` makes its input's version once, at its top, for every program (`Placed::normalized`).
+    `passes::normalize` derives it and `passes::stated_apart` overlays it. The passes edit that version, and the run
+    reads its rules from it. A run that reuses a choice whose program is its own reads it there too. The tree the rest
+    of the run reads is still the tree passes' (`sql_kernel::normalize`, `stated_apart`): nothing is decoded.
+  - Checked while porting:
+    - the parts: the shapes, gates, kind sets and tapes, read back, and each `again` stratum's rules, deltas and
+      relation sets, and `together`, equalled the tree's. Maintained programs of 1 to 16 strata derived again were
+      checked, over the maintain, again, edit, retain and corpus tests.
+    - the normalized version: equal, rule by rule (head, literals, observation key), digest and about rows, to the
+      normalized tree's image. This was checked over the planner's, keeps, demand, negation, inline, choices, cone,
+      phase0, session, maintain, again, edit, retain, corpus, rr and image tests and dl1.
+    The checks are gone.
+  - Cost: making the version is a span of its own ("the program's version"). On dl1 cold it is 46 ms of CPU over
+    30 runs, of the batch's 3.8 s in spans. Before step 2, a corpus run made its image only when it missed the kept
+    choices. The callers' versions (step 9) remove it.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 47.0, 49.1 and
+    50.1 G over three runs (load about 50), within the spread of this session's runs (44 to 50 G). Warm took 1.7 G.
+

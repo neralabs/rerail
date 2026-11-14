@@ -6,7 +6,7 @@
 //! digests and the text), stated over handles, and checked against it (`tests`): a plan searched over a `Body` is the
 //! plan the tree's search made, and its keys (`Body::digest`, `Body::observed_key`) are the tree's keys.
 use super::super::front::{Program, Rule};
-use super::super::program_image::{AggRef, AtomRef, Builder, CmpOp, Lit, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
+use super::super::program_image::{AggRef, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, RuleId, RuleRef, Slot, TermRef, Version};
 use super::{Constant, Error, Result};
 use std::cell::OnceCell;
 use std::sync::Arc;
@@ -434,30 +434,109 @@ pub struct Placed {
     ids: Option<Arc<[RuleId]>>,
     /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
     pub whole: bool,
+    /// A maintained program's parts (decision 0215): `None` for every other program.
+    pub maint: Option<Arc<Maint>>,
+}
+
+/// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
+/// (`front::Again`), its rules and deltas rules of `v`, an overlay of the program's version, and the sets of relations
+/// run as one component (`front::Program::together`). Every relation and rule is `v`'s.
+#[derive(Clone)]
+pub struct Maint {
+    pub v: Arc<Version>,
+    pub again: Vec<AgainRef>,
+    pub together: Vec<Vec<RelId>>,
+}
+
+/// A stratum derived again (`front::Again`): its relations, those its maintained form makes, its rules over the
+/// current inputs and its deltas against its old rows, the input deltas it reads and its old rows.
+#[derive(Clone, Debug)]
+pub struct AgainRef {
+    pub scc: Vec<RelId>,
+    pub owned: Vec<RelId>,
+    pub rules: Vec<RuleId>,
+    pub deltas: Vec<RuleId>,
+    pub reads: Vec<RelId>,
+    pub olds: Vec<RelId>,
+}
+
+impl Maint {
+    /// `prog`'s `again` and `together`, over `parent`, its version.
+    fn of(parent: &Arc<Version>, prog: &Program) -> Result<Maint> {
+        let mut b = Builder::on(parent);
+        let names = |set: &mut dyn Iterator<Item = &str>, b: &mut Builder<'_>| -> Vec<String> {
+            set.map(|n| {
+                b.rel(n);
+                n.to_owned()
+            })
+            .collect()
+        };
+        let mut groups = Vec::with_capacity(prog.again.len());
+        let mut added = Vec::new();
+        for g in &prog.again {
+            let rules = g.rules.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
+            let deltas = g.deltas.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
+            added.extend(rules.iter().chain(&deltas).copied());
+            let sets = [
+                names(&mut g.scc.iter().map(String::as_str), &mut b),
+                names(&mut g.owned.iter().map(String::as_str), &mut b),
+                names(&mut g.reads.iter().map(String::as_str), &mut b),
+                names(&mut g.olds.iter().map(String::as_str), &mut b),
+            ];
+            groups.push((rules, deltas, sets));
+        }
+        let together: Vec<Vec<String>> = prog.together.iter().map(|s| names(&mut s.iter().map(String::as_str), &mut b)).collect();
+        let (v, made) = b.finish().map_err(Error::Plan)?;
+        let order = super::keeps::inline::renumbered(parent, &[], &added, made);
+        let id = |r: RuleId| order.as_ref().map_or(r, |o| o[&r]);
+        let rel = |n: &str| v.rel(n).ok_or_else(|| Error::Plan(format!("a maintained program's relation {n} has no id")));
+        let rels = |ns: &[String]| ns.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>();
+        let again = groups
+            .iter()
+            .map(|(rules, deltas, [scc, owned, reads, olds])| {
+                Ok(AgainRef { scc: rels(scc)?, owned: rels(owned)?, rules: rules.iter().map(|&r| id(r)).collect(), deltas: deltas.iter().map(|&r| id(r)).collect(), reads: rels(reads)?, olds: rels(olds)? })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let together = together.iter().map(|s| rels(s)).collect::<Result<Vec<_>>>()?;
+        Ok(Maint { v, again, together })
+    }
 }
 
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None })
     }
     /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
-    /// fields (`About`), which the passes read beside the rules. A program with maintenance's parts (`again`,
-    /// `together`, `shapes`: a session's maintained program) has no image; it is made of its rules alone, and
-    /// `whole` says so.
+    /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
+    /// (`maint`, decision 0215).
     pub fn of_program(prog: &Program) -> Result<Placed> {
-        match Builder::of_program(prog) {
-            Ok(b) => Ok(Placed { v: b.finish().map_err(Error::Plan)?.0, ids: None, whole: true }),
-            Err(_) => Placed::made(&prog.rules),
+        // A program the image has no form for (a comparison it does not know) is made of its rules alone.
+        let Ok(v) = Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).map(|(v, _)| v) else {
+            return Placed::made(&prog.rules);
+        };
+        let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
+        Ok(Placed { v, ids: None, whole: true, maint })
+    }
+    /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
+    /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
+    /// overlay), as `plan::run` normalizes the program. A version of rules alone stays one, made of `normalized`'s.
+    pub fn normalized(&self, apart: bool, normalized: &Program) -> Result<Placed> {
+        use super::super::program_image::passes;
+        if !self.whole || self.ids.is_some() {
+            return Placed::made(&normalized.rules);
         }
+        let (v, _) = passes::normalize(&self.v).map_err(Error::Plan)?;
+        let v = if apart { passes::stated_apart(&v).map_err(Error::Plan)?.0 } else { v };
+        Ok(Placed { v, ids: None, whole: true, maint: self.maint.clone() })
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None, whole: true }
+        Placed { v, ids: None, whole: true, maint: None }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
-        Placed { v, ids: Some(ids.into()), whole }
+        Placed { v, ids: Some(ids.into()), whole, maint: None }
     }
     /// `rules` added to `parent` (an overlay that removes nothing), in order.
     pub fn over(parent: &Arc<Version>, parent_whole: bool, rules: &[Rule]) -> Result<Placed> {
