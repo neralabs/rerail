@@ -615,3 +615,14 @@ cmp / ccmp                   length, then key
 
 The main function: 1,493 instructions, from 1,580; 173 stack accesses, from 224 (one base
 less live across the loop). Metal reads the word table itself and is unchanged.
+
+## A refusal is a branch
+
+The loop carried its refusal as a value: each token's order differences and its tests'
+refusal ORed in, the sign bit read at the file's end. That is a register live across the
+whole loop, for an event most files never have. The lean lexer returns its error at once.
+
+Now a refusal is a branch to a cold block that sets the file's flag in memory (the count
+after the extracts', which the file's end ORs into); the loop carries nothing for it. The
+main function: 159 stack accesses, from 173. Measured with the slots (`jit_against_aot`,
+load average 88): tier 1 ahead of time 274 instructions a node, from 279; tier 1 + 2, 516.

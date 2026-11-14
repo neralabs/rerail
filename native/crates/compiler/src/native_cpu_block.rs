@@ -2977,7 +2977,19 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         Some(x) => f.ins().bor(wrong, x),
         None => wrong,
     };
-    let bad = f.ins().bor(bad, wrong);
+    // A refusal is rare: a branch to a cold block that sets the file's flag (the count after
+    // the extracts', as `record_end`), not a value the loop carries, as the lean lexer
+    // returns its error at once.
+    let (refuse, on) = (f.create_block(), f.create_block());
+    let no = f.ins().icmp_imm(IntCC::SignedLessThan, wrong, 0);
+    f.ins().brif(no, refuse, &[], on, &[]);
+    f.switch_to_block(refuse);
+    f.set_cold_block(refuse);
+    let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
+    let flag = f.ins().bor_imm(flag, 1);
+    f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
+    f.ins().jump(on, &[]);
+    f.switch_to_block(on);
     // The loop goes on past the token's first byte at least, whatever its rule found: a
     // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
     let next_after = if walked.is_some() {
