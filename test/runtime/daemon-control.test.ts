@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { createServer, type AddressInfo, type Socket } from "node:net";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -17,6 +17,7 @@ import {
   autostartDaemon,
   autostartOff,
   browserOpener,
+  DAEMON_ACCESS_HEADER,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonEngineEndpoint,
@@ -45,7 +46,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../sr
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -296,6 +297,39 @@ describe("Rerail daemon control", () => {
       blocker.close();
     }
   });
+
+  it("stops a daemon that has a hook's request still unanswered, without the kill that follows its wait", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const { state } = (await startDaemon(
+      { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
+      { dev: true, port: 0 },
+    )).daemon;
+    // A hook's event the daemon has not answered yet: its request is open on the engine socket.
+    const hook = connect(state.kernelSocketPath);
+    hook.on("error", () => undefined);
+    const kill = vi.spyOn(process, "kill");
+    let passed = false;
+    try {
+      await once(hook, "connect");
+      hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
+      expect(await stopDaemon(home)).toBe("stopped");
+      // The daemon ended itself; before, it waited on the hook and stop killed it once its 10 s were up.
+      expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL")).toEqual([]);
+      expect(processAlive(state.pid)).toBe(false);
+      passed = true;
+    } finally {
+      kill.mockRestore();
+      hook.destroy();
+      if (processAlive(state.pid)) process.kill(state.pid, "SIGKILL");
+      // The stop answers once the daemon's main thread has exited, while Node counts the daemon as running until its
+      // last thread has: the clean-up removes the home only once nothing this test started runs there. The wait runs
+      // here and not in onTestFinished, which Vitest runs after the afterEach that removes the home.
+      const gone = vi.waitFor(() => expect(runningIn(home)).toEqual([]), { timeout: 5_000, interval: 10 });
+      // A wait that fails after a body that failed would replace the body's error, which says what went wrong; the
+      // home's removal still fails then, naming what runs there.
+      await (passed ? gone : gone.catch(() => undefined));
+    }
+  }, 30_000);
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
