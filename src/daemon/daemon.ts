@@ -559,9 +559,9 @@ export class RerailDaemon {
   }
 
   /**
-   * Moves the rule provenance that audits an older Rerail recorded hold inline, a batch per short transaction while the
-   * daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. The move runs on
-   * a worker thread, so this thread keeps answering through its batches. It finds nothing to move on a file it has
+   * Moves the rule provenance that audits recorded before the upgrade hold inline, a batch per short transaction while
+   * the daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. The move runs
+   * on a worker thread, so this thread keeps answering through its batches. It finds nothing to move on a file it has
    * already moved, and starts no thread then. A failure goes to the daemon log; the audits read the same either way.
    */
   #startProvenanceMove(): void {

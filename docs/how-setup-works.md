@@ -586,10 +586,11 @@ one may still be using the database: it starts only once no audit an older Rerai
 begun for 7 days. The new version marks every audit it records with its shared copy, an empty one included, so an
 audit without that mark is an older Rerail's. The audits recorded before the update count too, so with only the new
 version running the move starts 7 days after the last audit recorded before the update, and every audit reads in full
-that week as before. While it waits, the daemon says once in `daemon.log` why and until when, and looks again at least
-once an hour, so after the computer sleeps the move starts at most an hour late. A move that finds such an audit
-before its next batch stops there and waits the same way; the audits it has not reached keep their provenance in their
-row.
+that week as before. While it waits, the daemon writes why and until when to `daemon.log` when the wait begins, and
+again when it finds another audit to wait for, as when an older Rerail has recorded one since. It looks again an hour
+later, or when the wait ends if that comes first, so an older Rerail that keeps recording adds at most one line an
+hour, and after the computer sleeps the move starts at most an hour late. A move that finds such an audit before its
+next batch stops there and waits the same way; the audits it has not reached keep their provenance in their row.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the

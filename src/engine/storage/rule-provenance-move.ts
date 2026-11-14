@@ -2,11 +2,13 @@
  * Moves the rule provenance that audits recorded before `audit-rule-provenance-once` hold inline
  * (`rule_provenance_json`) to the one copy `audit_rule_provenances` keeps. It runs after the open, never inside it:
  * the daemon starts it once it serves (`daemon.ts`), on a worker thread of its own (`moveRuleProvenancesInWorker`), so
- * none of its SQLite work holds the thread that answers requests. Each batch of audits is one write transaction sized
- * to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while it
- * runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit
- * moves, the audit store reads its provenance inline. The move never waits inside SQLite for another connection: it
- * awaits a pause and tries again (`whenFree`), so a stop reaches it between two tries.
+ * its batches and checkpoints never hold the thread that answers requests. That thread only reads, on a read-only
+ * connection, whether audits are left to move and whether an older Rerail's audit makes the move wait (`moveState`):
+ * at the start, after each pass of the wait, and once the move's thread ends. Each batch of audits is one write
+ * transaction sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep
+ * recording while it runs; a process stopped partway loses at most one batch, and the next run goes on from what is
+ * left. Until an audit moves, the audit store reads its provenance inline. The move never waits inside SQLite for
+ * another connection: it awaits a pause and tries again (`whenFree`), so a stop reaches it between two tries.
  *
  * The pages a batch frees stay in the file, zeroed as every delete's are (`secure_delete`, `database.ts`), and new
  * history reuses them before the file grows again. No `VACUUM` runs here: one holds the write lock until it ends, and
@@ -233,10 +235,10 @@ function nextBatchSize(size: number, took: number, most: number): number {
 
 /**
  * Runs `moveRuleProvenances` on a worker thread with a connection of its own, and resolves to how many audits it moved
- * once that thread ends. Its batches and checkpoints then never run on the calling thread, which in the daemon answers
- * the requests hooks send: on a loaded Windows machine one batch of 100 audits took 3.6 s, past the 2 s a hook's health
- * probe waits. `signal` stops the move before its next step. A file with nothing to move, read on the calling thread,
- * starts no thread.
+ * once no audit is left to move or `signal` stops it. Its batches and checkpoints then never run on the calling
+ * thread, which in the daemon answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took
+ * 3.6 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step. A file with nothing
+ * to move, read on the calling thread, starts no thread.
  *
  * While an audit that names no stored copy of its provenance has begun within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS`
  * unless a test passes its own), recorded before the step or by an older Rerail since, this thread starts no move:
@@ -283,10 +285,11 @@ async function movedInWorker(data: MoveWorkerData, signal: AbortSignal | undefin
 }
 
 /**
- * One pass of the wait for an older Rerail: says why the move waits and until when (`sayWaitsForOlder`) when the audit
- * it waits for is not the one it named last, so a wait says it once, then sleeps on `timer` (Node's, unreferenced,
- * unless a test passes its own) until `wait.until` by `older.clock`, or `OLDER_WAIT_PASS_MS`, whichever comes first.
- * False when `signal` ends the pass.
+ * One pass of the wait for an older Rerail. It says why the move waits and until when (`sayWaitsForOlder`) when the
+ * audit it waits for is not the one it named last: on its first pass, and on each later pass that finds another, as
+ * while an older Rerail keeps recording. Then it sleeps on `timer` (Node's, unreferenced, unless a test passes its own)
+ * until `wait.until` by `older.clock`, or `OLDER_WAIT_PASS_MS`, whichever comes first, so such a Rerail adds at most
+ * one line an hour. False when `signal` ends the pass.
  */
 function olderPass(
   path: string,
@@ -436,15 +439,15 @@ function takes(client: Client, upTo: number): boolean {
 }
 
 /**
- * When the last audit began that names no stored copy of its provenance, of those that began within `older.windowMs`
- * of `older.clock()`; undefined when none did. Only a Rerail older than the step writes an audit so, with its
- * provenance in the audit's own row or `[]` there when it ran no rules, and it reads each audit's provenance only from
- * that row. This Rerail's audit store names a stored copy for every audit, `[]` included, so its own audits never
- * count. The audits recorded before the step count as well: a Rerail that ran then may still run beside this one, and
- * record its next audit days later. The audits that began in the window come from `audits_session_started`, which
- * holds each one's start, and only their rows are read, the latest first: a row that holds its provenance runs to
- * hundreds of kilobytes with the start after it, so reading the start of every recorded audit from its row would read
- * the whole history.
+ * When the last audit began that names no stored copy of its provenance, of those that began less than
+ * `older.windowMs` before `older.clock()` or later; undefined when none did. Only a Rerail older than the step writes
+ * an audit so, with its provenance in the audit's own row or `[]` there when it ran no rules, and it reads each audit's
+ * provenance only from that row. This Rerail's audit store names a stored copy for every audit, `[]` included, so its
+ * own audits never count. The audits recorded before the step count as well: a Rerail that ran then may still run
+ * beside this one, and record its next audit days later. The audits that began in the window come from
+ * `audits_session_started`, which holds each one's start, and only their rows are read, the latest first: a row that
+ * holds its provenance runs to hundreds of kilobytes with the start after it, so reading the start of every recorded
+ * audit from its row would read the whole history.
  */
 function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): number | undefined {
   const began = client.prepare<[number], { row: number; at: number }>(
