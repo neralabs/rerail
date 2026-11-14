@@ -341,12 +341,21 @@ function gitInPlace(script: string): Promise<ChildProcess> {
   return started.promise;
 }
 
-/** In Git's place: prints a path, closes its output, and stays until its input ends (the test's, or the test process's). */
-const PRINTS_AND_CLOSES = "const fs = require('node:fs'); fs.writeSync(1, 'a.py\\0'); fs.closeSync(1); process.stdin.on('end', () => process.exit(0)).resume()";
+/** In Git's place: prints a path and stays until its input ends (the test's, or the test process's). */
+const PRINTS_AND_WAITS = "require('node:fs').writeSync(1, 'a.py\\0'); process.stdin.on('end', () => process.exit(0)).resume()";
 
-/** Resolves once `child`'s output has `event`ed: given its first bytes (`data`), or ended (`end`). */
-async function output(child: ChildProcess, event: "data" | "end"): Promise<void> {
-  await new Promise(settle => child.stdout?.once(event, settle));
+/** Resolves once `child`'s output has given its first bytes. */
+async function firstOutput(child: ChildProcess): Promise<void> {
+  await new Promise(settle => child.stdout?.once("data", settle));
+}
+
+/**
+ * Once `child` has printed, tells the read its output ended, as Node does when Git closes it. No program can close its
+ * own output and go on running on every platform: on Windows libuv keeps descriptors 0 to 2 open.
+ */
+async function outputEnds(child: ChildProcess): Promise<void> {
+  await firstOutput(child);
+  child.stdout?.emit("end");
 }
 
 /** Resolves once the look a faked tick asked for has run: it runs one loop turn after the tick, before this. */
@@ -414,7 +423,7 @@ describe("Git reads and their time limit", () => {
     // In Git's place, a program that prints a path every 20 ms until it is ended, as a Git listing a large checkout does.
     const printing = gitInPlace("setInterval(() => process.stdout.write('a.py\\0'), 20)");
     const read = gitModifiedOrUntrackedPaths(root);
-    await output(await printing, "data");
+    await firstOutput(await printing);
     clockAhead(10_000);
     vi.advanceTimersByTime(1_000);
     // The read's next look finds it past the limit on the clock, with output still coming: it ends there, as a timer of
@@ -426,10 +435,10 @@ describe("Git reads and their time limit", () => {
   it("answers with what Git printed when its output ended before its look past the time limit, and it exited after", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
-    const started = gitInPlace(PRINTS_AND_CLOSES);
+    const started = gitInPlace(PRINTS_AND_WAITS);
     const read = gitModifiedOrUntrackedPaths(root);
     const child = await started;
-    await output(child, "end");
+    await outputEnds(child);
     clockAhead(10_000);
     vi.advanceTimersByTime(1_000);
     await afterLook();
@@ -438,12 +447,12 @@ describe("Git reads and their time limit", () => {
     await expect(read).resolves.toEqual(["a.py"]);
   }, 30_000);
 
-  it("ends a read whose Git closed its output before one look past the time limit and has not exited by the next", async () => {
+  it("ends a read whose Git's output ended before one look past the time limit, and which has not exited by the next", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
-    const started = gitInPlace(PRINTS_AND_CLOSES);
+    const started = gitInPlace(PRINTS_AND_WAITS);
     const read = gitModifiedOrUntrackedPaths(root);
-    await output(await started, "end");
+    await outputEnds(await started);
     clockAhead(10_000);
     vi.advanceTimersByTime(1_000);
     await afterLook();
