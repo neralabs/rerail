@@ -3336,6 +3336,62 @@ fn the_product_reads_php_with_the_lean_parser() {
     assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
 }
 
+/// A Blade template's compiled program (its `compiled-view` document) is read by the lean PHP
+/// parser (decision 0198), and its derived image is the one tree-sitter-php's tree gives, byte for
+/// byte, its placeholders (`_`, `(0)`) left out the same. `RERAIL_BLADE_FILES` (a list of templates)
+/// adds a corpus.
+fn blade_programs_agree(source: &str) -> Option<bool> {
+    use crate::code_rule_dsl::embed::{Parse, Program};
+    let tree = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes()).ok()?;
+    let view = crate::code_rule_dsl::blade::view::View::read(&tree, source, &|| false).ok()?.view?;
+    let lean = view.read_by_the_lean_parser();
+    let host = Grammar::new(GrammarDialect::Blade).unwrap();
+    let program = view.into_program();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Php.get_ts_language()).unwrap();
+    let theirs = Program {
+        dialect: program.dialect,
+        parse: Parse::Tree(parser.parse(&program.text, None).unwrap()),
+        text: program.text.clone(),
+        segments: program.segments.clone(),
+        host_errors: program.host_errors.clone(),
+    };
+    let ours = DerivedImage::encode(Via::CompiledView, program, 0, &host, source, &|| false).unwrap();
+    let theirs = DerivedImage::encode(Via::CompiledView, theirs, 0, &host, source, &|| false).unwrap();
+    let php = Grammar::new(GrammarDialect::Php).unwrap();
+    assert!(
+        ours.tape.to_bytes().unwrap() == theirs.tape.to_bytes().unwrap(),
+        "the programs of {source:?} differ:\n{}\n{}",
+        python_tape_plain(&ours.tape, &php),
+        python_tape_plain(&theirs.tape, &php)
+    );
+    Some(lean)
+}
+
+#[test]
+fn blade_programs_from_the_lean_parser_are_tree_sitters() {
+    let templates = [
+        "{{ $a }}\n",
+        "<p>{{ $user->name }} {!! $html !!}</p>\n@if ($a > 1)\n  <b>{{ $a }}</b>\n@elseif ($b)\n  x\n@else\n  y\n@endif\n",
+        "@foreach ($items as $k => $item)\n  {{ $loop->index }}: {{ $item['name'] ?? 'none' }}\n@endforeach\n@forelse ($xs as $x) {{ $x }} @empty none @endforelse\n",
+        "@php\n  $color = match ($level) { 'error' => 'red', default => 'blue' };\n@endphp\n<x-alert :type=\"$color\" />\n@isset($title) {{ $title }} @endisset\n",
+        "@section('content')\n  @include('partials.nav', ['active' => 'home'])\n  {{ __('Hello :name', ['name' => $name]) }}\n@endsection\n@props(['size' => 'md'])\n",
+    ];
+    for template in templates {
+        assert_eq!(blade_programs_agree(template), Some(true), "{template:?}: the lean parser reads its program");
+    }
+    let Ok(list) = std::env::var("RERAIL_BLADE_FILES").map(|l| std::fs::read_to_string(l).unwrap()) else { return };
+    let (mut lean, mut all) = (0, 0);
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        if let Some(read) = blade_programs_agree(&source) {
+            all += 1;
+            lean += usize::from(read);
+        }
+    }
+    eprintln!("{lean} of {all} programs read by the lean parser, every one as tree-sitter-php's");
+}
+
 /// What a PHP file's tape costs, by parser: the lean parser (`tape::php_lean`, the product's)
 /// against tree-sitter-php, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
 /// and CPU time a node, the best of three passes. Only the files both read. Both read each file's

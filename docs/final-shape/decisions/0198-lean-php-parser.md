@@ -121,9 +121,13 @@ A file is refused where the lean parser does not read the construct exactly:
 file's view (`parse_input`, the bytes tree-sitter-php parses) and the tape reads the file. A file it
 refuses goes to tree-sitter-php.
 
-Blade's compiled programs are read exactly by the parser (the oracle's Blade set); the Blade route
-(`embed::Program`, which carries a tree-sitter tree built in `View::read`) is changed in a follow-up
-step below.
+A Blade template's compiled program is read by the same parser. `View::read` parses the program's
+text with it (`php_lean::encode_program`, the raw text: the program has no `<?php` tag), and the
+program carries the parse as a tape (`embed::Parse::Tape`) instead of a tree-sitter tree
+(`Parse::Tree`). A program the parser refuses is read by tree-sitter-php, as before. The derived
+document's tape is the lean tape with the program's placeholders (`_`, `(0)`) left out
+(`TapeImage::omitting`), as `encode_tree` leaves them out of a tree's. Tests that walk the view's
+tree make tree-sitter's lazily (`View::root`, test builds only).
 
 ## Results
 
@@ -148,6 +152,11 @@ tree-sitter's, line by line. Its sets:
 No tape differs: each is tree-sitter's or a refusal. Every clean whole file is read.
 
 **Engine tests:**
+
+- `blade_programs_from_the_lean_parser_are_tree_sitters`: a Blade template's derived document, from
+  the lean tape, is byte for byte the one tree-sitter-php's tree gives (hand-written templates; with
+  `RERAIL_BLADE_FILES`, the 77 corpus templates: 77 of 77 read by the lean parser, every one the
+  same).
 
 - `php_tapes_from_the_lean_parser_are_tree_sitters`: hand-written cases, byte for byte against
   tree-sitter's encoded tape. Syntax errors are refused.

@@ -48,7 +48,18 @@ fn ids() -> &'static Ids {
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
     let view = crate::code_rule_dsl::language::parse_input(crate::code_rule_dsl::language::GrammarDialect::Php, source);
     debug_assert_eq!(view.len(), source.len());
-    let tape = rerail_php_lean::tape(view.as_bytes())?;
+    encode_input(grammar, view.as_bytes(), source, budget)
+}
+
+/// The tape of a program's text as it is (no view): a Blade template's compiled program, which
+/// tree-sitter-php reads with no `<?php` tag (`blade::view`).
+pub fn encode_program(grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+    encode_input(grammar, text.as_bytes(), text, budget)
+}
+
+/// The tape of `input`, which has `source`'s length and offsets, reading `source`.
+fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+    let tape = rerail_php_lean::tape(input)?;
     let ids = ids();
     let lacks = |what: &str, i: usize| format!("tree-sitter-php lacks the lean parser's {what} {i}");
     let codes: Result<Vec<Code>, String> = tape
