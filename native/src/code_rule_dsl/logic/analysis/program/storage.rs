@@ -21,7 +21,7 @@ pub(super) fn analyze(rule: &front::Rule) -> storage::Projection {
             .get(v)
             .map_or_else(|| E::Opaque(format!("unbound {v}")), |&c| E::Column(c)),
         Term::Int(n) => E::Integer(*n),
-        Term::Str(s) => E::Text(s.clone()),
+        Term::Str(s) => E::Text(s.to_string()),
         _ => E::Opaque(format!("{t:?}")),
     };
     let mut predicates = vec![];

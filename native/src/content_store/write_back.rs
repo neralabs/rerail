@@ -10,7 +10,7 @@
 //! - **Read your writes.** A job names the keys it writes. A read of a key still queued is served
 //!   from the value the job left in memory (`pending`), or waits for that job alone (`settle`);
 //!   any other read goes to SQLite without waiting.
-//! - **Bounded lag.** Jobs carry their size; past `CAP_BYTES` queued, the next job waits for the
+//! - **Bounded lag.** Jobs carry their size; past `cap_bytes()` queued, the next job waits for the
 //!   writer to catch up (back-pressure, 0024 §5), so memory holds at most that much unwritten.
 //! - **Durable at the end.** `written` waits for the queue and gives the first error a job met; a
 //!   handle's drop waits too, so no queued write is lost when the process ends.
@@ -29,13 +29,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-/// The most bytes queued and unwritten: within the 1 GB budget, a few chunks' memo entries.
-const CAP_BYTES_DEFAULT: usize = 192 << 20;
+/// The most bytes queued and unwritten: a few chunks' memo entries, 192 MB of the default 1 GB budget, scaled with the
+/// budget (`rerail_accel::budget::share`, decision 0126).
+fn cap_bytes_default() -> usize {
+    rerail_accel::budget::share(192 << 20)
+}
 
 /// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
 fn cap_bytes() -> usize {
     static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(CAP_BYTES_DEFAULT, |mb| mb << 20))
+    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
 }
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
@@ -128,6 +131,8 @@ struct State {
     /// The most bytes queued at once, and the queue's back-pressure: how often it held a producer, and how long.
     peak: usize,
     held: (usize, f64),
+    /// Cache writes dropped for a full queue (`write_back_unless_full`): how many, and their bytes.
+    dropped: (usize, usize),
 }
 
 #[derive(Default)]
@@ -288,32 +293,45 @@ impl ContentStore {
     /// The writer drains what is queued into one transaction (`ContentStore::in_one_transaction`), each job a
     /// savepoint in it, and a read of a key waits for its batch's commit.
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Batched);
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Batched, false);
     }
 
     /// [`Self::write_back`] of a job whose rows hold `syms` (decision 0170).
     pub fn write_back_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched);
+        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched, false);
     }
 
     /// [`Self::write_back_alone`] of a job whose rows hold `syms` (decision 0170).
     pub fn write_back_alone_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::Alone);
+        self.queue(what, bytes, keys, guarded(syms, job), Run::Alone, false);
     }
 
     /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
     /// reads what it wrote): the batch before it commits first, and it runs in transactions of its own.
     pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Alone);
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Alone, false);
     }
 
-    fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run) {
+    /// [`write_back`](Self::write_back) for a cache's write that may go missing (a tape and its source: the next run
+    /// parses the file again): where the queue is full it is dropped, counted (`dropped`), rather than waited for, so
+    /// no wave waits for the writer (decision 0104). Whether it was queued.
+    /// Its rows hold `syms` (decision 0170).
+    pub fn write_back_unless_full(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) -> bool {
+        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched, true)
+    }
+
+    /// The cache writes dropped for a full queue since the writer started: how many, and their bytes.
+    pub fn dropped(&self) -> (usize, usize) {
+        self.writer().map_or((0, 0), |w| w.shared.state.lock().expect("the writer's state").dropped)
+    }
+
+    fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run, droppable: bool) -> bool {
         let mut job = job;
         let Some(w) = self.writer() else {
             if let Err(e) = retried(self, what, &mut job) {
                 eprintln!("rerail: the write failed: {e}");
             }
-            return;
+            return true;
         };
         let mut job: Job = Box::new(move |store| {
             let t0 = thread_cpu();
@@ -330,6 +348,12 @@ impl ContentStore {
             // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
             // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
             let full = |s: &State| bytes >= small_job() && s.jobs > 0 && s.bytes + bytes > cap_bytes();
+            // A cache's write gives way at half the cap: the other half is for the writes that may not go missing
+            // (frames, memo entries), so they find room rather than wait behind tapes.
+            if droppable && s.jobs > 0 && s.bytes + bytes > cap_bytes() / 2 {
+                s.dropped = (s.dropped.0 + 1, s.dropped.1 + bytes);
+                return false;
+            }
             let t = full(&s).then(std::time::Instant::now);
             // The first hold says what fills the queue (a strict run ends at it).
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -365,7 +389,7 @@ impl ContentStore {
         if cfg!(target_family = "wasm") {
             let outcome = job(self);
             finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
-            return;
+            return true;
         }
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
@@ -374,6 +398,7 @@ impl ContentStore {
             let outcome = job(self);
             finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
         }
+        true
     }
 
     fn start_writer(&self, w: &Arc<Writer>) -> Lane {
@@ -385,7 +410,7 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
         // come while it checkpoints are one.
-        let (mut told, tells) = mpsc::channel::<()>();
+        let (told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
@@ -398,9 +423,6 @@ impl ContentStore {
             }
         })
         .expect("the store's checkpoint thread");
-        // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
-        // files after its owner removed them.
-        let mut checkpoints = Some(checkpoints);
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
@@ -410,18 +432,13 @@ impl ContentStore {
                 }
                 let mut next: Option<Queued> = None;
                 loop {
-                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else {
-                        // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
-                        drop(std::mem::replace(&mut told, mpsc::channel().0));
-                        if let Some(c) = checkpoints.take() {
-                            let _ = c.join();
-                        }
-                        break;
-                    };
+                    // The queue closed (the last handle's drop): the checkpointer ends with the writer (below).
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
                     let before = thread_cpu();
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
                         *store.holder.lock() = holder;
+                        let _span = super::hazards::span(what);
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                             .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
                         w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
@@ -440,13 +457,17 @@ impl ContentStore {
                                 *store.holder.lock() = holder.clone();
                                 bytes += *b;
                                 let c0 = thread_cpu();
+                                let _span = super::hazards::span(*what);
                                 outcomes.push(
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                         .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
                                 );
                                 w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
                             }
-                            if bytes >= batch_bytes() {
+                            // A batch run again (rolled back below) whose first run took the job after it ends there
+                            // too: taking another would drop that one, and its count with it (`written` then waits for
+                            // ever).
+                            if bytes >= batch_bytes() || next.is_some() {
                                 return outcomes;
                             }
                             match rx.recv_timeout(BATCH_IDLE) {
@@ -459,11 +480,14 @@ impl ContentStore {
                             }
                         }
                     };
+                    // The batch's span holds its jobs' and its commit.
+                    let batch_span = super::hazards::span("a batch, in one transaction");
                     // A batch that finds the store busy (another process's writer held SQLite's write lock past this
                     // one's wait, at its start or its commit) rolled back whole: run again, as a busy job is
                     // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the batch.
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
+                    let mut forked_in = false;
                     let outcomes = loop {
                         match store.in_one_transaction(|| {
                             w.shared.state.lock().expect("the writer's state").open = true;
@@ -476,9 +500,13 @@ impl ContentStore {
                                 std::thread::sleep(super::connection::jittered(backoff));
                                 backoff = (backoff * 2).min(JOB_BACKOFF_MAX);
                             }
+                            // Forked by one of its jobs (decision 0170), so rolled back: run again, forked from its
+                            // start, its jobs' rows mapped or the jobs dropped (`guarded`).
+                            Err(StoreError::Invalid(e)) if !forked_in && e.contains(super::atoms::DIVERGED_TEXT) => forked_in = true,
                             Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
                         }
                     };
+                    drop(batch_span);
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len() as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
@@ -486,6 +514,10 @@ impl ContentStore {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                 }
+                // The checkpointer ends with the writer: the last handle's drop (which joins this thread) returns
+                // with no connection of the store's left open, so the store's files may be moved or removed then.
+                drop(told);
+                let _ = checkpoints.join();
             })
             .expect("the store's writer thread");
         Lane { tx, thread }
@@ -544,7 +576,7 @@ impl ContentStore {
 
     /// Ends the writer's open batch: an empty job that runs alone, queued behind it.
     fn commit_now(&self) {
-        self.queue("a wait for the writer", 0, Vec::new(), Box::new(|_| Ok(())), Run::Commit);
+        self.queue("a wait for the writer", 0, Vec::new(), Box::new(|_| Ok(())), Run::Commit, false);
     }
 
     /// What the writer has done since it started.
@@ -710,6 +742,78 @@ mod tests {
         assert!(store.written().is_ok());
         assert_eq!(store.written_so_far().jobs, 2);
         drop((store, other));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A cache's write that would wait for a full queue is dropped instead (`write_back_unless_full`): it returns at
+    /// once, is never run, and is counted; with room, it is queued as any write. A wave never waits for the writer.
+    #[test]
+    fn a_cache_write_to_a_full_queue_is_dropped_not_waited_for() {
+        let (dir, store) = store("drop");
+        let (open, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        store.write_back("slow", super::cap_bytes(), vec![], Box::new(move |_| {
+            let _ = gate.lock().unwrap().recv();
+            Ok(())
+        }));
+        let ran = Arc::new(Mutex::new(0));
+        let r = Arc::clone(&ran);
+        let t = std::time::Instant::now();
+        let queued = store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], Box::new(move |_| {
+            *r.lock().unwrap() += 1;
+            Ok(())
+        }));
+        assert!(!queued && t.elapsed() < std::time::Duration::from_millis(100), "dropped at once");
+        open.send(()).unwrap();
+        store.written().unwrap();
+        assert_eq!(*ran.lock().unwrap(), 0, "a dropped write never runs");
+        assert_eq!(store.dropped(), (1, small_job()));
+        let r = Arc::clone(&ran);
+        assert!(store.write_back_unless_full(Syms::None, "cache", small_job(), vec![], Box::new(move |_| {
+            *r.lock().unwrap() += 1;
+            Ok(())
+        })));
+        store.written().unwrap();
+        assert_eq!(*ran.lock().unwrap(), 1);
+        drop(store);
+        // The store's checkpoint may still be closing its files: a cleanup, not a check.
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A batch rolled back for a fork (decision 0170) runs again; the waits for the writer (`commit_now`) queued while
+    /// it first ran are each kept. One was lost when the second run took the next and overwrote the first's: the
+    /// queue's count then never reached zero, and `written` waited for ever (the hung warm runs).
+    #[test]
+    fn a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile() {
+        let (dir, store) = store("fork-waits");
+        store.intern_atoms(&["a"]).unwrap();
+        store.flush_atoms().unwrap();
+        // The job forks the batch midway, as another thread of the process does (it finds another process's atoms
+        // past this one's pending ones): its atoms are pending, and the store ends past them.
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let r = Arc::clone(&runs);
+        store.write_back_syms(Syms::None, "forks", 0, vec![], Box::new(move |s| {
+            if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                go_rx.recv().unwrap();
+                s.intern_atoms(&["b"])?;
+                s.connection.lock().map_err(StoreError::Invalid)?.execute(
+                    "INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))",
+                    [],
+                )?;
+            }
+            s.flush_atoms()
+        }));
+        store.commit_now();
+        store.commit_now();
+        go_tx.send(()).unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let other = ContentStore::open(&store.database_path).unwrap();
+        std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
+        assert!(store.atoms_handle().forked(), "the job forked the batch");
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
+        drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -733,6 +837,6 @@ mod tests {
         let again = ContentStore::open(&path).unwrap();
         assert_eq!(again.stat_blob([1; 32]).unwrap().as_deref(), Some(&b"kept"[..]));
         drop(again);
-        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

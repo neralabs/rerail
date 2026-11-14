@@ -207,6 +207,17 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     for (i, m) in n.token_marks.iter().enumerate() {
         pattern(out, i, m, n.extras.first().map_or(0, |e| e.0));
     }
+    // The refusing token marks' tests, at a token whose code has a bit of theirs.
+    let refusing: Vec<String> = n
+        .token_marks
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.refuses)
+        .map(|(i, m)| format!("(self.code >> {} & 1 != 0 && self.pattern_{i}())", crate::records::MARK_SHIFT + u32::from(m.order)))
+        .collect();
+    if !refusing.is_empty() {
+        writeln!(out, "    /// Whether a token mark that refuses holds at this token (`TokenMark::refuses`).\n    #[inline(never)]\n    #[cold]\n    fn refusals(&self) -> bool {{\n        {}\n    }}\n", refusing.join(" || ")).unwrap();
+    }
     let mut on_p = String::new();
     for (i, c) in n.local_checks.iter().enumerate() {
         let o = mask_output(n, c.mask)?;
@@ -400,6 +411,10 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
         ),
         _ => String::new(),
     };
+    // The token marks that refuse (`TokenMark::refuses`): their bits in the code, one test; where
+    // one is set, `refusals` (cold) tests their tokens.
+    let bits: u64 = n.token_marks.iter().filter(|m| m.refuses).fold(0, |b, m| b | 1u64 << (crate::records::MARK_SHIFT + u32::from(m.order)));
+    let refusals = if bits == 0 { String::new() } else { format!("            if u64::from(c) & {bits:#x} != 0 && self.refusals() {{\n                return Err(false);\n            }}\n") };
     writeln!(
         out,
         "    /// `TOKEN`: the next record{}.
@@ -421,7 +436,7 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
 {set_end}            self.rec_end = unsafe {{ *self.lasts.add(i) }} + 1;
             self.code = c;
             self.next = i as u32 + 1;
-{extra}            self.live = {live};
+{extra}{refusals}            self.live = {live};
             return Ok(());
         }}
     }}
@@ -1114,7 +1129,9 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
             let w: Vec<String> = el.words.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
             t.push(format!("matches!((c >> 8) & 0xff, {})", w.join(" | ")));
         }
-        if t.is_empty() { "false".into() } else { t.join(" || ") }
+        let t = if t.is_empty() { "false".into() } else { t.join(" || ") };
+        // A `not` element: none of its choices.
+        if el.not { format!("!({t})") } else { t }
     };
     let mut ahead = 0i8;
     for el in &m.elems {
@@ -1125,8 +1142,10 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
                 writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
             }
             o => {
+                // No record left: an `end` element holds there (it is the last), any other fails.
+                let past = if el.end { "true" } else { "false" };
                 for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return false; }}\n            let c = unsafe {{ *self.codes.add(at) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
+                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
                 }
                 ahead = o;
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();

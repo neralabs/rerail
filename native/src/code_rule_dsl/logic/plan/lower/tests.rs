@@ -72,7 +72,7 @@ fn a_kind_membership_compares_kind_atoms() {
     .unwrap();
     let tag = tape_tag(python).unwrap();
     let atom = |k: &str| Term::Int(i64::from(kind_atom(tag, python.kinds().kind_id(k))));
-    let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".to_owned()), op, r: atom(k) };
+    let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".into()), op, r: atom(k) };
     let bodies = |rel: &str| l.program.rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
     assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
     assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
@@ -89,9 +89,9 @@ fn kind_and_field_columns_are_not_stored_as_atoms() {
     ))
     .unwrap();
     let d = domains(&p).unwrap();
-    assert_eq!(stored_types(&p.decls, &d, "field").unwrap(), b"iii");
-    assert_eq!(stored_types(&p.decls, &d, "node").unwrap(), b"iiiii");
-    assert_eq!(stored_types(&p.decls, &d, "text").unwrap(), b"is");
-    assert_eq!(stored_types(&p.decls, &d, "kind").unwrap(), b"ii", "a derived kind column");
-    assert_eq!(stored_types(&p.decls, &d, "named").unwrap(), b"iis", "a derived field column, and a name");
+    assert_eq!(atom_columns(&p, &d, "field"), [false, false, false]);
+    assert_eq!(atom_columns(&p, &d, "node"), [false; 5]);
+    assert_eq!(atom_columns(&p, &d, "text"), [false, true]);
+    assert_eq!(atom_columns(&p, &d, "kind"), [false, false], "a derived kind column");
+    assert_eq!(atom_columns(&p, &d, "named"), [false, false, true], "a derived field column, and a name");
 }

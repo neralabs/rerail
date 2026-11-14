@@ -150,7 +150,7 @@ static CLASS: [u8; 256] = {
 };
 
 /// One-byte punctuation, by byte: its place in `syntax::PUNCT` plus one (0: none).
-static PUNCT1: [u8; 256] = {
+pub(crate) static PUNCT1: [u8; 256] = {
     let mut t = [0u8; 256];
     let s = b"(),.;:=<>!{}|@*[]-+/%~^&";
     let mut i = 0;

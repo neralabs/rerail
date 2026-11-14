@@ -40,7 +40,8 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
     let keys: Keys = match std::fs::read_to_string(out.join("violation.csv")) {
         Ok(text) => text.lines().map(|line| {
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(columns.len(), 5, "unexpected violation row: {line}");
+            // rule, clause, code, path, line and column (0165).
+            assert_eq!(columns.len(), 6, "unexpected violation row: {line}");
             (columns[2].to_owned(), columns[3].to_owned(), columns[4].parse().unwrap())
         }).collect(),
         Err(e) => panic!("read violations: {e}"),

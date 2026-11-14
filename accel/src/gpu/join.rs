@@ -298,7 +298,7 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             if let Some(old) = s[slot].take() {
                 old.release();
             }
-            s[slot] = Some(shared::lease_zeroed(bytes.max(64))?);
+            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").buffer().clone())
     })
@@ -325,7 +325,7 @@ impl Held {
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease(bytes)?;
+        let lease = shared::lease_for_join(bytes, false)?;
         let buffer = lease.buffer().clone();
         Ok(Held { _lease: Lease::Pooled(lease), buffer })
     }
@@ -333,7 +333,7 @@ impl Held {
     /// A buffer of at least `bytes`, its first `bytes` zero.
     pub fn zeroed(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_zeroed(bytes)?;
+        let lease = shared::lease_for_join(bytes, true)?;
         let buffer = lease.buffer().clone();
         Ok(Held { _lease: Lease::Pooled(lease), buffer })
     }
@@ -357,6 +357,9 @@ pub struct Pass<'a> {
     encoder: &'a ComputeCommandEncoderRef,
     /// The dispatches encoded so far (a command buffer's launch budget counts them).
     dispatches: Cell<usize>,
+    /// Whether `end` ended the encoder; dropped without it (an error between its dispatches: a refused lease), the
+    /// drop ends it, as Metal requires of an encoder it releases.
+    ended: bool,
 }
 
 impl<'a> Pass<'a> {
@@ -364,7 +367,7 @@ impl<'a> Pass<'a> {
         let encoder = command.new_compute_command_encoder();
         // Named: the launch budget's record reads the encoder's label, and an unnamed one's is nil.
         encoder.set_label("rows");
-        Pass { encoder, dispatches: Cell::new(0) }
+        Pass { encoder, dispatches: Cell::new(0), ended: false }
     }
 
     /// The dispatches encoded so far.
@@ -422,8 +425,17 @@ impl<'a> Pass<'a> {
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
-    pub fn end(self) {
+    pub fn end(mut self) {
         self.encoder.end_encoding();
+        self.ended = true;
+    }
+}
+
+impl Drop for Pass<'_> {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.encoder.end_encoding();
+        }
     }
 }
 

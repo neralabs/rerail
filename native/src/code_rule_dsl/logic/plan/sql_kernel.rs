@@ -10,10 +10,10 @@ pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
     let mut sentinels: BTreeSet<String> = prog
         .decls
         .iter()
-        .filter(|(r, c)| c.is_empty() || prog.lattice.get(*r).is_some_and(|l| l.keys == 0))
+        .filter(|(r, c)| c.is_empty() || prog.lattice.get(r.as_str()).is_some_and(|l| l.keys == 0))
         .map(|(r, _)| r.clone())
-        .collect();
-    sentinels.extend(prog.nullary.iter().filter(|name|prog.decls.contains_key(*name)).cloned());
+        .map(String::from).collect();
+    sentinels.extend(prog.nullary.iter().filter(|name|prog.decls.contains_key(name.as_str())).cloned());
     program::physical(&mut out);
     if prog.lattice.values().any(|l| l.lattice() != "flat") {
         let tops = out
@@ -51,7 +51,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
         name: "corpus-sql".into(),
         relations: rels
             .iter()
-            .map(|r| (r.clone(), run.prog.decls[r].len()))
+            .map(|r| (r.clone(), run.prog.decls[r.as_str()].len()))
             .collect(),
         steps: vec![],
         file_local: false,
@@ -63,7 +63,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
             .map(|r| {
                 (
                     r.clone(),
-                    run.prog.decls[r]
+                    run.prog.decls[r.as_str()]
                         .iter()
                         .map(|(_, t)| {
                             if t == "sym" && run.model.inputs.atoms.is_none() {
@@ -99,15 +99,15 @@ pub fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     rules: &[&Rule],
-    planned: &[(Atom, Vec<Step>)],
+    planned: &[(&Rule, Vec<Step>)],
     recursive: bool,
 ) -> Result<u32> {
     let mut p = program_for(run, scc)?;
     let mut queries = Vec::new();
-    for (head, order) in planned {
-        let q = run.model.checked_query(run.prog, head, order, None, None)?;
+    for (rule, order) in planned {
+        let q = run.model.checked_query(run.prog, &rule.head, Order::new(&rule.body, order), None, None)?;
         p.steps.push(schedule::Step {
-            output: head.rel.to_string(),
+            output: rule.head.rel.to_string(),
             stratum: 0,
             reads: vec![],
             sql: String::new(),
@@ -124,11 +124,11 @@ pub fn component(
                 {
                     let (order, _, _) =
                         run.model
-                            .plan_rule(run.prog, &rule.head, &rule.body, Some(i))?;
+                            .plan_rule(run.prog, &run.versions.body(rule)?, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
                     let q =
                         run.model
-                            .checked_query(run.prog, &rule.head, &order, Some(at), None)?;
+                            .checked_query(run.prog, &rule.head, Order::new(&rule.body, &order), Some(at), None)?;
                     p.steps.push(schedule::Step {
                         output: rule.head.rel.to_string(),
                         stratum: 0,
@@ -151,7 +151,7 @@ pub fn component(
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
         constant_rows: Default::default(),
-        value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+        value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
         analysis: run.model.analysis(run.prog),
         program: p,
         queries,

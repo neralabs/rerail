@@ -4,6 +4,39 @@
         RulePlan, StepPlan,
     };
 
+    /// A job on another thread opens its spans under the path of the run that
+    /// issued it (`based`, `here`), as if it ran there; without a base, at the profile's root as before.
+    #[test]
+    fn a_jobs_spans_open_under_the_run_that_issued_it() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let under = {
+            let _run = span(|| "xrun".into());
+            let _eval = span(|| "evaluate".into());
+            super::super::here()
+        };
+        assert_eq!(under.as_deref(), Some("xrun/evaluate"));
+        // As `Ambient::enter` opens a job: its span at the issuing run's path, the members' spans under it.
+        std::thread::spawn(move || {
+            let _issued = super::super::span_at(under.as_deref(), || "issued components (stream job)".into());
+            let _job = span(|| "stratum s (in a job)".into());
+            assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/issued components (stream job)/stratum s (in a job)"));
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(|| {
+            let _job = span(|| "xloose".into());
+            assert_eq!(super::super::here().as_deref(), Some("xloose"));
+        })
+        .join()
+        .unwrap();
+        let s = super::super::spans();
+        set(false);
+        assert!(s.contains_key("xrun/evaluate/issued components (stream job)/stratum s (in a job)") && s.contains_key("xloose"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(!s.contains_key("stratum s (in a job)"));
+    }
+
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
         let _serial = one_run();

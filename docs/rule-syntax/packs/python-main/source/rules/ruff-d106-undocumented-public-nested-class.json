@@ -1,0 +1,154 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d106-undocumented-public-nested-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add a docstring to each public nested class; it does not inherit the docstring of the class that encloses it.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "doc-expr": {
+            "any": [
+              {"kind": "string", "regex": "^[rRuU]{0,2}['\"]"},
+              {
+                "kind": "concatenated_string",
+                "not": {"has": {"stopBy": "neighbor", "kind": "string", "not": {"regex": "^[rRuU]{0,2}['\"]"}}}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "doc-expr"}}
+            ]
+          },
+          "documented": {
+            "kind": "block",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "expression_statement",
+              "nthChild": {"position": 1, "ofRule": {"not": {"kind": "comment"}}},
+              "has": {"stopBy": "neighbor", "matches": "doc-expr"},
+              "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}}
+            }
+          },
+          "dunder-all": {
+            "any": [{"kind": "assignment"}, {"kind": "augmented_assignment"}],
+            "has": {"field": "left", "kind": "identifier", "regex": "^__all__$"},
+            "inside": {"stopBy": "neighbor", "kind": "expression_statement"}
+          },
+          "public-class": {
+            "kind": "class_definition",
+            "not": {"has": {"field": "name", "regex": "^_"}},
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                  "kind": "class_definition",
+                  "matches": "public-class"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "inside": {"stopBy": "end", "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]}
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "name",
+                      "any": [
+                        {
+                          "not": {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                                "matches": "dunder-all"
+                              }
+                            }
+                          }
+                        },
+                        {"binds": {"exported": true}}
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "undocumented-public-nested-class",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": false,
+            "path": {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^[^_]",
+            "pattern": "$NAME",
+            "inside": {
+              "field": "name",
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "not": {"has": {"field": "body", "matches": "documented"}},
+              "inside": {
+                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                "kind": "class_definition",
+                "matches": "public-class"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "D106",
+        "message": "Add a docstring to nested class `$NAME` describing its purpose; it does not inherit its enclosing class's docstring.",
+        "suppress": {"noqa": {"codes": ["D106"]}}
+      }
+    },
+    {
+      "id": "undocumented-public-nested-class-in-package",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "inPackage": true,
+            "path": {"notRegex": "\\.pyi$"},
+            "module": {"notRegex": "(?:^|\\.)(?:_|_[^._][^.]*|__[^.]*[^._]_?)(?:\\.|$)"}
+          },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^[^_]",
+            "pattern": "$NAME",
+            "inside": {
+              "field": "name",
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "not": {"has": {"field": "body", "matches": "documented"}},
+              "inside": {
+                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                "kind": "class_definition",
+                "matches": "public-class"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "D106",
+        "message": "Add a docstring to nested class `$NAME` describing its purpose; it does not inherit its enclosing class's docstring.",
+        "suppress": {"noqa": {"codes": ["D106"]}}
+      }
+    }
+  ]
+}

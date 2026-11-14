@@ -24,6 +24,7 @@ pub mod grammar;
 pub mod ladder;
 mod error;
 pub mod native_cpu_block;
+pub mod native_cpu_walk;
 pub mod native_cpu_codegen;
 pub mod native_cpu_lanes;
 pub mod native_cpu_pressure;

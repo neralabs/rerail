@@ -150,6 +150,12 @@ impl CompiledBlock {
         self.records.as_ref().map(|t| t.words.as_ptr() as i64)
     }
 
+    /// The record pass's tables: their address and bytes. Its code holds addresses inside them
+    /// as constants (the slots' keys and meta, say).
+    pub fn tables_span(&self) -> Option<(i64, i64)> {
+        self.records.as_ref().map(|t| (t.words.as_ptr() as i64, 8 * t.words.len() as i64))
+    }
+
     /// Every output's words over `bytes`; bits past the end are zero.
     /// The calls in the passes' IR: each of a function the same lowering made from the same
     /// program (`native_cpu_shape::check`), the only calls the machine code may have.
@@ -368,7 +374,24 @@ pub struct State {
     /// Each instruction's top field and flag field, if it has one.
     top: Vec<Option<usize>>,
     flag: Vec<Option<usize>>,
+    /// Each walk's state field (`WalkState`), by walk: kept on its hidden value.
+    walk: Vec<Option<usize>>,
     pub words: usize,
+}
+
+/// A walk's state from one block to the next (`build_walk`): bits 0..4 the kind of region open
+/// at the block's end, plus one (0: none); bits 4..6 the hidden bytes it hides past its end (a
+/// closer's bytes, an empty literal's); bit `8 + k` that kind `k`'s closer has no byte left in
+/// the file (its `else` is taken from there on, with no scan).
+pub struct WalkState;
+
+impl WalkState {
+    pub const SKIP: u8 = 4;
+    pub const NONE: u8 = 8;
+    /// The field's width for a walk of `kinds` kinds.
+    pub fn width(kinds: usize) -> u8 {
+        Self::NONE + kinds as u8
+    }
 }
 
 impl State {
@@ -389,23 +412,27 @@ impl State {
                 back[usize::from(a)] = back[usize::from(a)].max(k);
             }
         }
-        let mut wanted: Vec<(usize, u8, bool)> = Vec::new();
+        // (instruction, width, what): 0 its top bits, 1 an escape's flag, 2 + w walk `w`'s state.
+        let mut wanted: Vec<(usize, u8, usize)> = Vec::new();
         for (at, inst) in native.insts.iter().enumerate() {
             match inst {
-                BlockInst::Toggle(_) | BlockInst::Fill(..) => wanted.push((at, back[at].max(1), false)),
+                BlockInst::Toggle(_) | BlockInst::Fill(..) => wanted.push((at, back[at].max(1), 0)),
                 BlockInst::Escaped(_) => {
-                    wanted.push((at, 1, true));
+                    wanted.push((at, 1, 1));
                     if back[at] > 0 {
-                        wanted.push((at, back[at], false));
+                        wanted.push((at, back[at], 0));
                     }
                 }
-                _ if back[at] > 0 => wanted.push((at, back[at], false)),
+                _ if back[at] > 0 => wanted.push((at, back[at], 0)),
                 _ => {}
             }
         }
+        for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len()), 2 + w));
+        }
         let mut used: Vec<u8> = Vec::new();
-        let (mut fields, mut top, mut flag) = (Vec::new(), vec![None; n], vec![None; n]);
-        for (at, width, is_flag) in wanted {
+        let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
+        for (at, width, what) in wanted {
             let word = match used.iter().position(|&u| u + width <= 64) {
                 Some(w) => w,
                 None => {
@@ -415,7 +442,11 @@ impl State {
             };
             fields.push(Field { at, width, word, pos: used[word] });
             used[word] += width;
-            if is_flag { flag[at] = Some(fields.len() - 1) } else { top[at] = Some(fields.len() - 1) }
+            match what {
+                0 => top[at] = Some(fields.len() - 1),
+                1 => flag[at] = Some(fields.len() - 1),
+                w => walk[w - 2] = Some(fields.len() - 1),
+            }
         }
         let mut region_fields: Vec<Vec<(usize, u64)>> = vec![Vec::new(); plan.regions.len()];
         for field in &fields {
@@ -429,7 +460,7 @@ impl State {
                 }
             }
         }
-        State { fields, plan, region_fields, top, flag, words: used.len() }
+        State { fields, plan, region_fields, top, flag, walk, words: used.len() }
     }
 }
 
@@ -479,6 +510,8 @@ pub struct At<'a> {
     pub sinks: Option<Sinks<'a>>,
     /// The gated regions' functions, each called from its branch (`Emit::region`).
     pub calls: Option<&'a RegionCalls>,
+    /// The walks' functions (`native_cpu_walk`), each called once a block.
+    pub walks: Option<&'a crate::native_cpu_walk::WalkCalls>,
 }
 
 /// The gated regions' functions of a pass: each region is computed by a function of its own,
@@ -567,6 +600,8 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
         rounds: Vec::new(),
         row,
         calls: at.calls,
+        walks: at.walks,
+        walked: vec![false; native.walks.len()],
     };
     (e.live, e.masked) = live(native, state, at.full);
     let mut grouped: Vec<Option<usize>> = vec![None; n];
@@ -642,8 +677,11 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
     let mut ran = vec![false; native.groups.len()];
     let mut gates = 0;
     let mut stack: Vec<(Node, bool)> = Vec::new();
-    for root in 0..n {
-        if done[root] || (e.live[root] && read[root]) {
+    // Each walk's call first, before the body's other values are live: what is live across a
+    // call stays in a callee-saved register, or spills.
+    let walks_first: Vec<usize> = native.walks.iter().filter(|w| !w.kinds.is_empty() && e.live[usize::from(w.hidden)]).map(|w| usize::from(w.hidden)).collect();
+    for root in walks_first.iter().copied().chain(0..n) {
+        if done[root] || (e.live[root] && read[root] && !walks_first.contains(&root)) {
             continue;
         }
         stack.push((Node::Value(root), false));
@@ -752,7 +790,7 @@ fn live(native: &BlockNative, state: &State, full: bool) -> (Vec<bool>, Vec<bool
         }
     }
     for x in (0..n).rev() {
-        live[x] |= state.top[x].is_some() || state.flag[x].is_some();
+        live[x] |= state.top[x].is_some() || state.flag[x].is_some() || state.walk.iter().flatten().any(|&k| state.fields[k].at == x);
         masked[x] |= state.plan.mask[x] && (live[x] && (native.outputs.contains(&(x as u16)) || state.top[x].is_some()));
         if live[x] && !known(x) {
             for o in native.insts[x].operands() {
@@ -800,6 +838,9 @@ struct Emit<'a, 'b> {
     row: Value,
     /// The regions' functions (`RegionCalls`); none: each region inline.
     calls: Option<&'b RegionCalls>,
+    /// The walks' functions, and which walks this body has called.
+    walks: Option<&'b crate::native_cpu_walk::WalkCalls>,
+    walked: Vec<bool>,
 }
 
 impl Emit<'_, '_> {
@@ -851,6 +892,20 @@ impl Emit<'_, '_> {
             self.set(at, Sym::Known(0));
             return;
         }
+        // A walk's values are made together, by its call; what it reads, by the call too.
+        match inst {
+            BlockInst::Walk { walk, .. } => {
+                if !self.walked[usize::from(walk)] {
+                    self.walk(&mut *f, usize::from(walk));
+                }
+                return;
+            }
+            BlockInst::Args(..) => {
+                self.set(at, Sym::Known(0));
+                return;
+            }
+            _ => {}
+        }
         if plan.lanes[at] {
             let sym = if self.masked[at] {
                 let parts: Vec<Lane> = (1..5).map(|c| self.lanes.get(&mut *f, at, c)).collect();
@@ -888,10 +943,9 @@ impl Emit<'_, '_> {
             self.carry(&mut *f, at);
             return;
         }
-        for x in inst.operands() {
-            plain(&mut *f, &self.syms, &mut self.values, x);
-        }
-        let v = |x: u16| self.values[usize::from(x)].expect("made plain");
+        let operands = inst.operands();
+        let given: Vec<Value> = operands.iter().map(|&x| plain(&mut *f, &self.syms, &mut self.values, x)).collect();
+        let v = |x: u16| given[operands.iter().position(|&o| o == usize::from(x)).expect("an operand")];
         let (i, len, even) = (self.i, self.len, self.even);
         let value = match inst {
             // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
@@ -921,6 +975,7 @@ impl Emit<'_, '_> {
             BlockInst::Load(k) => f.ins().load(types::I64, MemFlags::trusted().with_readonly(), self.row, 8 * i32::from(k)),
             BlockInst::BackFill(..) => unreachable!("a pass of its own (`native_ir::passes`)"),
             BlockInst::Carry(_) => unreachable!("a carry is its round's head's parameter"),
+            BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("made by its walk's call"),
             BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's (`native_cpu_rows`)"),
             BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => unreachable!("on the vectors"),
             BlockInst::Const(_) | BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => unreachable!("folded"),
@@ -981,6 +1036,43 @@ impl Emit<'_, '_> {
         };
         self.set(at, Sym::Value(value, false));
         self.carry(&mut *f, at);
+    }
+
+    /// Walk `w`'s call (`native_cpu_walk`): its state and inputs stored to a slot, its function
+    /// called, its values and state read back. Every value it makes is set, and carried.
+    fn walk(&mut self, f: &mut FunctionBuilder<'_>, w: usize) {
+        let native = self.native;
+        let walk = &native.walks[w];
+        let calls = self.walks.expect("a walk's function");
+        let field = self.state.fields[self.state.walk[w].expect("a walk's state field")];
+        let made = walk.made();
+        let n = crate::native_cpu_walk::layout(walk.kinds.len(), made.len());
+        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * n as u32, 3));
+        let state_in = self.read(&mut *f, &field, 0, field.width);
+        f.ins().stack_store(state_in, slot, 0);
+        for (k, kind) in walk.kinds.iter().enumerate() {
+            let o = plain(&mut *f, &self.syms, &mut self.values, usize::from(kind.opener));
+            f.ins().stack_store(o, slot, 8 * (1 + 2 * k as i32));
+            let c = plain(&mut *f, &self.syms, &mut self.values, usize::from(kind.closer));
+            f.ins().stack_store(c, slot, 8 * (2 + 2 * k as i32));
+        }
+        if calls.built.borrow()[w].is_none() {
+            let func = crate::native_cpu_walk::build_walk(native, w, calls).expect("a walk the program verified");
+            calls.built.borrow_mut()[w] = Some(func);
+        }
+        let address = f.ins().stack_addr(types::I64, slot, 0);
+        let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, calls.ids[w].as_u32()));
+        let signature = f.import_signature(calls.signature.clone());
+        let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+        let base = self.lanes.base();
+        f.ins().call(callee, &[address, base, self.i, self.len]);
+        let state_out = f.ins().stack_load(types::I64, slot, 0);
+        self.put(&mut *f, field, state_out);
+        self.walked[w] = true;
+        for (j, &v) in made.iter().enumerate() {
+            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 2 * walk.kinds.len() + j) as i32, false));
+            self.carry(&mut *f, usize::from(v));
+        }
     }
 
     /// Region `r` behind its branch: computed where its gate has a bit or its carried bits came
@@ -1213,6 +1305,8 @@ impl Emit<'_, '_> {
                 rounds: Vec::new(),
                 row,
                 calls: None,
+                walks: None,
+                walked: vec![false; native.walks.len()],
             };
             for (k, &w) in words.iter().enumerate() {
                 e.packed_out[w] = Some(so_far[k]);
@@ -1432,6 +1526,9 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     for _ in 0..4 {
         signature.params.push(AbiParam::new(pointer));
     }
+    // The CPU's form: the walks made by walking, not by rounds (decision 0139).
+    let cpu = native.cpu_form();
+    let native = &cpu;
     let passes = native.passes();
     // The records (`records`): made in the last pass at each file's end where it is a forward
     // one, else in a pass of their own after the passes.
@@ -1550,6 +1647,9 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
 /// The record pass's tables (`records::WordTable`), in one buffer the code reads by address:
 /// each byte's kind (256 bytes), the slots' keys, the slots' `len | code << 8`, each long word's
 /// tails (seven words). Byte offsets of each part.
+/// A record table's meta bit (`RecordTables::new`): the slot's word is past eight bytes.
+const LONG_WORD: u64 = 1 << 63;
+
 pub struct RecordTables {
     pub words: Vec<u64>,
     pub keys: usize,
@@ -1559,6 +1659,8 @@ pub struct RecordTables {
     /// The extracts of the first and last bytes.
     pub starts: u16,
     pub lasts: u16,
+    /// Where each byte's end rule is (`Records::ends`), a byte each.
+    pub ends: usize,
 }
 
 impl RecordTables {
@@ -1567,26 +1669,42 @@ impl RecordTables {
         let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
         let keys = 8 * words.len();
         words.extend(&table.keys);
+        // Each slot's length, then the code bits its word gives (`len | bits << 8`): the word at
+        // `KIND_BITS`, and the marks of that word alone at `MARK_SHIFT` (`Records::marks`), so
+        // that a token takes them with the slot's one load.
         let meta = 8 * words.len();
-        words.extend(table.meta.iter().map(|&m| u64::from(m)));
+        words.extend(table.meta.iter().map(|&m| {
+            let word = u64::from(m >> 8);
+            let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
+            // A word past eight bytes: its top bit (`LONG_WORD`), whose other words a token
+            // compares.
+            let long = if (m & 0xff) > 8 { LONG_WORD } else { 0 };
+            u64::from(m & 0xff) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | long
+        }));
         let tails = 8 * words.len();
         for t in &table.tails {
             words.extend(t);
         }
-        Ok(RecordTables { words, keys, meta, tails, table, starts: r.starts, lasts: r.lasts })
+        // Each byte's end rule (decision 0177), a byte each.
+        let ends = 8 * words.len();
+        if !r.rules.is_empty() {
+            words.extend(r.ends.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 rules"))));
+        }
+        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts })
     }
 }
 
 /// The bytes `len` of `w` keeps (all eight at eight or more), a mask by `select`: a shift by
 /// 64 is a shift by 0 in Cranelift.
 fn cut_to(f: &mut FunctionBuilder<'_>, w: Value, len: Value) -> Value {
-    let bits = f.ins().ishl_imm(len, 3);
-    let one = f.ins().iconst(types::I64, 1);
-    let low = f.ins().ishl(one, bits);
-    let low = f.ins().iadd_imm(low, -1);
+    // All ones shifted down by `64 - 8 * min(len, 8)`, mod 64 (a shift's amount is): eight
+    // bytes, a shift of 0.
+    let eight = f.ins().iconst(types::I64, 8);
+    let n = f.ins().umin(len, eight);
+    let bits = f.ins().ishl_imm(n, 3);
+    let sh = f.ins().ineg(bits);
     let all = f.ins().iconst(types::I64, -1);
-    let whole = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 8);
-    let m = f.ins().select(whole, all, low);
+    let m = f.ins().ushr(all, sh);
     f.ins().band(w, m)
 }
 
@@ -1602,6 +1720,109 @@ struct FileCols {
     nl: Value,
     out: Value,
     counts: Value,
+    /// The file's blocks: its rows of output words.
+    blocks: Value,
+    /// The file's bytes.
+    len: Value,
+    /// The record tables (`RecordTables::words`) and the word hash's multiplier: values, not
+    /// constants, so a loop over tokens keeps them in registers (Cranelift remakes a constant
+    /// at each use).
+    tables: Value,
+    mult: Value,
+    /// The slots' keys and meta (`RecordTables::keys`, `meta`): a slot's two loads, each one
+    /// instruction.
+    keys: Value,
+    meta: Value,
+}
+
+/// The record function's parameters (`record_fn`): `FileCols`' fields, in order.
+const RECORD_PARAMS: usize = 14;
+
+impl FileCols {
+    /// The address of the file's byte `s`.
+    fn bytes_at(&self, f: &mut FunctionBuilder<'_>, s: Value) -> Value {
+        f.ins().iadd(self.bytes, s)
+    }
+
+    fn values(&self) -> [Value; RECORD_PARAMS] {
+        [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.keys, self.meta, self.len]
+    }
+
+    fn of(p: &[Value]) -> Self {
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], keys: p[11], meta: p[12], len: p[13] }
+    }
+}
+
+/// The signature of a file's record function (`record_fn`).
+fn record_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
+    let mut sig = module.make_signature();
+    for _ in 0..RECORD_PARAMS {
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    }
+    sig
+}
+
+/// A file's records as a function of its own (`record_file`), which the last forward pass
+/// calls once a file: a register allocation of its own, apart from the block loop's, so its
+/// token loop keeps its values in registers.
+fn record_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let (entry, done) = (f.create_block(), f.create_block());
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let cols = FileCols::of(&p);
+    let mut heads = vec![];
+    record_file(&mut f, r, t, extracts, outputs, &cols, done, &mut heads);
+    f.switch_to_block(done);
+    f.ins().return_(&[]);
+    f.seal_all_blocks();
+    f.finalize();
+    crate::native_cpu_shape::check(func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+}
+
+/// A row's record slot (decision 0177): `FileCols`' values, then the token loop's state.
+const REC_SLOT: usize = RECORD_PARAMS + STATE_WORDS;
+
+/// A signature of `n` words.
+fn words_signature(module: &JITModule, n: usize) -> cranelift_codegen::ir::Signature {
+    let mut sig = module.make_signature();
+    for _ in 0..n {
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    }
+    sig
+}
+
+/// A part of a file's token loop (`(slot, ready)`), or its end (`(slot)`), as functions of
+/// their own: the block loop calls a part after each block, over the blocks whose outputs are
+/// final, and the part and the end at the file's end. The slot holds the file's columns and
+/// the loop's state (`REC_SLOT`).
+fn part_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, end: bool) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let (entry, done) = (f.create_block(), f.create_block());
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let fl = MemFlags::trusted();
+    let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().load(types::I64, fl, p[0], 8 * k as i32)).collect();
+    let cols = FileCols::of(&vals);
+    let state = f.ins().iadd_imm(p[0], 8 * RECORD_PARAMS as i64);
+    let mut heads = vec![];
+    if end {
+        let n = f.ins().load(types::I64, fl, state, 0);
+        let bad = f.ins().load(types::I64, fl, state, 16);
+        let zero = f.ins().iconst(types::I64, 0);
+        record_end(&mut f, r, extracts, outputs, &cols, bad, n, zero, done, &mut heads);
+    } else {
+        record_tokens(&mut f, r, t, extracts, outputs, &cols, Some(RecPart { ready: p[1], state }), done, &mut heads);
+    }
+    f.switch_to_block(done);
+    f.ins().return_(&[]);
+    f.seal_all_blocks();
+    f.finalize();
+    crate::native_cpu_shape::check(func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))
 }
 
 /// The record pass on its own (`records`), a function of the passes' signature, where the last
@@ -1621,7 +1842,7 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     f.ins().brif(no_rows, done, &[], row, &[zero.into()]);
     f.switch_to_block(row);
     let rr = f.block_params(row)[0];
-    let cols = file_cols(&mut f, r, extracts, rr, rows, bytes_all, out_all, positions_all, counts_all);
+    let cols = file_cols(&mut f, r, t, extracts, rr, rows, bytes_all, out_all, positions_all, counts_all);
     let mut heads = vec![(row, Step::File)];
     record_file(&mut f, r, t, extracts, outputs, &cols, exit, &mut heads);
     f.switch_to_block(exit);
@@ -1637,7 +1858,7 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
 
 /// File `rr`'s columns (`FileCols`) from its row, the counts as the passes stored them.
 #[allow(clippy::too_many_arguments)]
-fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, rr: Value, rows: Value, bytes_all: Value, out_all: Value, positions_all: Value, counts_all: Value) -> FileCols {
+fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, rr: Value, rows: Value, bytes_all: Value, out_all: Value, positions_all: Value, counts_all: Value) -> FileCols {
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
     let at = f.ins().imul_imm(rr, std::mem::size_of::<Row>() as i64);
@@ -1661,7 +1882,229 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts:
     let (starts, lasts, codes) = (column(i64::from(r.starts)), column(i64::from(r.lasts)), column(extracts as i64));
     let ns = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.starts));
     let nl = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.lasts));
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts }
+    let blocks = f.ins().load(types::I64, ro, at, 8);
+    let len = f.ins().load(types::I64, ro, at, 16);
+    let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let keys = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.keys as i64);
+    let meta = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.meta as i64);
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, keys, meta, len }
+}
+
+/// Where the token loop runs a block at a time (decision 0177): the blocks whose outputs are
+/// final (`ready`), whether they are all the file's (`last`), and where the loop waits for more.
+#[derive(Clone, Copy)]
+struct Limit {
+    ready: Value,
+    last: Value,
+    wait: cranelift_codegen::ir::Block,
+}
+
+/// The words a search may read: the ready blocks', or the file's.
+fn bound(c: &FileCols, l: Option<Limit>) -> Value {
+    l.map_or(c.blocks, |l| l.ready)
+}
+
+/// A search past the words it may read: at the file's end, on to `end` with `args`; before it,
+/// the loop waits for the next block (`Limit::wait`).
+fn past(f: &mut FunctionBuilder<'_>, l: Option<Limit>, end: cranelift_codegen::ir::Block, args: &[BlockArg]) {
+    match l {
+        None => {
+            f.ins().jump(end, args);
+        }
+        Some(l) => {
+            f.ins().brif(l.last, end, args, l.wait, &[]);
+        }
+    }
+}
+
+/// A branch on `inside`: to `to`, or past the words (`past`).
+fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_codegen::ir::Block, l: Option<Limit>, end: cranelift_codegen::ir::Block, args: &[BlockArg]) {
+    let out = f.create_block();
+    f.ins().brif(inside, to, &[], out, &[]);
+    f.switch_to_block(out);
+    f.set_cold_block(out);
+    past(f, l, end, args);
+}
+
+/// A token's last byte from its first, `s`, by its end rule (`records::last_by_rule`, decision
+/// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
+/// first word; a run or a search past it goes on a word at a time, in a cold block. A search
+/// that finds no last gives `s - 1`, which the order check refuses.
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    use crate::records::EndRule;
+    let ro = MemFlags::trusted().with_readonly();
+    let fl = MemFlags::trusted();
+    let ended = f.create_block();
+    f.append_block_param(ended, types::I64);
+    // Output `o`'s word `q` (`q` below the file's blocks).
+    let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        f.ins().load(types::I64, fl, row, 8 * i32::from(o))
+    };
+    let at = c.bytes_at(f, s);
+    let first = f.ins().uload8(types::I64, ro, at, 0);
+    let ea = f.ins().iadd(c.tables, first);
+    let rule = f.ins().uload8(types::I32, ro, ea, t.ends as i32);
+    let q0 = f.ins().ushr_imm(s, 6);
+    let sh = f.ins().band_imm(s, 63);
+    let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
+    // A compare a rule (the translation to Rust has no jump table); none, the byte alone
+    // (`records::NO_RULE`).
+    for (k, &b) in blocks.iter().enumerate() {
+        let is = f.ins().icmp_imm(IntCC::Equal, rule, k as i64);
+        let other = f.create_block();
+        f.ins().brif(is, b, &[], other, &[]);
+        f.switch_to_block(other);
+        if k + 1 == blocks.len() {
+            f.set_cold_block(other);
+            f.ins().jump(ended, &[s.into()]);
+        }
+    }
+    for (&rule, &b) in r.rules.iter().zip(&blocks) {
+        f.switch_to_block(b);
+        match rule {
+            EndRule::Pair(o) => {
+                let x = word_at(f, q0, o);
+                let bit = f.ins().ushr(x, sh);
+                let bit = f.ins().band_imm(bit, 1);
+                let l = f.ins().iadd(s, bit);
+                f.ins().jump(ended, &[l.into()]);
+            }
+            EndRule::Run(o) => {
+                // The run from `s + 1`: its first word's ones from there, then whole words.
+                let (more, whole) = (f.create_block(), f.create_block());
+                f.append_block_param(more, types::I64);
+                let i = f.ins().iadd_imm(s, 1);
+                let q = f.ins().ushr_imm(i, 6);
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
+                let (first_word, next) = (f.create_block(), f.create_block());
+                inside_or_past(f, inside, first_word, limit, ended, &[s.into()]);
+                f.switch_to_block(first_word);
+                let x = word_at(f, q, o);
+                let isn = f.ins().band_imm(i, 63);
+                let y = f.ins().ushr(x, isn);
+                let y = f.ins().bnot(y);
+                let ones = f.ins().ctz(y);
+                let left = f.ins().irsub_imm(isn, 64);
+                let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, left);
+                let l = f.ins().iadd(s, ones);
+                let w1 = f.ins().iadd_imm(q, 1);
+                f.ins().brif(short, ended, &[l.into()], next, &[]);
+                f.switch_to_block(next);
+                f.set_cold_block(next);
+                f.ins().jump(more, &[w1.into()]);
+                // A whole word of the run: on to the next, or the file's end.
+                f.switch_to_block(more);
+                f.set_cold_block(more);
+                heads.push((more, Step::Word));
+                let w = f.block_params(more)[0];
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                let w64 = f.ins().ishl_imm(w, 6);
+                let at_end = f.ins().iadd_imm(w64, -1);
+                inside_or_past(f, inside, whole, limit, ended, &[at_end.into()]);
+                f.switch_to_block(whole);
+                f.set_cold_block(whole);
+                let x = word_at(f, w, o);
+                let y = f.ins().bnot(x);
+                let ones = f.ins().ctz(y);
+                let full = f.ins().icmp_imm(IntCC::Equal, ones, 64);
+                let l = f.ins().iadd(w64, ones);
+                let l = f.ins().iadd_imm(l, -1);
+                let w1 = f.ins().iadd_imm(w, 1);
+                f.ins().brif(full, more, &[w1.into()], ended, &[l.into()]);
+            }
+            EndRule::Last(o) => {
+                // The mask's first bit at or after `s`: in its word, then the words after.
+                let (more, look) = (f.create_block(), f.create_block());
+                f.append_block_param(more, types::I64);
+                let x = word_at(f, q0, o);
+                let ones = f.ins().iconst(types::I64, -1);
+                let from = f.ins().ishl(ones, sh);
+                let x = f.ins().band(x, from);
+                let base = f.ins().band_imm(s, !63);
+                let tz = f.ins().ctz(x);
+                let l = f.ins().iadd(base, tz);
+                let w1 = f.ins().iadd_imm(q0, 1);
+                let next = f.create_block();
+                f.ins().brif(x, ended, &[l.into()], next, &[]);
+                f.switch_to_block(next);
+                f.set_cold_block(next);
+                f.ins().jump(more, &[w1.into()]);
+                f.switch_to_block(more);
+                f.set_cold_block(more);
+                heads.push((more, Step::Word));
+                let w = f.block_params(more)[0];
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                // None found: with the loop's starts (`records::walk`), the first byte alone;
+                // else `s - 1`, which the order check refuses.
+                let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
+                inside_or_past(f, inside, look, limit, ended, &[none.into()]);
+                f.switch_to_block(look);
+                f.set_cold_block(look);
+                let x = word_at(f, w, o);
+                let w64 = f.ins().ishl_imm(w, 6);
+                let tz = f.ins().ctz(x);
+                let l = f.ins().iadd(w64, tz);
+                let w1 = f.ins().iadd_imm(w, 1);
+                f.ins().brif(x, ended, &[l.into()], more, &[w1.into()]);
+            }
+        }
+    }
+    f.switch_to_block(ended);
+    f.block_params(ended)[0]
+}
+
+/// The next token's first byte from `after` (`records::walk`, stage 2a): the first bit at or
+/// after it that the skip's output `o` does not hold, in its word, then the words after, a word
+/// at a time in a cold block. Past the file's blocks, the blocks' end (no byte of the file).
+fn next_start(f: &mut FunctionBuilder<'_>, c: &FileCols, outputs: usize, o: u16, after: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    let fl = MemFlags::trusted();
+    let (found, more, look, next) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(found, types::I64);
+    f.append_block_param(more, types::I64);
+    let held = |f: &mut FunctionBuilder<'_>, q: Value| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        let x = f.ins().load(types::I64, fl, row, 8 * i32::from(o));
+        f.ins().bnot(x)
+    };
+    let q0 = f.ins().ushr_imm(after, 6);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q0, bound(c, limit));
+    let end = f.ins().ishl_imm(c.blocks, 6);
+    let first = f.create_block();
+    inside_or_past(f, inside, first, limit, found, &[end.into()]);
+    f.switch_to_block(first);
+    let x = held(f, q0);
+    let ones = f.ins().iconst(types::I64, -1);
+    let sh = f.ins().band_imm(after, 63);
+    let from = f.ins().ishl(ones, sh);
+    let x = f.ins().band(x, from);
+    let base = f.ins().band_imm(after, !63);
+    let tz = f.ins().ctz(x);
+    let s = f.ins().iadd(base, tz);
+    let w1 = f.ins().iadd_imm(q0, 1);
+    f.ins().brif(x, found, &[s.into()], next, &[]);
+    f.switch_to_block(next);
+    f.set_cold_block(next);
+    f.ins().jump(more, &[w1.into()]);
+    f.switch_to_block(more);
+    f.set_cold_block(more);
+    heads.push((more, Step::Word));
+    let w = f.block_params(more)[0];
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+    inside_or_past(f, inside, look, limit, found, &[end.into()]);
+    f.switch_to_block(look);
+    f.set_cold_block(look);
+    let x = held(f, w);
+    let w64 = f.ins().ishl_imm(w, 6);
+    let tz = f.ins().ctz(x);
+    let s = f.ins().iadd(w64, tz);
+    let w1 = f.ins().iadd_imm(w, 1);
+    f.ins().brif(x, found, &[s.into()], more, &[w1.into()]);
+    f.switch_to_block(found);
+    f.block_params(found)[0]
 }
 
 /// A file's records (`records::pass`): per token, its code from its first and last bytes, stored
@@ -1670,6 +2113,25 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts:
 /// for a word past eight bytes, whose other words are compared in a block of their own.
 #[allow(clippy::too_many_arguments)]
 fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, c: &FileCols, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    record_tokens(f, r, t, extracts, outputs, c, None, then, heads);
+}
+
+/// The token loop's state between its parts (`RecPart`): the next token's index, the end of
+/// the token before, the refusal so far; three words.
+const STATE_WORDS: usize = 3;
+
+/// A part of a file's token loop (decision 0177): the tokens whose words are in the `ready`
+/// blocks, from the state at `state` and back to it.
+#[derive(Clone, Copy)]
+struct RecPart {
+    ready: Value,
+    state: Value,
+}
+
+/// A file's token loop: the whole file's (`part` none), then its end (`record_end`); or a
+/// part of it, which waits where a token reads past the ready blocks and stores its state.
+#[allow(clippy::too_many_arguments)]
+fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, c: &FileCols, part: Option<RecPart>, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let (head, token, long, coded, finish) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     // The loop's values: the token, the end of the token before, the refusal so far.
     for _ in 0..3 {
@@ -1678,22 +2140,69 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     }
     // At `coded`, the token's code too.
     f.append_block_param(coded, types::I64);
+    // At `finish`, the refusal and the tokens' count.
     f.append_block_param(finish, types::I64);
+    f.append_block_param(finish, types::I64);
+    // The tokens by the loop (stage 2a): each start found at the head.
+    let walked = r.skip;
+    if walked.is_some() {
+        f.append_block_param(token, types::I64);
+    }
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
     let stores = MemFlags::new().with_notrap();
     let zero = f.ins().iconst(types::I64, 0);
-    let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
-    let differ = f.ins().icmp(IntCC::NotEqual, c.ns, c.nl);
-    let differ = f.ins().uextend(types::I64, differ);
-    let n = f.ins().umin(c.ns, c.nl);
-    f.ins().jump(head, &[zero.into(), zero.into(), differ.into()]);
+    let tables = c.tables;
+    // With end rules (decision 0177) the lasts are this pass's: as many as the starts.
+    let ruled = !r.rules.is_empty();
+    let (differ, n) = if walked.is_some() {
+        (zero, zero)
+    } else if ruled {
+        (zero, c.ns)
+    } else {
+        let differ = f.ins().icmp(IntCC::NotEqual, c.ns, c.nl);
+        (f.ins().uextend(types::I64, differ), f.ins().umin(c.ns, c.nl))
+    };
+    // The refusal so far: the differences that must not be negative, ORed (their sign bit).
+    // A part starts from the state the one before stored.
+    let wait = part.map(|_| f.create_block());
+    let limit = match (part, wait) {
+        (Some(p), Some(wait)) => {
+            let init: Vec<BlockArg> = (0..STATE_WORDS).map(|k| BlockArg::from(f.ins().load(types::I64, fl, p.state, 8 * k as i32))).collect();
+            let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, p.ready, c.blocks);
+            f.ins().jump(head, &init);
+            Some(Limit { ready: p.ready, last, wait })
+        }
+        _ => {
+            f.ins().jump(head, &[zero.into(), zero.into(), zero.into()]);
+            None
+        }
+    };
     heads.push((head, Step::Token));
 
     f.switch_to_block(head);
     let h = f.block_params(head).to_vec();
-    let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], n);
-    f.ins().brif(more, token, &[], finish, &[h[2].into()]);
+    // Waiting: the state as the head has it, for the next part.
+    if let (Some(p), Some(wait)) = (part, wait) {
+        f.switch_to_block(wait);
+        f.set_cold_block(wait);
+        for (k, &v) in h.iter().enumerate() {
+            f.ins().store(stores, v, p.state, 8 * k as i32);
+        }
+        f.ins().jump(then, &[]);
+        f.switch_to_block(head);
+    }
+    match walked {
+        Some(o) => {
+            let s = next_start(f, c, outputs, o, h[1], limit, heads);
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, s, c.len);
+            f.ins().brif(more, token, &[s.into()], finish, &[h[2].into(), h[0].into()]);
+        }
+        None => {
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], n);
+            f.ins().brif(more, token, &[], finish, &[h[2].into(), n.into()]);
+        }
+    }
 
     // A token: its first and last bytes, its kind and its word's slot.
     f.switch_to_block(token);
@@ -1701,14 +2210,34 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let at = f.ins().ishl_imm(k, 2);
     let sa = f.ins().iadd(c.starts, at);
     let la = f.ins().iadd(c.lasts, at);
-    let s = f.ins().uload32(fl, sa, 0);
-    let l = f.ins().uload32(fl, la, 0);
-    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, s);
-    let inside = f.ins().icmp(IntCC::UnsignedLessThan, s, after);
+    let s = if walked.is_some() {
+        let s = f.block_params(token)[0];
+        f.ins().istore32(stores, s, sa, 0);
+        s
+    } else {
+        f.ins().uload32(fl, sa, 0)
+    };
+    let l = if ruled {
+        let l = rule_last(f, r, t, outputs, c, s, limit, heads);
+        f.ins().istore32(stores, l, la, 0);
+        l
+    } else {
+        f.ins().uload32(fl, la, 0)
+    };
+    // Out of order (a last before its start, a start inside the token before): a difference
+    // below zero. The columns are 32 bits wide, so a difference's sign is its 64th bit.
+    let before = f.ins().isub(l, s);
+    let inside = f.ins().isub(s, after);
     let wrong = f.ins().bor(before, inside);
-    let wrong = f.ins().uextend(types::I64, wrong);
     let bad = f.ins().bor(bad, wrong);
-    let next_after = f.ins().iadd_imm(l, 1);
+    // The loop goes on past the token's first byte at least, whatever its rule found: a
+    // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
+    let next_after = if walked.is_some() {
+        let past = f.ins().smax(l, s);
+        f.ins().iadd_imm(past, 1)
+    } else {
+        f.ins().iadd_imm(l, 1)
+    };
     let len = f.ins().isub(next_after, s);
     let from = f.ins().iadd(c.bytes, s);
     let raw = f.ins().load(types::I64, fl, from, 0);
@@ -1717,43 +2246,47 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let kind = f.ins().uload8(types::I64, ro, ka, 0);
     let key = cut_to(f, raw, len);
     let h1 = f.ins().bxor(key, len);
-    let h1 = f.ins().imul_imm(h1, t.table.mult as i64);
+    let h1 = f.ins().imul(h1, c.mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
     let off = f.ins().ishl_imm(slot, 3);
-    let at = f.ins().iadd(tables, off);
-    let kk = f.ins().load(types::I64, ro, at, t.keys as i32);
-    let meta = f.ins().load(types::I64, ro, at, t.meta as i32);
+    let ka = f.ins().iadd(c.keys, off);
+    let kk = f.ins().load(types::I64, ro, ka, 0);
+    let ma = f.ins().iadd(c.meta, off);
+    let meta = f.ins().load(types::I64, ro, ma, 0);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
     let mlen = f.ins().band_imm(meta, 0xff);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
     let hit = f.ins().band(same_key, same_len);
+    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
     let w = f.ins().ushr_imm(meta, 8);
-    let word = f.ins().select(hit, w, zero);
-    let shifted = f.ins().ishl_imm(word, i64::from(crate::records::KIND_BITS));
-    let mut code = f.ins().bor(kind, shifted);
+    let bits = f.ins().select(hit, w, zero);
+    let mut code = f.ins().bor(kind, bits);
+    // The word itself, where a mark or a long word's tail needs it.
+    let word_of = |f: &mut FunctionBuilder<'_>| {
+        let x = f.ins().ushr_imm(bits, i64::from(crate::records::KIND_BITS));
+        f.ins().band_imm(x, 0xff)
+    };
+    let word = if r.marks.iter().any(|m| m.0 != crate::records::WORD_ALONE && m.1 != 0) { Some(word_of(&mut *f)) } else { None };
     // The kind and the marks that need no word: the code where a long word's tail differs.
     let mut no_word = kind;
     // The marks at its first byte (`Records::marks`): each its mask's word at the start, the
     // bit, and (a mark of one word) the word compared. Straight-line: a load a mark.
-    if !r.marks.is_empty() {
+    if r.marks.iter().any(|&(o, wc)| o != crate::records::WORD_ALONE && wc != 0) {
         let row_w = f.ins().ushr_imm(s, 6);
         let row_off = f.ins().imul_imm(row_w, 8 * outputs as i64);
         let row_at = f.ins().iadd(c.out, row_off);
         let sh = f.ins().band_imm(s, 63);
         for (k, &(o, wc)) in r.marks.iter().enumerate() {
-            // A mark of its word alone: one compare, no load.
-            if o == crate::records::WORD_ALONE {
-                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
-                let bit = f.ins().uextend(types::I64, same);
-                let placed = f.ins().ishl_imm(bit, i64::from(crate::records::MARK_SHIFT) + k as i64);
-                code = f.ins().bor(code, placed);
+            // A mark of its word alone: in the word's code bits already. A mark of any word: set
+            // after the tokens, from its bits (`late_marks`).
+            if o == crate::records::WORD_ALONE || wc == 0 {
                 continue;
             }
             let x = f.ins().load(types::I64, fl, row_at, 8 * i32::from(o));
             let bit = f.ins().ushr(x, sh);
             let mut bit = f.ins().band_imm(bit, 1);
             if wc != 0 {
-                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
+                let same = f.ins().icmp_imm(IntCC::Equal, word.expect("made for a mark of a word"), i64::from(wc));
                 let same = f.ins().uextend(types::I64, same);
                 bit = f.ins().band(bit, same);
             }
@@ -1764,13 +2297,14 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
             }
         }
     }
-    let longer = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 8);
-    let check = f.ins().band(hit, longer);
+    // A hit on a word past eight bytes: the meta's top bit, in the bits taken (`LONG_WORD`).
+    let check = f.ins().ushr_imm(bits, 55);
     f.ins().brif(check, long, &[], coded, &[k.into(), next_after.into(), bad.into(), code.into()]);
 
     // A word past eight bytes: its other words, compared (seven at most, unrolled).
     f.switch_to_block(long);
     f.set_cold_block(long);
+    let word = word.unwrap_or_else(|| word_of(&mut *f));
     let wi = f.ins().iadd_imm(word, -1);
     let toff = f.ins().imul_imm(wi, 56);
     let tail = f.ins().iadd(tables, toff);
@@ -1798,11 +2332,210 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 
     // The file's end: a refusal sets the totals' flag, the count after the extracts'.
     f.switch_to_block(finish);
-    let bad = f.block_params(finish)[0];
+    let (bad, n) = (f.block_params(finish)[0], f.block_params(finish)[1]);
+    // A part at the file's end: its count and refusal stored, for the end.
+    if let Some(p) = part {
+        // The loop is past the file's last byte: a part after this one finds no token.
+        f.ins().store(stores, n, p.state, 0);
+        f.ins().store(stores, c.len, p.state, 8);
+        f.ins().store(stores, bad, p.state, 16);
+        f.ins().jump(then, &[]);
+        return;
+    }
+    record_end(f, r, extracts, outputs, c, bad, n, differ, then, heads);
+}
+
+/// A file's records' end (`record_tokens`): a refusal sets the totals' flag, the count after the
+/// extracts'; the loop's counts stored; then the marks of any word (`late_marks`).
+#[allow(clippy::too_many_arguments)]
+fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, bad: Value, n: Value, differ: Value, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let fl = MemFlags::trusted();
+    let stores = MemFlags::new().with_notrap();
+    let (walked, ruled) = (r.skip, !r.rules.is_empty());
+    let bad = f.ins().ushr_imm(bad, 63);
+    let bad = f.ins().bor(bad, differ);
     let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
     let flag = f.ins().bor(flag, bad);
     f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
-    f.ins().jump(then, &[]);
+    if walked.is_some() {
+        f.ins().store(stores, n, c.counts, 8 * i32::from(r.starts));
+    }
+    if ruled {
+        f.ins().store(stores, n, c.counts, 8 * i32::from(r.lasts));
+    }
+    // The gap marks (decision 0177) after the others: they read the extra's mark.
+    if r.gaps == 0 {
+        late_marks(f, r, outputs, c, n, false, then, heads);
+    } else {
+        let gaps = f.create_block();
+        late_marks(f, r, outputs, c, n, false, gaps, heads);
+        f.switch_to_block(gaps);
+        late_marks(f, r, outputs, c, n, true, then, heads);
+    }
+}
+
+/// The marks of any word (`Records::marks` with no word): rare bits, so set after the tokens,
+/// not tested at each. Over the file's rows, the marks' words ORed; at each bit, its token by a
+/// binary search over the starts from the token before; where a token starts there, each
+/// mark's bit ORed into its code. Then on to `then`.
+///
+/// The gap marks (`lift`, `Records::gaps`): each bit to the first grammar token that starts at
+/// it or after (an extra's token, by its mark, passed over), as `records::gap_marks`.
+#[allow(clippy::too_many_arguments)]
+fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift).map(|(k, m)| (k, m.0)).collect();
+    if late.is_empty() {
+        f.ins().jump(then, &[]);
+        return;
+    }
+    let fl = MemFlags::trusted();
+    let stores = MemFlags::new().with_notrap();
+    let [rows, row, bits, bit, search, probe, found, set, next] = [(); 9].map(|_| f.create_block());
+    // (block, cursor)
+    f.append_block_param(rows, types::I64);
+    f.append_block_param(rows, types::I64);
+    // (block, cursor, bits)
+    for b in [bits, bit] {
+        for _ in 0..3 {
+            f.append_block_param(b, types::I64);
+        }
+    }
+    // (block, cursor, bits, low, high)
+    for _ in 0..5 {
+        f.append_block_param(search, types::I64);
+        f.append_block_param(probe, types::I64);
+    }
+    // (block, cursor, bits, token)
+    for b in [found, set, next] {
+        for _ in 0..4 {
+            f.append_block_param(b, types::I64);
+        }
+    }
+    heads.push((rows, Step::Block));
+    heads.push((bits, Step::Bits));
+    heads.push((search, Step::Token));
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(rows, &[zero.into(), zero.into()]);
+
+    f.switch_to_block(rows);
+    let (j, cur) = (f.block_params(rows)[0], f.block_params(rows)[1]);
+    let more = f.ins().icmp(IntCC::UnsignedLessThan, j, c.blocks);
+    f.ins().brif(more, row, &[], then, &[]);
+
+    f.switch_to_block(row);
+    let off = f.ins().imul_imm(j, 8 * outputs as i64);
+    let at = f.ins().iadd(c.out, off);
+    let mut any = None;
+    for &(_, o) in &late {
+        let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+        any = Some(match any {
+            None => w,
+            Some(a) => f.ins().bor(a, w),
+        });
+    }
+    let any = any.expect("a mark");
+    let j1 = f.ins().iadd_imm(j, 1);
+    f.ins().brif(any, bits, &[j.into(), cur.into(), any.into()], rows, &[j1.into(), cur.into()]);
+
+    f.switch_to_block(bits);
+    let p = f.block_params(bits).to_vec();
+    let j1 = f.ins().iadd_imm(p[0], 1);
+    f.ins().brif(p[2], bit, &[p[0].into(), p[1].into(), p[2].into()], rows, &[j1.into(), p[1].into()]);
+
+    // The bit's place, and the first token from the cursor on that starts at it or after.
+    f.switch_to_block(bit);
+    let p = f.block_params(bit).to_vec();
+    f.ins().jump(search, &[p[0].into(), p[1].into(), p[2].into(), p[1].into(), n.into()]);
+
+    f.switch_to_block(search);
+    let q = f.block_params(search).to_vec();
+    let open = f.ins().icmp(IntCC::UnsignedLessThan, q[3], q[4]);
+    let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+    f.ins().brif(open, probe, &qa, found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
+
+    f.switch_to_block(probe);
+    let q = f.block_params(probe).to_vec();
+    let place = {
+        let b = f.ins().ctz(q[2]);
+        let base = f.ins().ishl_imm(q[0], 6);
+        f.ins().iadd(base, b)
+    };
+    let sum = f.ins().iadd(q[3], q[4]);
+    let mid = f.ins().ushr_imm(sum, 1);
+    let ma = f.ins().ishl_imm(mid, 2);
+    let ma = f.ins().iadd(c.starts, ma);
+    let sv = f.ins().uload32(fl, ma, 0);
+    let below = f.ins().icmp(IntCC::UnsignedLessThan, sv, place);
+    let mid1 = f.ins().iadd_imm(mid, 1);
+    let lo = f.ins().select(below, mid1, q[3]);
+    let hi = f.ins().select(below, q[4], mid);
+    f.ins().jump(search, &[q[0].into(), q[1].into(), q[2].into(), lo.into(), hi.into()]);
+
+    // A token starting at the bit's place: the marks' bits there, into its code.
+    f.switch_to_block(found);
+    let q = f.block_params(found).to_vec();
+    let b = f.ins().ctz(q[2]);
+    let base = f.ins().ishl_imm(q[0], 6);
+    let place = f.ins().iadd(base, b);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
+    let k = f.ins().select(inside, q[3], zero);
+    let ka = f.ins().ishl_imm(k, 2);
+    let sa = f.ins().iadd(c.starts, ka);
+    let sv = f.ins().uload32(fl, sa, 0);
+    let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+    if lift {
+        // On past the extras' tokens: the first grammar token from it.
+        let (over, test) = (f.create_block(), f.create_block());
+        for _ in 0..4 {
+            f.append_block_param(over, types::I64);
+        }
+        heads.push((over, Step::Token));
+        let _ = (sv, place, k);
+        f.ins().jump(over, &qa);
+        f.switch_to_block(over);
+        let q = f.block_params(over).to_vec();
+        let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
+        f.ins().brif(inside, test, &[], next, &qa);
+        f.switch_to_block(test);
+        let ka = f.ins().ishl_imm(q[3], 2);
+        let ca = f.ins().iadd(c.codes, ka);
+        let code = f.ins().uload32(fl, ca, 0);
+        let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
+        let is_extra = f.ins().ushr_imm(code, e);
+        let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
+        let k1 = f.ins().iadd_imm(q[3], 1);
+        f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], set, &qa);
+    } else {
+        let at_it = f.ins().icmp(IntCC::Equal, sv, place);
+        let hit = f.ins().band(inside, at_it);
+        f.ins().brif(hit, set, &qa, next, &qa);
+    }
+
+    f.switch_to_block(set);
+    let q = f.block_params(set).to_vec();
+    let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
+    let at = f.ins().iadd(c.out, off);
+    let b = f.ins().ctz(q[2]);
+    let ka = f.ins().ishl_imm(q[3], 2);
+    let ca = f.ins().iadd(c.codes, ka);
+    let mut code = f.ins().uload32(fl, ca, 0);
+    for &(m, o) in &late {
+        let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+        let x = f.ins().ushr(w, b);
+        let x = f.ins().band_imm(x, 1);
+        let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
+        code = f.ins().bor(code, x);
+    }
+    f.ins().istore32(stores, code, ca, 0);
+    f.ins().jump(next, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
+
+    // The bit done: the next, from this token on.
+    f.switch_to_block(next);
+    let q = f.block_params(next).to_vec();
+    let less = f.ins().iadd_imm(q[2], -1);
+    let rest = f.ins().band(q[2], less);
+    f.ins().jump(bits, &[q[0].into(), q[3].into(), rest.into()]);
 }
 
 /// A backward pass (`native_ir::Pass::Back`): per file, its blocks last to first, each
@@ -1897,6 +2630,8 @@ struct Loop<'a> {
     /// words, the running counts, the row of slots if any. No delayed output's word is held
     /// (`delayed_store`).
     params: usize,
+    /// The walks' functions, called by the full body and the general one alike.
+    walks: Option<&'a crate::native_cpu_walk::WalkCalls>,
 }
 
 impl Loop<'_> {
@@ -1937,7 +2672,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
         f.ins().brif(ascii, fast, &[], slow, &[]);
         for (blk, ascii) in [(fast, true), (slow, false)] {
             f.switch_to_block(blk);
-            let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of, sinks, calls });
+            let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of, sinks, calls, walks: lp.walks });
             gate_branches += gates;
             round_branches += rounds.len();
             heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1948,7 +2683,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
         let m = f.block_params(merge).to_vec();
         (m[..n].to_vec(), m[n..].to_vec())
     } else {
-        let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of, sinks, calls });
+        let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of, sinks, calls, walks: lp.walks });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1977,6 +2712,12 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let mut counts_out = Vec::with_capacity(counted.len());
     for (c, &k) in counted.iter().enumerate() {
         let n = counts_in[c];
+        // The lasts by the end rules, the starts by the loop (decision 0177): the record pass
+        // writes them.
+        if c < native.extracts.len() && native.records_made().contains(&k) {
+            counts_out.push(n);
+            continue;
+        }
         if c < native.extracts.len() {
             // `n` is where the next position goes.
             let start = f.ins().ishl_imm(i, 6);
@@ -2023,7 +2764,7 @@ fn general(context: &mut Context, lp: &Loop<'_>) -> Result<(), Error> {
     f.ins().return_(&[]);
     f.seal_all_blocks();
     f.finalize();
-    crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+    crate::native_cpu_shape::check(&context.func, &heads, &walk_names(lp.walks)).map_err(|r| Error::RefusedShape(format!("{r:?}")))
 }
 
 /// The outlined general body's signature: the loop's parameters' address, the stream's length.
@@ -2051,7 +2792,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let carried = state.words;
     let rowed = slots > 0;
     let params = 3 + carried + counted.len() + usize::from(rowed);
-    let lp = Loop { native, state: &state, counted: &counted, early: &early, stride: 8 * native.outputs.len() as i64, slot_of, slots, params };
+    // Each walk's function, declared here and built where a body first calls it.
+    let walks = crate::native_cpu_walk::WalkCalls::declare(module, name, native)?;
+    let lp = Loop { native, state: &state, counted: &counted, early: &early, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks) };
     general(general_context, &lp)?;
     let own = cranelift_codegen::ir::UserExternalName::new(0, outlined.0.as_u32());
     // Each gated region's function, declared here and built where the body lowers it.
@@ -2060,6 +2803,33 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         .map(|r| module.declare_function(&format!("{name}_region{r}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure))
         .collect::<Result<Vec<_>, _>>()?;
     let n_regions = state.plan.regions.len();
+    // The file's records: a function of its own (`record_fn`), called once a file; or, where
+    // the loop finds the starts (decision 0177), a part after each block and the file's end.
+    let part_calls = match records {
+        Some((rec, t, outputs)) if rec.skip.is_some() => {
+            let mut made = Vec::new();
+            for (end, n, what) in [(false, 2, "part"), (true, 1, "end")] {
+                let sig = words_signature(module, n);
+                let id = module.declare_function(&format!("{name}_records_{what}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+                let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+                part_fn(&mut func, rec, t, native.extracts.len(), outputs, end)?;
+                made.push((id, sig, func));
+            }
+            made
+        }
+        _ => Vec::new(),
+    };
+    let record_call = match records {
+        Some(_) if !part_calls.is_empty() => None,
+        Some((rec, t, outputs)) => {
+            let sig = record_signature(module);
+            let id = module.declare_function(&format!("{name}_records"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+            record_fn(&mut func, rec, t, native.extracts.len(), outputs)?;
+            Some((id, sig, func))
+        }
+        None => None,
+    };
     let calls = RegionCalls { ids, signature, built: std::cell::RefCell::new(vec![None; n_regions]), inline: std::cell::RefCell::new(vec![false; n_regions]) };
     let mut shape = Ok(());
     let ascii_branch = state.plan.ascii_branch;
@@ -2097,8 +2867,16 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
 
         f.switch_to_block(entry);
         let entry_params = f.block_params(entry).to_vec();
-        let (arena, rows, nrows, out_all, pos_all, counts_all, scratch_all) =
-            (entry_params[0], entry_params[1], entry_params[2], entry_params[3], entry_params[4], entry_params[5], entry_params[6]);
+        // The pass's arguments and the row's index, in a slot: read where a row's work needs
+        // them, before and after its blocks. Held through the block loop, which reads none of
+        // them, they took its registers (or were spilled and reloaded in it).
+        let outer = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * 8, 3));
+        for (k, &v) in entry_params.iter().enumerate() {
+            f.ins().stack_store(v, outer, 8 * k as i32);
+        }
+        let reload = |f: &mut FunctionBuilder<'_>, k: i32| f.ins().stack_load(types::I64, outer, 8 * k);
+        const ROW_INDEX: i32 = 7;
+        let nrows = entry_params[2];
         let zero = f.ins().iconst(types::I64, 0);
         // The constants every block uses, made once. (Others are made where used, decision 0069.)
         let consts = Consts::make(&mut f);
@@ -2108,12 +2886,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // A row: the file's blocks, length, outputs, positions and counts.
         f.switch_to_block(row);
         let r = f.block_params(row)[0];
+        f.ins().stack_store(r, outer, 8 * ROW_INDEX);
+        let (arena, rows, out_all, pos_all, scratch_all) = (reload(&mut f, 0), reload(&mut f, 1), reload(&mut f, 3), reload(&mut f, 4), reload(&mut f, 6));
         let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
         let at = f.ins().iadd(rows, at);
         let flags = MemFlags::trusted().with_readonly();
         let field = |f: &mut FunctionBuilder<'_>, k: i32| f.ins().load(types::I64, flags, at, 8 * k);
         let (start, blocks, len, first_word) = (field(&mut f, 0), field(&mut f, 1), field(&mut f, 2), field(&mut f, 3));
-        let (first_position, capacity, first_count) = (field(&mut f, 4), field(&mut f, 5), field(&mut f, 6));
+        let (first_position, capacity) = (field(&mut f, 4), field(&mut f, 5));
         let scratch = {
             let first = field(&mut f, 7);
             let from = f.ins().ishl_imm(first, 3);
@@ -2133,10 +2913,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 f.ins().iadd(pos_all, offset)
             })
             .collect();
-        let counts_at = {
-            let offset = f.ins().ishl_imm(first_count, 3);
-            f.ins().iadd(counts_all, offset)
-        };
         let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
@@ -2149,6 +2925,36 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
             .chain(rowed.then_some(scratch.into()))
             .collect();
+        // The row's record slot (`REC_SLOT`): its columns, and the token loop's state at zero.
+        let rec_slot = (!part_calls.is_empty()).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * REC_SLOT as u32, 3)));
+        let callee_of = |f: &mut FunctionBuilder<'_>, k: usize| {
+            let (id, sig, _) = &part_calls[k];
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true })
+        };
+        let parts = rec_slot.map(|slot| (slot, callee_of(&mut f, 0), callee_of(&mut f, 1)));
+        if let (Some((slot, _, _)), Some((rec, t, _))) = (parts, records) {
+            let counts_all = reload(&mut f, 5);
+            let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
+            for (k, v) in cols.values().into_iter().enumerate() {
+                f.ins().stack_store(v, slot, 8 * k as i32);
+            }
+            let zero = f.ins().iconst(types::I64, 0);
+            for k in 0..STATE_WORDS {
+                f.ins().stack_store(zero, slot, 8 * (RECORD_PARAMS + k) as i32);
+            }
+        }
+        // A part of the token loop after a block (`next` the block after it): the blocks before
+        // it are final (an output's delayed bits go into the row before).
+        let call_part = |f: &mut FunctionBuilder<'_>, next: Value| {
+            if let Some((slot, part, _)) = parts {
+                let pointer = f.func.dfg.value_type(next);
+                let address = f.ins().stack_addr(pointer, slot, 0);
+                let ready = f.ins().iadd_imm(next, -1);
+                f.ins().call(part, &[address, ready]);
+            }
+        };
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
         f.ins().brif(none, finish, &first, head, &first);
@@ -2183,6 +2989,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             BlockArg::Value(v) => v,
             _ => unreachable!("a value"),
         };
+        call_part(&mut f, next);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
         f.ins().brif(more, body_block, &again, head, &again);
 
@@ -2200,6 +3007,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
         f.ins().call(callee, &[address, len]);
         let back: Vec<BlockArg> = (0..params).map(|k| BlockArg::from(f.ins().stack_load(types::I64, slot, 8 * k as i32))).collect();
+        if let Some(BlockArg::Value(next)) = back.first().copied() {
+            call_part(&mut f, next);
+        }
         f.ins().jump(head, &back);
 
         // The row's end: each delayed output's last word, and the counts.
@@ -2214,6 +3024,25 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let down = f.ins().ushr_imm(last, i64::from(native.output_delays[k]));
             f.ins().store(stores, down, dst, at);
         }
+        // The row's places again, from the slot: none is held through its blocks.
+        let r = reload(&mut f, ROW_INDEX);
+        let (rows, pos_all, counts_all) = (reload(&mut f, 1), reload(&mut f, 4), reload(&mut f, 5));
+        let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
+        let at = f.ins().iadd(rows, at);
+        let flags = MemFlags::trusted().with_readonly();
+        let (first_position, capacity, first_count) = (f.ins().load(types::I64, flags, at, 32), f.ins().load(types::I64, flags, at, 40), f.ins().load(types::I64, flags, at, 48));
+        let extract_base: Vec<Value> = (0..native.extracts.len())
+            .map(|e| {
+                let room = f.ins().imul_imm(capacity, e as i64);
+                let index = f.ins().iadd(first_position, room);
+                let offset = f.ins().ishl_imm(index, 2);
+                f.ins().iadd(pos_all, offset)
+            })
+            .collect();
+        let counts_at = {
+            let offset = f.ins().ishl_imm(first_count, 3);
+            f.ins().iadd(counts_all, offset)
+        };
         for c in 0..counted.len() {
             let mut v = p[3 + carried + c];
             if let Some(&base) = extract_base.get(c) {
@@ -2227,17 +3056,26 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         // The file's records, in the same pass (the last forward one): its positions and mask
         // words just made, still in the cache.
-        match records {
-            Some((rec, t, outputs)) => {
-                let cols = file_cols(&mut f, rec, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
-                record_file(&mut f, rec, t, native.extracts.len(), outputs, &cols, exit, &mut heads);
-            }
-            None => {
-                f.ins().jump(exit, &[]);
-            }
+        // The token loop's last part, every block final, and its end.
+        if let Some((slot, part, end)) = parts {
+            let pointer = f.func.dfg.value_type(r);
+            let address = f.ins().stack_addr(pointer, slot, 0);
+            let blocks = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 8);
+            f.ins().call(part, &[address, blocks]);
+            f.ins().call(end, &[address]);
         }
+        if let (Some((rec, t, _)), Some((id, sig, _))) = (records, &record_call) {
+            let (arena, out_all) = (reload(&mut f, 0), reload(&mut f, 3));
+            let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+            f.ins().call(callee, &cols.values());
+        }
+        f.ins().jump(exit, &[]);
 
         f.switch_to_block(exit);
+        let (r, nrows) = (reload(&mut f, ROW_INDEX), reload(&mut f, 2));
         let next_row = f.ins().iadd_imm(r, 1);
         let more_rows = f.ins().icmp(IntCC::UnsignedLessThan, next_row, nrows);
         f.ins().brif(more_rows, row, &[next_row.into()], done, &[]);
@@ -2248,6 +3086,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.finalize();
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
+        owns.extend(walk_names(Some(&walks)));
+        owns.extend(record_call.iter().chain(&part_calls).map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         shape = crate::native_cpu_shape::check(&context.func, &heads, &owns);
     }
     if round == n_regions || !worth_calling(&context.func, &calls) {
@@ -2270,7 +3110,25 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             regions.push((calls.ids[r], func));
         }
     }
+    // The records' function, checked where it is built (`record_fn`).
+    if let Some((id, _, func)) = record_call {
+        regions.push((id, func));
+    }
+    for (id, _, func) in part_calls {
+        regions.push((id, func));
+    }
+    // The walks' functions, checked where they are built (`native_cpu_walk::build_walk`).
+    for (w, built) in walks.built.into_inner().into_iter().enumerate() {
+        if let Some(func) = built {
+            regions.push((walks.ids[w], func));
+        }
+    }
     Ok((ascii_branch, gate_branches, round_branches, regions, kept, inlined))
+}
+
+/// The walks' functions' names: the functions a pass may call besides its regions'.
+fn walk_names(walks: Option<&crate::native_cpu_walk::WalkCalls>) -> Vec<cranelift_codegen::ir::UserExternalName> {
+    walks.map_or(Vec::new(), |w| w.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect())
 }
 
 /// The callee-saved integer registers on aarch64 (x19..x28): the values a call can keep.
@@ -2306,10 +3164,14 @@ fn stores_flags() -> MemFlags {
 }
 
 /// A value of the bit logic: a known word, or a value that is the word itself or its complement.
+/// `Slot`: a word in a stack slot (a walk's result, `Emit::walk`), or its complement, loaded at
+/// each use and never held: a value held from the call to its last reader would cost a
+/// register through the loop, or a spill.
 #[derive(Clone, Copy)]
 pub enum Sym {
     Known(u64),
     Value(Value, bool),
+    Slot(cranelift_codegen::ir::StackSlot, i32, bool),
 }
 
 impl Sym {
@@ -2317,12 +3179,25 @@ impl Sym {
         match self {
             Sym::Known(c) => Sym::Known(!c),
             Sym::Value(v, neg) => Sym::Value(v, !neg),
+            Sym::Slot(s, at, neg) => Sym::Slot(s, at, !neg),
+        }
+    }
+
+    /// A slot's word loaded here; any other as it is.
+    fn loaded(self, f: &mut FunctionBuilder<'_>) -> Sym {
+        match self {
+            Sym::Slot(s, at, neg) => Sym::Value(f.ins().stack_load(types::I64, s, at), neg),
+            other => other,
         }
     }
 
     /// `a & b`, one instruction at most: a complemented side is a `bic`; both complemented,
     /// the complement of an `or`.
     fn and(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        if let (Sym::Known(0), _) | (_, Sym::Known(0)) = (a, b) {
+            return Sym::Known(0);
+        }
+        let (a, b) = (a.loaded(&mut *f), b.loaded(&mut *f));
         match (a, b) {
             (Sym::Known(x), Sym::Known(y)) => Sym::Known(x & y),
             (Sym::Known(0), _) | (_, Sym::Known(0)) => Sym::Known(0),
@@ -2334,10 +3209,12 @@ impl Sym {
             (Sym::Value(x, false), Sym::Value(y, false)) => Sym::Value(f.ins().band(x, y), false),
             (Sym::Value(x, false), Sym::Value(y, true)) | (Sym::Value(y, true), Sym::Value(x, false)) => Sym::Value(f.ins().band_not(x, y), false),
             (Sym::Value(x, true), Sym::Value(y, true)) => Sym::Value(f.ins().bor(x, y), true),
+            (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
         }
     }
 
     fn xor(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        let (a, b) = (a.loaded(&mut *f), b.loaded(&mut *f));
         match (a, b) {
             (Sym::Known(x), Sym::Known(y)) => Sym::Known(x ^ y),
             (Sym::Known(0), s) | (s, Sym::Known(0)) => s,
@@ -2347,11 +3224,12 @@ impl Sym {
                 Sym::Value(f.ins().bxor(v, k), neg)
             }
             (Sym::Value(x, nx), Sym::Value(y, ny)) => Sym::Value(f.ins().bxor(x, y), nx != ny),
+            (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
         }
     }
 }
 
-/// Value `x` plain (not complemented), made once.
+/// Value `x` plain (not complemented), made once; a slot's word loaded at each use, not kept.
 fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>], x: usize) -> Value {
     if let Some(v) = values[x] {
         return v;
@@ -2360,6 +3238,10 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
         Sym::Known(c) => f.ins().iconst(types::I64, c as i64),
         Sym::Value(v, false) => v,
         Sym::Value(v, true) => f.ins().bnot(v),
+        Sym::Slot(s, at, neg) => {
+            let w = f.ins().stack_load(types::I64, s, at);
+            return if neg { f.ins().bnot(w) } else { w };
+        }
     };
     values[x] = Some(v);
     v

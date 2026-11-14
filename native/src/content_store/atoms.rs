@@ -1,5 +1,5 @@
 //! One string interner for the graph: every name, key, path and content hash is a `Sym` (u32).
-//! Strings live back to back in one byte arena; the table holds only ids. Append-only: a string
+//! Strings live back to back in one byte arena; the table holds ids and hash tags. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
 //!
 //! The store's single interner (C12, docs/final-shape/03-architecture.md §10.6; decision 0049). A
@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 mod map;
 mod vtab;
-pub use map::{map_columns, mapped};
+pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
 pub type Sym = u32;
 
@@ -66,7 +66,9 @@ pub struct Interner {
     /// ends[i] = end offset of pending atom `base + i` in `buf`.
     ends: Vec<u32>,
     hashes: Vec<u64>,
-    table: hashbrown::HashTable<Sym>,
+    /// Each atom's id with its hash's high half (`tag`): a probe compares tags and reads no atom's hash, so a
+    /// stored atom costs no segment lookup until its tag matches (then one, for its string).
+    table: hashbrown::HashTable<(u32, Sym)>,
 }
 
 impl Default for Interner {
@@ -94,12 +96,14 @@ impl Interner {
         (i < held.ends.len()).then(|| held.str(i))
     }
 
-    fn hash_of(held: &std::collections::BTreeMap<Sym, Held>, base: Sym, hashes: &[u64], s: Sym) -> u64 {
-        if s >= base {
-            return hashes[(s - base) as usize];
-        }
-        let (first, h) = held.range(..=s).next_back().expect("a held atom");
-        h.hashes[(s - first) as usize]
+    /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
+    /// without reading an atom.
+    fn tag(h: u64) -> u32 {
+        (h >> 32) as u32
+    }
+
+    fn placed(tag: u32) -> u64 {
+        ((tag as u64) << 32) | tag.rotate_left(16) as u64
     }
 
     pub fn get(&self, s: &str) -> Option<Sym> {
@@ -107,7 +111,8 @@ impl Interner {
     }
 
     pub fn get_h(&self, s: &str, h: u64) -> Option<Sym> {
-        self.table.find(h, |&id| Self::hash_of(&self.held, self.base, &self.hashes, id) == h && self.str(id) == Some(s)).copied()
+        let tag = Self::tag(h);
+        self.table.find(Self::placed(tag), |&(t, id)| t == tag && self.str(id) == Some(s)).map(|&(_, id)| id)
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
@@ -124,8 +129,8 @@ impl Interner {
         assert!(self.buf.len() <= u32::MAX as usize, "pending atoms over 4 GiB");
         self.ends.push(self.buf.len() as u32);
         self.hashes.push(h);
-        let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-        self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+        let tag = Self::tag(h);
+        self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
         id
     }
 
@@ -147,29 +152,20 @@ impl Interner {
     /// Heap bytes held (capacities).
     pub fn bytes(&self) -> usize {
         let held: usize = self.held.values().map(|h| h.bytes.capacity() + h.ends.capacity() * 4 + h.hashes.capacity() * 8 + 48).sum();
-        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
+        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 9
     }
 
-    /// The pending atoms from `from` on as segments of about `most` bytes each (one atom at least): each its first
-    /// id, its end offsets (u32, little-endian, relative to the segment's first byte) and its bytes; and each atom's
-    /// (hash, id). One segment of every pending atom passed SQLite's largest blob (1 GB) at the end of a run over
-    /// posthog's 30,000 files.
-    fn segments(&self, from: usize, most: usize) -> (Vec<(usize, Vec<u8>, Vec<u8>)>, Vec<(u64, Sym)>) {
-        let at = |i: usize| if i == 0 { 0 } else { self.ends[i - 1] as usize };
-        let mut out = Vec::new();
-        let mut i = from - self.base();
-        while i < self.ends.len() {
-            let start = at(i);
-            let mut j = i + 1;
-            while j < self.ends.len() && self.ends[j] as usize - start <= most {
-                j += 1;
-            }
-            let ends = self.ends[i..j].iter().flat_map(|&end| (end - start as u32).to_le_bytes()).collect();
-            out.push((self.base() + i, ends, self.buf[start..self.ends[j - 1] as usize].to_vec()));
-            i = j;
-        }
-        let keys = self.hashes[from - self.base()..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
-        (out, keys)
+    /// The pending atoms from `from` on, as one segment of at most `most` bytes (and at least one atom): their end
+    /// offsets (u32, little-endian, relative to the segment's first byte), their bytes, each one's (hash, id), and
+    /// the id past its last.
+    fn segment(&self, from: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
+        let i = from - self.base();
+        let start = if i == 0 { 0 } else { self.ends[i - 1] };
+        let n = self.ends[i..].partition_point(|&end| (end - start) as usize <= most).max(1).min(self.ends.len() - i);
+        let last = self.ends[i + n - 1];
+        let ends = self.ends[i..i + n].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
+        let keys = self.hashes[i..i + n].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
+        (ends, self.buf[start as usize..last as usize].to_vec(), keys, from + n)
     }
 
     /// The pending atoms below `upto` are stored now: held as a segment of their own.
@@ -179,8 +175,17 @@ impl Interner {
             return;
         }
         let cut = self.ends[n - 1] as usize;
-        let bytes = self.buf[..cut].to_vec();
-        self.buf.drain(..cut);
+        // The stored bytes move into the held segment; the pending rest (if any) is copied into a buffer of its own.
+        // A copy and a drain would keep the buffer's capacity: every stored atom held twice.
+        // (`split_off(0)` would hand the whole buffer over: stored atoms that are all empty take no bytes.)
+        let bytes = if cut == 0 {
+            Vec::new()
+        } else {
+            let rest = self.buf.split_off(cut);
+            let mut bytes = std::mem::replace(&mut self.buf, rest);
+            bytes.shrink_to_fit();
+            bytes
+        };
         let ends: Vec<u32> = self.ends.drain(..n).collect();
         for end in &mut self.ends {
             *end -= cut as u32;
@@ -208,9 +213,10 @@ impl Interner {
         s >= self.base || self.held.range(..=s).next_back().is_some_and(|(first, h)| ((s - first) as usize) < h.ends.len())
     }
 
-    /// Holds a stored segment read from the database: atoms `first..`. Those already held are skipped; a string
-    /// held twice is refused as corrupt.
-    fn add_segment(&mut self, first: Sym, ends: &[u8], bytes: &[u8]) -> StoreResult<()> {
+    /// Holds a stored segment read from the database: atoms `first..`. Those already held are skipped. A string held
+    /// under another id is refused as corrupt, or, given `dups`, not held and listed there as (stored id, held id):
+    /// this process gave it an id of its own before it held the store's (decision 0170).
+    fn add_segment(&mut self, first: Sym, ends: &[u8], bytes: &[u8], mut dups: Option<&mut Vec<(Sym, Sym)>>) -> StoreResult<()> {
         let corrupt = |what: &str| StoreError::Corrupt(format!("atom segment {first}: {what}"));
         if ends.len() % 4 != 0 {
             return Err(corrupt("its end offsets are not u32s"));
@@ -233,6 +239,13 @@ impl Interner {
                 runs.extend(run.take());
                 continue;
             }
+            if let Some(dups) = dups.as_deref_mut()
+                && let Some(held) = self.get(s)
+            {
+                dups.push((id, held));
+                runs.extend(run.take());
+                continue;
+            }
             let (_, held) = run.get_or_insert_with(|| (id, Held { ends: Vec::new(), bytes: Vec::new(), hashes: Vec::new() }));
             held.bytes.extend_from_slice(s.as_bytes());
             held.ends.push(held.bytes.len() as u32);
@@ -252,18 +265,14 @@ impl Interner {
             self.held.insert(at, held);
             for k in 0..n {
                 let id = at + k as Sym;
-                let h = self.held[&at].hashes[k];
-                let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-                self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+                let tag = Self::tag(self.held[&at].hashes[k]);
+                self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
             }
         }
         Ok(())
     }
 }
 
-/// The most bytes of strings a segment holds (SQLite's largest blob is 1 GB); 1 MB in tests, so a test of the split
-/// writes a few MB.
-const SEGMENT_BYTES: usize = if cfg!(test) { 1 << 20 } else { 64 << 20 };
 
 /// More pending atoms than this, more pending bytes, or atoms pending this long, make a flush due
 /// (decision 0049 §4.2): what a crash can lose.
@@ -317,6 +326,8 @@ pub struct Atoms {
     /// Where this process's last appended segment ended (`write_pending`): the database's end there is its own, not
     /// another process's.
     wrote: std::sync::atomic::AtomicUsize,
+    /// `RERAIL_TEST_FORK_AFTER`'s thresholds (`test_fork`), read once when the table is made; none unless it is set.
+    fork_after: Vec<usize>,
     /// Another process stored atoms while this one's were provisional (decision 0160): this process's ids are not the
     /// store's past `base`, and are mapped to them at the store's boundary (decision 0170, `map`).
     forked: AtomicBool,
@@ -343,6 +354,19 @@ static IDENTITIES: LazyLock<Mutex<HashMap<String, ((u64, u64, u128), Option<i64>
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
     IDENTITIES.lock().remove(path);
+}
+
+/// The most bytes of atoms one segment holds (`write_pending`): a commit's new atoms are written as several, so
+/// neither the copy bound to the statement nor SQLite's record of the row holds a whole run's atoms at once.
+const SEGMENT_BYTES: usize = 8 << 20;
+
+thread_local! {
+    /// A test's smaller `SEGMENT_BYTES`.
+    pub(super) static SEGMENT_BYTES_TEST: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn segment_bytes() -> usize {
+    SEGMENT_BYTES_TEST.with(std::cell::Cell::get).unwrap_or(SEGMENT_BYTES)
 }
 
 thread_local! {
@@ -398,6 +422,11 @@ impl Drop for Reservation {
 pub struct Reserved(Vec<(usize, Vec<Sym>)>);
 
 impl Reserved {
+    /// Takes in what a later reservation of the same component made (its members resumed after their wave).
+    pub fn extend(&mut self, mut more: Reserved) {
+        self.0.append(&mut more.0);
+    }
+
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
     }
@@ -518,10 +547,7 @@ fn key_segments(connection: &Connection) -> StoreResult<()> {
         }
     }
     keys.sort_unstable();
-    let mut insert = connection.prepare("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
-    for (h, id) in keys {
-        insert.execute([h, id])?;
-    }
+    super::bounded_insert::insert(connection, "INSERT OR IGNORE INTO atom_key(h, id)", "", keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h), rusqlite::types::Value::Integer(id)]))?;
     connection.execute("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
     Ok(())
 }
@@ -543,6 +569,7 @@ impl Atoms {
             written: Mutex::new((0, 0, 0)),
             runs: std::sync::atomic::AtomicUsize::new(0),
             wrote: std::sync::atomic::AtomicUsize::new(0),
+            fork_after: std::env::var("RERAIL_TEST_FORK_AFTER").map(|v| v.split(',').filter_map(|k| k.trim().parse().ok()).collect()).unwrap_or_default(),
             forked: AtomicBool::new(false),
             complete: AtomicBool::new(false),
             flush_queued: AtomicBool::new(false),
@@ -690,10 +717,12 @@ impl Atoms {
         self.state.read().atoms.len()
     }
 
-    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom is held, so a
-    /// string not in memory is new to this process, and its id is checked against the store's when it is written.
+    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom it may meet is
+    /// held, so a string not in memory is new to it, and its id is checked against the store's when it is written.
+    /// Every stored atom is held (`complete`), or this process maps its ids to the store's (decision 0170): forked, or
+    /// over a store it does not hold whole, holding the atoms its stored rows name as they are read (`hold_named`).
     fn provisional(&self) -> bool {
-        lease_free() && self.runs.load(Ordering::Acquire) > 0 && self.complete.load(Ordering::Acquire)
+        lease_free() && self.runs.load(Ordering::Acquire) > 0 && (self.complete.load(Ordering::Acquire) || self.forked())
     }
 
     /// Forks on this process's reader (outside a write): another process stored atoms past this one's pending ones.
@@ -768,7 +797,7 @@ impl Atoms {
         }
         // Forked: another process's atom of it is found by its key and held here (decision 0170).
         if self.forked() {
-            self.find_forked(value)?;
+            self.find_forked(&[value])?;
             return Ok(self.state.read().atoms.get(value));
         }
         if !self.leased.load(Ordering::Acquire) {
@@ -776,6 +805,26 @@ impl Atoms {
         }
         self.find(&[value])?;
         Ok(self.state.read().atoms.get(value))
+    }
+
+    /// The atom of each of `values` (`lookup`), those not in memory found in one read.
+    pub fn lookup_all(&self, values: &[&str]) -> StoreResult<Vec<Option<Sym>>> {
+        let missing: Vec<&str> = {
+            let state = self.state.read();
+            values.iter().copied().filter(|v| state.atoms.get(v).is_none()).collect()
+        };
+        if !missing.is_empty() && !self.provisional() {
+            if self.forked() {
+                self.find_forked(&missing)?;
+            } else {
+                if !self.leased.load(Ordering::Acquire) {
+                    self.catch_up()?;
+                }
+                self.find(&missing)?;
+            }
+        }
+        let state = self.state.read();
+        Ok(values.iter().map(|v| state.atoms.get(v)).collect())
     }
 
     /// The string of `atom`, if the database or this process holds it.
@@ -851,6 +900,11 @@ impl Atoms {
         if state.since.is_none() && state.atoms.pending().0 > 0 {
             state.since = Some(Instant::now());
         }
+        let new = state.atoms.len() as Sym - before;
+        drop(state);
+        if new > 0 {
+            self.test_fork(new as usize);
+        }
         // Made while this thread reserves (`reserving`): the ids are its component's until it retires.
         RESERVING.with_borrow_mut(|r| {
             if let Some((arena, r)) = r.as_mut()
@@ -864,6 +918,98 @@ impl Atoms {
             }
         });
         ids
+    }
+
+    /// A test of decision 0170 (`RERAIL_TEST_FORK_AFTER=k1,k2,…`): once this process has given out `k` new ids, the
+    /// `sqlite3` shell (another process) appends a segment of 20 strings no rule uses at the store's end, as a
+    /// concurrent process giving out provisional ids does (0160). This process forks at its next write if ids are
+    /// pending then, at a point the thresholds choose. Each threshold fires once. Off unless the variable is set.
+    fn test_fork(&self, new: usize) {
+        static GIVEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if self.fork_after.is_empty() {
+            return;
+        }
+        let Some(path) = self.path.clone() else { return };
+        let was = GIVEN.fetch_add(new, Ordering::AcqRel);
+        for (i, &k) in self.fork_after.iter().enumerate() {
+            if was < k && was + new >= k {
+                let path = path.clone();
+                let append = move || {
+                    // Another process: the `sqlite3` shell, so no connection of this one writes outside its writer.
+                    let (mut ends, mut bytes) = (String::new(), String::new());
+                    for j in 0..20 {
+                        bytes.push_str(&format!("rerail-test-fork-{}-{i}-{j}", std::process::id()));
+                        ends.push_str(&(bytes.len() as u32).to_le_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
+                    }
+                    // With `RERAIL_TEST_FORK_FROM=<store>`, that store's atoms instead: real strings, which this process
+                    // may give ids of its own later. As another process would, in one write transaction on a connection
+                    // of its own: the strings the store holds then are left out (found by key, never stored twice).
+                    if let Ok(donor) = std::env::var("RERAIL_TEST_FORK_FROM") {
+                        let path = path.clone();
+                        let appended = std::thread::spawn(move || -> rusqlite::Result<(usize, i64)> {
+                            super::hazards::behind_the_run();
+                            let strings = |c: &rusqlite::Connection, schema: &str| -> rusqlite::Result<Vec<String>> {
+                                let mut st = c.prepare(&format!("SELECT ends, bytes FROM {schema}.atom_segment ORDER BY first"))?;
+                                let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                                let mut out = Vec::new();
+                                for (ends, bytes) in rows {
+                                    let mut start = 0usize;
+                                    for e in ends.chunks_exact(4) {
+                                        let end = u32::from_le_bytes(e.try_into().expect("4 bytes")) as usize;
+                                        out.push(String::from_utf8_lossy(&bytes[start..end]).into_owned());
+                                        start = end;
+                                    }
+                                }
+                                Ok(out)
+                            };
+                            let c = rusqlite::Connection::open(&path)?;
+                            c.busy_timeout(std::time::Duration::from_secs(60))?;
+                            c.execute("ATTACH ?1 AS donor", [&donor])?;
+                            c.execute_batch("BEGIN IMMEDIATE")?;
+                            let held: std::collections::HashSet<String> = strings(&c, "main")?.into_iter().collect();
+                            let mut seen = std::collections::HashSet::new();
+                            let fresh: Vec<String> = strings(&c, "donor")?.into_iter().filter(|t| !t.is_empty() && !held.contains(t) && seen.insert(t.clone())).collect();
+                            for chunk in fresh.chunks(4096) {
+                                let mut ends = Vec::new();
+                                let mut bytes = Vec::new();
+                                for t in chunk {
+                                    bytes.extend_from_slice(t.as_bytes());
+                                    ends.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                                }
+                                c.execute("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
+                            }
+                            let end: i64 = c.query_row("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
+                            c.execute_batch("COMMIT")?;
+                            Ok((fresh.len(), end))
+                        })
+                        .join();
+                        match appended {
+                            Ok(Ok((n, end))) => eprintln!("rerail: test fork after {k} ids: {n} strings of another store appended, the store ends at {end}"),
+                            Ok(Err(e)) => eprintln!("rerail: test fork after {k} ids: {e}"),
+                            Err(_) => eprintln!("rerail: test fork after {k} ids: the append panicked"),
+                        }
+                        return;
+                    }
+                    let sql = format!(".timeout 60000\nBEGIN IMMEDIATE;\nINSERT INTO atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), x'{ends}', CAST('{bytes}' AS BLOB) FROM atom_segment;\nSELECT max(first) FROM atom_segment;\nCOMMIT;\n");
+                    let out = std::process::Command::new("sqlite3").arg(&path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().and_then(|mut child| {
+                        use std::io::Write as _;
+                        child.stdin.take().expect("piped").write_all(sql.as_bytes())?;
+                        child.wait_with_output()
+                    });
+                    match out {
+                        Ok(o) => eprintln!("rerail: test fork after {k} ids: atoms appended at {} {}", String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim()),
+                        Err(e) => eprintln!("rerail: test fork after {k} ids: {e}"),
+                    }
+                };
+                // Waited for, so the ids just given are still pending when the store moves; but not on the writer's
+                // batch thread, whose transaction the append waits for.
+                if super::connection::in_batch() {
+                    std::thread::spawn(append);
+                } else {
+                    append();
+                }
+            }
+        }
     }
 
     /// The atom of `value`, given out (pending) under the lease if it is new.
@@ -1030,22 +1176,11 @@ impl Atoms {
         if wanted.is_empty() {
             return Ok(());
         }
-        let segments = self.with_reader(|connection| {
-            let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first <= ?1 ORDER BY first DESC LIMIT 1")?;
-            let mut out: Vec<(i64, Vec<u8>, Vec<u8>)> = Vec::new();
-            for &id in &wanted {
-                if out.last().is_some_and(|(first, ends, _)| i64::from(id) < first + (ends.len() / 4) as i64) {
-                    continue;
-                }
-                if let Some(segment) = statement.query_row([i64::from(id)], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()? {
-                    out.push(segment);
-                }
-            }
-            Ok(out)
-        })?;
+        // Their segments, in one statement (`map::fetch`).
+        let segments = self.with_reader(|connection| map::fetch(connection, &wanted))?;
         let mut state = self.state.write();
         for (first, ends, bytes) in segments.unwrap_or_default() {
-            state.atoms.add_segment(first as Sym, &ends, &bytes)?;
+            map::add_stored(&mut state, first, &ends, &bytes)?;
         }
         Ok(())
     }
@@ -1069,7 +1204,7 @@ impl Atoms {
                 if first as usize >= state.atoms.base() {
                     break;
                 }
-                state.atoms.add_segment(first as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+                map::add_stored(&mut state, first as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
             }
             state.all_held = state.atoms.base();
             Ok(())
@@ -1107,7 +1242,7 @@ impl Atoms {
             .query_row([], |row| row.get(0))
             .optional()?
             .unwrap_or(0);
-        let (from, segments, mut keys, upto) = {
+        let (end, upto) = {
             let state = self.state.read();
             let (end, len, base) = (end as usize, state.atoms.len(), state.atoms.base());
             if end < base {
@@ -1129,38 +1264,44 @@ impl Atoms {
                 self.advance_holding(connection, base, end)?;
                 return Ok(end);
             }
-            if end >= len {
-                return Ok(end);
-            }
-            let (segments, keys) = state.atoms.segments(end, SEGMENT_BYTES);
-            (end, segments, keys, len)
+            (end, len)
         };
-        let size: u64 = segments.iter().map(|(_, e, b)| (e.len() + b.len()) as u64).sum();
-        // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
-        if key_end(connection).is_none_or(|upto| upto < from) {
-            key_segments(connection)?;
-        }
-        let count = segments.len() as u64;
-        for (first, ends, bytes) in segments {
+        // Segments of at most `segment_bytes`, each copied, bound and inserted before the next is made: a run's new
+        // atoms (141 MB in one segment on public_api_triples) were held four times at once (the arena's, the copy, the
+        // statement's, SQLite's record of the row).
+        let mut from = end;
+        while from < upto {
+            let (ends, bytes, mut keys, next) = self.state.read().atoms.segment(from, segment_bytes());
+            let size = (ends.len() + bytes.len()) as u64;
+            // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
+            if key_end(connection).is_none_or(|k| k < from) {
+                key_segments(connection)?;
+            }
             connection
                 .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
-                .execute(rusqlite::params![first as i64, ends, bytes])?;
-        }
-        // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
-        // (decision 0111 §1).
-        if key_end(connection) == Some(from) {
-            keys.sort_unstable();
-            let mut insert = connection.prepare_cached("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
-            for (h, id) in keys {
-                insert.execute([h as i64, i64::from(id)])?;
+                .execute(rusqlite::params![from as i64, ends, bytes])?;
+            // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
+            // (decision 0111 §1).
+            if key_end(connection) == Some(from) {
+                keys.sort_unstable();
+                super::bounded_insert::insert(
+                    connection,
+                    "INSERT OR IGNORE INTO atom_key(h, id)",
+                    "",
+                    keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h as i64), rusqlite::types::Value::Integer(i64::from(id))]),
+                )?;
+                connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([next as i64])?;
             }
-            connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([upto as i64])?;
+            // Counted when written; a transaction that then rolls back still counts.
+            let mut written = self.written.lock();
+            *written = (written.0 + 1, written.1 + (next - from) as u64, written.2 + size);
+            from = next;
         }
-        self.wrote.store(upto, Ordering::Release);
-        // Counted when written; a transaction that then rolls back still counts.
-        let mut written = self.written.lock();
-        *written = (written.0 + count, written.1 + (upto - from) as u64, written.2 + size);
-        Ok(upto)
+        // Where this process's own segments end: one committed on another connection is not another process's.
+        if upto > end {
+            self.wrote.store(upto, Ordering::Release);
+        }
+        Ok(upto.max(end))
     }
 
     /// Another process stored atoms `base..end` and none is pending here: this process's end moves there, and, where
@@ -1168,6 +1309,11 @@ impl Atoms {
     /// still read nothing (decision 0160).
     fn advance_holding(&self, connection: &Connection, base: usize, end: usize) -> StoreResult<()> {
         let mut state = self.state.write();
+        self.advance_holding_in(connection, &mut state, base, end)
+    }
+
+    /// `advance_holding`, under `state`'s lock held.
+    pub(super) fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
         if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }
@@ -1179,7 +1325,7 @@ impl Atoms {
         let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
         let mut rows = statement.query([base as i64, end as i64])?;
         while let Some(row) = rows.next()? {
-            state.atoms.add_segment(row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+            map::add_stored(state, row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
         }
         state.all_held = state.atoms.base();
         Ok(())
@@ -1263,7 +1409,56 @@ impl Atoms {
         }
         let complete = held();
         self.complete.store(complete, Ordering::Release);
-        Ok(complete)
+        // Past `READ_WHOLE`, without the lease: this process maps its ids to the store's from its end (decision 0170),
+        // so the run's waves read nothing. The atoms its stored rows name are held as they are read (`hold_named`).
+        if !complete && lease_free() {
+            self.map_from_end();
+        }
+        Ok(complete || self.forked())
+    }
+
+    /// Whether the atoms a stored row names are held as the row is read (`hold_named`): this process does not hold
+    /// every stored atom, maps its ids to the store's, or gives ids out without the lease. Without it, a row another
+    /// process stored past this one's end names ids this one may have given to other strings: reading the row finds
+    /// the fork (decision 0170) before its symbols are decoded, in a wave.
+    pub fn holds_by_reading(&self) -> bool {
+        if self.path.is_none() {
+            return false;
+        }
+        if self.forked() || !self.leased.load(Ordering::Acquire) {
+            return true;
+        }
+        let state = self.state.read();
+        state.atoms.base() > 1 && state.all_held < state.atoms.base()
+    }
+
+    /// Holds the stored atoms `ids` (as the store numbers them: a stored row's symbols) that this process does not, in
+    /// one read, as the rows are read before a run's waves. Every stored atom held (`complete`), or none named, reads
+    /// nothing. So the waves find each such atom in memory, and a string not there is not one of them.
+    pub fn hold_named(&self, ids: &[i64]) -> StoreResult<()> {
+        if self.path.is_none() || ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<Sym> = ids.iter().filter_map(|&v| Sym::try_from(v).ok()).collect();
+        if self.forked() {
+            let missing: Vec<Sym> = {
+                let state = self.state.read();
+                let map = state.map.as_ref().expect("forked");
+                ids.iter().copied().filter(|&v| if v >= map.fork { map.local_of(v).is_none() } else { !map.relinked(v) && !state.atoms.holds(v) }).collect()
+            };
+            return if missing.is_empty() { Ok(()) } else { self.hold_forked(&missing) };
+        }
+        let (base, whole) = { let s = self.state.read(); (s.atoms.base(), s.all_held >= s.atoms.base()) };
+        if whole && ids.iter().all(|&v| (v as usize) < base) {
+            return Ok(());
+        }
+        if ids.iter().any(|&v| v as usize >= base) {
+            self.read_end()?;
+            if self.forked() {
+                return self.hold_named(&ids.iter().map(|&v| i64::from(v)).collect::<Vec<_>>());
+            }
+        }
+        self.read_atoms(&ids)
     }
 
     /// A run's end: the lease is given back with its next commit, as before the run.
@@ -1475,12 +1670,12 @@ impl super::ContentStore {
 
     /// `values` (this process's symbols) as the store numbers them, in this handle's open write transaction (the
     /// writer's batch): unchanged unless forked (decision 0170).
-    pub fn symbols_to_store(&self, values: &mut [i64]) -> StoreResult<()> {
+    pub fn symbols_to_store<'v>(&self, ids: ProcessIds<'v>) -> StoreResult<StoreIds<'v>> {
         if !self.atoms.forked() {
-            return Ok(());
+            return Ok(StoreIds(ids.0));
         }
         let connection = self.connection.lock().map_err(StoreError::Invalid)?;
-        self.atoms.to_store(&connection, values)
+        self.atoms.to_store(&connection, ids)
     }
 
     /// The atom of `value`, if the store holds it.

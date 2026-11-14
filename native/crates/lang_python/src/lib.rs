@@ -549,6 +549,7 @@ pub mod code_rule_dsl {
         pub use rerail_w::code_rule_dsl::literal::*;
         pub mod annotation;
         pub mod brace;
+        pub mod format_tape;
         pub mod identifier_words;
         pub mod percent;
         pub mod python_fstring;

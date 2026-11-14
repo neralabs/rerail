@@ -118,25 +118,19 @@ impl ContentStore {
     /// Every derivation that read one of `names`: the frontier those names' changes dirty, each
     /// once, ordered by output name.
     pub fn derivations_reading(&self, names: &[String]) -> StoreResult<Vec<Derivation>> {
-        let mut ids = Vec::with_capacity(names.len());
-        for name in names {
-            ids.extend(self.atom(name)?);
-        }
+        // The names' atoms in one lookup, as the store numbers them, and their readers in one statement.
+        let ids: Vec<Sym> = self.atoms.lookup_all(&names.iter().map(String::as_str).collect::<Vec<_>>())?.into_iter().flatten().collect();
         let ids: Vec<Sym> = self.atoms.stored(&ids)?.into_iter().flatten().collect();
         let mut rows = Vec::new();
-        {
+        if !ids.is_empty() {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut readers = connection.prepare_cached(
-                "SELECT d.output_atom,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
-                 JOIN derivations d ON d.output_atom=i.output_atom WHERE i.name_atom=?1",
+                "SELECT DISTINCT d.output_atom,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
+                 JOIN derivations d ON d.output_atom=i.output_atom WHERE i.name_atom IN (SELECT value FROM json_each(?1))",
             )?;
-            for id in ids {
-                let found = readers.query_map([id], |row| {
-                    Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
-                })?;
-                for row in found {
-                    rows.push(row?);
-                }
+            let ids = serde_json::to_string(&ids).expect("ids encode");
+            for row in readers.query_map([ids], |row| Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?)))? {
+                rows.push(row?);
             }
         }
         let mut frontier = BTreeSet::new();
@@ -250,7 +244,7 @@ impl ContentStore {
         let mut inputs = inputs;
         if self.atoms.forked() {
             let mut names: Vec<i64> = inputs.iter().filter_map(|(n, _)| n.map(i64::from)).collect();
-            self.atoms.to_local(&mut names)?;
+            self.atoms.to_local(super::StoreIds::as_stored(&mut names))?;
             let mut names = names.into_iter();
             for (name, _) in &mut inputs {
                 if name.is_some() {
@@ -275,7 +269,7 @@ impl ContentStore {
         drop(connection);
         if self.atoms.forked() {
             let mut local: Vec<i64> = readers.iter().map(|&r| i64::from(r)).collect();
-            self.atoms.to_local(&mut local)?;
+            self.atoms.to_local(super::StoreIds::as_stored(&mut local))?;
             readers = local.into_iter().map(|r| r as Sym).collect();
             readers.sort_unstable();
         }
@@ -315,7 +309,7 @@ impl ContentStore {
             return Ok(());
         }
         let mut values: Vec<i64> = atoms.iter().map(|&a| i64::from(a)).collect();
-        self.atoms.to_store(transaction, &mut values)?;
+        self.atoms.to_store(transaction, super::ProcessIds::of_process(&mut values))?;
         for (atom, value) in atoms.iter_mut().zip(values) {
             *atom = value as Sym;
         }
@@ -359,7 +353,7 @@ impl ContentStore {
     /// Rows keyed by an output atom (the store's id), with the output's string.
     fn named_outputs<T>(&self, rows: Vec<(Sym, T, i64, i64)>) -> StoreResult<Vec<(String, T, i64, i64)>> {
         let mut ids: Vec<i64> = rows.iter().map(|r| i64::from(r.0)).collect();
-        self.atoms.to_local(&mut ids)?;
+        self.atoms.to_local(super::StoreIds::as_stored(&mut ids))?;
         rows.into_iter()
             .zip(ids)
             .map(|((_, a, b, c), id)| {

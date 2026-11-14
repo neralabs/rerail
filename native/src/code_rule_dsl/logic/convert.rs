@@ -899,7 +899,7 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
             }
         }
     }
-    prog.decls.retain(|r, _| used.contains(r));
+    prog.decls.retain(|r, _| used.contains(r.as_str()));
     prog.inputs.retain(|r| used.contains(r));
     prog.facts.retain(|r, _| used.contains(r));
     prog.lattice.retain(|r, _| used.contains(r));
@@ -959,8 +959,8 @@ fn converter_name(rel: &str) -> bool {
 }
 
 #[cfg(test)]
-fn types(columns: &[(String, String)]) -> Vec<&str> {
-    columns.iter().map(|(_, t)| t.as_str()).collect()
+fn types<S: AsRef<str>>(columns: &[(S, S)]) -> Vec<&str> {
+    columns.iter().map(|(_, t)| t.as_ref()).collect()
 }
 
 /// Column types in `.rr` spellings, for the errors.

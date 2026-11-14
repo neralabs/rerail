@@ -251,9 +251,9 @@ fn signed_cpython_replays_match_full_batches_within_the_session_cap() {
     let edited=json!({"upsert":[{"path":path,"source":format!("{source}\n\ndef debug_extra(text):\n    return eval(text)\n"),"language":"python"}]}).to_string();
     let original =
         json!({"upsert":[{"path":path,"source":source,"language":"python"}]}).to_string();
-    for program in [
-        include_str!("../../../logic/plan/golden/programs/workload.rr"),
-        include_str!("../../../logic/plan/golden/programs/calls.rr"),
+    for (program, vm_allowance) in [
+        (include_str!("../../../logic/plan/golden/programs/workload.rr"), 20_000_000),
+        (include_str!("../../../logic/plan/golden/programs/calls.rr"), 100_000_000),
     ] {
         let (_dir, mut sparse) = executor();
         let (_dir, mut full) = executor();
@@ -287,6 +287,7 @@ fn signed_cpython_replays_match_full_batches_within_the_session_cap() {
                 signed.1 <= baseline.1,
                 "signed batch must preserve indexed small-edit work: signed={signed:?}, full={baseline:?}"
             );
+            assert!(signed.1 <= vm_allowance, "small-edit VM allowance {vm_allowance}: {signed:?}");
             assert_eq!(normalized_state(&sparse), normalized_state(&full));
             assert!(sparse.db.admission().counters().0 <= 100);
             assert!(full.db.admission().counters().0 <= 100);
@@ -304,6 +305,52 @@ fn signed_cpython_replays_match_full_batches_within_the_session_cap() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "complete CPython return-fact comparison with an independent parent walk"]
+fn cpython_calls_returns_match_parent_walk_after_edit() {
+    let raw = zstd::decode_all(&include_bytes!("../../../facts/vtab/golden/corpus.json.zst")[..])
+        .unwrap();
+    let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
+    let snapshot=json!({"files":corpus.iter().map(|(p,s)|json!({"path":p,"source":s,"language":"python"})).collect::<Vec<_>>()}).to_string();
+    let (path, source) = corpus.iter().find(|(p, _)| p == "json/decoder.py").unwrap();
+    let (_dir, mut e) = executor();
+    e.set_limits(json!({"max_submissions":100}).to_string())
+        .unwrap();
+    e.bind_snapshot(snapshot).unwrap();
+    e.run(
+        include_str!("../../../logic/plan/golden/programs/calls.rr").into(),
+        "python".into(),
+        None,
+    )
+    .unwrap();
+    let ledger = e.db.admission();
+    let _measurement = ledger.measure();
+    let before = ledger.counters();
+    e.apply_file_changes(json!({"upsert":[{"path":path,"source":format!("{source}\n\ndef debug_extra(text):\n    return eval(text)\n"),"language":"python"}]}).to_string(),None).unwrap();
+    let edit_vm_steps = ledger.counters().1 - before.1;
+    // This oracle climbs parents from return statements. It shares neither the
+    // descendant SQL nor its order-key assumptions with the query under test.
+    let oracle = r#"
+WITH RECURSIVE owners(rs,n) AS (
+    SELECT n.n,t.par FROM node n JOIN tape t ON t.n=n.n
+    WHERE kind_name('python',n.kind)='return_statement' AND t.par>=0
+    UNION ALL
+    SELECT w.rs,t.par FROM owners w JOIN node n ON n.n=w.n JOIN tape t ON t.n=w.n
+    WHERE kind_name('python',n.kind) NOT IN ('module','function_definition','lambda')
+        AND t.par>=0
+)
+SELECT DISTINCT w.n,c.c FROM owners w
+JOIN node n ON n.n=w.n JOIN child c ON c.p=w.rs
+WHERE kind_name('python',n.kind)='function_definition' AND c.idx=0
+ORDER BY 1,2
+"#;
+    assert_eq!(
+        rows(&mut e, "SELECT * FROM retval ORDER BY c0,c1"),
+        rows(&mut e, oracle)
+    );
+    assert!(edit_vm_steps < 100_000_000, "{edit_vm_steps} VM steps");
 }
 
 #[test]

@@ -185,7 +185,7 @@ fn spec(
                 chars.byte(open + 1),
                 chars.byte(index - 1),
             )
-            .with_value(Value::Str(text.clone())),
+            .with_value(Value::Str(text.clone().into())),
         );
         key = Some(text);
     }
@@ -267,7 +267,7 @@ fn spec(
     }
     children.push(
         PNode::new(G, "conversion", chars.byte(index), chars.byte(index + 1))
-            .with_value(Value::Str(c.to_string())),
+            .with_value(Value::Str(c.to_string().into())),
     );
     index += 1;
     let mut placeholder = PNode::new(G, "placeholder", chars.byte(percent), chars.byte(index));

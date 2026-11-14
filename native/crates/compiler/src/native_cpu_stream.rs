@@ -1197,6 +1197,36 @@ fn local_classes(f: &mut FunctionBuilder<'_>, e: &mut LocalWords<'_>, ti: usize,
     c
 }
 
+/// The token marks that refuse (`TokenMark::refuses`), at a token of code `c`: their bits, one
+/// test; where one is set (cold), each set bit's tokens, to `refused` where they follow. Then
+/// on, in a new block.
+fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: &[crate::program::TokenMark], extra_bit: u8, refused: Block, heads: &mut Vec<(Block, Step)>) {
+    let refusing: Vec<&crate::program::TokenMark> = marks.iter().filter(|m| m.refuses).collect();
+    if refusing.is_empty() {
+        return;
+    }
+    let shift = i64::from(crate::records::MARK_SHIFT);
+    let bits = refusing.iter().fold(0i64, |b, m| b | 1 << (shift + i64::from(m.order)));
+    let any = f.ins().band_imm(c, bits);
+    let (test, on) = (f.create_block(), f.create_block());
+    f.ins().brif(any, test, &[], on, &[]);
+    f.switch_to_block(test);
+    f.set_cold_block(test);
+    for m in refusing {
+        let bit = f.ins().ushr_imm(c, shift + i64::from(m.order));
+        let bit = f.ins().band_imm(bit, 1);
+        let (set, next) = (f.create_block(), f.create_block());
+        f.ins().brif(bit, set, &[], next, &[]);
+        f.switch_to_block(set);
+        f.set_cold_block(set);
+        let holds = token_pattern(f, e, m, extra_bit, heads);
+        f.ins().brif(holds, refused, &[], next, &[]);
+        f.switch_to_block(next);
+    }
+    f.ins().jump(on, &[]);
+    f.switch_to_block(on);
+}
+
 fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: u8, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let codes = (e.ctx)(f, CODES);
@@ -1210,9 +1240,10 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         f.ins().uload32(flags, a, 0)
     };
     let shift = i64::from(crate::records::MARK_SHIFT) + i64::from(extra_bit);
-    // The element's test on a code: a kind of its set, or a word of its.
+    // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
     let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| {
-        let ok = f.create_block();
+        let (ok, miss) = (f.create_block(), f.create_block());
+        let ok_to = if el.not { miss } else { ok };
         if el.kinds != 0 {
             let kind = f.ins().band_imm(c, 0xff);
             let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, kind, 64);
@@ -1222,7 +1253,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
             let zero = f.ins().iconst(types::I64, 0);
             let bit = f.ins().select(small, bit, zero);
             let other = f.create_block();
-            f.ins().brif(bit, ok, &[], other, &[]);
+            f.ins().brif(bit, ok_to, &[], other, &[]);
             f.switch_to_block(other);
         }
         if !el.words.is_empty() {
@@ -1231,11 +1262,20 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
             for &s in &el.words {
                 let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
                 let other = f.create_block();
-                f.ins().brif(same, ok, &[], other, &[]);
+                f.ins().brif(same, ok_to, &[], other, &[]);
                 f.switch_to_block(other);
             }
         }
-        f.ins().jump(no, &[]);
+        // None of the choices: a `not` element holds, any other fails.
+        if el.not {
+            f.ins().jump(ok, &[]);
+            f.switch_to_block(miss);
+            f.ins().jump(no, &[]);
+        } else {
+            f.ins().jump(no, &[]);
+            f.switch_to_block(miss);
+            f.ins().jump(no, &[]);
+        }
         f.switch_to_block(ok);
     };
     // The records after the token, in turn; the one before, for an element at -1.
@@ -1276,7 +1316,8 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 let j = f.ins().iadd_imm(j, 1);
                 let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, n);
                 let on = f.create_block();
-                f.ins().brif(past, no, &[], on, &[]);
+                // No record left: an `end` element holds there (it is the last), any other fails.
+                f.ins().brif(past, if el.end { yes } else { no }, &[], on, &[]);
                 f.switch_to_block(on);
                 let c = code_at(f, j);
                 let x = f.ins().ushr_imm(c, shift);
@@ -1880,7 +1921,7 @@ struct TokenShape {
 /// `TOKEN`'s body (`WordFn::Token`), taking a token: params `ctx`, the calls open. The room for
 /// the path to the next token, then the next record, or the stream's end (its own kind's code). 0, or 1 where the stream had ended
 /// already, or `OVERFLOW` out of room.
-fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape, table: Table<'_>, heads: &mut Vec<(Block, Step)>) {
+fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape, table: Table<'_>, refusals: &[crate::program::TokenMark], heads: &mut Vec<(Block, Step)>) {
     let ctx = p[0];
     let flags = MemFlags::trusted();
     let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, flags, ctx, at);
@@ -1978,6 +2019,22 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         f.ins().jump(top, &[]);
         f.switch_to_block(on);
     }
+    // A token mark that refuses, at this token: 1, as the refusals past the end.
+    if refusals.iter().any(|m| m.refuses) {
+        let refused = f.create_block();
+        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
+        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+        refusal_tests(f, &env, c, refusals, t.extra.map_or(0, |e| e.0), refused, heads);
+        let on = f.current_block().expect("in a block");
+        f.switch_to_block(refused);
+        f.set_cold_block(refused);
+        let one = f.ins().iconst(types::I64, 1);
+        f.ins().return_(&[one]);
+        f.switch_to_block(on);
+    }
     let live = match any_mark {
         _ if t.in_code > 0 => {
             let marks = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
@@ -2001,11 +2058,11 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
 }
 
 /// `TOKEN`'s function (`WordFn::Token`), made where first called.
-fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, table: Table<'_>, pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, table: Table<'_>, refusals: &[crate::program::TokenMark], pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
     let key = WordFn::Token { any_mark, extras: shape.extra.is_some() };
     if !fns.contains_key(&key) {
         let name = format!("tempo_word_{}", fns.len());
-        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, &table.fns.names(), |g, q, heads| take_token(g, q, any_mark, shape, table, heads))?;
+        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, &table.fns.names(), |g, q, heads| take_token(g, q, any_mark, shape, table, refusals, heads))?;
         fns.insert(key, made);
     }
     Ok(&fns[&key])
@@ -3251,7 +3308,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             continue;
                         }
                         let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
-                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, pinned_ctx)?;
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &open_calls)[0];
@@ -3363,6 +3420,17 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let k = f.ins().iconst(types::I64, i64::from(kind));
                         let again = wb[pc].expect("its own place");
                         word!(WordFn::Leaf { deferred: true, extra: true, end: EndAt::Taken, by_word: false }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, table, q[0], true, true, EndAt::Taken, wrapping), again);
+                        f.switch_to_block(on);
+                    }
+                    // A token mark that refuses, at this token: refused at this word.
+                    if native.token_marks.iter().any(|m| m.refuses) {
+                        let refused = f.create_block();
+                        refusal_tests(&mut f, &env, c, &native.token_marks, extra.map_or(0, |e| e.0), refused, &mut heads);
+                        let on = f.current_block().expect("in a block");
+                        f.switch_to_block(refused);
+                        f.set_cold_block(refused);
+                        let at = f.ins().iconst(types::I64, pc as i64 + 1);
+                        f.ins().jump(refuse, &[BlockArg::from(at)]);
                         f.switch_to_block(on);
                     }
                     // The marks live at this token: every one; with any mark's mask
@@ -4091,7 +4159,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             None => None,
                         };
                         let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
-                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, pinned_ctx)?;
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
                         let (no, taken) = (f.create_block(), f.create_block());

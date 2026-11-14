@@ -1324,7 +1324,19 @@ fn records_source(programs: &[&BlockNative]) -> String {
          \x20 const ulong lo = o < 8u ? w0 : w1, hi = o < 8u ? w1 : w2;\n\
          \x20 return r == 0u ? lo : (lo >> r) | (hi << (64u - r));\n\
          }\n\
-         static inline ulong record_cut(ulong w, uint n) { return n >= 8u ? w : w & ((1ul << (8u * n)) - 1ul); }\n",
+         static inline ulong record_cut(ulong w, uint n) { return n >= 8u ? w : w & ((1ul << (8u * n)) - 1ul); }\n\
+         // Whether output `o` holds in bytes `a..=b` (`records::any_in`).\n\
+         static inline bool record_any(device const ulong* out, FileRow f, uint o, uint a, uint b) {\n\
+         \x20 if (a > b) return false;\n\
+         \x20 for (uint q = a / 64u; q <= b / 64u; q++) {\n\
+         \x20   ulong x = out[f.out_base + o * f.groups + q];\n\
+         \x20   if (q == a / 64u) x &= ~0ul << (a % 64u);\n\
+         \x20   if (q == b / 64u && b % 64u != 63u) x &= (1ul << (b % 64u + 1u)) - 1ul;\n\
+         \x20   if (x != 0ul) return true;\n\
+         \x20 }\n\
+         \x20 return false;\n\
+         }\n\
+         static inline bool record_bit(device const ulong* out, FileRow f, uint o, uint p) { return ((out[f.out_base + o * f.groups + p / 64u] >> (p % 64u)) & 1ul) != 0ul; }\n",
     );
     let mut cases = String::new();
     for (p, n) in programs.iter().enumerate() {
@@ -1359,7 +1371,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20     for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
              \x20     word = all ? word : 0u;\n\
              \x20   }}\n\
-             \x20   uint marks = 0u;{marks}\n\
+             \x20   uint marks = 0u;{marks}{gaps}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
              \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
@@ -1387,6 +1399,30 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     format!(" if (((out[f.out_base + {o}u * f.groups + s / 64u] >> (s % 64u)) & 1ul) != 0ul{word}) marks |= {}u;", 1u32 << k)
                 })
                 .collect::<String>(),
+            // The gap marks (`records::gap_marks`): a grammar token's from the bytes after the
+            // grammar token before it, the extras' tokens before it passed over by their mark.
+            gaps = if r.gaps == 0 {
+                String::new()
+            } else {
+                let extra = r.extra.map(|e| (e, r.marks[usize::from(e)].0));
+                let is_extra = |at: &str| match extra {
+                    Some((_, o)) => format!("record_bit(out, f, {o}u, {at})"),
+                    None => "false".into(),
+                };
+                let tests: String = r
+                    .marks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(m, _)| r.gaps >> m & 1 == 1)
+                    .map(|(m, &(o, _))| format!(" if (record_any(out, f, {o}u, from, s)) marks |= {}u;", 1u32 << m))
+                    .collect();
+                format!(
+                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{tests} }}",
+                    gaps = r.gaps,
+                    here = is_extra("s"),
+                    before = is_extra("starts[j]"),
+                )
+            },
         ));
         cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, out, positions, tot, flag); break;\n"));
     }

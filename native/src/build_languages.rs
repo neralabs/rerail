@@ -17,9 +17,9 @@ const FORMAT: &str = "rerail.language/v1";
 /// `code_rule_dsl::blade::forte`), the rule engine's own `.rr` parser (`logic::rr::syntax`), or a
 /// Bitlex grammar compiled by the transducer, with its tree-sitter grammar's ids, and tree-sitter
 /// for a file it refuses (JSON's: `transducer::packed::json_parser`).
-const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex"];
+const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex", "literal"];
 /// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
-const NATIVE_GRAMMARS: &[&str] = &["forte", "rr"];
+const NATIVE_GRAMMARS: &[&str] = &["forte", "rr", "percent-format", "brace-format"];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is
 /// one of them (Python, TypeScript and TSX, which Rerail vendors with patches) still lends that
 /// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar, and a
@@ -65,6 +65,10 @@ struct Entry {
     dialects: Vec<Dialect>,
     #[serde(default)]
     runs_on: Option<Vec<String>>,
+    /// The language whose build feature (`lang-<id>`) includes this one, when it has none of its own: a guest
+    /// language only another reads (`python-format`, built with `lang-python`).
+    #[serde(default)]
+    built_with: Option<String>,
     capabilities: BTreeMap<String, Support>,
     suppressions: Vec<String>,
     #[serde(default)]
@@ -192,7 +196,9 @@ pub(crate) fn omitted_languages(languages: &Path) -> Vec<String> {
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
         let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
-        let feature = format!("CARGO_FEATURE_LANG_{}", id.to_ascii_uppercase().replace('-', "_"));
+        // a guest language is built with the language it names (`builtWith`), never alone
+        let built = value["builtWith"].as_str().unwrap_or(id);
+        let feature = format!("CARGO_FEATURE_LANG_{}", built.to_ascii_uppercase().replace('-', "_"));
         if std::env::var_os(&feature).is_none() {
             omitted.push(id.to_owned());
         }
@@ -476,6 +482,9 @@ fn validate_registry(entries: &[(String, Entry)]) {
     for (name, entry) in entries {
         if let Some(other) = owners.insert(entry.id.as_str(), name) {
             panic!("{name}: id {} is also {other}'s", entry.id);
+        }
+        if let Some(with) = &entry.built_with {
+            assert!(ids.contains(with.as_str()) && with != &entry.id, "{name}: builtWith names no other language: {with}");
         }
         assert!(
             entry.capabilities.keys().collect::<Vec<_>>() == capabilities,

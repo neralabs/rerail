@@ -284,7 +284,9 @@ pub fn build_in_wave_with_tape(
             let canonical = HashKey::from_sha256_digest(digest);
             let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
             let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
-            cache.write_back_syms(
+            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
+            // the file again (decision 0104: no wave waits for the writer).
+            cache.write_back_unless_full(
                 crate::content_store::write_back::Syms::None,
                 "a tape and its source",
                 frames.bytes(),
@@ -387,7 +389,9 @@ pub(crate) fn build_cached_with_tape(
             let canonical = HashKey::from_sha256_digest(digest);
             let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
             let held = std::sync::Arc::clone(&frames);
-            cache.write_back_syms(
+            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
+            // the file again (decision 0104: no wave waits for the writer).
+            cache.write_back_unless_full(
                 crate::content_store::write_back::Syms::None,
                 "a tape and its source",
                 frames.bytes(),

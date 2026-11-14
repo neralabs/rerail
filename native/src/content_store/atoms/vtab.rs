@@ -122,6 +122,8 @@ enum Rows {
     Span(usize),
     /// These atoms, in this order.
     Ids(Vec<Sym>),
+    /// Mapped (decision 0170): these store atoms, each with this process's id of its string.
+    Stored(Vec<(Sym, Sym)>),
 }
 
 #[repr(C)]
@@ -133,10 +135,20 @@ struct Cursor {
 }
 
 impl Cursor {
+    /// The row's id as the table answers it (the store's).
     fn atom(&self) -> Sym {
         match &self.rows {
             Rows::Span(_) => self.at as Sym,
             Rows::Ids(ids) => ids[self.at],
+            Rows::Stored(pairs) => pairs[self.at].0,
+        }
+    }
+
+    /// The row's atom in this process, whose string it holds.
+    fn local(&self) -> Sym {
+        match &self.rows {
+            Rows::Stored(pairs) => pairs[self.at].1,
+            _ => self.atom(),
         }
     }
 }
@@ -156,10 +168,13 @@ fn text(value: Value) -> Option<Vec<u8>> {
 // SAFETY: SQLite's base is first; the cursor owns its rows and an `Arc` of the arena.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        // Its ids are this process's; the tables it is joined with hold the store's. Forked (decision 0170), the two
-        // differ, so the table refuses rather than join one string's id to another's.
-        self.atoms.refuse_forked("the atoms table").map_err(error)?;
         self.at = 0;
+        // The tables it is joined with hold the store's ids. Mapped (decision 0170), this process's differ from them
+        // past the fork: the table answers as the store numbers its atoms.
+        if self.atoms.forked() {
+            self.rows = self.stored(idx_num, args)?;
+            return Ok(());
+        }
         self.rows = match idx_num {
             BY_ATOM => {
                 let atom = match args.get::<Value>(0)? {
@@ -203,6 +218,7 @@ unsafe impl VTabCursor for Cursor {
         match &self.rows {
             Rows::Span(end) => self.at >= *end,
             Rows::Ids(ids) => self.at >= ids.len(),
+            Rows::Stored(pairs) => self.at >= pairs.len(),
         }
     }
 
@@ -210,7 +226,7 @@ unsafe impl VTabCursor for Cursor {
         let atom = self.atom();
         match column {
             0 => ctx.set_result(i64::from(atom)),
-            _ => self.atoms.with_str(atom, |value| ctx.set_result(value)).expect("the cursor's atoms are in the arena"),
+            _ => self.atoms.with_str(self.local(), |value| ctx.set_result(value)).expect("the cursor's atoms are in the arena"),
         }
     }
 
@@ -220,6 +236,49 @@ unsafe impl VTabCursor for Cursor {
 }
 
 impl Cursor {
+    /// Mapped (decision 0170): the rows as the store numbers them. A lookup by id or by value holds just its atom; a
+    /// scan or a range holds every stored atom (one read), as `read_all` does unmapped.
+    fn stored(&self, idx_num: c_int, args: &Filters<'_>) -> Result<Rows> {
+        let pairs = match idx_num {
+            BY_ATOM => match args.get::<Value>(0)? {
+                Value::Integer(atom) => match u32::try_from(atom) {
+                    Ok(atom) => self.atoms.stored_pairs(&[atom]).map_err(error)?,
+                    Err(_) => Vec::new(),
+                },
+                _ => self.atoms.stored_pairs_all().map_err(error)?,
+            },
+            BY_VALUE => match args.get::<Value>(0)? {
+                Value::Text(value) => match self.atoms.lookup(&value).map_err(error)? {
+                    Some(local) => self.atoms.stored(&[local]).map_err(error)?[0].map(|s| vec![(s, local)]).unwrap_or_default(),
+                    None => Vec::new(),
+                },
+                _ => self.atoms.stored_pairs_all().map_err(error)?,
+            },
+            flags if flags & RANGE != 0 => {
+                let mut arg = 0;
+                let lower = if flags & LOWER != 0 {
+                    arg += 1;
+                    text(args.get::<Value>(arg - 1)?)
+                } else {
+                    None
+                };
+                let upper = if flags & UPPER != 0 { text(args.get::<Value>(arg)?) } else { None };
+                let mut pairs: Vec<(Sym, Vec<u8>, Sym)> = self
+                    .atoms
+                    .stored_pairs_all()
+                    .map_err(error)?
+                    .into_iter()
+                    .filter_map(|(s, l)| self.atoms.with_str(l, |v| (s, v.as_bytes().to_vec(), l)))
+                    .filter(|(_, v, _)| lower.as_deref().is_none_or(|lo| v.as_slice() >= lo) && upper.as_deref().is_none_or(|up| v.as_slice() <= up))
+                    .collect();
+                pairs.sort_by(|a, b| a.1.cmp(&b.1));
+                pairs.into_iter().map(|(s, _, l)| (s, l)).collect()
+            }
+            _ => self.atoms.stored_pairs_all().map_err(error)?,
+        };
+        Ok(Rows::Stored(pairs))
+    }
+
     fn scan(&self) -> Result<Rows> {
         self.atoms.read_all().map_err(error)?;
         Ok(Rows::Span(self.atoms.len()))

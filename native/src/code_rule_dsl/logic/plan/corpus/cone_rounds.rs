@@ -67,7 +67,7 @@ impl RoundProgram {
             }
         }
         let heads: BTreeSet<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        let produced: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !per_file.contains(r)).filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect::<BTreeSet<_>>().into_iter().collect();
+        let produced: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !per_file.contains(r)).filter_map(|r| Some((r.clone(), load.decls.get(r.as_str())?.len()))).collect::<BTreeSet<_>>().into_iter().collect();
         // An answer's relation that rules derive too is not an input.
         if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
             return None;
@@ -80,14 +80,14 @@ impl RoundProgram {
                 continue;
             }
             let input = fs_input(answer);
-            program.decls.insert(input.clone(), load.decls[answer].clone());
-            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}"))).collect();
+            program.decls.insert(input.clone().into(), load.decls[answer].clone());
+            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}").into())).collect();
             program.rules.push(Rule {
-                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
+                head: Atom { rel: (answer).to_owned().into(), args: vars.clone().into(), neg: false, gated: false },
                 body: vec![
-                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
-                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
-                ],
+                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: [vars[0].clone()].into(), neg: false, gated: false }),
+                    Literal::Atom(Atom { rel: input.clone().into(), args: vars.into(), neg: false, gated: false }),
+                ].into(),
             });
             // Read back by the rest of the cross part: kept, not inlined.
             program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());
@@ -105,7 +105,7 @@ impl RoundProgram {
                 program.inputs.push(rel);
             }
         }
-        let requests = load.answers.keys().filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect();
+        let requests = load.answers.keys().filter_map(|r| Some((r.clone(), load.decls.get(r.as_str())?.len()))).collect();
         program.answers.clear();
         program.gates.clear();
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
@@ -343,7 +343,7 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 open.insert(done.clone(), match ask {
                     Some(ask) => asks.get(ask).cloned().unwrap_or_default(),
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.program.decls[done.as_str()].len()]],
                 });
             }
         }
@@ -358,18 +358,21 @@ impl RoundProgram {
             let program = &self.program;
             // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
             let no_locations = retain::Locations::new();
+            // A granule the store no longer holds: the last run's round is not as kept, and the rounds give up (the
+            // fixpoint derives the part again), not the run.
+            let rows = |read: std::result::Result<Option<Vec<Vec<i64>>>, String>| read.map(Option::unwrap_or_default).map_err(Gave::Up);
             for (done, _) in &self.gates {
-                open.insert(done.clone(), k.read_input(on.store, program, &no_locations, done, None)?.unwrap_or_default());
+                open.insert(done.clone(), rows(k.read_input(on.store, program, &no_locations, done, None)?)?);
             }
             for (rel, _) in &self.produced {
-                provisional.insert(rel.clone(), k.read_input(on.store, program, &no_locations, rel, None)?.unwrap_or_default());
+                provisional.insert(rel.clone(), rows(k.read_input(on.store, program, &no_locations, rel, None)?)?);
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
             // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
-                provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
+                let got = rows(k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?)?;
+                provisional.insert(rel.clone(), got.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
                 carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
@@ -410,7 +413,7 @@ impl RoundProgram {
             let s = crate::code_rule_dsl::logic::profile::span(|| "rounds/inputs".into());
             let fresh = std::mem::take(&mut dirty);
             for rel in fresh.iter().cloned() {
-                let width = self.program.decls[&rel].len();
+                let width = self.program.decls[rel.as_str()].len();
                 let source = if let Some(c) = inputs.constants.get(&rel) {
                     Arc::clone(c)
                 } else if let Some(keys) = open.get(&rel) {
@@ -485,7 +488,7 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 let keys = match ask {
                     Some(ask) => next.read_derived(on.store, ask)?.ok_or_else(|| Gave::Up(format!("{ask} is not kept")))?,
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.program.decls[done.as_str()].len()]],
                 };
                 opened.insert(done.clone(), keys);
             }
@@ -529,7 +532,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.program, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                next.write_frames(on.store, was, &self.program, &super::lower::domains(&self.program).unwrap_or_default(), &retain::Locations::new(), &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
             }
             None => 0,
         };

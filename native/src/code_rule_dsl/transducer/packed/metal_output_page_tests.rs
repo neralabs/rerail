@@ -1,7 +1,7 @@
 //! Publication keeps complete file intervals while bounded GPU pages retain typed rows.
 use super::*;
 
-#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; 1024 files x 128 programs x 256 roots do not fit METAL_BUFFER_LIMIT (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
+#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; 1024 files x 128 programs x 256 roots do not fit metal_buffer_limit() (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn finite_output_larger_than_the_raw_arena_limit_publishes_every_occurrence() {
     use metal_grid_plan::{ExecutionPlan, ResidentInput};
     let file_count = 1024_usize;

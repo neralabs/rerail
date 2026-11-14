@@ -243,7 +243,7 @@ fn run_reduction(states: &[State], bucket_bits: u32, active: bool) -> usize {
     assert!(
         trace
             .iter()
-            .all(|r| r.peak_application_buffer_bytes <= super::metal_backend::METAL_BUFFER_LIMIT)
+            .all(|r| r.peak_application_buffer_bytes <= super::metal_backend::metal_buffer_limit())
     );
     assert!(
         trace.len() <= 20,

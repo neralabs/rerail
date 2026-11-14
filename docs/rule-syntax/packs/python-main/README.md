@@ -1,0 +1,194 @@
+# Main's Python rules, translated for the engine
+
+## Intro
+
+This directory holds main's 537 Python JSON rules (`rerail.policy/v1`), translated mechanically into the
+engine's `.rr` rules. It exists to test the Datalog engine against main on every rule, not only on the ones that
+translate easily. Because a program does the translation, nobody picks or tunes a rule to suit the engine.
+
+Each `<id>.rr` file is generated. Do not edit one by hand: the next regeneration overwrites it. There are no
+hand-written overrides: each file is what the engine itself reads from the JSON rule, so a rule that translates
+badly is fixed in the translator.
+
+Every rule keeps main's logic and regexes. Every rule says `.guests off`, because main matches only files and
+never the strings inside them. No rule includes a library beyond the core relations the translator emits.
+
+## How to regenerate
+
+```sh
+PACK_RULES=<main's pack>/rules ENGINE=<rerail-engine> RERAIL_RR_LIB=<engine lib dir> \
+    docs/rule-syntax/site/regen_main_pack.sh [ids file]
+```
+
+The script does two things:
+
+1. It runs the engine's translator over the JSON files: `rerail-engine translate-json <rule.json>... --out
+   <dir>`. The translator is part of the engine (decisions 0175, 0182), so `logic`, `run-rr` and `check-rr` read
+   a JSON rule directly, to the same text. The test `json_rules_pack_is_current` holds this directory equal to
+   the translator's output on all 537 rules, so a change to the translator regenerates the pack.
+2. It reader-checks every file with `rerail-engine check-rr`.
+
+The verdicts go to `reader-check.txt`, one line per rule: its status and the first line of any error. Old
+generated files are moved to a directory under `/tmp`, not deleted.
+
+## How the tape changes the translation
+
+A tape stores a file's named nodes. It leaves out the tokens its grammar implies, such as the `,` between
+arguments, the `as` in an import alias, or the `return` keyword. Main's rules often test those tokens through an
+anonymous child or sibling: `has: {regex: "^,$"}` or `follows: {regex: "^as$"}`. The translator answers such a
+test from three places:
+
+- a named node;
+- a token the tape stores, read with `op` or the parent's `token` list (the relation says `.stored`, with a
+  reason);
+- a token the tape leaves out, read from the source between stored children (`structural_before` and
+  `structural_after`), tested as whole tokens.
+
+Two shapes read a token in a chain, not only as a test:
+
+- A neighbour step to a token that steps on to its own neighbour (E711's `precedes: {regex: "^==$", precedes:
+  {…}}`) is one step from the node to its named neighbour w, with the token between them: the whole source gap
+  between the two, or a stored token that starts where the node's blank gap ends and ends where w's begins. The
+  inner step's tests are then read at w.
+- A rule whose subject is a token that opens its parent (E722's `{regex: "^except$", inside: {kind:
+  except_clause}, precedes: {regex: "^:$"}}`) is read at the parent: its first stored `token` (and second, for the
+  next token the rule names), or the start of the source before its first stored child. A finding then sits on the
+  parent, which starts where the token does: the token's line and column.
+
+A token in the middle of its parent that a util returns (F632's `is`, read from outside through `inside`) is not
+covered yet: it needs a token as a value (its parent and place), which utils and `inside` steps can carry.
+
+A `layout` gap to the neighbouring token reads the line of the code next to the node from those same gaps. It
+climbs to the parent where the gap reaches the parent's edge, and steps past comments unless the rule says
+`comments: true`.
+
+## The former overrides
+
+Until decision 0182, 9 rules had hand-written overrides, because the translator could not say them. Each is now
+generated, and gives the same findings as its override did on a probe with known answers:
+
+| Rule | What the translator could not say | How it says it now |
+|---|---|---|
+| B110, B112 | `pattern: {context, selector}`: a snippet parsed in a context (`try: … except: pass`), matched at the node of the selector's kind. | A pattern with a selector, ``n ~ `try: …` at "except_clause"``: the engine parses the context and matches the selected node (decision 0182). |
+| RET505–RET508 | A capture of the `else`/`elif` keyword, which the tape leaves out. | The token that opens its parent (above): the finding is at the clause, and the capture is read from the source before the clause's first child. |
+| COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The capture is precomputed over the children of the parent's kind (`SpanIn::ChildOf`, decision 0182). |
+| N806 | A util that reads the caller's metavariable (`NAME`). | The util's caller binds it: a helper that reads a transform's target gets the target's source column. |
+
+## Rules that still fail, and the plan to run them all
+
+The pinned source is `source/` (main's Python pack 0.1.8: `pack.json` and `rules/`). `reader-check.txt` holds each
+rule's reader verdict, and `run-check.txt` (from `../../site/run_main_pack.sh`) each rule's verdict when run alone
+on one file, under the caps (2 minutes, 2 GB).
+
+### Binding sites: main's and the library's differ (open)
+
+Found on an N806 probe. Main's `binds: {form: …}` holds at the bound name, with forms `assignment`, `annotated`,
+`augmented`, `named` (walrus), `definition`, `parameter` and so on. The library's `site_form` (`lib/python/names.rr`)
+puts a simple assignment's site on the assignment statement, a definition's on the `def`, and names its forms
+`assign`, `augassign`, `walrus`, `def`, `param`. So `x = 1` inside a function gives no `site_form(x,
+"assignment")`, and N806 misses `Bad = 1` (it finds the `for` and `with` targets, whose site is the name). About
+46 generated rules use `site_form`. The fix is a relation in main's terms, keyed by the name, that the translator
+writes.
+
+### 14 refused by the reader: all fixed
+
+- **Done: the `percentFormat` and `braceFormat` grammars** (F501–F503, F506, F508, F509, F521, F523–F525, FAST003,
+  UP031; decision 0176). These are the grammars of the format mini-languages: `%` printf formats and `str.format`'s
+  `{}` templates. Main parses a string's value with Rust ports of Ruff's own parsers (`literal/percent.rs`,
+  `brace.rs`) and hands the rule the tree (`format`, `placeholder`, `mapping_key`, …, and an `error` node holding
+  Ruff's message). They are now the guest dialects `percent-format` and `brace-format` of the registry language
+  `languages/python-format.json`. The same ported parsers write the tree, and the error's message is the node's
+  value. The reader passes all 12 rules. On 10 files, F501, F502, F503, F506, F508, F509, F521, F525 and UP031 run.
+  Their findings have not been compared with main's yet. F523 and F524 now run too (`formatArgs`, below). FAST003 and UP032 run
+  through the `host` term (below). The final shape is a
+  transducer program per grammar (rank 0 allows a lean parser until then).
+- **Fixed: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` is now Datalog (below). UP030 and
+  UP032 run.
+
+### 13 refused at run time: 9 fixed, 4 left
+
+- **Fixed: not stratifiable** (RUF018, FBT001, N805, PYI051). The engine narrows a negated or aggregated helper with a
+  context relation built from the rule's other literals. In a recursive rule (a translator demand) those literals are
+  the helper's own component, so the negation closed a cycle. Lowering now widens such a context: it drops the cycle's
+  literals from it (`rr::lower::widen_cyclic_contexts`). A wider context gives the same rows where the rule reads it.
+- **Fixed: JSON terms** (UP008, SIM113, B615, F402, F823). The translator cut the term out of its matcher (`ast(n,
+  {"bindings": …})`), which is no matcher. It now writes the whole matcher (`{"language", "rule"}`), and writes
+  `binds.bindings` (a count of the name's bindings) and `binds.redefines` (an earlier binding of the name in the scope)
+  in Datalog, since the engine's matcher compiler has neither. `binds.site` is the statement that binds, not the name.
+- **Fixed: `formatArgs`** (F504, F505, F507, F522; and F523, F524, UP030, UP032). The engine's matcher compiler
+  has no `formatArgs`, so the translator writes it in Datalog over the library `lib/python/format-args.rr`. That
+  library reads the call's arguments or the `%` operand against the format string's guest tree, as Ruff's
+  Pyflakes rules do. It has relations per style (`fa_brace_unused`, `fa_percent_missing`, …), so a guest column holds
+  one grammar's nodes, and a kind test on them is resolved in that grammar. Ruff's verdict is three-valued. A
+  negated term also gets a guard that the verdict is known (`!fa_unknown(n), !fa_brace_missing_open(n)`), so an
+  unknown verdict reports nothing either way. On a probe of 15 lines with known answers
+  (`"{a}".format(a=1, b=2)`, `"%s %s" % pair`, …), F504, F505, F507, F522, F523, F524 and UP030 each give exactly
+  the expected lines. UP030 also agrees with the hand-written `packs/python` rule.
+
+### The `host` term, and what it found (FAST003, UP032)
+
+`host: R` inside a `parse` matches R on the host string that holds the guest. The translator writes it as
+`docof(v, d), guest(d, _, h, _)` and lowers R at h. Getting FAST003 right on a probe took three more fixes. With
+them, its findings and UP032's on probes with known answers equal the hand-written `packs/python` rules'.
+
+- **Engine: tree axes over a guest.** `has(r, c, "field")` and `inside(n, p, "field")` over a guest's nodes found
+  nothing. The kind was named in the run language's grammar, and the descendant was not known to be in the
+  guest's document, so it was bounded away. Hiding (`plan/corpus/hiding.rs`) now names an axis's kind set in the
+  guest's grammar, as it already did for `nearest`, and holds an axis's two nodes in one document. This also
+  fixes every generated `has`/`inside` test over a format string: UP030's `has(r1, c5, "format_spec")` was false
+  for every string.
+- **Translator: a util's parameter passed on.** A util that only passes its parameter to a helper
+  (`covered(n, K)` calling `param_eq(c, K)`) was taken to capture it, so the helper's column was dropped as dead
+  and K was grounded over every node. `drop_dead_columns`'s `binds_in` now counts only real captures, through the
+  callees. That fix also changes C414, N802, N804, SLOT000 and UP008, which passed `unset` or grounded columns
+  before.
+- **Translator: a guest capture read by the host.** Main compares a guest capture with a host node by text.
+  The translator's same-document pass added `@doc(K) = @doc(N)`, which never holds across a guest. The
+  translator now lists the captures a `host` rule reads (`// Guest captures a host rule reads …`), and the
+  same-document constraint skips them.
+
+**Left: FAST003 is heavy.** It takes 488 MB on a 14-line probe and 934 MB on 10 files. The helpers that now take
+K (`fast003_param_eq`, `fast003_alt_2`) get no demand relation, so they are evaluated for every node as K. The
+fix is the translator's demand pass (`demand()`), which gives up on a helper called from a util's parameter; it
+is the same item as ANN401's.
+
+### Against Ruff's own findings (Ruff's fixtures)
+
+Main pins Ruff 0.16.9's fixtures for 17 rules, with Ruff's findings (`packs/python/upstream/ruff` on main:
+`fixtures/`, `fixtures.expected.json`). `../../site/upstream_check.py` runs each generated rule alone over them,
+under the caps, and compares (path, line, column):
+
+    git archive main packs/python/upstream/ruff | tar -x -C tmp/ruff-fx
+    ENGINE=<rerail-engine> python3 docs/rule-syntax/site/upstream_check.py tmp/ruff-fx/packs/python/upstream/ruff
+
+Measured on 2026-11-13:
+
+| Rule | Ruff | Engine | Verdict, and the cause where known |
+|---|---|---|---|
+| B011, B028, B905, F523, F823 | 2, 4, 7, 21, 5 | the same | equal |
+| F507, F524 | 25, 9 | the same | equal, after a fix (below) |
+| E711, E722, SIM222 | 10, 7, 59 | the same | equal, after the two token shapes (above); SIM222 found 24 before |
+| F601 | 35 | 22 | 13 missing: keys are compared by `value`, which holds no value for a tuple, a bytes literal or a complex sum (`1 + 0j`), and does not equate numbers across types (`1.0` and `1`, `True` and `1`, `False` and `-0`), as Ruff's `ComparableExpr` does. The fix is in the engine's Python value facts |
+| F632 | 12 | 0 | none found: its subject is the `is` token, mid-comparison, returned by a util (the uncovered token shape above) |
+| F722 | 10 | 0 | none found: it reads the `annotation` grammar's `ERROR` nodes in a string; not yet looked at |
+| PIE796 | 11 | 0 | none found: 5 terms the translator leaves untranslated (`ast(…)`) |
+| F811, F821, F841 | | | no rule: main's Python pack has none of these codes, though its Ruff fixtures name them |
+
+The fix to F507 and F524: `formatArgs` typed a field by `value_type`, which is keyed by the value's text, so in a
+file where `"1"` is also a str (`"{1.arg[1]}"`), field `{1}` read as both an index and a name. A field is now
+typed by its tree: the field name's `auto`, `index` or `name` head, or a `%` placeholder's `mapping_key`.
+
+### 8 too heavy, or aborting, at scale
+
+Measured on 2026-11-13, each rule alone (`RERAIL_PROFILE`'s `heads.tsv` and `analysis.txt`).
+
+| Rule | Measured | Cause | Fix |
+|---|---|---|---|
+| PIE810 | 1 file 221 MB; 10 files over 2 GB | A context's cover (`rr_cover41(c2)`) pairs every node `c2` under an ancestor with every other node `c7` under it, 1,988 rows into 107,176, and then rejects them all on `!rr_not104(c7)`. `c7` is only tested for existence. | Planner: an existence-only side of a join is checked once per ancestor (a semi-join), not paired. |
+| C416 | 1 file 3.5 s; 10 files 80 s | The same shape: `dm_c416_alt_14_0` pairs a node under one sibling with nodes under a later sibling (23,263 rows into 1.9 M). | The same semi-join. |
+| ANN401 | 1 file 254 MB; 10 files over 2 GB | The translator's demand `ann401_demand_alt_34(c5, LA)` carries `c5`, every node of the module, beside each annotation: 621 rows into 1.2 M. | Translator: a demand carries only the columns its helper is asked at. |
+| UP028 | 1 file 1.4–2.1 GB, 33–70 s (the old engine too) | An inlined util joins names by text (`text(J, t), text(N, t)`) over every identifier of a scope inside a count, which is quadratic in a scope's names. Main resolves the name once a match. Not yet profiled to the relation: the run passes the cap first. | Translator: read same-name bindings through the library's name resolution (`binding`, `ref_site`). |
+| B606, B323, B304 | Clean alone on 10 files | Strict mode aborted grouped 50-file runs: `$rr_sd0 >= 1073741824 has no native step` (a hiding bound with no native step). | Engine: the bound's comparison gets a native step. To be reproduced alone on 50 files. |
+| AIR312 | Clean alone on 10 files (531 MB) | On 50 files, the writer's queue fills with the memo's entries (about 200 MB). | Engine: the memo's writes are bounded, as the other writes are. To be reproduced. |
+| D418, TC006 | Abort alone on one file | Strict mode: `a stratum the native engine declined`. Grouped runs hid it. | Engine: the stratum's native lowering. |
+

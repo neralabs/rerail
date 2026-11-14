@@ -231,7 +231,7 @@ elem_key(c, k) :- child(t, c, _), kind(t, "tuple"), unparen(c, m), atom_key(m, k
 // atom_key(e, k): a literal that is not a tuple.
 .decl atom_key(e: node, k: symbol)
 atom_key(e, cat("s:", v)) :- plain_str(e, v).
-atom_key(e, cat("b:", v)) :- string_form(e, "bytes"), value(e, v).
+atom_key(e, cat("b:", v)) :- string_form(e, "bytes"), str(e, v).
 // An f-string is compared as written: `f"a"` repeats `f"a"`, and `f"{x}"` repeats `f"{x}"`.
 atom_key(e, cat("f:", t)) :- kind(e, "string"), fstring(e), text(e, t).
 atom_key(e, "None") :- kind(e, "none").

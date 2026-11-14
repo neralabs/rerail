@@ -1473,6 +1473,11 @@ impl<L: Layout> Parser<'_, L> {
             }
             self.bump_as(Kind::CodeLiteral);
             self.field(Field::Pattern);
+            if self.is_word_at(0, b"at") && self.kind_at(1) == STR {
+                self.implied();
+                self.bump_as(Kind::String);
+                self.field(Field::Selector);
+            }
             self.close();
             return Ok(Lit::Other);
         }
@@ -1721,6 +1726,29 @@ mod tests {
             }
         }
         files
+    }
+
+    /// An image read in place (`rerail_tape_format::View`) is the image decoded (`decode`): each
+    /// node's key and span, and each node's children the nodes whose parent it is, on every `.rr`
+    /// file and on one with columns at 4 bytes (more than 65,535 nodes).
+    #[test]
+    fn a_view_reads_each_node_as_decode_does() {
+        let mut texts = corpus();
+        texts.push(("20,000 facts".to_owned(), (0..20_000).map(|i| format!("f({i}, \"x\").\n")).collect()));
+        for (path, src) in &texts {
+            let image = crate::tape(src);
+            let decoded = rerail_tape_format::decode(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let view = rerail_tape_format::View::new(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(view.len(), decoded.len(), "{path}");
+            let mut parent = vec![None; decoded.len()];
+            for (i, d) in decoded.iter().enumerate() {
+                assert_eq!((view.key(i), view.start(i), view.end(i)), (d.key, d.start, d.end), "{path}: node {i}");
+                for c in view.children(i) {
+                    parent[c] = Some(i as u32);
+                }
+            }
+            assert!(decoded.iter().zip(&parent).all(|(d, p)| d.parent == *p), "{path}: parents");
+        }
     }
 
     /// The lexer's tokens and comments are the engine's lexer's (`syntax::lex`), kind for kind

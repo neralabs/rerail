@@ -1,8 +1,8 @@
-//! A `front::Program` as `.rr` text, and that text read back as the same program (decision 0155).
+//! A `front::Program` as `.rr` text, and that text read back as the same program (decisions 0155, 0162).
 //!
 //! This is how a run keeps what it compiled (a prepared program, a plan choice, a combined program): the program's
-//! own rules as text, read back by the rr parser into the program's parts in one walk over its statements, with
-//! nothing lowered and nothing joined. `rr::print` is another thing: it prints a program as source to lower again.
+//! own rules as text, read back into the program's parts by one walk over the lean parser's tape image
+//! (`from_tape`), with nothing lowered and nothing joined. `rr::print` is another thing: it prints a program as source to lower again.
 //!
 //! The text, in order:
 //!
@@ -26,7 +26,7 @@
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
 use super::program_facts::{self, Facts};
-use rerail_rr_syntax::syntax::{self, Item, Lit, Term as STerm, quote};
+use rerail_rr_syntax::syntax::quote;
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
@@ -34,11 +34,9 @@ use std::fmt::Write as _;
 /// The program the `.about` rows are written as (`program_facts`).
 const ABOUT: &str = "a";
 
-/// The variables the parser reads as words.
-const VAR_WORDS: [&str; 10] = ["top", "count", "min", "max", "sum", "product", "mean", "join", "by", "sep"];
+pub mod from_tape;
 
-/// The relations named as this text's literals.
-const REL_WORDS: [&str; 2] = ["nearest", "ast"];
+use from_tape::{Parts, REL_WORDS, VAR_WORDS};
 
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program text: {what}")
@@ -55,13 +53,6 @@ fn escape(name: &str, words: &[&str]) -> Result<String, String> {
         return Err(bad(format!("{name:?} is no identifier")));
     }
     Ok(if words.contains(&name.trim_end_matches('_')) { format!("{name}_") } else { name.to_owned() })
-}
-
-fn unescape(name: &str, words: &[&str]) -> String {
-    match name.strip_suffix('_') {
-        Some(stripped) if words.contains(&name.trim_end_matches('_')) => stripped.to_owned(),
-        _ => name.to_owned(),
-    }
 }
 
 fn var(v: &str) -> Result<String, String> {
@@ -247,127 +238,20 @@ pub fn print(prog: &Program) -> Result<String, String> {
     Ok(out)
 }
 
-/// Which part of the text a statement is in.
-#[derive(Clone, Copy, PartialEq)]
-enum Part {
-    Facts,
-    Rules,
-    About,
-}
-
-fn read_int(t: &STerm) -> Result<i64, String> {
-    match t {
-        STerm::Num(n) => Ok(*n),
-        STerm::Bin { op: "-", l, r } => read_int(l)?.checked_sub(read_int(r)?).ok_or_else(|| bad("a number out of range")),
-        other => Err(bad(format!("{other:?} where a number goes"))),
-    }
-}
-
-fn read_value(t: &STerm) -> Result<Value, String> {
-    match t {
-        STerm::Str(s) => Ok(Value::Str(s.clone())),
-        t => read_int(t).map(Value::Int),
-    }
-}
-
-fn read_var(t: &STerm) -> Result<String, String> {
-    match t {
-        STerm::Var(v) if v != "top" => Ok(unescape(v, &VAR_WORDS)),
-        other => Err(bad(format!("{other:?} where a variable goes"))),
-    }
-}
-
-fn read_str(t: &STerm) -> Result<String, String> {
-    match t {
-        STerm::Str(s) => Ok(s.clone()),
-        other => Err(bad(format!("{other:?} where a string goes"))),
-    }
-}
-
-fn read_term(t: &STerm) -> Result<Term, String> {
-    Ok(match t {
-        STerm::Var(v) if v == "top" => Term::Top,
-        STerm::Var(v) => Term::Var(unescape(v, &VAR_WORDS)),
-        STerm::Wild => Term::Wild,
-        STerm::Str(s) => Term::Str(s.clone()),
-        STerm::Call { name, functor: true, args } => Term::Call(name.clone(), args.iter().map(read_term).collect::<Result<_, _>>()?),
-        t => Term::Int(read_int(t)?),
-    })
-}
-
-fn read_atom(rel: &str, args: &[STerm], neg: bool) -> Result<Atom, String> {
-    Ok(Atom { rel: unescape(rel, &REL_WORDS).into(), args: args.iter().map(read_term).collect::<Result<_, _>>()?, neg, gated: false })
-}
-
-fn read_literal(l: &Lit) -> Result<Literal, String> {
-    Ok(match l {
-        Lit::Atom { rel, args, neg: false } if rel == "nearest" => match args.as_slice() {
-            [n, a, set] => Literal::Nearest { n: read_var(n)?, a: read_var(a)?, kindset: read_str(set)? },
-            _ => return Err(bad("nearest of other than three arguments")),
-        },
-        Lit::Atom { rel, args, neg: false } if rel == "ast" => {
-            let [document, node, matcher, captures @ ..] = args.as_slice() else { return Err(bad("ast of under three arguments")) };
-            if captures.len() % 2 != 0 {
-                return Err(bad("an ast capture without its variable"));
-            }
-            let captures = captures.chunks(2).map(|c| Ok((read_str(&c[0])?, read_var(&c[1])?))).collect::<Result<_, String>>()?;
-            Literal::Ast { document: read_var(document)?, node: read_var(node)?, matcher: read_str(matcher)?, captures }
-        }
-        Lit::Atom { rel, args, neg } => Literal::Atom(read_atom(rel, args, *neg)?),
-        Lit::Cmp { l: STerm::Var(v), op: "=", r: STerm::Agg { op, over, by, sep, body } } => {
-            let [Lit::Atom { rel, args, neg }] = body.as_slice() else { return Err(bad("an aggregate over other than one atom")) };
-            let over = match over.as_deref() {
-                None | Some(STerm::Wild) => None,
-                Some(o) => Some(read_var(o)?),
-            };
-            let op = match op.as_str() {
-                "count" => AggOp::Count,
-                "min" => AggOp::Min,
-                "max" => AggOp::Max,
-                "sum" => AggOp::Sum,
-                "product" => AggOp::Product,
-                "join" => AggOp::Join { by: by.iter().map(read_var).collect::<Result<_, _>>()?, sep: sep.clone().ok_or_else(|| bad("a join without its separator"))? },
-                other => return Err(bad(format!("aggregate {other:?}"))),
-            };
-            Literal::Agg { var: unescape(v, &VAR_WORDS), op, over, atom: read_atom(rel, args, *neg)? }
-        }
-        Lit::Cmp { l, op, r } => Literal::Cmp { l: read_term(l)?, op, r: read_term(r)? },
-        other => return Err(bad(format!("literal {other:?}"))),
-    })
-}
-
-/// The program `text` (`print`) holds.
+/// The program `text` (`print`) holds: its tape image (the lean parser's) walked straight into the program's parts.
+/// Its lists are its own; a run reads with `read_in`, so that its programs share theirs.
 pub fn read(text: &str) -> Result<Program, String> {
-    let statements = syntax::Parser::new(text).and_then(|mut p| p.statements()).map_err(|e| bad(format!("{e:?}")))?;
-    let mut part = Part::Facts;
-    let (mut decls, mut inputs, mut outputs) = (std::collections::BTreeMap::new(), Vec::new(), Vec::new());
-    let mut facts = Facts::new();
-    let mut rules = Vec::with_capacity(statements.len());
-    let mut about = Facts::new();
-    for (item, line) in &statements {
-        match item {
-            Item::Setting { key, .. } if key == "rules" => part = Part::Rules,
-            Item::Setting { key, .. } if key == "about" => part = Part::About,
-            Item::Decl { name, cols, .. } => {
-                decls.insert(unescape(name, &REL_WORDS), cols.clone());
-            }
-            Item::Io { output, names, .. } => (if *output { &mut outputs } else { &mut inputs }).extend(names.iter().map(|n| unescape(n, &REL_WORDS))),
-            Item::Clause { heads, body, edits } if heads.len() == 1 && edits.is_empty() && heads[0].modal.is_none() => {
-                let head = &heads[0];
-                if part == Part::Rules {
-                    let head = read_atom(&head.rel, &head.args, false)?;
-                    rules.push(Rule { head, body: body.iter().map(read_literal).collect::<Result<_, _>>()? });
-                } else if body.is_empty() {
-                    let row = head.args.iter().map(read_value).collect::<Result<Vec<_>, _>>()?;
-                    let into = if part == Part::About { &mut about } else { &mut facts };
-                    into.entry(unescape(&head.rel, &REL_WORDS)).or_default().push(row);
-                } else {
-                    return Err(bad(format!("line {line}: a rule before .rules")));
-                }
-            }
-            other => return Err(bad(format!("line {line}: {other:?}"))),
-        }
-    }
+    read_in(text, &crate::code_rule_dsl::logic::front::Lists::default())
+}
+
+/// `read`, each list taken from the run's `lists` (decision 0172).
+pub fn read_in(text: &str, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
+    assemble(from_tape::parts(text, &rerail_rr_syntax::tape(text), lists)?)
+}
+
+/// The program of `parts`: the gated atoms marked, the rest of it read from the `.about` rows.
+fn assemble(parts: Parts) -> Result<Program, String> {
+    let Parts { decls, inputs, outputs, facts, mut rules, mut about } = parts;
     let gated = about.remove("gated").unwrap_or_default();
     let mut prog = program_facts::program(&about, ABOUT)?;
     for row in gated {
@@ -375,7 +259,7 @@ pub fn read(text: &str) -> Result<Program, String> {
         let rule = rules.get_mut(*r as usize).ok_or_else(|| bad(format!("gated: no rule {r}")))?;
         let atom = match *k {
             -1 => &mut rule.head,
-            k => match rule.body.get_mut(k as usize) {
+            k => match rule.body.make_mut().get_mut(k as usize) {
                 Some(Literal::Atom(a) | Literal::Agg { atom: a, .. }) => a,
                 _ => return Err(bad(format!("gated: rule {r} has no atom {k}"))),
             },
@@ -393,11 +277,46 @@ pub fn read(text: &str) -> Result<Program, String> {
     Ok(prog)
 }
 
-/// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95): the digest and the
-/// source. `None` when the text does not read back as `prog`: nothing is kept.
-pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], SourceId)>> {
+/// Whether stored programs are kept and read as images too (decision 0173): `RERAIL_PROGRAM_IMAGE=off` keeps and
+/// reads texts only; `require` reads images only, refusing a program kept as text alone (a validation aid).
+fn images() -> &'static str {
+    match std::env::var("RERAIL_PROGRAM_IMAGE").as_deref() {
+        Ok("off") => "off",
+        Ok("require") => "require",
+        _ => "on",
+    }
+}
+
+/// The alias the store keeps the image of the program whose text has sha256 `digest` under: the program's identity
+/// stays its text's digest, which the rows that name a program hold, and the image's source is its own bytes' sha256,
+/// as every source's is. The format is in the key, so another format's image is never found for it.
+pub fn image_key(digest: &[u8; 32]) -> HashKey {
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    HashKey::sha256(&[format!("rerail program image {format}\0").as_bytes(), digest.as_slice()].concat())
+}
+
+/// What the store keeps of a program, as read: its image (decision 0173), or its text where it has no image.
+pub enum Stored {
+    Image(Vec<u8>),
+    Text(String),
+}
+
+/// The program `stored` holds, its lists taken from the run's `lists`.
+pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
+    match stored {
+        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::decode(bytes, lists),
+        Stored::Text(text) => read_in(text, lists),
+    }
+}
+
+/// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95), and as its image,
+/// a source by `image_key` (decision 0173): the digest, and the sources written, which the caller names so collection
+/// keeps them. `None` when the text does not read back as `prog`: nothing is kept. An image that does not read back as
+/// `prog` is not kept; the text is.
+pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
     let Ok(text) = print(prog) else { return Ok(None) };
-    if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(prog)) {
+    let want = program_facts::debug_digest(prog);
+    if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
         return Ok(None);
     }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
@@ -406,30 +325,63 @@ pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 3
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
-    Ok(Some((Sha256::digest(text.as_bytes()).into(), source)))
+    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+    let mut sources = vec![source];
+    if images() != "off" {
+        let key = image_key(&digest);
+        if let Some(id) = store.source_by_alias(key)? {
+            store.pin_held_sources(&[id])?;
+            sources.push(id);
+        } else if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog)
+            && crate::code_rule_dsl::logic::program_image::decode(&bytes, &crate::code_rule_dsl::logic::front::Lists::default()).is_ok_and(|back| program_facts::debug_digest(&back) == want)
+        {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+            // An image the store refuses (its alias taken by other bytes) is not kept; the text is.
+            if let Ok(id) = store.put_source(&bytes, &[key]) {
+                store.pin_held_sources(&[id])?;
+                sources.push(id);
+            }
+        }
+    }
+    Ok(Some((digest, sources)))
 }
 
-/// The texts `store` keeps of sha256 `digests` (`store`), by digest, with their sources, in two reads: for a caller
-/// that must read before its run's waves (decision 0104) and parse later. One the store has lost is left out.
-pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (String, SourceId)>> {
+/// What `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources, in two reads: for
+/// a caller that must read before its run's waves (decision 0104) and parse later. Each is its image where it has
+/// one, else its text; one the store has lost is left out.
+pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Stored, Vec<SourceId>)>> {
+    let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let ids = store.held_sources_by_hash(&hashes)?;
-    let requests: Vec<(SourceId, HashKey)> = ids.iter().zip(&hashes).filter_map(|(id, h)| Some(((*id)?, *h))).collect();
+    let text_ids = store.held_sources_by_hash(&hashes)?;
+    let mut out = std::collections::HashMap::new();
+    let mut want_text = Vec::new();
+    for (k, d) in digests.iter().enumerate() {
+        let image = if mode == "off" { None } else { store.source_by_alias(image_key(d))? };
+        match image {
+            Some(id) => {
+                store.pin_held_sources(&[id])?;
+                let bytes = store.get_source(id)?;
+                out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().chain([id]).collect()));
+            }
+            None if mode != "require" => want_text.push(k),
+            None => {}
+        }
+    }
+    let requests: Vec<(SourceId, HashKey)> = want_text.iter().filter_map(|&k| Some((text_ids[k]?, hashes[k]))).collect();
     let mut bytes = store.get_sources_by_hash_bulk(&requests, usize::MAX)?;
-    Ok(ids
-        .iter()
-        .zip(digests)
-        .filter_map(|(id, d)| {
-            let id = (*id)?;
-            Some((*d, (String::from_utf8(bytes.remove(&id)?).ok()?, id)))
-        })
-        .collect())
+    for k in want_text {
+        let Some(id) = text_ids[k] else { continue };
+        let Some(text) = bytes.remove(&id).and_then(|b| String::from_utf8(b).ok()) else { continue };
+        out.insert(digests[k], (Stored::Text(text), vec![id]));
+    }
+    Ok(out)
 }
 
-/// The program `store` keeps as the text of sha256 `digest` (`store`), and its source; `None` when the store has
-/// lost it, or it no longer reads.
-pub fn load(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(Program, SourceId)>> {
-    let Some(source) = store.held_source_by_hash(HashKey::from_sha256_digest(*digest))? else { return Ok(None) };
-    let Ok(text) = String::from_utf8(store.get_source(source)?) else { return Ok(None) };
-    Ok(read(&text).ok().map(|p| (p, source)))
+/// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
+/// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
+/// run's `lists`.
+pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
+    let mut found = texts(store, &[*digest])?;
+    let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
+    Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
 }

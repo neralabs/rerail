@@ -2,7 +2,7 @@
 
 > The core additions proposed below are now in lib/core.rr (2026-11-05).
 
-These are hand-written versions of the two ESLint rules that `site/translate.py` produces from
+These are hand-written versions of the two ESLint rules that the engine's JSON translator (`rerail-engine translate-json`) produces from
 `packs/javascript/rules/eslint-curly.json` and `eslint-one-var.json`. Both are written on top of a new
 library, `lib/tsx/statements.rr`. The library supplies the words the generated text was missing, such as
 "the body of this if", "a block that needs its braces", "a one-line statement", "removing these braces
