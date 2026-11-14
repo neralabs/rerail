@@ -3474,6 +3474,22 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
 }
 
 
+/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
+/// name (the scope code reads the same table, `scope::options::EsGlobals`).
+#[test]
+fn es_globals_match_the_engines_table() {
+    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
+    let latest = table["latest"].as_u64().unwrap().to_string();
+    let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
+    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
+    let got: std::collections::BTreeSet<String> = rows
+        .lines()
+        .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
+        .collect();
+    assert!(!want.is_empty());
+    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+}
+
 /// What only the engine reads is reached: a library's request rule, whose head nothing reads but whose body reads
 /// the file system (`py_listed(d) :- py_file_at(_, _, d, _), dir_entry(d, _, _)`), and a rule deriving one of the
 /// engine's relations (`load(f, q, "python")`). Dropped, a run loading modules listed no directory and loaded
@@ -3491,18 +3507,27 @@ fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
-/// name (the scope code reads the same table, `scope::options::EsGlobals`).
+/// Two programs run as one: each one's `has` over a guest's nodes still finds them. The merge names kind sets by
+/// their kinds; it renamed `inside`'s axis to the shared set but left `has`'s on the program's own set name, which
+/// guest hiding then could not name in the guest's grammar: no row.
 #[test]
-fn es_globals_match_the_engines_table() {
-    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
-    let latest = table["latest"].as_u64().unwrap().to_string();
-    let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
-    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
-    let got: std::collections::BTreeSet<String> = rows
-        .lines()
-        .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
-        .collect();
-    assert!(!want.is_empty());
-    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+fn has_over_a_guest_holds_with_two_programs() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("has2");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(db):\n    db.execute(\"SELECT name FROM users\")\n").unwrap();
+    let text = |clause: &str, body: &str| {
+        let path = dir.join(format!("{clause}.rr"));
+        std::fs::write(&path, format!(
+            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+        )).unwrap();
+        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+    };
+    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let other = text("calls", "kind(n, \"call\")");
+    let out = dir.join("out");
+    let options = serde_json::json!({ "memo": "off" });
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[has.as_str(), other.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    let rows = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
 }

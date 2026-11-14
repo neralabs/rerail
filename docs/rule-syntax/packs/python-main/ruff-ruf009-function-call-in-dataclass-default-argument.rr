@@ -56,9 +56,8 @@ ruf009_immutable_annotation(n) :- ruf009_immutable_annotation_u7(n).
 .decl ruf009_class_var_import_follows(n: node)
 ruf009_class_var_import_follows(n) :- ruf009_demand_class_var_import_follows(n),
     inside(n, p1, "module"), within_stop(c2, p1, ruf009_stop_52),
-    kind(c2, "import_from_statement"), field(c2, "module_name", c3),
-    glob("{typing,typing_extensions,_typeshed}", c3), child(c2, c4, _),
-    kind(c4, "dotted_name"), glob("ClassVar", c4).
+    kind(c2, "import_from_statement"), ruf009_tok_has_21(c2), child(c2, c11, _),
+    kind(c11, "dotted_name"), glob("ClassVar", c11).
 
 // class_var_ref(n): the JSON util `class-var-ref`, used where the JSON says `matches: "class-var-ref"`
 .decl ruf009_class_var_ref(n: node)
@@ -115,7 +114,8 @@ ruf009_ref_newtype(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 ruf009_newtype_call(n) :- ruf009_demand_newtype_call(n), kind(n, "call"), ruf009_arg_tp_1(n, a1), TP = a1,
     child(n, c2, _), ruf009_ref_newtype(c2), child(n, c3, _), kind(c3, "argument_list"),
     k5 = count : { child(c3, c4, _), !ruf009_alt_55(c4) }, k5 >= 2, k5 <= 2, within(c6, c3),
-    node(_, c6, _, _, _), TP_ARG = c6, text(TP, t7), text(TP_ARG, t7), ruf009_immutable_annotation(c6), @doc(TP) = @doc(TP_ARG).
+    node(_, c6, _, _, _), TP_ARG = c6, node(_, TP, _, _, _), node(_, TP_ARG, _, _, _), TP = TP_ARG,
+    ruf009_immutable_annotation(c6).
 ruf009_newtype_call(n) :- ruf009_demand_newtype_call(n), kind(n, "parenthesized_expression"),
     child(n, c9, _), ruf009_newtype_call(c9).
 
@@ -131,14 +131,13 @@ ruf009_newtype_name(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
 // descriptor_class(n): the JSON util `descriptor-class`, used where the JSON says `matches: "descriptor-class"`
 .decl ruf009_descriptor_class(n: node)
 ruf009_descriptor_class(n) :- kind(n, "class_definition"), child(n, c1, _), kind(c1, "block"),
-    within_stop(c2, c1, ruf009_stop_52), kind(c2, "function_definition"),
-    field(c2, "name", c3), glob("__{get,set,delete}__", c3),
-    count : { within(n, p4), (kind(p4, "function_definition") ; kind(p4, "class_definition")) } = 0.
+    within_stop(c2, c1, ruf009_stop_52), kind(c2, "function_definition"), ruf009_tok_has_22(c2),
+    count : { within(n, p11), (kind(p11, "function_definition") ; kind(p11, "class_definition")) } = 0.
 
 // descriptor_name(n): the JSON util `descriptor-name`, used where the JSON says `matches: "descriptor-name"`
 .decl ruf009_descriptor_name(n: node)
-ruf009_descriptor_name(n) :- kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), ruf009_descriptor_class(st2).
+ruf009_descriptor_name(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    ruf009_descriptor_class(st2).
 ruf009_descriptor_name(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
     ruf009_descriptor_name(c3).
 
@@ -215,9 +214,9 @@ ruf009_auto_attribs_on(n) :- kind(n, "parenthesized_expression"), child(n, c1, _
 .decl ruf009_attrs_expression(n: node)
 ruf009_attrs_expression(n) :- ruf009_attrs_bare_name(n).
 ruf009_attrs_expression(n) :- kind(n, "call"), field(n, "function", c1), ruf009_attrs_name(c1),
-    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("auto_attribs", c4), field(c3, "value", c5), !ruf009_auto_attribs_on(c5) } = 0.
-ruf009_attrs_expression(n) :- kind(n, "parenthesized_expression"), child(n, c6, _),
-    ruf009_attrs_expression(c6).
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), ruf009_tok_has_23(c3), field(c3, "value", c12), !ruf009_auto_attribs_on(c12) } = 0.
+ruf009_attrs_expression(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    ruf009_attrs_expression(c13).
 
 // frozen_expression(n): the JSON util `frozen-expression`, used where the JSON says `matches: "frozen-expression"`
 .decl ruf009_frozen_expression(n: node)
@@ -225,10 +224,10 @@ ruf009_frozen_expression(n) :- ruf009_frozen_name(n).
 ruf009_frozen_expression(n) :- kind(n, "call"), field(n, "function", c1), ruf009_frozen_name(c1).
 ruf009_frozen_expression(n) :- kind(n, "call"), field(n, "function", c2), ruf009_stdlib_name(c2),
     field(n, "arguments", c3), kind(c3, "argument_list"), child(c3, c4, _),
-    kind(c4, "keyword_argument"), field(c4, "name", c5), glob("frozen", c5),
-    field(c4, "value", c6), ruf009_literal_truthy(c6).
-ruf009_frozen_expression(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
-    ruf009_frozen_expression(c7).
+    kind(c4, "keyword_argument"), ruf009_tok_has_24(c4), field(c4, "value", c13),
+    ruf009_literal_truthy(c13).
+ruf009_frozen_expression(n) :- kind(n, "parenthesized_expression"), child(n, c14, _),
+    ruf009_frozen_expression(c14).
 
 // frozen_class(n): the JSON util `frozen-class`, used where the JSON says `matches: "frozen-class"`
 .decl ruf009_frozen_class(n: node)
@@ -238,8 +237,8 @@ ruf009_frozen_class(n) :- kind(n, "class_definition"), child(p1, n, _),
 
 // frozen_name_ref(n): the JSON util `frozen-name-ref`, used where the JSON says `matches: "frozen-name-ref"`
 .decl ruf009_frozen_name_ref(n: node)
-ruf009_frozen_name_ref(n) :- kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), ruf009_frozen_class(st2).
+ruf009_frozen_name_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    ruf009_frozen_class(st2).
 ruf009_frozen_name_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
     ruf009_frozen_name_ref(c3).
 
@@ -252,7 +251,7 @@ ruf009_exempt_callee(n) :- ruf009_frozen_name_ref(n).
 
 // stdlib_value(n): the JSON util `stdlib-value`, used where the JSON says `matches: "stdlib-value"`
 .decl ruf009_stdlib_value(n: node)
-ruf009_stdlib_value(n) :- ruf009_tok_follows_21(n), child(p8, n, _), kind(p8, "assignment"),
+ruf009_stdlib_value(n) :- ruf009_tok_follows_25(n), child(p8, n, _), kind(p8, "assignment"),
     child(p8, c9, _), kind(c9, "type"),
     count : { field(p8, "type", c10), ruf009_alt_61(c10) } = 0, child(p11, p8, _),
     kind(p11, "expression_statement"), child(p12, p11, _), kind(p12, "block"),
@@ -264,7 +263,7 @@ ruf009_stdlib_value(n) :- child(p17, n, _), kind(p17, "parenthesized_expression"
 
 // attrs_value(n): the JSON util `attrs-value`, used where the JSON says `matches: "attrs-value"`
 .decl ruf009_attrs_value(n: node)
-ruf009_attrs_value(n) :- ruf009_tok_follows_21(n), child(p8, n, _), kind(p8, "assignment"),
+ruf009_attrs_value(n) :- ruf009_tok_follows_25(n), child(p8, n, _), kind(p8, "assignment"),
     child(p8, c9, _), kind(c9, "type"),
     count : { field(p8, "type", c10), ruf009_alt_61(c10) } = 0, child(p11, p8, _),
     kind(p11, "expression_statement"), child(p12, p11, _), kind(p12, "block"),
@@ -1050,6 +1049,19 @@ ruf009_tok_has_20(n) :- child(n, c64, _), structural_after(c64, g59),
     match("(?s)^(?:.*(?:,).*)$", g59).
 ruf009_tok_has_20(n) :- node_text(n, g59), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g59).
 
+// tok_has_21(n): a child of n, a named node or an anonymous token, matches "^(typing|typing_extensions|_typeshed)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf009_tok_has_21(n: node)
+.stored ruf009_tok_has_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf009_tok_has_21(n) :- field(n, "module_name", c3),
+    glob("{typing,typing_extensions,_typeshed}", c3).
+ruf009_tok_has_21(n) :- op(n, t4), match("(typing|typing_extensions|_typeshed)", t4).
+ruf009_tok_has_21(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+ruf009_tok_has_21(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+ruf009_tok_has_21(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:typing)(?:\\W.*)?|(?:.*\\W)?(?:typing_extensions)(?:\\W.*)?|(?:.*\\W)?(?:_typeshed)(?:\\W.*)?)$", g5).
+
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
 //   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
 .decl ruf009_all_expr(x: node)
@@ -1134,38 +1146,74 @@ ruf009_arg_tp_1(n, v) :- kind(n, "call"), field(n, "arguments", l), ruf009_args_
 ruf009_arg_no_tp_1(n) :- kind(n, "call"), field(n, "arguments", l), !ruf009_args_kwp(l, "tp", _),
     !ruf009_args_pos(l, _, 1).
 
-// tok_follows_21(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl ruf009_tok_follows_21(n: node)
-.stored ruf009_tok_follows_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf009_tok_follows_21(n) :- next_sibling(s1, n), glob("=", s1).
-ruf009_tok_follows_21(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
-    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
-    match("=", t2).
-ruf009_tok_follows_21(n) :- structural_before(n, g3),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g3).
-
-// tok_has_22(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_22(n): a child of n, a named node or an anonymous token, matches "^__(get|set|delete)__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf009_tok_has_22(n: node)
 .stored ruf009_tok_has_22 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf009_tok_has_22(n) :- child(n, c4, _), glob("=", c4).
-ruf009_tok_has_22(n) :- op(n, t5), match("=", t5).
-ruf009_tok_has_22(n) :- child(n, c11, _), structural_before(c11, g6),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
-ruf009_tok_has_22(n) :- child(n, c11, _), structural_after(c11, g6),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
-ruf009_tok_has_22(n) :- node_text(n, g6), !child(n, _, _),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+ruf009_tok_has_22(n) :- field(n, "name", c3), glob("__{get,set,delete}__", c3).
+ruf009_tok_has_22(n) :- op(n, t4), match("__(get|set|delete)__", t4).
+ruf009_tok_has_22(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__(get|set|delete)__).*)$", g5).
+ruf009_tok_has_22(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__(get|set|delete)__).*)$", g5).
+ruf009_tok_has_22(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__(get|set|delete)__).*)$", g5).
 
-// tok_has_23(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_23(n): a child of n, a named node or an anonymous token, matches "^auto_attribs$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf009_tok_has_23(n: node)
 .stored ruf009_tok_has_23 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf009_tok_has_23(n) :- child(n, c1, _), glob("=", c1).
-ruf009_tok_has_23(n) :- op(n, t2), match("=", t2).
-ruf009_tok_has_23(n) :- child(n, c8, _), structural_before(c8, g3),
+ruf009_tok_has_23(n) :- field(n, "name", c4), glob("auto_attribs", c4).
+ruf009_tok_has_23(n) :- op(n, t5), match("auto_attribs", t5).
+ruf009_tok_has_23(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:auto_attribs)(?:\\W.*)?)$", g6).
+ruf009_tok_has_23(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:auto_attribs)(?:\\W.*)?)$", g6).
+ruf009_tok_has_23(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:auto_attribs)(?:\\W.*)?)$", g6).
+
+// tok_has_24(n): a child of n, a named node or an anonymous token, matches "^frozen$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf009_tok_has_24(n: node)
+.stored ruf009_tok_has_24 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf009_tok_has_24(n) :- field(n, "name", c5), glob("frozen", c5).
+ruf009_tok_has_24(n) :- op(n, t6), match("frozen", t6).
+ruf009_tok_has_24(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:frozen)(?:\\W.*)?)$", g7).
+ruf009_tok_has_24(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:frozen)(?:\\W.*)?)$", g7).
+ruf009_tok_has_24(n) :- node_text(n, g7), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:frozen)(?:\\W.*)?)$", g7).
+
+// tok_follows_25(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf009_tok_follows_25(n: node)
+.stored ruf009_tok_follows_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf009_tok_follows_25(n) :- next_sibling(s1, n), glob("=", s1).
+ruf009_tok_follows_25(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("=", t2).
+ruf009_tok_follows_25(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g3).
+
+// tok_has_26(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf009_tok_has_26(n: node)
+.stored ruf009_tok_has_26 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf009_tok_has_26(n) :- child(n, c4, _), glob("=", c4).
+ruf009_tok_has_26(n) :- op(n, t5), match("=", t5).
+ruf009_tok_has_26(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+ruf009_tok_has_26(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+ruf009_tok_has_26(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_has_27(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf009_tok_has_27(n: node)
+.stored ruf009_tok_has_27 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf009_tok_has_27(n) :- child(n, c1, _), glob("=", c1).
+ruf009_tok_has_27(n) :- op(n, t2), match("=", t2).
+ruf009_tok_has_27(n) :- child(n, c8, _), structural_before(c8, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
-ruf009_tok_has_23(n) :- child(n, c8, _), structural_after(c8, g3),
+ruf009_tok_has_27(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
-ruf009_tok_has_23(n) :- node_text(n, g3), !child(n, _, _),
+ruf009_tok_has_27(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // demand_newtype_call: the nodes newtype_call is asked at (its recursion looks at every descendant)
@@ -1374,7 +1422,7 @@ ruf009_alt_64(n) :- ruf009_alt_64_u7(n).
 
 // alt_68(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf009_alt_68(n: node)
-ruf009_alt_68(n) :- ruf009_tok_has_23(n).
+ruf009_alt_68(n) :- ruf009_tok_has_27(n).
 ruf009_alt_68(n) :- count : { child(n, c9, _), kind(c9, "format_specifier") } = 0,
     field(n, "expression", c10), kind(c10, k11), ruf009_set_67(k11).
 

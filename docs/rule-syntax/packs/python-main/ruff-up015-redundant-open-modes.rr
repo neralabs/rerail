@@ -56,10 +56,10 @@ up015_mode_after_continued_comma(n) :- child(p1, n, _), up015_counted_2(n),
     k3 = count : { child(p1, s2, _), precedes(s2, n), up015_counted_2(s2) }, k3 = 1,
     count : { precedes(s4, n), kind(s4, "list_splat") } = 0, child(p5, n, _),
     kind(p5, "argument_list"),
-    count : { child(p5, c6, _), kind(c6, "keyword_argument"), field(c6, "name", c7), glob("mode", c7) } = 0,
-    child(p8, p5, _), kind(p8, "call"), field(p8, "function", c9), up015_callee(c9),
-    precedes_stop(s10, n, up015_stop_3), glob("\\,", s10), precedes_stop(s11, s10, up015_stop_3),
-    kind(s11, "line_continuation").
+    count : { child(p5, c6, _), kind(c6, "keyword_argument"), up015_tok_has_1(c6) } = 0,
+    child(p15, p5, _), kind(p15, "call"), field(p15, "function", c16), up015_callee(c16),
+    precedes_stop(s17, n, up015_stop_3), glob("\\,", s17), precedes_stop(s18, s17, up015_stop_3),
+    kind(s18, "line_continuation").
 
 // UP015(n, detail): findings from clauses `mode-only-redundant`, `mode-has-redundant-flags`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -92,9 +92,7 @@ up015_mode_only_redundant_site(n, S) :- kind(n, "parenthesized_expression"), chi
 // mode_only_redundant_slot(n): the JSON util `mode-only-redundant-slot`, used where the JSON says `matches: "mode-only-redundant-slot"`
 //   M: metavariable this relation binds for the calling rule
 .decl up015_mode_only_redundant_slot(n: node, m: loc)
-up015_mode_only_redundant_slot(n, M) :- up015_empty_mode(n), node(_, n, _, _, _), L = n,
-    ( within(n, p1_1), up015_open_call(p1_1, M), text(L, t2_1), text(M, t2_1), @doc(L) = @doc(M) ; up015_up_1(n, p4_2), node(_, p4_2, _, _, _), P = p4_2, within(p4_2, p5_2), up015_open_call(p5_2, M), text(P, t6_2), text(M, t6_2), @doc(P) = @doc(M) ).
-
+up015_mode_only_redundant_slot(n, M) :- up015_empty_mode(n), node(_, n, _, _, _), L = n, up015_alt_10(n, L, M).
 
 // mode_only_redundant_in_string(n): the JSON util `mode-only-redundant-in-string`, used where the JSON says `matches: "mode-only-redundant-in-string"`
 //   M, S: metavariables this relation binds for the calling rule
@@ -112,9 +110,7 @@ up015_mode_has_redundant_flags_site(n, S) :- kind(n, "parenthesized_expression")
 // mode_has_redundant_flags_slot(n): the JSON util `mode-has-redundant-flags-slot`, used where the JSON says `matches: "mode-has-redundant-flags-slot"`
 //   M: metavariable this relation binds for the calling rule
 .decl up015_mode_has_redundant_flags_slot(n: node, m: loc)
-up015_mode_has_redundant_flags_slot(n, M) :- up015_flags_mode(n), node(_, n, _, _, _), L = n,
-    ( within(n, p1_3), up015_open_call(p1_3, M), text(L, t2_3), text(M, t2_3), @doc(L) = @doc(M) ; up015_up_2(n, p4_4), node(_, p4_4, _, _, _), P = p4_4, within(p4_4, p5_4), up015_open_call(p5_4, M), text(P, t6_4), text(M, t6_4), @doc(P) = @doc(M) ).
-
+up015_mode_has_redundant_flags_slot(n, M) :- up015_flags_mode(n), node(_, n, _, _, _), L = n, up015_alt_10(n, L, M).
 
 // mode_has_redundant_flags_in_string(n): the JSON util `mode-has-redundant-flags-in-string`, used where the JSON says `matches: "mode-has-redundant-flags-in-string"`
 //   M, S: metavariables this relation binds for the calling rule
@@ -183,15 +179,22 @@ up015_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), up015_args_
 up015_arg_no_mode_1(n) :- kind(n, "call"), field(n, "arguments", l), !up015_args_kwp(l, "mode", _),
     !up015_args_pos(l, _, 1).
 
-// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
-.decl up015_up_1(n: node, p: node)
-up015_up_1(n, p) :- up015_empty_mode(n), within_stop(n, p, up015_stop_11),
-    kind(p, "parenthesized_expression").
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^mode$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up015_tok_has_1(n: node)
+.stored up015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up015_tok_has_1(n) :- field(n, "name", c7), glob("mode", c7).
+up015_tok_has_1(n) :- op(n, t8), match("mode", t8).
+up015_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
+up015_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
+up015_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
 
-// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
-.decl up015_up_2(n: node, p: node)
-up015_up_2(n, p) :- up015_flags_mode(n), within_stop(n, p, up015_stop_11),
-    kind(p, "parenthesized_expression").
+// demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
+.decl up015_demand_alt_10(n: node, l: loc)
+up015_demand_alt_10(n, L) :- up015_empty_mode(n), node(_, n, _, _, _), L = n.
+up015_demand_alt_10(n, L) :- up015_flags_mode(n), node(_, n, _, _, _), L = n.
 
 // counted_2(n): the siblings the JSON `nthChild.ofRule` counts
 .decl up015_counted_2(n: node)
@@ -210,6 +213,16 @@ up015_alt_8(n, M, S) :- up015_mode_only_redundant_in_string(n, M, S).
 // stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up015_stop_11(n: node)
 up015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+//   M: metavariable this relation binds for the calling rule
+.decl up015_alt_10(n: node, l: loc, m: loc)
+up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within(n, p1), up015_open_call(p1, M),
+    node(_, L, _, _, _), node(_, M, _, _, _), L = M.
+up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within_stop(n, p4, up015_stop_11),
+    kind(p4, "parenthesized_expression"), node(_, p4, _, _, _), P = p4, within(p4, p5), up015_open_call(p5, M),
+    node(_, P, _, _, _), node(_, M, _, _, _), P = M.
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   M, S: metavariables this relation binds for the calling rule

@@ -10,12 +10,11 @@
 // Each rule below is one way the JSON `rule` can match.
 .violation ISC003(at: node) "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring."
     suppress noqa "ISC003"
-ISC003(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("+", c1),
-    field(n, "left", c2), isc003_left_string(c2, L), field(n, "right", c3),
-    isc003_right_string_on_later_line(c3, L),
-    ( field(n, "left", c4), isc003_text_util(c4), field(n, "right", c5), isc003_text_util(c5)
-    ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
-    ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
+ISC003(n) :- kind(n, "binary_operator"), isc003_tok_has_1(n), field(n, "left", c9),
+    isc003_left_string(c9, L), field(n, "right", c10), isc003_right_string_on_later_line(c10, L),
+    ( field(n, "left", c1), isc003_text_util(c1), field(n, "right", c2), isc003_text_util(c2)
+    ; field(n, "left", c3), isc003_bytes(c3), field(n, "right", c4), isc003_bytes(c4)
+    ; field(n, "left", c5), isc003_template(c5), field(n, "right", c6), isc003_template(c6)
     ).
 
 
@@ -56,14 +55,25 @@ isc003_template(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), isc0
 .decl isc003_text_util(n: node)
 isc003_text_util(n) :- node(_, n, _, _, _), !isc003_alt_1(n).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl isc003_tok_has_1(n: node)
+.stored isc003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+isc003_tok_has_1(n) :- field(n, "operator", c1), glob("+", c1).
+isc003_tok_has_1(n) :- op(n, t2), match("\\+", t2).
+isc003_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+isc003_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+isc003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
 // demand_right_string_on_later_line: the rows of right_string_on_later_line its callers ask for (the metavariable columns they pass in)
 .decl isc003_demand_right_string_on_later_line(n: node, l: loc)
-isc003_demand_right_string_on_later_line(c3, L) :- kind(n, "binary_operator"),
-    field(n, "operator", c1), glob("+", c1), field(n, "left", c2), isc003_left_string(c2, L),
-    field(n, "right", c3),
-    ( field(n, "left", c4), isc003_text_util(c4), field(n, "right", c5), isc003_text_util(c5)
-    ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
-    ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
+isc003_demand_right_string_on_later_line(c10, L) :- kind(n, "binary_operator"), isc003_tok_has_1(n),
+    field(n, "left", c9), isc003_left_string(c9, L), field(n, "right", c10),
+    ( field(n, "left", c1), isc003_text_util(c1), field(n, "right", c2), isc003_text_util(c2)
+    ; field(n, "left", c3), isc003_bytes(c3), field(n, "right", c4), isc003_bytes(c4)
+    ; field(n, "left", c5), isc003_template(c5), field(n, "right", c6), isc003_template(c6)
     ).
 
 isc003_demand_right_string_on_later_line(c9, L) :- isc003_demand_right_string_on_later_line(n, L),

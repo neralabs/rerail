@@ -55,7 +55,12 @@ perf401_list_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), per
 
 // list_bound(n): the JSON util `list-bound`, used where the JSON says `matches: "list-bound"`
 .decl perf401_list_bound(n: node)
-perf401_list_bound(n) :- kind(n, "identifier"), perf401_alt_4(n).
+perf401_list_bound(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), site_only(b1), binding_value(b1, x1), perf401_list_init(x1), st1 = b1, count : { child(st1, c1, _), kind(c1, "type") } = 0
+    ; ref_site(n, b2), site_only(b2), site_annotation(b2, o1), perf401_list_ann(o1), st2 = b2, count : { child(st2, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0
+    ; ref_site(n, b3), site_only(b3), (st3 = b3 ; within(b3, st3)), perf401_alt_3(st3)
+    ).
+
 
 // plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
 //   L: metavariable this relation binds for the calling rule
@@ -100,7 +105,7 @@ perf401_has_ref(n, L) :- perf401_demand_has_ref(n, L), within(c1, n), perf401_re
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
 .decl perf401_post_ref(n: node, for: loc)
 perf401_post_ref(n, FOR) :- perf401_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), node(_, st2, _, _, _), SITE = st2, text(SITE, t3), text(FOR, t3), @doc(SITE) = @doc(FOR).
+    st2 = b1, node(_, st2, _, _, _), SITE = st2, node(_, SITE, _, _, _), node(_, FOR, _, _, _), SITE = FOR.
 
 // has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
@@ -462,16 +467,6 @@ perf401_alt_2(n) :- perf401_alt_2_u7(n).
 perf401_alt_3(n) :- kind(n, "as_pattern"), child(n, c1, _), perf401_tok_precedes_7(c1), perf401_list_init(c1).
 perf401_alt_3(n) :- kind(n, "function_definition"), field(n, "return_type", c9),
     kind(c9, "type"), child(c9, c10, _), perf401_list_ann(c10).
-
-// alt_4(n): the JSON `any`: n matches if any one of these rules does
-.decl perf401_alt_4(n: node)
-perf401_alt_4(n) :- ref_site(n, b1), site_only(b1), binding_value(b1, x2), perf401_list_init(x2),
-    (st3 = b1 ; within(b1, st3)), count : { child(st3, c4, _), kind(c4, "type") } = 0.
-perf401_alt_4(n) :- ref_site(n, b5), site_only(b5), site_annotation(b5, o6), perf401_list_ann(o6),
-    (st7 = b5 ; within(b5, st7)),
-    count : { child(st7, c8, _), (kind(c8, "list_splat_pattern") ; kind(c8, "dictionary_splat_pattern")) } = 0.
-perf401_alt_4(n) :- ref_site(n, b9), site_only(b9), (st10 = b9 ; within(b9, st10)),
-    perf401_alt_3(st10).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 .decl perf401_alt_6(n: node)

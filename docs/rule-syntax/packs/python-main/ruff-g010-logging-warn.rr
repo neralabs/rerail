@@ -39,6 +39,34 @@ g010_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
 g010_logger_object(n) :-
     ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
-    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g010_name_chain(c2)
+    ; kind(n, "attribute"), g010_tok_has_2(n), field(n, "object", c1), g010_name_chain(c1)
     ),
     !sym_of(n, _).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g010_tok_has_1(n: node)
+.stored g010_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g010_tok_has_1(n) :- field(n, "attribute", c3),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c3).
+g010_tok_has_1(n) :- op(n, t4),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t4).
+g010_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g010_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g010_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g010_tok_has_2(n: node)
+.stored g010_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g010_tok_has_2(n) :- field(n, "attribute", c1),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1).
+g010_tok_has_2(n) :- op(n, t2),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t2).
+g010_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g010_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g010_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).

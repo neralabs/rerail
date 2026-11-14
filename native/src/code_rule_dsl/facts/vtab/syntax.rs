@@ -1511,6 +1511,9 @@ pub struct Locs {
     lines: Arc<core_rr::Lines>,
     pub token_spans: OnceLock<Vec<[u32; 2]>>,
     pub tokens: u32,
+    /// Each node's end point (`end_point`, where a program reads it): a zero-width span at its end offset, after the
+    /// lines, one per node in local order. 0 where no program reads them.
+    pub ends: u32,
     /// The whole source and its lines follow the tokens, implicit (`Projected::span`): a guest has none of its own.
     own_text: bool,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
@@ -1520,7 +1523,9 @@ pub struct Locs {
 
 impl Locs {
     /// The document's spans past its nodes: its tokens, then (its own text) the whole source and each line.
-    fn positions(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
+    fn positions(&self) -> u32 { self.ends_from() + self.ends }
+    /// The first end point's position: past the tokens, the whole source and the lines.
+    fn ends_from(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
     /// A span's first line, last line and start column, in its file.
     fn place(&self, span: [u32; 2]) -> (u32, u32, u32) {
         match &self.host {
@@ -1636,7 +1641,7 @@ impl Projected {
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
             let own_text = guest.is_none();
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
-            p.extra = Some(Box::new(Locs { lines, tokens, token_spans: OnceLock::new(), own_text, host }));
+            p.extra = Some(Box::new(Locs { lines, tokens, ends: 0, token_spans: OnceLock::new(), own_text, host }));
         } else if definition_ids() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
             p.defs = Some(DefIds::new(&p, dialect, &[]));
@@ -1725,6 +1730,9 @@ impl Projected {
                         spans
                     });
                     spans[i as usize]
+                } else if i >= x.ends_from() {
+                    let id = self.core[(i - x.ends_from()) as usize] as usize;
+                    [self.facts.end[id], self.facts.end[id]]
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
@@ -2169,6 +2177,7 @@ impl Extra {
     fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let tokens = p.extra.as_ref().map_or(0, |x| x.tokens);
+        let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
         if self.line_rows() || self.end_line || self.col || self.node_text {
             for (local, &id) in p.core.iter().enumerate() {
@@ -2213,10 +2222,34 @@ impl Extra {
                     self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
                 }
             }
+            // Each node's end point (`end_point`, where a program reads it): placed where the node ends.
+            for local in ends.clone() {
+                let n = p.global(local);
+                let at = p.span(local)[0];
+                let (line, col) = match guest {
+                    Some(x) => {
+                        let (first, _, col) = x.place([at, at]);
+                        (i64::from(first), i64::from(col))
+                    }
+                    None => {
+                        let l = f.lines.line(at as usize);
+                        (l as i64 + 1, (at as usize - f.lines.start(l)) as i64)
+                    }
+                };
+                if self.line_rows() {
+                    self.lines.push([n, line]);
+                }
+                if self.end_line {
+                    self.end_lines.push([n, line]);
+                }
+                if self.col {
+                    self.cols.push([n, col]);
+                }
+            }
         }
         if self.docof {
             let key = i64::from(p.key);
-            self.docofs.extend((0..p.len() + tokens).map(|local| [p.global(local), key]));
+            self.docofs.extend((0..p.len() + tokens).chain(ends).map(|local| [p.global(local), key]));
         }
     }
 
@@ -2849,6 +2882,12 @@ impl Batch {
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core));
             drop(new_span);
+            // A program that reads `end_point` has each node's end point among the positions, after the lines.
+            if core && projection.wants("end_point")
+                && let Some(x) = p.extra.as_mut()
+            {
+                x.ends = p.core.len() as u32;
+            }
             p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
             if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {

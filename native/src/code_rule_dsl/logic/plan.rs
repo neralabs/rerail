@@ -4023,6 +4023,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
+        "end_point" => &[&["n"], &["p"]],
         "next_sibling" => &[&["a"], &["b"]],
         "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],

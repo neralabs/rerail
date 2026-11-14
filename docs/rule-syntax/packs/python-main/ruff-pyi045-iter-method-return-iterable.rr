@@ -19,8 +19,7 @@ PYI045(n, "`__aiter__` as returning `AsyncIterator` (from `collections.abc`) ins
 
 // method_of(n): the JSON util `method-of`, used where the JSON says `matches: "method-of"`
 .decl pyi045_method_of(n: node)
-pyi045_method_of(n) :- kind(n, "function_definition"), field(n, "name", c1),
-    glob("__iter__", c1), within_stop(n, p2, pyi045_stop_1), kind(p2, "class_definition").
+pyi045_method_of(n) :- kind(n, "function_definition"), pyi045_tok_has_1(n), pyi045_up_1(n, p9).
 
 // iterable_ref(n): the JSON util `iterable-ref`, used where the JSON says `matches: "iterable-ref"`
 .decl pyi045_iterable_ref(n: node)
@@ -77,8 +76,7 @@ pyi045_return_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression
 // method_of_aiter_returns_async_iterable(n): the JSON util `method-of`, used where the JSON says `matches: "method-of"`
 .decl pyi045_method_of_aiter_returns_async_iterable(n: node)
 pyi045_method_of_aiter_returns_async_iterable(n) :- kind(n, "function_definition"),
-    field(n, "name", c1), glob("__aiter__", c1), within_stop(n, p2, pyi045_stop_1),
-    kind(p2, "class_definition").
+    pyi045_tok_has_2(n), pyi045_up_2(n, p9).
 
 // iterable_ref_aiter_returns_async_iterable(n): the JSON util `iterable-ref`, used where the JSON says `matches: "iterable-ref"`
 .decl pyi045_iterable_ref_aiter_returns_async_iterable(n: node)
@@ -136,6 +134,18 @@ pyi045_return_position_aiter_returns_async_iterable(n) :- child(p3, n, _),
     kind(p3, "parenthesized_expression"),
     pyi045_return_position_aiter_returns_async_iterable(p3).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^__iter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi045_tok_has_1(n: node)
+.stored pyi045_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi045_tok_has_1(n) :- field(n, "name", c1), glob("__iter__", c1).
+pyi045_tok_has_1(n) :- op(n, t2), match("__iter__", t2).
+pyi045_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi045_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi045_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
 //   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
 .decl pyi045_all_expr(x: node)
@@ -158,6 +168,26 @@ pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "call"), field(x, "function", 
 pyi045_all_entry(e, x) :- pyi045_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
     (kind(e, "string") ; kind(e, "concatenated_string")),
     count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^__aiter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi045_tok_has_2(n: node)
+.stored pyi045_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi045_tok_has_2(n) :- field(n, "name", c1), glob("__aiter__", c1).
+pyi045_tok_has_2(n) :- op(n, t2), match("__aiter__", t2).
+pyi045_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+pyi045_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+pyi045_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi045_up_1(n: node, p: node)
+pyi045_up_1(n, p) :- pyi045_tok_has_1(n), within_stop(n, p, pyi045_stop_1), kind(p, "class_definition").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi045_up_2(n: node, p: node)
+pyi045_up_2(n, p) :- pyi045_tok_has_2(n), within_stop(n, p, pyi045_stop_1), kind(p, "class_definition").
 
 // stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pyi045_stop_1(kind: symbol)

@@ -247,10 +247,10 @@ pyi034_in_final(n) :- pyi034_demand_in_final(n), pyi034_up_2(n, p1), child(p2, p
 PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
     field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
     pyi034_class_name(c2, C, _),
-    ( match("async\\b.*", n), field(n, "name", c3), glob("__aenter__", c3), !pyi034_in_final(n)
+    ( match("async\\b.*", n), pyi034_tok_has_10(n), !pyi034_in_final(n)
     ; !match("async\\b.*", n), pyi034_alt_19(n)
     ),
-    field(n, "name", c6), node(_, c6, _, _, _), M = c6.
+    field(n, "name", c27), node(_, c27, _, _, _), M = c27.
 
 // PYI034_iterator_returns_iterator(n): a finding at node n, from clause `iterator-returns-iterator`.
 // Each rule below is one way the JSON `rule` can match.
@@ -260,7 +260,208 @@ PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
 PYI034_iterator_returns_iterator(M, n, C) :- kind(n, "function_definition"),
     pyi034_method(n, C), !match("async\\b.*", n),
     count : { field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _), pyi034_class_name(c2, C, _) } = 0,
-    pyi034_alt_22(n), field(n, "name", c12), node(_, c12, _, _, _), M = c12.
+    ( pyi034_tok_has_15(n), field(n, "return_type", c3), kind(c3, "type"), child(c3, c4, _), pyi034_ret_iterable(c4), pyi034_iter_subclass(n)
+    ; pyi034_tok_has_16(n), field(n, "return_type", c5), kind(c5, "type"), child(c5, c6, _), pyi034_ret_async_iterable(c6), pyi034_up_3(n, p1), field(p1, "superclasses", c7), child(c7, c8, _), pyi034_aiter_base(c8)
+    ),
+    field(n, "name", c26), node(_, c26, _, _, _), M = c26.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_1(n: node)
+.stored pyi034_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_1(n) :- field(n, "name", c7), glob("__new__", c7).
+pyi034_tok_has_1(n) :- op(n, t8), match("__new__", t8).
+pyi034_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g9).
+pyi034_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g9).
+pyi034_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g9).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_2(n: node)
+.stored pyi034_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_2(n) :- field(n, "name", c17), glob("__new__", c17).
+pyi034_tok_has_2(n) :- op(n, t18), match("__new__", t18).
+pyi034_tok_has_2(n) :- child(n, c24, _), structural_before(c24, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g19).
+pyi034_tok_has_2(n) :- child(n, c24, _), structural_after(c24, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g19).
+pyi034_tok_has_2(n) :- node_text(n, g19), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g19).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_3(n: node)
+.stored pyi034_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_3(n) :- field(n, "name", c1), glob("__new__", c1).
+pyi034_tok_has_3(n) :- op(n, t2), match("__new__", t2).
+pyi034_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+pyi034_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+pyi034_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_4(n: node)
+.stored pyi034_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_4(n) :- field(n, "name", c11), glob("__new__", c11).
+pyi034_tok_has_4(n) :- op(n, t12), match("__new__", t12).
+pyi034_tok_has_4(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g13).
+pyi034_tok_has_4(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g13).
+pyi034_tok_has_4(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g13).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^__aenter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_5(n: node)
+.stored pyi034_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_5(n) :- field(n, "name", c3), glob("__aenter__", c3).
+pyi034_tok_has_5(n) :- op(n, t4), match("__aenter__", t4).
+pyi034_tok_has_5(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g5).
+pyi034_tok_has_5(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g5).
+pyi034_tok_has_5(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g5).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_6(n: node)
+.stored pyi034_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_6(n) :- field(n, "name", c11),
+    glob("{__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c11).
+pyi034_tok_has_6(n) :- op(n, t12),
+    match("(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)", t12).
+pyi034_tok_has_6(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g13).
+pyi034_tok_has_6(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g13).
+pyi034_tok_has_6(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g13).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^(?:__enter__|__new__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_7(n: node)
+.stored pyi034_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_7(n) :- field(n, "name", c19), glob("{__enter__,__new__}", c19).
+pyi034_tok_has_7(n) :- op(n, t20), match("(?:__enter__|__new__)", t20).
+pyi034_tok_has_7(n) :- child(n, c26, _), structural_before(c26, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g21).
+pyi034_tok_has_7(n) :- child(n, c26, _), structural_after(c26, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g21).
+pyi034_tok_has_7(n) :- node_text(n, g21), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g21).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_8(n: node)
+.stored pyi034_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_8(n) :- field(n, "name", c1),
+    glob("{__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
+pyi034_tok_has_8(n) :- op(n, t2),
+    match("(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)", t2).
+pyi034_tok_has_8(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
+pyi034_tok_has_8(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
+pyi034_tok_has_8(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g3).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^(?:__enter__|__new__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_9(n: node)
+.stored pyi034_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_9(n) :- field(n, "name", c9), glob("{__enter__,__new__}", c9).
+pyi034_tok_has_9(n) :- op(n, t10), match("(?:__enter__|__new__)", t10).
+pyi034_tok_has_9(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g11).
+pyi034_tok_has_9(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g11).
+pyi034_tok_has_9(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g11).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^__aenter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_10(n: node)
+.stored pyi034_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_10(n) :- field(n, "name", c1), glob("__aenter__", c1).
+pyi034_tok_has_10(n) :- op(n, t2), match("__aenter__", t2).
+pyi034_tok_has_10(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g3).
+pyi034_tok_has_10(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g3).
+pyi034_tok_has_10(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aenter__).*)$", g3).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_11(n: node)
+.stored pyi034_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_11(n) :- field(n, "name", c9),
+    glob("{__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c9).
+pyi034_tok_has_11(n) :- op(n, t10),
+    match("(?:__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)", t10).
+pyi034_tok_has_11(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g11).
+pyi034_tok_has_11(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g11).
+pyi034_tok_has_11(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iadd__).*|(?:.*\\W)?(?:__isub__).*|(?:.*\\W)?(?:__imul__).*|(?:.*\\W)?(?:__imatmul__).*|(?:.*\\W)?(?:__itruediv__).*|(?:.*\\W)?(?:__ifloordiv__).*|(?:.*\\W)?(?:__imod__).*|(?:.*\\W)?(?:__ipow__).*|(?:.*\\W)?(?:__ilshift__).*|(?:.*\\W)?(?:__irshift__).*|(?:.*\\W)?(?:__iand__).*|(?:.*\\W)?(?:__ixor__).*|(?:.*\\W)?(?:__ior__).*)$", g11).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^(?:__enter__|__new__)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_12(n: node)
+.stored pyi034_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_12(n) :- field(n, "name", c17), glob("{__enter__,__new__}", c17).
+pyi034_tok_has_12(n) :- op(n, t18), match("(?:__enter__|__new__)", t18).
+pyi034_tok_has_12(n) :- child(n, c24, _), structural_before(c24, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g19).
+pyi034_tok_has_12(n) :- child(n, c24, _), structural_after(c24, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g19).
+pyi034_tok_has_12(n) :- node_text(n, g19), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__enter__).*|(?:.*\\W)?(?:__new__).*)$", g19).
+
+// tok_has_13(n): a child of n, a named node or an anonymous token, matches "^__iter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_13(n: node)
+.stored pyi034_tok_has_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_13(n) :- field(n, "name", c3), glob("__iter__", c3).
+pyi034_tok_has_13(n) :- op(n, t4), match("__iter__", t4).
+pyi034_tok_has_13(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g5).
+pyi034_tok_has_13(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g5).
+pyi034_tok_has_13(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g5).
+
+// tok_has_14(n): a child of n, a named node or an anonymous token, matches "^__aiter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_14(n: node)
+.stored pyi034_tok_has_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_14(n) :- field(n, "name", c13), glob("__aiter__", c13).
+pyi034_tok_has_14(n) :- op(n, t14), match("__aiter__", t14).
+pyi034_tok_has_14(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g15).
+pyi034_tok_has_14(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g15).
+pyi034_tok_has_14(n) :- node_text(n, g15), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g15).
+
+// tok_has_15(n): a child of n, a named node or an anonymous token, matches "^__iter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_15(n: node)
+.stored pyi034_tok_has_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_15(n) :- field(n, "name", c1), glob("__iter__", c1).
+pyi034_tok_has_15(n) :- op(n, t2), match("__iter__", t2).
+pyi034_tok_has_15(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi034_tok_has_15(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi034_tok_has_15(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+
+// tok_has_16(n): a child of n, a named node or an anonymous token, matches "^__aiter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi034_tok_has_16(n: node)
+.stored pyi034_tok_has_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi034_tok_has_16(n) :- field(n, "name", c11), glob("__aiter__", c11).
+pyi034_tok_has_16(n) :- op(n, t12), match("__aiter__", t12).
+pyi034_tok_has_16(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g13).
+pyi034_tok_has_16(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g13).
+pyi034_tok_has_16(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g13).
 
 // demand_class_name: the rows of class_name its callers ask for (the metavariable columns they pass in)
 .decl pyi034_demand_class_name(n: node, c: loc)
@@ -268,9 +469,12 @@ pyi034_demand_class_name(c6, C) :- pyi034_demand_class_name(n, C),
     kind(n, "parenthesized_expression"), child(n, c6, _).
 pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C),
     field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
-    field(n, "name", c6), node(_, c6, _, _, _), M = c6.
-pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C), pyi034_alt_22(n),
-    field(n, "name", c12), node(_, c12, _, _, _), M = c12, field(n, "return_type", c1), kind(c1, "type"),
+    field(n, "name", c27), node(_, c27, _, _, _), M = c27.
+pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C),
+    ( pyi034_tok_has_15(n), field(n, "return_type", c3), kind(c3, "type"), child(c3, c4, _), pyi034_ret_iterable(c4), pyi034_iter_subclass(n)
+    ; pyi034_tok_has_16(n), field(n, "return_type", c5), kind(c5, "type"), child(c5, c6, _), pyi034_ret_async_iterable(c6), pyi034_up_3(n, p1), field(p1, "superclasses", c7), child(c7, c8, _), pyi034_aiter_base(c8)
+    ),
+    field(n, "name", c26), node(_, c26, _, _, _), M = c26, field(n, "return_type", c1), kind(c1, "type"),
     child(c1, c2, _).
 
 // demand_aiter_base: the nodes aiter_base is asked at (its recursion looks at every descendant)
@@ -284,10 +488,10 @@ pyi034_demand_aiter_base(c11) :- pyi034_demand_aiter_base(n), kind(n, "subscript
     field(st9, "superclasses", c10), child(c10, c11, _).
 pyi034_demand_aiter_base(c12) :- pyi034_demand_aiter_base(n), kind(n, "parenthesized_expression"),
     child(n, c12, _).
-pyi034_demand_aiter_base(c9) :- field(n, "name", c4), glob("__aiter__", c4),
-    field(n, "return_type", c5), kind(c5, "type"), child(c5, c6, _),
-    pyi034_ret_async_iterable(c6), within_stop(n, p7, "function_definition"),
-    kind(p7, "class_definition"), field(p7, "superclasses", c8), child(c8, c9, _).
+pyi034_demand_aiter_base(c8) :- kind(n, "function_definition"), pyi034_method(n, C),
+    field(n, "name", c26), node(_, c26, _, _, _), M = c26, pyi034_tok_has_16(n), field(n, "return_type", c5),
+    kind(c5, "type"), child(c5, c6, _), pyi034_ret_async_iterable(c6), pyi034_up_3(n, p1),
+    field(p1, "superclasses", c7), child(c7, c8, _).
 
 // demand_iter_base: the nodes iter_base is asked at (its recursion looks at every descendant)
 .decl pyi034_demand_iter_base(n: node)
@@ -305,8 +509,9 @@ pyi034_demand_iter_base(c12) :- pyi034_demand_iter_base(n), kind(n, "parenthesiz
 
 // demand_iter_subclass: the nodes iter_subclass is asked at (it looks at every ancestor of every node)
 .decl pyi034_demand_iter_subclass(n: node)
-pyi034_demand_iter_subclass(n) :- field(n, "name", c1), glob("__iter__", c1),
-    field(n, "return_type", c2), kind(c2, "type"), child(c2, c3, _), pyi034_ret_iterable(c3).
+pyi034_demand_iter_subclass(n) :- kind(n, "function_definition"), pyi034_method(n, C),
+    field(n, "name", c26), node(_, c26, _, _, _), M = c26, pyi034_tok_has_15(n), field(n, "return_type", c3),
+    kind(c3, "type"), child(c3, c4, _), pyi034_ret_iterable(c4).
 
 // demand_metaclass_base: the nodes metaclass_base is asked at (its recursion looks at every descendant)
 .decl pyi034_demand_metaclass_base(n: node)
@@ -325,9 +530,9 @@ pyi034_demand_metaclass_base(c2) :- kind(n, "class_definition"), field(n, "super
 // demand_in_final: the nodes in_final is asked at (it looks at every ancestor of every node)
 .decl pyi034_demand_in_final(n: node)
 pyi034_demand_in_final(n) :- kind(n, "function_definition"), field(n, "return_type", c1),
-    kind(c1, "type"), child(c1, c2, _), field(n, "name", c6), node(_, c6, _, _, _), M = c6,
-    match("async\\b.*", n), field(n, "name", c3), glob("__aenter__", c3).
-pyi034_demand_in_final(n) :- field(n, "name", c2), glob("{__enter__,__new__}", c2).
+    kind(c1, "type"), child(c1, c2, _), field(n, "name", c27), node(_, c27, _, _, _), M = c27,
+    match("async\\b.*", n), pyi034_tok_has_10(n).
+pyi034_demand_in_final(n) :- pyi034_tok_has_9(n).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl pyi034_up_1(n: node, p: node)
@@ -337,6 +542,11 @@ pyi034_up_1(n, p) :- pyi034_demand_iter_subclass(n), within_stop(n, p, "function
 // up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl pyi034_up_2(n: node, p: node)
 pyi034_up_2(n, p) :- pyi034_demand_in_final(n), within_stop(n, p, "function_definition"),
+    kind(p, "class_definition").
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi034_up_3(n: node, p: node)
+pyi034_up_3(n, p) :- pyi034_tok_has_16(n), within_stop(n, p, "function_definition"),
     kind(p, "class_definition").
 
 // set_1: node kinds from a JSON `any`
@@ -378,11 +588,11 @@ pyi034_alt_10(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi034_alt_11(n: node)
-pyi034_alt_11(n) :- kind(n, "function_definition"), field(n, "name", c1), glob("__new__", c1),
-    field(n, "parameters", c2), pyi034_metaclass_params(c2).
-pyi034_alt_11(n) :- kind(n, "decorated_definition"), child(n, c3, _),
-    kind(c3, "function_definition"), field(c3, "name", c4), glob("__new__", c4),
-    field(c3, "parameters", c5), pyi034_metaclass_params(c5).
+pyi034_alt_11(n) :- kind(n, "function_definition"), pyi034_tok_has_3(n), field(n, "parameters", c9),
+    pyi034_metaclass_params(c9).
+pyi034_alt_11(n) :- kind(n, "decorated_definition"), child(n, c10, _),
+    kind(c10, "function_definition"), pyi034_tok_has_4(c10), field(c10, "parameters", c19),
+    pyi034_metaclass_params(c19).
 
 // stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pyi034_stop_14(n: node)
@@ -403,15 +613,5 @@ pyi034_alt_18(n) :- kind(n, "typed_parameter"), child(n, c1, _),
 
 // alt_19(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi034_alt_19(n: node)
-pyi034_alt_19(n) :- field(n, "name", c1),
-    glob("{__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
-pyi034_alt_19(n) :- field(n, "name", c2), glob("{__enter__,__new__}", c2), !pyi034_in_final(n).
-
-// alt_22(n): the JSON `any`: n matches if any one of these rules does
-.decl pyi034_alt_22(n: node)
-pyi034_alt_22(n) :- field(n, "name", c1), glob("__iter__", c1), field(n, "return_type", c2),
-    kind(c2, "type"), child(c2, c3, _), pyi034_ret_iterable(c3), pyi034_iter_subclass(n).
-pyi034_alt_22(n) :- field(n, "name", c4), glob("__aiter__", c4), field(n, "return_type", c5),
-    kind(c5, "type"), child(c5, c6, _), pyi034_ret_async_iterable(c6),
-    within_stop(n, p7, "function_definition"), kind(p7, "class_definition"),
-    field(p7, "superclasses", c8), child(c8, c9, _), pyi034_aiter_base(c9).
+pyi034_alt_19(n) :- pyi034_tok_has_8(n).
+pyi034_alt_19(n) :- pyi034_tok_has_9(n), !pyi034_in_final(n).

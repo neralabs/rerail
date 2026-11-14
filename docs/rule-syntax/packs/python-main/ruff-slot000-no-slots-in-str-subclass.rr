@@ -99,9 +99,9 @@ slot000_demand_enum_base(c5, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_4(n, K
     kind(c4, "argument_list"), child(c4, c5, _).
 slot000_demand_enum_base(c12, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "attribute"), inside(n, p6, "module"), within(c7, p6),
-    kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, text(KX, t8), text(K, t8),
-    field(p10, "name", c7), kind(p10, "class_definition"),
-    field(p10, "superclasses", c11), kind(c11, "argument_list"), child(c11, c12, _), @doc(KX) = @doc(K).
+    kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, node(_, KX, _, _, _), node(_, K, _, _, _),
+    KX = K, field(p10, "name", c7), kind(p10, "class_definition"),
+    field(p10, "superclasses", c11), kind(c11, "argument_list"), child(c11, c12, _).
 slot000_demand_enum_base(c2, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_6(n, K, N1, N2, N3, N4, SB),
     kind(n, "parenthesized_expression"), child(n, c2, _).
 
@@ -121,20 +121,21 @@ slot000_demand_alt_8(n, K, O) :- slot000_demand_class_ref(n, O), unset(K).
 .decl slot000_demand_class_ref(n: node, o: loc)
 slot000_demand_class_ref(n, UNSET_1) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "attribute"), inside(n, p6, "module"), within(c7, p6),
-    kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, text(KX, t8), text(K, t8),
-    field(p10, "name", c7), kind(p10, "class_definition"),
+    kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, node(_, KX, _, _, _), node(_, K, _, _, _),
+    KX = K, field(p10, "name", c7), kind(p10, "class_definition"),
     field(p10, "superclasses", c11), kind(c11, "argument_list"), child(c11, c12, _),
-    unset(UNSET_1), @doc(KX) = @doc(K).
+    unset(UNSET_1).
 slot000_demand_class_ref(c4, O) :- slot000_demand_alt_8(n, K, O), kind(n, "parenthesized_expression"),
     child(n, c4, _).
 slot000_demand_class_ref(c6, O) :- slot000_demand_alt_8(n, K, O), kind(n, "attribute"),
     field(n, "attribute", c5), kind(c5, "identifier"), node(_, c5, _, _, _), N = c5,
     field(n, "object", c6), inside(n, p7, "module"), within(c8, p7),
-    kind(c8, "identifier"), node(_, c8, _, _, _), OX = c8, text(OX, t9), text(O, t9),
-    field(p11, "name", c8), kind(p11, "class_definition"), field(p11, "body", c12),
-    within_stop(c13, c12, slot000_stop_7), kind(c13, "class_definition"),
-    field(c13, "name", c14), kind(c14, "identifier"), text(c14, t_k2), text(K, t_k2),
-    text(K, t15), text(N, t15), bind_name(c14, b17), site_latest(b17), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
+    kind(c8, "identifier"), node(_, c8, _, _, _), OX = c8, node(_, OX, _, _, _), node(_, O, _, _, _),
+    OX = O, field(p11, "name", c8), kind(p11, "class_definition"),
+    field(p11, "body", c12), within_stop(c13, c12, slot000_stop_7),
+    kind(c13, "class_definition"), field(c13, "name", c14), kind(c14, "identifier"),
+    text(c14, t_k2), text(K, t_k2), text(K, t15), text(N, t15), bind_name(c14, b17),
+    site_latest(b17), @doc(c14) = @doc(K), @doc(K) = @doc(N).
 
 // demand_str_base: the nodes str_base is asked at (its recursion looks at every descendant)
 .decl slot000_demand_str_base(n: node)
@@ -179,10 +180,11 @@ slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_4(n, K,
     slot000_enum_base(c5, SB, K, KX, N, N1, N2, N3, N4, OX, SB).
 slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "attribute"), slot000_class_ref(n, K, N, _, OX), inside(n, p6, "module"),
-    within(c7, p6), kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, text(KX, t8), text(K, t8),
-    field(p10, "name", c7), kind(p10, "class_definition"),
-    field(p10, "superclasses", c11), kind(c11, "argument_list"), child(c11, c12, _),
-    slot000_enum_base(c12, SB, K, KX, N, N1, N2, N3, N4, OX, SB), @doc(KX) = @doc(K).
+    within(c7, p6), kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7,
+    node(_, KX, _, _, _), node(_, K, _, _, _), KX = K, field(p10, "name", c7),
+    kind(p10, "class_definition"), field(p10, "superclasses", c11),
+    kind(c11, "argument_list"), child(c11, c12, _),
+    slot000_enum_base(c12, SB, K, KX, N, N1, N2, N3, N4, OX, SB).
 slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "parenthesized_expression"), child(n, c13, _),
     slot000_enum_name(c13, N4, K, KX, N, N1, N2, N3, N4, OX, SB).
@@ -213,11 +215,12 @@ slot000_alt_8(n, K, N, O, OX) :- slot000_demand_alt_8(n, K, O), kind(n, "parenth
 slot000_alt_8(n, K, N, O, OX) :- slot000_demand_alt_8(n, K, O), kind(n, "attribute"),
     field(n, "attribute", c5), kind(c5, "identifier"), node(_, c5, _, _, _), N = c5,
     field(n, "object", c6), slot000_class_ref(c6, O, N, O, OX), inside(n, p7, "module"),
-    within(c8, p7), kind(c8, "identifier"), node(_, c8, _, _, _), OX = c8, text(OX, t9), text(O, t9),
-    field(p11, "name", c8), kind(p11, "class_definition"), field(p11, "body", c12),
+    within(c8, p7), kind(c8, "identifier"), node(_, c8, _, _, _), OX = c8,
+    node(_, OX, _, _, _), node(_, O, _, _, _), OX = O, field(p11, "name", c8),
+    kind(p11, "class_definition"), field(p11, "body", c12),
     within_stop(c13, c12, slot000_stop_7), kind(c13, "class_definition"),
     field(c13, "name", c14), kind(c14, "identifier"), text(c14, t_k2), text(K, t_k2),
-    text(K, t15), text(N, t15), bind_name(c14, b17), site_latest(b17), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
+    text(K, t15), text(N, t15), bind_name(c14, b17), site_latest(b17), @doc(c14) = @doc(K), @doc(K) = @doc(N).
 
 // main's file condition {"notRegex": "\\.pyi$"}
 .decl SLOT000_raw(at: node)

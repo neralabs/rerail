@@ -19,7 +19,7 @@ PTH101(F, n) :- kind(n, "call"), field(n, "function", c1), pth101_callee(c1, F),
     ; kind(n, "call"), pth101_arg_path_1(n, a1_2), S = a1_2
     ),
 
-    count : { field(n, "arguments", c3), kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "keyword_argument"), field(c4, "name", c5), glob("dir_fd", c5), field(c4, "value", c6), !pth101_none_literal(c6) } = 0,
+    count : { field(n, "arguments", c3), kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "keyword_argument"), pth101_tok_has_4(c4), field(c4, "value", c13), !pth101_none_literal(c13) } = 0,
     !pth101_file_descriptor(S).
 
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
@@ -58,14 +58,13 @@ pth101_int_t(n) :- kind(n, "integer"), !glob("**[jJ]", n).
 pth101_int_t(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_int_t(c1).
 pth101_int_t(n) :- kind(n, "named_expression"), field(n, "value", c2), pth101_int_t(c2).
 pth101_int_t(n) :- kind(n, "unary_operator"), field(n, "argument", c3), pth101_intlike(c3).
-pth101_int_t(n) :- kind(n, "binary_operator"),
-    count : { field(n, "operator", c4), glob("[/@]", c4) } = 0, field(n, "left", c5),
-    pth101_intlike(c5), field(n, "right", c6), pth101_intlike(c6).
-pth101_int_t(n) :- kind(n, "boolean_operator"), field(n, "left", c7), pth101_intlike(c7),
-    field(n, "right", c8), pth101_intlike(c8), pth101_alt_1(n).
-pth101_int_t(n) :- kind(n, "conditional_expression"), child(n, c11, _), pth101_arm_if(c11),
-    pth101_intlike(c11), child(n, c12, _), pth101_arm_else(c12), pth101_intlike(c12), child(n, c13, _),
-    (pth101_arm_if(c13) ; pth101_arm_else(c13)), pth101_int_t(c13).
+pth101_int_t(n) :- kind(n, "binary_operator"), !pth101_tok_has_3(n), field(n, "left", c12),
+    pth101_intlike(c12), field(n, "right", c13), pth101_intlike(c13).
+pth101_int_t(n) :- kind(n, "boolean_operator"), field(n, "left", c14), pth101_intlike(c14),
+    field(n, "right", c15), pth101_intlike(c15), pth101_alt_1(n).
+pth101_int_t(n) :- kind(n, "conditional_expression"), child(n, c18, _), pth101_arm_if(c18),
+    pth101_intlike(c18), child(n, c19, _), pth101_arm_else(c19), pth101_intlike(c19), child(n, c20, _),
+    (pth101_arm_if(c20) ; pth101_arm_else(c20)), pth101_int_t(c20).
 
 // bool_t(n): the JSON util `bool-t`, used where the JSON says `matches: "bool-t"`
 .decl pth101_bool_t(n: node)
@@ -146,24 +145,20 @@ pth101_class_int_member(n) :- kind(n, "class_definition"), field(n, "body", c1),
 
 // class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
 .decl pth101_class_ref(n: node)
-pth101_class_ref(n) :- pth101_demand_class_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), pth101_alt_10(st2).
-pth101_class_ref(n) :- pth101_demand_class_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _), pth101_class_ref(c4).
+pth101_class_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, pth101_alt_10(st2).
+pth101_class_ref(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pth101_class_ref(c4).
 
 // inner_class_name(n): the JSON util `inner-class-name`, used where the JSON says `matches: "inner-class-name"`
 .decl pth101_inner_class_name(n: node)
 pth101_inner_class_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), MID = n, bind_name(n, b1),
-    site_latest(b1), site_scope(b1, "class"), main_form(b1, "definition"),
-    (st2 = b1 ; within(b1, st2)), pth101_alt_10(st2).
+    site_latest(b1), site_scope(b1, "class"), main_form(b1, "definition"), st2 = b1,
+    pth101_alt_10(st2).
 
 // outer_ref(n): the JSON util `outer-ref`, used where the JSON says `matches: "outer-ref"`
 .decl pth101_outer_ref(n: node)
-pth101_outer_ref(n) :- pth101_demand_outer_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)),
+pth101_outer_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     (pth101_outer_class(st2) ; field(st2, "definition", c1), pth101_outer_class(c1)).
-pth101_outer_ref(n) :- pth101_demand_outer_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _), pth101_outer_ref(c4).
+pth101_outer_ref(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pth101_outer_ref(c4).
 
 // mid_ref(n): the JSON util `mid-ref`, used where the JSON says `matches: "mid-ref"`
 .decl pth101_mid_ref(n: node)
@@ -200,6 +195,18 @@ pth101_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4
     match("else", t2).
 pth101_tok_follows_2(n) :- structural_before(n, g3),
     match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^[/@]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth101_tok_has_3(n: node)
+.stored pth101_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth101_tok_has_3(n) :- field(n, "operator", c4), glob("[/@]", c4).
+pth101_tok_has_3(n) :- op(n, t5), match("[/@]", t5).
+pth101_tok_has_3(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[/@])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+pth101_tok_has_3(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[/@])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+pth101_tok_has_3(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[/@])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl pth101_args_plain(l: node, a: node, i: number)
@@ -264,31 +271,29 @@ pth101_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
 pth101_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth101_args_kwp(l, "path", _),
     !pth101_args_pos(l, _, 0), !kind(l, "generator_expression").
 
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^dir_fd$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth101_tok_has_4(n: node)
+.stored pth101_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth101_tok_has_4(n) :- field(n, "name", c5), glob("dir_fd", c5).
+pth101_tok_has_4(n) :- op(n, t6), match("dir_fd", t6).
+pth101_tok_has_4(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g7).
+pth101_tok_has_4(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g7).
+pth101_tok_has_4(n) :- node_text(n, g7), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g7).
+
 // demand_int_with: the rows of int_with its callers ask for (the metavariable columns they pass in)
 .decl pth101_demand_int_with(n: node, wn: loc)
 pth101_demand_int_with(st12, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
-    main_form(b11, "with"), (st12 = b11 ; within(b11, st12)).
+    main_form(b11, "with"), st12 = b11.
 pth101_demand_int_with(c1, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
-    main_form(b11, "with"), (st12 = b11 ; within(b11, st12)), within(c1, st12).
+    main_form(b11, "with"), st12 = b11, within(c1, st12).
 
 // demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
 .decl pth101_demand_alt_3(n: node, wn: loc)
 pth101_demand_alt_3(c2, WN) :- pth101_demand_int_with(n, WN), kind(n, "as_pattern"), child(n, c1, _),
     child(_, c1, 0), pth101_int_initializer(c1), field(n, "alias", c2).
-
-// demand_outer_ref: the nodes outer_ref is asked at (its recursion looks at every descendant)
-.decl pth101_demand_outer_ref(n: node)
-pth101_demand_outer_ref(c4) :- pth101_demand_outer_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _).
-pth101_demand_outer_ref(c2) :- kind(n, "attribute"), field(n, "attribute", c1), node(_, c1, _, _, _), MID = c1,
-    field(n, "object", c2).
-
-// demand_class_ref: the nodes class_ref is asked at (its recursion looks at every descendant)
-.decl pth101_demand_class_ref(n: node)
-pth101_demand_class_ref(c4) :- pth101_demand_class_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _).
-pth101_demand_class_ref(c2) :- kind(n, "attribute"), field(n, "attribute", c1), node(_, c1, _, _, _), ATTR = c1,
-    field(n, "object", c2).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pth101_alt_1(n: node)
@@ -303,17 +308,15 @@ pth101_alt_3(n, WN) :- pth101_demand_alt_3(n, WN), child(n, c1, _), text(c1, t_w
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 .decl pth101_alt_5(n: node)
-pth101_alt_5(n) :- ref_site(n, b1), site_only(b1), (st2 = b1 ; within(b1, st2)),
+pth101_alt_5(n) :- ref_site(n, b1), site_only(b1), st2 = b1,
     count : { kind(st2, "assignment"), field(st2, "type", c3), kind(c3, "type") } = 0,
     binding_value(b1, x4), pth101_int_initializer(x4).
-pth101_alt_5(n) :- ref_site(n, b5), site_only(b5), (st6 = b5 ; within(b5, st6)),
+pth101_alt_5(n) :- ref_site(n, b5), site_only(b5), st6 = b5,
     count : { child(st6, c7, _), (kind(c7, "list_splat_pattern") ; kind(c7, "dictionary_splat_pattern")) } = 0,
     site_annotation(b5, o8), pth101_int_annotation(o8).
-pth101_alt_5(n) :- ref_site(n, b9), site_only(b9), (st10 = b9 ; within(b9, st10)),
-    pth101_int_def(st10).
+pth101_alt_5(n) :- ref_site(n, b9), site_only(b9), st10 = b9, pth101_int_def(st10).
 pth101_alt_5(n) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11), main_form(b11, "with"),
-    (st12 = b11 ; within(b11, st12)),
-    (pth101_int_with(st12, WN) ; within(c1, st12), pth101_int_with(c1, WN)).
+    st12 = b11, (pth101_int_with(st12, WN) ; within(c1, st12), pth101_int_with(c1, WN)).
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl pth101_alt_7(n: node)
@@ -324,7 +327,7 @@ pth101_alt_7(n) :- bind_name(n, b3), site_latest(b3), site_scope(b3, "class"),
     (main_form(b3, "annotated") ; main_form(b3, "annotation")),
     site_annotation(b3, o4), pth101_int_annotation(o4).
 pth101_alt_7(n) :- bind_name(n, b5), site_latest(b5), site_scope(b5, "class"),
-    main_form(b5, "definition"), (st6 = b5 ; within(b5, st6)), pth101_int_def(st6).
+    main_form(b5, "definition"), st6 = b5, pth101_int_def(st6).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl pth101_alt_10(n: node)

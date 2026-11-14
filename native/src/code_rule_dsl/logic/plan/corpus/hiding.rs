@@ -202,7 +202,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         Literal::Cmp { l: Term::Var(v), r: Term::Str(s), .. } | Literal::Cmp { l: Term::Str(s), r: Term::Var(v), .. }
                             if qualified(s.as_str()).is_none() && kind_of.contains_key(v.as_str()) =>
                         {
-                            edits.push((i, k, Edit::Kind(format!("{}:{s}", dialect_label(&kind_of[v.as_str()])))));
+                            edits.push((i, k, Edit::Str(s.as_str().to_owned(), format!("{}:{s}", dialect_label(&kind_of[v.as_str()])))));
                             changed = true;
                             continue;
                         }
@@ -332,10 +332,14 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             match (&mut prog.rules[i].body.make_mut()[k], edit) {
                 (Literal::Nearest { kindset, .. }, Edit::Kindset(name)) => *kindset = name,
                 (Literal::Atom(a) | Literal::Agg { atom: a, .. }, Edit::Rel(name)) => a.rel = name.into(),
-                (Literal::Cmp { l, r, .. }, Edit::Kind(kind)) => match (l, r) {
-                    (Term::Str(s), Term::Var(_)) | (Term::Var(_), Term::Str(s)) => *s = kind.into(),
-                    _ => unreachable!("a kind's comparison holds its string"),
-                },
+                // The string side of the comparison the edit was recorded for: the one that named `from`.
+                (Literal::Cmp { l, r, .. }, Edit::Str(from, to)) => {
+                    for t in [l, r] {
+                        if matches!(t, Term::Str(s) if s.as_str() == from) {
+                            *t = Term::Str(to.clone().into());
+                        }
+                    }
+                }
                 _ => unreachable!("an edit is of the literal it was recorded for"),
             }
         }
@@ -653,8 +657,8 @@ fn reaching(prog: &Program, seeds: &[BTreeMap<String, Fact>]) -> Vec<bool> {
 enum Edit {
     Kindset(String),
     Rel(String),
-    /// A comparison's kind, named in a guest's grammar (decision 0222).
-    Kind(String),
+    /// A comparison's kind name, qualified in a guest's grammar: (as written, qualified).
+    Str(String, String),
 }
 
 /// What each derived relation's columns carry, to a fixpoint over the rules.

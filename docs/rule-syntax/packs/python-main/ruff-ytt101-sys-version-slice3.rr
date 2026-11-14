@@ -60,8 +60,8 @@ ytt101_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // splat_target(n): the JSON util `splat-target`, used where the JSON says `matches: "splat-target"`
 .decl ytt101_splat_target(n: node)
 ytt101_splat_target(n) :-
-    ( kind(n, "attribute"), field(n, "object", c1), kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"), sym_of(c2, "sys"), field(n, "attribute", c3), glob("version", c3)
-    ; kind(n, "list_splat"), child(n, c4, _), kind(c4, "identifier"), sym_of(c4, "sys.version")
+    ( kind(n, "attribute"), field(n, "object", c1), kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"), sym_of(c2, "sys"), ytt101_tok_has_4(n)
+    ; kind(n, "list_splat"), child(n, c3, _), kind(c3, "identifier"), sym_of(c3, "sys.version")
     ),
     ytt101_subscripted(n).
 
@@ -97,6 +97,18 @@ ytt101_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
 ytt101_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
 ytt101_tok_has_3(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^version$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt101_tok_has_4(n: node)
+.stored ytt101_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt101_tok_has_4(n) :- field(n, "attribute", c3), glob("version", c3).
+ytt101_tok_has_4(n) :- op(n, t4), match("version", t4).
+ytt101_tok_has_4(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
+ytt101_tok_has_4(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
+ytt101_tok_has_4(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
 
 // counted(n): 3 identical copies of one rule set (`counted_1`, `counted_2`, `counted_3`), folded into one.
 .decl ytt101_counted(n: node)

@@ -97,8 +97,7 @@ c408_all_entry(e, x) :- c408_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), 
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl c408_alt_1(n: node)
-c408_alt_1(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    !kind(st2, "global_statement").
+c408_alt_1(n) :- ref_site(n, b1), st2 = b1, !kind(st2, "global_statement").
 c408_alt_1(n) :- docof(n, d4), modnode(d4, m5),
     ( kind(n, "identifier"), !bind_only(n), miss(n, x3)
     ; (kind(n, "string") ; kind(n, "concatenated_string")), c408_all_entry(n, x3), !bound_in(m5, x3)

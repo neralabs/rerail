@@ -160,7 +160,8 @@ async221_demand_alt_4(n) :- async221_callee_position(n), async221_async_context(
 async221_demand_p_wait_arg(c16) :- async221_demand_p_wait_arg(n), kind(n, "parenthesized_expression"),
     child(n, c16, _).
 async221_demand_p_wait_arg(c4) :- async221_demand_alt_4(n), async221_up_3(n, p2), async221_arg_mode_1(p2, a3), M = a3,
-    within(c4, p2), node(_, c4, _, _, _), MODE_ARG = c4, text(M, t5), text(MODE_ARG, t5), @doc(M) = @doc(MODE_ARG).
+    within(c4, p2), node(_, c4, _, _, _), MODE_ARG = c4, node(_, M, _, _, _), node(_, MODE_ARG, _, _, _),
+    M = MODE_ARG.
 
 // demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
 .decl async221_demand_async_context(n: node)
@@ -200,4 +201,5 @@ async221_stop_1(n) :- async221_lambda_body(n).
 .decl async221_alt_4(n: node)
 async221_alt_4(n) :- async221_demand_alt_4(n), async221_up_2(n, p1).
 async221_alt_4(n) :- async221_demand_alt_4(n), async221_up_3(n, p2), async221_arg_mode_1(p2, a3), M = a3, within(c4, p2),
-    node(_, c4, _, _, _), MODE_ARG = c4, text(M, t5), text(MODE_ARG, t5), async221_p_wait_arg(c4), @doc(M) = @doc(MODE_ARG).
+    node(_, c4, _, _, _), MODE_ARG = c4, node(_, M, _, _, _), node(_, MODE_ARG, _, _, _), M = MODE_ARG,
+    async221_p_wait_arg(c4).

@@ -20,7 +20,7 @@ pyi055_union_head(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), py
 
 // pipe_bin(n): the JSON util `pipe-bin`, used where the JSON says `matches: "pipe-bin"`
 .decl pyi055_pipe_bin(n: node)
-pyi055_pipe_bin(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+pyi055_pipe_bin(n) :- kind(n, "binary_operator"), pyi055_tok_has_1(n).
 
 // pipe(n): the JSON util `pipe`, used where the JSON says `matches: "pipe"`
 .decl pyi055_pipe(n: node)
@@ -40,8 +40,8 @@ pyi055_union(n) :- pyi055_union_sub(n).
 // sole_tuple(n): the JSON util `sole-tuple`, used where the JSON says `matches: "sole-tuple"`
 .decl pyi055_sole_tuple(n: node)
 pyi055_sole_tuple(n) :- kind(n, "tuple"),
-    ( child(p1, n, _), kind(p1, "subscript"), pyi055_union_sub(p1), !pyi055_tok_has_1(p1)
-    ; child(p2, n, _), kind(p2, "type"), child(p3, p2, _), kind(p3, "type_parameter"), !pyi055_tok_has_2(p3), child(p4, p3, _), pyi055_union_sub(p4)
+    ( child(p1, n, _), kind(p1, "subscript"), pyi055_union_sub(p1), !pyi055_tok_has_2(p1)
+    ; child(p2, n, _), kind(p2, "type"), child(p3, p2, _), kind(p3, "type_parameter"), !pyi055_tok_has_3(p3), child(p4, p3, _), pyi055_union_sub(p4)
     ).
 
 
@@ -108,36 +108,39 @@ pyi055_tc_test(n) :- kind(n, "identifier"),
     ; sym_of(n, "_typeshed.TYPE_CHECKING")
     ).
 
-pyi055_tc_test(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("TYPE_CHECKING", c1).
-pyi055_tc_test(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi055_tc_test(c2).
+pyi055_tc_test(n) :- kind(n, "attribute"), pyi055_tok_has_4(n).
+pyi055_tc_test(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), pyi055_tc_test(c9).
 
 // in_tc_block(n): the JSON util `in-tc-block`, used where the JSON says `matches: "in-tc-block"`
 .decl pyi055_in_tc_block(n: node)
-pyi055_in_tc_block(n) :- inside(n, p1, "if_statement"), field(_, "consequence", n),
-    field(p1, "condition", c2), pyi055_tc_test(c2).
+pyi055_in_tc_block(n) :- inside(n, p1, "if_statement"),
+    field(p1, "consequence", f2), (f2 = n ; within(n, f2)), field(p1, "condition", c3),
+    pyi055_tc_test(c3).
 
 // in_type_statement(n): the JSON util `in-type-statement`, used where the JSON says `matches: "in-type-statement"`
 .decl pyi055_in_type_statement(n: node)
 pyi055_in_type_statement(n) :- inside(n, p1, "type_alias_statement").
-pyi055_in_type_statement(n) :- within(n, p2), field(_, "type_parameters", n),
+pyi055_in_type_statement(n) :- within(n, p2),
+    field(p2, "type_parameters", f3), (f3 = n ; within(n, f3)),
     (kind(p2, "function_definition") ; kind(p2, "class_definition")).
 
 // in_annotation_slot(n): the JSON util `in-annotation-slot`, used where the JSON says `matches: "in-annotation-slot"`
 .decl pyi055_in_annotation_slot(n: node)
-pyi055_in_annotation_slot(n) :- within(n, p1), field(_, "type", n),
+pyi055_in_annotation_slot(n) :- within(n, p1),
+    field(p1, "type", f2), (f2 = n ; within(n, f2)),
     ( kind(p1, "assignment")
     ; kind(p1, "typed_parameter")
     ; kind(p1, "typed_default_parameter")
     ).
 
-pyi055_in_annotation_slot(n) :- inside(n, p2, "function_definition"),
-    field(_, "return_type", n).
+pyi055_in_annotation_slot(n) :- inside(n, p3, "function_definition"),
+    field(p3, "return_type", f4), (f4 = n ; within(n, f4)).
 
 // in_local_annotation(n): the JSON util `in-local-annotation`, used where the JSON says `matches: "in-local-annotation"`
 .decl pyi055_in_local_annotation(n: node)
-pyi055_in_local_annotation(n) :- inside(n, p1, "assignment"), field(_, "type", n),
-    within_stop(p1, p2, pyi055_stop_6), kind(p2, "function_definition").
+pyi055_in_local_annotation(n) :- inside(n, p1, "assignment"),
+    field(p1, "type", f2), (f2 = n ; within(n, f2)), within_stop(p1, p3, pyi055_stop_6),
+    kind(p3, "function_definition").
 
 // future_file(n): the JSON util `future-file`, used where the JSON says `matches: "future-file"`
 .decl pyi055_future_file(n: node)
@@ -234,27 +237,51 @@ PYI055_unnecessary_type_union_raw(n) :- pyi055_bad_union(n),
 PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_string_annotation(n, UNION).
 PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_escaped_or_concatenated_annotation(n, UNION).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi055_tok_has_1(n: node)
 .stored pyi055_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi055_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
-pyi055_tok_has_1(n) :- op(n, t3), match(",", t3).
-pyi055_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-pyi055_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-pyi055_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+pyi055_tok_has_1(n) :- field(n, "operator", c1), glob("|", c1).
+pyi055_tok_has_1(n) :- op(n, t2), match("\\|", t2).
+pyi055_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi055_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi055_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi055_tok_has_2(n: node)
 .stored pyi055_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi055_tok_has_2(n) :- child(n, c12, _), glob("\\,", c12).
-pyi055_tok_has_2(n) :- op(n, t13), match(",", t13).
-pyi055_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+pyi055_tok_has_2(n) :- child(n, c2, _), glob("\\,", c2).
+pyi055_tok_has_2(n) :- op(n, t3), match(",", t3).
+pyi055_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi055_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi055_tok_has_2(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi055_tok_has_3(n: node)
+.stored pyi055_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi055_tok_has_3(n) :- child(n, c12, _), glob("\\,", c12).
+pyi055_tok_has_3(n) :- op(n, t13), match(",", t13).
+pyi055_tok_has_3(n) :- child(n, c19, _), structural_before(c19, g14),
     match("(?s)^(?:.*(?:,).*)$", g14).
-pyi055_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+pyi055_tok_has_3(n) :- child(n, c19, _), structural_after(c19, g14),
     match("(?s)^(?:.*(?:,).*)$", g14).
-pyi055_tok_has_2(n) :- node_text(n, g14), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g14).
+pyi055_tok_has_3(n) :- node_text(n, g14), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g14).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^TYPE_CHECKING$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi055_tok_has_4(n: node)
+.stored pyi055_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi055_tok_has_4(n) :- field(n, "attribute", c1), glob("TYPE_CHECKING", c1).
+pyi055_tok_has_4(n) :- op(n, t2), match("TYPE_CHECKING", t2).
+pyi055_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:TYPE_CHECKING)(?:\\W.*)?)$", g3).
+pyi055_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:TYPE_CHECKING)(?:\\W.*)?)$", g3).
+pyi055_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:TYPE_CHECKING)(?:\\W.*)?)$", g3).
 
 // demand_alt_10: the nodes alt_10 is asked at (its recursion looks at every descendant)
 .decl pyi055_demand_alt_10(n: node)

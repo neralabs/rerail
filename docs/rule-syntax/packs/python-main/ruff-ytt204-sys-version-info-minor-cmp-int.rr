@@ -48,7 +48,7 @@ ytt204_left_operand(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
 .decl ytt204_target(n: node)
 ytt204_target(n) :- kind(n, "attribute"), ytt204_left_operand(n), field(n, "object", c1),
-    ytt204_sys_version_info(c1), field(n, "attribute", c2), glob("minor", c2).
+    ytt204_sys_version_info(c1), ytt204_tok_has_2(n).
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
@@ -67,6 +67,18 @@ ytt204_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 ytt204_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^minor$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt204_tok_has_2(n: node)
+.stored ytt204_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt204_tok_has_2(n) :- field(n, "attribute", c2), glob("minor", c2).
+ytt204_tok_has_2(n) :- op(n, t3), match("minor", t3).
+ytt204_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:minor)(?:\\W.*)?)$", g4).
+ytt204_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:minor)(?:\\W.*)?)$", g4).
+ytt204_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:minor)(?:\\W.*)?)$", g4).
 
 // counted(n): 3 identical copies of one rule set (`counted_1`, `counted_2`, `counted_3`), folded into one.
 .decl ytt204_counted(n: node)
