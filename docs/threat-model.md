@@ -694,8 +694,9 @@ should not widen it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
-  (`src/setup/harness-registration.ts`). Set-up writes that path only when its `SystemRoot` makes it absolute, and
-  `node` otherwise: Claude Code would start a relative one from the hook's working folder.
+  (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
+  drive's root folder (`C:\`) or a UNC share, and `node` otherwise: Windows completes any other path from a current
+  folder or drive, and a hook's current folder is the repository it runs in.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor

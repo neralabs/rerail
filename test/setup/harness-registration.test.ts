@@ -402,7 +402,14 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
   });
 
-  it("writes node for the Windows hooks where SystemRoot is a relative path, which would name a cmd.exe in each repository", async () => {
+  it.each([
+    ["Windows", "node"],
+    [String.raw`\Windows`, "node"],
+    ["/Windows", "node"],
+    ["C:Windows", "node"],
+    [String.raw`D:\Windows`, "cmd.exe"],
+    [String.raw`\\server\share\Windows`, "cmd.exe"],
+  ])("writes the Windows hooks with SystemRoot %j as %s: cmd.exe only by a full path, which no current folder completes", async (systemRoot, form) => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
@@ -410,13 +417,15 @@ describe("Claude Code settings.json", () => {
     await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
-    // Claude Code starts a relative command from the hook's working folder: a `Windows\System32\cmd.exe` committed to a
-    // repository would run on every hook event there.
-    vi.stubEnv("SystemRoot", "Windows");
+    // Claude Code starts the command from the hook's working folder, a repository. Windows completes a path without a
+    // drive or without a root folder from there or from its drive: a `Windows\System32\cmd.exe` committed to the
+    // repository, or one on its drive, would run on every hook event.
+    vi.stubEnv("SystemRoot", systemRoot);
 
     await registerHarnesses(windows);
     const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
-    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+    const expected = form === "node" ? viaPath : cmdEntry(launcherPath, nodePath, hookPath);
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [expected] }]);
     await unregisterHarnesses(windows);
     expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
   });
