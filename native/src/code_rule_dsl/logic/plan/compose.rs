@@ -61,7 +61,7 @@ pub(super) struct Compiled {
     prepares: Arc<std::sync::OnceLock<bool>>,
 }
 
-pub(super) fn accepts(prog: &Program) -> Result<bool> {
+pub fn accepts(prog: &Program) -> Result<bool> {
     if !prog.lattice.is_empty()
         || !prog.answers.is_empty()
         || !prog.gates.is_empty()

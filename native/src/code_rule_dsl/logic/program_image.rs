@@ -39,6 +39,8 @@ use super::front::{Lists, Name, Program, Value};
 use super::program_facts::{self, Facts};
 use std::collections::BTreeMap;
 
+pub mod about;
+pub mod analyses;
 pub mod build;
 pub mod csr;
 mod encoder;
@@ -49,6 +51,8 @@ pub mod strings;
 mod tree;
 pub mod version;
 
+pub use about::{About, LatticeRef, NativeKind, NativeRef};
+pub use analyses::{Edges, Strata};
 pub use build::{Builder, Rel, RuleBuilder, T};
 pub use extents::Extents;
 pub use grouped::Grouped;
@@ -57,8 +61,10 @@ pub use strings::Strings;
 pub use tree::Tree;
 pub use version::{DeclRef, FactsRef, Made, Version};
 
-pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x02";
-pub const FORMAT: u32 = 2;
+pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x03";
+/// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
+/// name included (`about::RELATION_COLUMNS`), so a format-2 image is read again from its text.
+pub const FORMAT: u32 = 3;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
 const ABOUT: &str = "a";
 

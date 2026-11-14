@@ -4411,7 +4411,7 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
 }
 
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
-fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
+pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
     let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
     for r in &prog.rules {
         by_head.entry(r.head.rel.as_str()).or_default().push(r);

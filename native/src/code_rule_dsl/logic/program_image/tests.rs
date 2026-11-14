@@ -342,14 +342,15 @@ fn ids_are_the_same_through_a_stack_and_a_fold() {
     p0.rules.extend((0..8).map(|k| Rule { head: atom(&format!("pad_{k}"), vec![v("x")]), body: vec![Literal::Atom(atom("a", vec![v("x")]))].into() }));
     let v0 = base(&p0);
     let mut b = v0.builder();
-    // "s" is a string constant of the base; here it becomes a relation.
-    let s = v0.find("s").unwrap();
+    // "^a$" is a string constant of the base (no relation: a native's seed `s` is one); here it becomes a relation.
+    let s = v0.find("^a$").unwrap();
     assert_eq!(v0.rel_of(s), None);
-    b.rule().head("s", &[T::Var("x")]).atom("a", &[T::Var("x"), T::Wild, T::Wild]).finish().unwrap();
+    assert!(v0.rel("s").is_some(), "a relation an about row names has an id");
+    b.rule().head("^a$", &[T::Var("x")]).atom("a", &[T::Var("x"), T::Wild, T::Wild]).finish().unwrap();
     b.rule().head("brand_new", &[T::Str("never seen")]).finish().unwrap();
     let (v1, made) = b.finish().unwrap();
     assert_eq!(made, Made::Overlay);
-    assert_eq!(v1.find("s"), Some(s));
+    assert_eq!(v1.find("^a$"), Some(s));
     let rs = v1.rel_of(s).unwrap();
     assert_eq!(rs.0, v0.rel_end());
     let new = v1.rel("brand_new").unwrap();
@@ -479,4 +480,119 @@ fn a_delta_is_the_size_of_its_edit() {
     assert!(sizes[1].0 > 5 * sizes[0].0, "{sizes:?}");
     assert_eq!(sizes[0].1, sizes[1].1, "{sizes:?}");
     assert!(sizes[1].1 < 2048, "{sizes:?}");
+}
+
+/// The analyses over `v` say what their tree forms say of `p`, `v`'s program: the strata (as sets, the version's
+/// dependencies first), the edges, what the outputs need, the projections, what answers produce, and whether the
+/// composed path accepts it.
+fn analyses_agree(v: &Version, p: &Program) {
+    use super::{About, analyses};
+    use crate::code_rule_dsl::logic::front;
+    use std::collections::{BTreeMap, BTreeSet};
+    let about = About::of(v);
+    let name = |r: RelId| v.rel_name(r).to_owned();
+    match (front::strata(p), analyses::strata(v, &about)) {
+        (Ok((sccs, edges)), Ok(s)) => {
+            let want: BTreeSet<BTreeSet<String>> = sccs.into_iter().collect();
+            let got: BTreeSet<BTreeSet<String>> = s.sccs.iter().map(|c| c.iter().map(|&r| name(r)).collect()).collect();
+            assert_eq!(got, want, "strata");
+            let at: std::collections::HashMap<RelId, usize> = s.sccs.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |&r| (r, i))).collect();
+            for (h, w, _) in s.edges.iter() {
+                if let (Some(a), Some(b)) = (at.get(&h), at.get(&w)) {
+                    assert!(b <= a, "{} before {}", name(w), name(h));
+                }
+            }
+            let mut got: front::Edges = BTreeMap::new();
+            for (h, w, neg) in s.edges.iter() {
+                got.entry(name(h)).or_default().insert((name(w), neg));
+            }
+            let want: front::Edges = edges.into_iter().filter(|(_, e)| !e.is_empty()).collect();
+            assert_eq!(got, want, "edges");
+        }
+        (Err(a), Err(b)) => assert_eq!(std::mem::discriminant(&a), std::mem::discriminant(&b), "{a} / {b}"),
+        (a, b) => panic!("strata: tree {:?}, version {:?}", a.map(|_| ()), b.map(|_| ())),
+    }
+    let want = front::needed(p, p.outputs.clone());
+    let need = analyses::needed(v, &about, v.outputs().map(|o| v.rel_of(o).expect("an output is a relation")));
+    let got: BTreeSet<String> = (0..v.rel_end()).map(RelId).filter(|r| need[r.index()]).map(name).collect();
+    assert_eq!(got, want, "needed");
+    let want: BTreeMap<String, Vec<(usize, i64)>> = crate::code_rule_dsl::logic::plan::projections(p).into_iter().collect();
+    let got: BTreeMap<String, Vec<(usize, i64)>> = analyses::projections(v).into_iter().map(|(r, e)| (name(r), e)).collect();
+    assert_eq!(got, want, "projections");
+    let want: Vec<(String, String)> = p.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |x| (x.clone(), req.clone()))).collect();
+    let got: Vec<(String, String)> = about.produced().map(|(x, req)| (name(x), name(req))).collect();
+    assert_eq!(got, want, "produced");
+    let produced: BTreeMap<String, String> = crate::code_rule_dsl::logic::answers::produced(p).into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
+    assert_eq!(got.into_iter().collect::<BTreeMap<_, _>>(), produced, "produced, by relation");
+    let want = crate::code_rule_dsl::logic::plan::compose::accepts(p).ok();
+    let got = analyses::accepts(v, &about).ok();
+    assert_eq!(got, want, "accepts");
+}
+
+/// A program with what the analyses read beside rules: answers, a lattice its aggregate is monotone in, a native,
+/// projections with constants, and a stratum through a gated negation.
+fn analysed() -> Program {
+    let mut p = Program::default();
+    let neg = |mut a: Atom| { a.neg = true; a };
+    let mut gated = neg(atom("done_q", vec![v("x")]));
+    gated.gated = true;
+    p.rules = vec![
+        Rule { head: atom("e", vec![v("x"), v("y")]), body: vec![Literal::Atom(atom("in", vec![v("x"), v("y"), Term::Int(3)]))].into() },
+        Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() },
+        Rule { head: atom("p", vec![v("y")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Atom(atom("e", vec![v("x"), v("y")]))].into() },
+        Rule { head: atom("q", vec![v("x")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Atom(gated)].into() },
+        Rule { head: atom("best", vec![v("x"), v("n")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Agg { var: "n".into(), op: AggOp::Max, over: Some("y".into()), atom: atom("best", vec![v("x"), v("y")]) }].into() },
+        Rule { head: atom("lone", vec![v("x")]), body: vec![Literal::Atom(neg(atom("q", vec![v("x")]))), Literal::Atom(atom("p", vec![v("x")]))].into() },
+        Rule { head: atom("ask", vec![v("x")]), body: vec![Literal::Atom(atom("lone", vec![v("x")]))].into() },
+        Rule { head: atom("out", vec![v("x")]), body: vec![Literal::Atom(atom("told", vec![v("x")])), Literal::Atom(atom("r", vec![v("x")]))].into() },
+    ];
+    p.answers.insert("ask".into(), vec!["told".into()]);
+    p.lattice.insert("best".into(), crate::code_rule_dsl::logic::front::LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None });
+    p.natives.insert("r".into(), Native::Reach { seed: "lone".into(), edge: "e".into() });
+    p.rules.push(Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("seed", vec![v("x")]))].into() });
+    // Padding, so that a small edit is an overlay or a view, not a fold.
+    for k in 0..24 {
+        p.rules.push(Rule { head: atom("pad", vec![v("x")]), body: vec![Literal::Atom(atom("in", vec![v("x"), v("y"), Term::Int(k)]))].into() });
+    }
+    p.inputs = vec!["in".into(), "seed".into()];
+    p.outputs = vec!["out".into(), "best".into(), "pad".into()];
+    p
+}
+
+/// The analyses over a version agree with their tree forms: on the pack programs, on a program with answers,
+/// lattices and natives, on one that is not stratifiable, and on versions of a stack, whose ids are not a base's.
+#[test]
+fn the_analyses_over_a_version_say_what_the_tree_says() {
+    let mut n = 0;
+    for (_, prog) in pack_programs() {
+        let Ok(bytes) = encode(&prog) else { continue };
+        analyses_agree(&Version::open(&bytes).unwrap(), &prog);
+        n += 1;
+    }
+    assert!(n > 50, "{n}");
+    let p = analysed();
+    let b = base(&p);
+    analyses_agree(&b, &p);
+    analyses_agree(&base(&every_part()), &every_part());
+    // Not stratifiable: `lone` read negatively in its own component.
+    let mut bad = p.clone();
+    bad.rules.push(Rule { head: atom("q", vec![v("x")]), body: vec![Literal::Atom(atom("lone", vec![v("x")]))].into() });
+    analyses_agree(&base(&bad), &bad);
+    // An overlay that adds a relation and a native, and a view that drops one.
+    let mut more = p.clone();
+    more.rules.push(Rule { head: atom("extra", vec![v("x")]), body: vec![Literal::Atom(atom("out", vec![v("x")]))].into() });
+    more.natives.insert("far".into(), Native::Reach { seed: "extra".into(), edge: "e".into() });
+    more.outputs.push("far".into());
+    let (o, made) = edit(&b, &more);
+    assert_eq!(made, Made::Overlay);
+    analyses_agree(&o, &more);
+    let mut less = p.clone();
+    less.rules.retain(|r| r.head.rel.as_str() != "lone");
+    let (w, made) = edit(&b, &less);
+    assert_eq!(made, Made::View);
+    analyses_agree(&w, &less);
+    // The composed path's own kind of program.
+    let plain = Program { rules: p.rules[..3].to_vec(), inputs: vec!["in".into()], outputs: vec!["p".into()], ..Program::default() };
+    analyses_agree(&base(&plain), &plain);
+    assert_eq!(super::analyses::accepts(&base(&plain), &super::About::of(&base(&plain))).ok(), Some(true));
 }

@@ -643,6 +643,58 @@ The tree reader and `diff` are rewritten on these. So is a fold, which now copie
   28 M for the regions alone. That is still 15× cheaper than parsing. The check could run once when an image is
   stored, with the store's sha256 guarding it after that.
 
+### Stage 2, step 2: the whole-program analyses
+
+Built 2026-11-13. Two modules, and image format 3.
+
+| File | What it holds |
+|---|---|
+| `about.rs` | `About`: the program's other fields, read by type from its about rows. These are the answers, the natives (each with its kind and the relations it reads), the lattices and the count of gates, each relation by `RelId`. |
+| `analyses.rs` | `strata`, `needed`, `projections` and `accepts` over a version and its `About`. `About::produced` is `answers::produced`. |
+
+**Every relation a program names has an id.** That now includes the relations its declarations, facts, inputs,
+outputs and about rows name, not only those its rules name.
+
+- `about::RELATION_COLUMNS` says which columns of which about relation name a relation. The builder gives each
+  of them an id.
+- Without that, a relation an answer produces, or a native reads, has no id when no rule names it. An analysis
+  keyed by id would then miss it.
+- Format 3 marks this: format-2 images are read again from their text.
+
+**The analyses run without building strings.** Each one:
+
+- reads rules by `heads` and `readers` and the other fields by `About`;
+- keeps relations in vectors indexed by id;
+- keeps the edges as one sorted list of (head, dependency, negative) triples;
+- computes components with an iterative Tarjan over ids.
+
+Names are made only for an error.
+
+**Strata come in an order of ids, not of names.** Either order puts dependencies first.
+
+- It matters only where a stratum's index is a key. Step 6 checks those sites: `choices` keys per-rule choices by
+  index.
+- The tree form's sort by name was itself an accident of `BTreeSet<String>`.
+
+**Tests.** All 18 image and text tests pass. One is new: the analyses over a version say what their tree forms say.
+It checks:
+
+- the strata as sets, and that the version's order puts every dependency first;
+- the edges, what the outputs need, the projections, what the answers produce, and whether `compose` accepts the
+  program;
+- on every sampled pack program;
+- on a program with answers, a lattice whose aggregate it is monotone in, a native, a gated negation and
+  projections with constants;
+- on a program that is not stratifiable (the same error);
+- on an overlay that adds a relation and a native, and on a view that drops one.
+
+**dl1** (images required, profiling build, a fresh store): the 48 findings are the same as step 1's, cold and warm.
+Nothing calls the analyses yet, so what moved is the images' writing: cold 57.6 G instructions against 54.8 G
+(+5%; the encoder makes a relation of each about cell that names one), warm 20.0 G against 19.8 G.
+
+The tree forms of `projections`, `compose::accepts` and `answers::produced` are now `pub`, so the engine's tests
+can compare against them.
+
 ## Stage 2, step by step
 
 ### Where a warm run's program work is
@@ -684,7 +736,7 @@ with nothing left that wants their trees.
 ### The steps
 
 1. **The access layer** (§11). Built.
-2. **The whole-program analyses over a version:**
+2. **The whole-program analyses over a version.** Built ("Stage 2, step 2"):
    - `front::strata` (by `heads` and `readers`);
    - `front::needed` (reachability from the outputs, by `heads`);
    - `projections`;

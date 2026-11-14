@@ -222,6 +222,12 @@ impl<'p> Encoder<'p> {
         }
         r
     }
+    /// The atom of `name`, made a relation.
+    pub fn rel_atom_of(&mut self, name: &str) -> u32 {
+        let a = self.atom(name);
+        self.rel_of_atom(a);
+        a
+    }
     pub fn rel(&mut self, name: &str) -> u32 {
         let a = self.atom(name);
         self.rel_of_atom(a)

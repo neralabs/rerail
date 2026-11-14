@@ -199,6 +199,7 @@ impl<'p> Builder<'p> {
     /// Declares relation `rel`'s columns (names and types), replacing the parent's.
     pub fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
         let a = self.enc.atom(rel);
+        self.enc.rel_of_atom(a);
         let ids = cols.iter().map(|&(n, t)| (self.enc.atom(n), self.enc.atom(t))).collect();
         self.parts.decls_gone.remove(&a);
         self.parts.decls.insert(a, Decl { cols: ids, hash: encoder::decl_hash(rel, cols.iter().copied()) });
@@ -228,6 +229,7 @@ impl<'p> Builder<'p> {
     /// States relation `rel`'s facts, replacing the parent's.
     pub fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
         let a = self.enc.atom(rel);
+        self.enc.rel_of_atom(a);
         let cells = self.rows_of(rows);
         self.parts.facts_gone.remove(&a);
         self.parts.facts.insert(a, FactRel { rows: cells, hash: Self::hash_rows(rel, false, rows) });
@@ -244,12 +246,12 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     pub fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
-        let ids = names.iter().map(|n| self.enc.atom(n.as_ref())).collect();
+        let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.inputs = Some((ids, encoder::names_hash(0, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
     pub fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
-        let ids = names.iter().map(|n| self.enc.atom(n.as_ref())).collect();
+        let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
@@ -259,6 +261,16 @@ impl<'p> Builder<'p> {
         for (rel, rows) in about {
             let a = self.enc.atom(rel);
             let cells = self.rows_of(rows);
+            // Every relation a row names has an id (`about::RELATION_COLUMNS`).
+            for &c in super::about::relation_columns(rel) {
+                for row in rows {
+                    if let Some(Value::Str(s)) = row.get(c)
+                        && !s.is_empty()
+                    {
+                        self.enc.rel(s);
+                    }
+                }
+            }
             self.parts.facts.insert(a | ABOUT_BIT, FactRel { rows: cells, hash: Self::hash_rows(rel, true, rows) });
         }
         self.parts.owns_about = true;
