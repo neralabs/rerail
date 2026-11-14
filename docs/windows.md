@@ -300,7 +300,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node; elsewhere `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node, or where set-up finds no `cmd.exe` by its full System32 path; elsewhere `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 

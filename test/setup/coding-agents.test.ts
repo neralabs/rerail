@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import {
   codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
@@ -319,13 +319,17 @@ describe("whether a coding agent can read Rerail's data", () => {
     const other = join(dirname(home), "other-node");
     await mkdir(other);
     await writeFile(join(other, "node.exe"), "");
+    // cmd.exe at the path set-up names, on Linux too: set-up writes a cmd.exe entry only where a file is there.
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    const fileExists = (path: string) => path === cmd;
     const askedWith = async (path: string) => {
       vi.stubEnv("PATH", path);
-      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null });
+      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists });
     };
 
     expect(await askedWith(other)).toEqual({ connected: true, access: "file-tools" });
-    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32" });
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", fileExists });
+    expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
     expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
   });
 });

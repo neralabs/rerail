@@ -387,10 +387,10 @@ Set-up records the Node that ran it for the launcher, the hooks and the Claude C
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
 Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Where
-set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
-runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
-Node rather than two. `rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard
-count Claude Code as connected in either case.
+set-up found another `node` first on `PATH`, or none, and found `cmd.exe` by its full System32 path, Claude Code's
+hooks on Windows start through `cmd.exe`, which runs the recorded Node itself while it exists and `node.exe` from
+`PATH` once it is gone, so each hook event runs one Node rather than two. `rerail update` chooses again from the
+`PATH` it runs with, and `rerail status` and the dashboard count Claude Code as connected in either case.
 
 Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
 its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
