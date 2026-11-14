@@ -216,6 +216,12 @@ async function readRememberedPort(portFile: string): Promise<number | undefined>
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/**
+ * The whole error for the daemon log, as a failed request's is written there: its stack, which says where it was thrown,
+ * else its message. An error a worker thread threw arrives with the stack it had in that thread.
+ */
+const errorStack = (error: unknown): string => (error instanceof Error ? error.stack ?? error.message : String(error));
+
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
   try {
@@ -562,12 +568,13 @@ export class RerailDaemon {
    * Moves the rule provenance that audits recorded before the upgrade hold inline, a batch per short transaction while
    * the daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. The move runs
    * on a worker thread, so this thread keeps answering through its batches. It finds nothing to move on a file it has
-   * already moved, and starts no thread then. A failure goes to the daemon log; the audits read the same either way.
+   * already moved, and starts no thread then. A failure goes to the daemon log with its stack, and the next start tries
+   * again; a stop is no failure and logs nothing. The audits read the same either way.
    */
   #startProvenanceMove(): void {
     const stop = new AbortController();
     const done = moveRuleProvenancesInWorker(this.#databasePath, stop.signal).then(() => undefined, (error: unknown) => {
-      process.stderr.write(`rerail daemon: moving audit rule provenance stopped: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`rerail daemon: moving audit rule provenance failed: ${errorStack(error)}\n`);
     });
     this.#provenanceMove = { stop, done };
   }

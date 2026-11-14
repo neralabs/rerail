@@ -181,5 +181,31 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(namingStoredCopy(databasePath, provenance)).toBe(500);
     expect(moveLines(log.writes())).toEqual([]);
   }, 2 * TEST_MS);
+
+  it("writes a failure of the move's thread to the daemon log with the stack of where the thread threw it", async () => {
+    const { home, databasePath } = databaseWithInlineAudits();
+    // The first batch fails as it stores the shared copy, on the move's thread.
+    const refused = "this test refuses to store a rule provenance";
+    const database = new Database(databasePath);
+    try {
+      database.exec(`CREATE TRIGGER refuse_provenance BEFORE INSERT ON audit_rule_provenances BEGIN SELECT RAISE(ABORT, '${refused}'); END`);
+    } finally {
+      database.close();
+    }
+    const log = spyOnStderr();
+
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => daemon.close());
+    await until(() => moveLines(log.writes()).length > 0);
+
+    const lines = moveLines(log.writes());
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/\n +at moveBatch \(.*rule-provenance-move\.[jt]s:\d+:\d+\)\n/u);
+    expect(lines[0]).toMatch(/\n +at whenFree \(.*rule-provenance-move\.[jt]s:\d+:\d+\)\n/u);
+    expect(lines[0]).toMatch(/^rerail daemon: moving audit rule provenance failed: /u);
+    expect(lines[0]).toContain(`${refused}\n`);
+    // The audits read as before: each still holds its provenance in its row.
+    expect(fileState(databasePath).inline).toBe(20);
+  }, TEST_MS);
 });
 
