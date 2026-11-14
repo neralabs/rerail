@@ -1301,7 +1301,9 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per group and check, its events with findings to compare that the baseline records exact.
     let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
-        if event.want.is_ok() && !baseline.misses.contains_key(id) {
+        // `RERAIL_REPLAY_CHECK`: only the checks whose group or name holds it (one check, to time or profile it).
+        let named = std::env::var("RERAIL_REPLAY_CHECK").map_or(true, |c| event.group.contains(&c) || event.check.contains(&c));
+        if event.want.is_ok() && !baseline.misses.contains_key(id) && named {
             by_check.entry((event.group, &event.check)).or_default().push(k);
         }
     }
@@ -1312,8 +1314,10 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Per check: the events run, the failures, the time taken.
     let sampled: Vec<(usize, Vec<String>, std::time::Duration, String)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
+            .map(|k| {
+                // Named as a test's thread is, so each worker runs on a store of its own (`test_store::own`), not on
+                // the process's, which every worker would share.
+                std::thread::Builder::new().name(format!("convert::tests::replay_sample_{k}")).spawn_scoped(s, || {
                     let mut out = Vec::new();
                     while let Some(((group, check), ks)) = next() {
                         let begun = std::time::Instant::now();
@@ -1322,6 +1326,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
                     }
                     out
                 })
+                .expect("a sample thread")
             })
             .collect();
         workers.into_iter().flat_map(|w| w.join().expect("a sample thread")).collect()
