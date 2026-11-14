@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 672 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #672</div>
+  <h1>Daemon: a TLS key others can read stops remote access, not recording</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>A TLS key others can read: does the daemon serve this computer alone, fail a remote start, and stop on every other key main refuses?</p>
+  <ol><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>With a key others can read, the daemon serves this computer alone, over http. <b>Changes the intent.</b></li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>The start reads that key once, to tell it from another file.</li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A TLS start on loopback only then exits 0, on http.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> review e3e22bd70, since a code owner ruled on #664 and found the security side holds at 646270e08; this head builds the three conditions and the restart fix, and refactor 11cb52c2a can leave on your word.</p>
+  <div class="big">
+    <div><b class="w">637 lines</b><span>in 10 files. 246 ship, 391 are tests and text.</span></div><div><b class="w">Careful lane</b><span>A code owner approves.</span></div><div><b class="w">Waits on a code owner</b><span>CI passed at e3e22bd70.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/672">GitHub</a> on 14 November 2026, at head e3e22bd70.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr class="intent"><td class="k"><span class="lb">A</span><b>Exposed key</b></td><td class="in" data-l="Intended"><code>rerail daemon start</code> &quot;refuses a key file other users could read&quot;. <span class="tagx">threat model, T9</span></td><td class="fo" data-l="Found">Under <code>RERAIL_AUTOSTART=0</code> nothing is checked or recorded. <span class="tagx">issue #664</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 1.</b> The daemon starts again on loopback, over http, on three conditions. A maintainer must agree.</td></tr><tr><td class="k"><span class="lb">A</span><b>Which key</b></td><td class="in" data-l="Intended">&quot;Unread is refused, as a key others can read is&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">At 646270e08 a missing path or a certificate fell back too. <span class="tagx">a code owner&#x27;s check</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> Only a readable private key beside its certificate falls back; the start reads it once.</td></tr><tr><td class="k"><span class="lb">B</span><b>Exit code</b></td><td class="in" data-l="Intended">A key file with any group or other permission bit &quot;is refused&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">At 646270e08 a remote start exited 0. <span class="tagx">a code owner&#x27;s check</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 3.</b> A remote start exits 1; a loopback-only TLS start exits 0, on http.</td></tr></tbody></table>
+<figcaption>Issue #664; a code owner&#x27;s check of 646270e08, 13 November 2026.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Exposed key</td><td data-l="Where main states the intent"><code>docs/threat-model.md</code> line 643, under T9: &quot;`rerail daemon start --tls-cert &lt;pem&gt; --tls-key &lt;pem&gt;` serves HTTPS, and refuses a key file other users could read.&quot; <code>src/daemon/daemon.ts</code> lines 774 and 775, above <code>loadDaemonTls</code>: &quot;a key other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused&quot;.</td><td data-l="The cause, and what was measured"><code>runRerailDaemon</code> calls <code>loadDaemonTls</code> before it opens a store or a socket (<code>src/daemon/daemon.ts</code> line 851 at main), and the throw ends the process. Under <code>RERAIL_AUTOSTART=0</code> no hook starts a daemon. One hand start on Linux x64 at main (a9101752c): exit 1 after 686 ms. On Windows the refusal is new with #503: 0.1.4 served with such a key.</td></tr><tr><td class="k">A. Which key</td><td data-l="Where main states the intent"><code>src/daemon/daemon.ts</code> line 785 at main, a code comment in <code>loadDaemonTls</code>: &quot;Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.&quot;</td><td data-l="The cause, and what was measured">At 646270e08 the catch in <code>loadDaemonTls</code> made every failed read of who may read the key a <code>TlsKeyExposedError</code>, and any path others could read counted as a key. Hand starts on Linux x64: a missing file, a misspelled path, a folder, a file of text, the certificate and a FIFO exit 0 at 646270e08 and exit 1 with main&#x27;s message at 01138399c. <code>readPrivateKey</code> (line 804 at the head) is the read; since e076420d3 <code>certificateServes</code> then pairs the key with <code>--tls-cert</code>.</td></tr><tr><td class="k">B. Exit code</td><td data-l="Where main states the intent"><code>docs/reference.md</code> line 560 at main: &quot;A key file with any group or other permission bit (such as `0644`) is refused; `chmod 600` it.&quot; <code>src/cli/cli.ts</code> line 267 at main: <code>runDaemonStartCommand</code> ends <code>return 0;</code> once a daemon runs, and at main none runs with such a key.</td><td data-l="The cause, and what was measured">At 646270e08 <code>runDaemonStartCommand</code> returned a literal 0 for the loopback daemon. It counted 13 in the complexity scan, so 11cb52c2a first moves its launch options and dashboard link out, which brings it to 4, and 75d17d6d9 adds <code>remoteAccessExit</code>. The test at b8bd0f7e3 fails before that with &quot;expected +0 to be 1&quot; (Linux x64).</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 262" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Loopback start, high risk, 148 lines; B, Exit code and notice, medium risk, 98 lines. Read first: daemon.ts, cli.ts, daemon-entry.ts. To skim: 357 lines of tests and 34 lines of three docs and one release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk high"/><text x="49" y="38" class="t s">High risk, 148 lines</text><text x="128" y="59" text-anchor="end" class="t s">daemon.ts</text><g><title>daemon.ts: 143 changed lines, high risk</title><path d="M134 50h38.9a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-38.9z" class="rk high"/></g><text x="181.9" y="59" class="t n">143</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">daemon-entry.ts</text><g><title>daemon-entry.ts: 5 changed lines, high risk</title><path d="M134 67h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk high"/></g><text x="140.5" y="76" class="t n">5</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">3</text><rect x="4.5" y="90.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="104" text-anchor="middle" class="t b">B</text><rect x="30" y="95" width="14" height="10" rx="2" class="rk med"/><text x="49" y="104" class="t s">Medium risk, 98 lines</text><text x="128" y="125" text-anchor="end" class="t s">cli.ts</text><g><title>cli.ts: 92 changed lines, medium risk</title><path d="M134 116h23.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-23.6z" class="rk med"/></g><text x="166.6" y="125" class="t n">92</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">2</text><text x="128" y="142" text-anchor="end" class="t s">daemon-control.ts</text><g><title>daemon-control.ts: 6 changed lines, medium risk</title><path d="M134 133h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk med"/></g><text x="140.8" y="142" class="t n">6</text><line x1="4" y1="156" x2="336" y2="156" class="ar thin"/><text x="4" y="176" class="t b">Skim: tests and text</text><text x="128" y="196" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 315 changed lines, skim</title><path d="M134 187h90.5a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-90.5z" class="rk skim"/></g><text x="233.5" y="196" class="t n">315</text><text x="128" y="213" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 42 changed lines, skim</title><path d="M134 204h8.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-8.6z" class="rk skim"/></g><text x="151.6" y="213" class="t n">42</text><text x="128" y="230" text-anchor="end" class="t s">docs, release note</text><g><title>Three docs and one release note: 34 lines</title><path d="M134 221h6.2a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-6.2z" class="rk skim"/></g><text x="149.2" y="230" class="t n">34</text><rect x="4" y="246" width="14" height="10" rx="2" class="rk high"/><text x="22" y="255" class="t s">High</text><rect x="62.8" y="246" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="255" class="t s">Medium</text><rect x="133" y="246" width="14" height="10" rx="2" class="rk low"/><text x="151" y="255" class="t s">Low risk</text><rect x="214.6" y="246" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="255" class="t s">Skim</text></svg>
+<figcaption><code>cli.ts</code> is mostly the refactor.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>daemon.ts</code>: <code>loadDaemonTls</code>, <code>readPrivateKey</code>, <code>certificateServes</code>, <code>serveRerailDaemon</code>, <code>remoteRefusal</code>, <code>serveLoopback</code>, <code>loopbackArguments</code></b><span class="min">7 min</span><span class="x">Can a remote option, or the key&#x27;s bytes, reach the loopback daemon or its restart?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>cli.ts</code>: <code>remoteAccessExit</code>, refactor 11cb52c2a</b><span class="min">4 min</span><span class="x">Does every remote start exit 1, and does the refactor keep each check?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon-entry.ts</code>: the one call</b><span class="min">1 min</span><span class="x">Can #657&#x27;s lock hold both starts from here?</span></div></li><li><div><b>B: <code>daemon-control.ts</code></b><span class="min">1 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">4 min</span><span class="x">No assertion of main&#x27;s goes. T9 states the three conditions.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 214" role="img" aria-label="The changes by risk, high on top, against six checks. A, Loopback start, high risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Exit code, medium risk: fails without the fix holds with a limit, independent review holds with a limit, users lose nothing holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx hib"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk high"/><text x="28" y="34" class="t s b">High risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Loopback start</text><g><title>Loopback start, fails without the fix: Linux x64, each fix removed in turn fails a test: at 01138399c the key parse, the file check (the FIFO case times out at 5,000 ms) and the argument rewrite (12 arguments, not 7); at e3e22bd70 the certificate check and the reason line (&quot;expected 1 to be 2&quot;). The exposed-key CLI case fails over main&#x27;s source.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Loopback start, independent review: A code owner checked 646270e08, not this head. The automated reviewer approved e3e22bd70 with no blocker, follow-up or nit. It marks its two nits at 98c2462b6, both in `daemon.ts`, fixed: e076420d3 and 3d3459746 stop a start whose `--tls-cert` would not serve, and e3e22bd70 writes a restart&#x27;s reason to `daemon.log`.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Loopback start, users lose nothing: Hand starts on Linux x64 at e3e22bd70: nine kinds of `--tls-key` that main refuses, and seven kinds of `--tls-cert` that would not serve, stop the start with main&#x27;s exit code and message for that file; a private key serves https. On purpose: the exposed key is read once; a Windows daemon 0.1.4 served to other machines serves this computer alone.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Loopback start, rules scan: nothing new: The automated reviewer&#x27;s complexity scan over the four source files: 12 functions over the ceiling at main, 11 at 01138399c, 0 new; no new finding at 98c2462b6 or e3e22bd70. Each added or edited function counts 6 or less. `runRerailDaemon`, at 15, loses its `export` and nothing else.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Loopback start, Windows 11: no new failure: Windows 11 x64 at e3e22bd70: 52 test files passed, 0 failed, none outside main&#x27;s baseline. The exposed-key case runs through `icacls`; the `Get-Acl` failure is a key in an NTFS stream. Not run there: the two FIFO cases, the hand starts, and a key others read that this account may not, which the test adds only where its read fails.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Loopback start, CI at this head: CI run 43560638959 at e3e22bd70 ended with success at 05:24 UTC on 14 November 2026, on its first attempt: 18 jobs passed, 3 skipped (the Rust engine and two conformance jobs), none failed. Both Windows unit jobs, both Linux unit jobs and `Integration tests` passed.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><rect x="1" y="75" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="80" width="14" height="10" rx="2" class="rk med"/><text x="28" y="89" class="t s b">Medium risk</text><rect x="8.5" y="97.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="111" text-anchor="middle" class="t b">B</text><text x="34" y="111" class="t b">Exit code</text><g><title>Exit code, fails without the fix: Linux x64, 01138399c, a second run from a separate checkout: with `remoteAccessExit` returning 0, with the exit checked only for a daemon this start launched, or with the stderr line removed, the exposed-key CLI case fails. One line has no test: the state reader&#x27;s check that `remoteRefused` is a string.</title><circle cx="150" cy="107" r="7.4" class="ml"/><path d="M150 99.6A7.4 7.4 0 0 0 150 114.4Z" class="mlf"/></g><g><title>Exit code, independent review: A code owner asked for this exit code in the check of 646270e08 and has not read it. The automated reviewer approved e3e22bd70 with no blocker and no finding in these two files. Commit 11cb52c2a is a refactor inside a fix, which a code owner may want apart.</title><circle cx="184" cy="107" r="7.4" class="ml"/><path d="M184 99.6A7.4 7.4 0 0 0 184 114.4Z" class="mlf"/></g><g><title>Exit code, users lose nothing: A remote start with an exposed key exits 1, as at main, now with a loopback daemon running; a plain start and `rerail status` exit 0. On purpose: a TLS start on loopback only exits 0 on http where main exits 1. In 11cb52c2a the four checks of the start&#x27;s options run in main&#x27;s order: one reading, no test.</title><circle cx="218" cy="107" r="7.4" class="ml"/><path d="M218 99.6A7.4 7.4 0 0 0 218 114.4Z" class="mlf"/></g><g><title>Exit code, rules scan: nothing new: The same scan: `runDaemonStartCommand` counts 4 at 01138399c, down from 13. `remoteAccessExit` counts 4, `daemonStartLaunch` 3, `daemonStartReach` 5, `printDashboardLink` 4 and `printDaemon` 4. 0 new findings.</title><circle cx="252" cy="107" r="8" class="mh"/><path d="M248 107l3 3l5 -6" class="mt"/></g><g><title>Exit code, Windows 11: no new failure: Windows 11 x64 at e3e22bd70, the exposed-key CLI case, through `icacls`: the remote start exits 1 with the daemon on loopback; found running, a `--public-host` start exits 1 and a plain start 0; a TLS start on loopback only exits 0; `rerail status` prints the notice.</title><circle cx="286" cy="107" r="8" class="mh"/><path d="M282 107l3 3l5 -6" class="mt"/></g><g><title>Exit code, CI at this head: CI run 43560638959 at e3e22bd70 ended with success at 05:24 UTC on 14 November 2026, on its first attempt: 18 jobs passed, 3 skipped (the Rust engine and two conformance jobs), none failed. Both Windows unit jobs, both Linux unit jobs and `Integration tests` passed.</title><circle cx="320" cy="107" r="8" class="mh"/><path d="M316 107l3 3l5 -6" class="mt"/></g><text x="8" y="144" class="t s">1  fails without the fix</text><text x="168" y="144" class="t s">2  independent review</text><text x="8" y="160" class="t s">3  users lose nothing</text><text x="168" y="160" class="t s">4  rules scan: nothing new</text><text x="8" y="176" class="t s">5  Windows 11: no new failure</text><text x="168" y="176" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="200" r="8" class="mh"/><path d="M10 200l3 3l5 -6" class="mt"/></g><text x="28" y="204" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="200" r="7.4" class="ml"/><path d="M92 192.6A7.4 7.4 0 0 0 92 207.4Z" class="mlf"/></g><text x="106" y="204" class="t s">holds with a limit</text></svg>
+<figcaption>Start at A: it decides what other machines reach.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. Loopback start</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A code owner checked 646270e08, not this head. The automated reviewer approved e3e22bd70 with no blocker, follow-up or nit. It marks its two nits at 98c2462b6, both in <code>daemon.ts</code>, fixed: e076420d3 and 3d3459746 stop a start whose <code>--tls-cert</code> would not serve, and e3e22bd70 writes a restart&#x27;s reason to <code>daemon.log</code>.</td></tr><tr><td class="k">A. Loopback start</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">Hand starts on Linux x64 at e3e22bd70: nine kinds of <code>--tls-key</code> that main refuses, and seven kinds of <code>--tls-cert</code> that would not serve, stop the start with main&#x27;s exit code and message for that file; a private key serves https. On purpose: the exposed key is read once; a Windows daemon 0.1.4 served to other machines serves this computer alone.</td></tr><tr><td class="k">A. Loopback start</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">Windows 11 x64 at e3e22bd70: 52 test files passed, 0 failed, none outside main&#x27;s baseline. The exposed-key case runs through <code>icacls</code>; the <code>Get-Acl</code> failure is a key in an NTFS stream. Not run there: the two FIFO cases, the hand starts, and a key others read that this account may not, which the test adds only where its read fails.</td></tr><tr><td class="k">B. Exit code</td><td data-l="Check">fails without the fix</td><td data-l="It holds with this limit">Linux x64, 01138399c, a second run from a separate checkout: with <code>remoteAccessExit</code> returning 0, with the exit checked only for a daemon this start launched, or with the stderr line removed, the exposed-key CLI case fails. One line has no test: the state reader&#x27;s check that <code>remoteRefused</code> is a string.</td></tr><tr><td class="k">B. Exit code</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A code owner asked for this exit code in the check of 646270e08 and has not read it. The automated reviewer approved e3e22bd70 with no blocker and no finding in these two files. Commit 11cb52c2a is a refactor inside a fix, which a code owner may want apart.</td></tr><tr><td class="k">B. Exit code</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">A remote start with an exposed key exits 1, as at main, now with a loopback daemon running; a plain start and <code>rerail status</code> exit 0. On purpose: a TLS start on loopback only exits 0 on http where main exits 1. In 11cb52c2a the four checks of the start&#x27;s options run in main&#x27;s order: one reading, no test.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Loopback start</b><span class="chip high"><i></i>High risk</span><span class="sx">Exposed key, remote start: no daemon at main, a loopback daemon here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A person starts the daemon for other machines with a TLS key other accounts can read. The start exits 1, and under <code>RERAIL_AUTOSTART=0</code> no hook starts a daemon, so no session on the computer is checked or recorded.</dd>
+<dt>Who meets it</dt><dd>Whoever starts the daemon themselves for other machines, at every start while others can read the key. On Windows a key under <code>C:\certs</code> inherits such an ACL. Source: issue #664. We have no count of these people.</dd>
+<dt>What it does</dt><dd><code>loadDaemonTls</code> throws <code>TlsKeyExposedError</code> only for a file this account reads that parses as a private key (<code>readPrivateKey</code>) and whose certificate would serve (<code>certificateServes</code>). <code>serveRerailDaemon</code> catches it, and <code>serveLoopback</code> runs the daemon with <code>loopbackArguments</code> after it writes those arguments and <code>--remote-refused</code> with the reason into <code>process.argv</code>. A daemon launched with <code>--remote-refused</code> serves loopback from its start. <code>runRerailDaemon</code> loses only its <code>export</code>.</dd>
+<dt>Risk</dt><dd>High. It decides whether a daemon with an exposed key is reachable from another machine, it reads that key on the refusal path, and it rewrites T9 of the threat model.</dd>
+<dt>Check</dt><dd><code>loopbackArguments</code> must drop every argument that binds off loopback or names a public host; <code>parseArguments</code> takes only <code>--option value</code>. <code>--remote-refused</code> can only narrow: <code>remoteRefusal</code> strips it and <code>serveLoopback</code> filters the rest again. <code>readPrivateKey</code> runs only after <code>openToOthers</code> found other readers; its bytes go to <code>certificateServes</code> and nowhere else. Any error but <code>TlsKeyExposedError</code> still ends the process with exit 1. <code>certificateServes</code> throws what an https start throws for that certificate, and never reads a FIFO.</dd>
+</dl><figure><svg viewBox="0 0 340 186" role="img" aria-label="Time until rerail daemon start answers on Linux x64. Remote start with a key at mode 0644: exit 1 after 686 ms at main, exit 1 after 706 ms here with a loopback daemon running. TLS on loopback only: exit 1 after 691 ms, exit 0 after 697 ms. Missing key file: exit 1 after 675 ms at both." class="dg pic"><text x="4" y="17" class="t b">Remote start, exposed key</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Remote start, exposed key, main: exit 1, 686 ms</title><path d="M80 24h126.34a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-126.34z" class="rk was"/></g><text x="216.34" y="34" class="t n">exit 1, 686 ms</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Remote start, exposed key, this change: exit 1, 706 ms</title><path d="M80 41h130.14a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-130.14z" class="rk now"/></g><text x="220.14" y="51" class="t n">exit 1, 706 ms</text><text x="4" y="75" class="t b">Loopback TLS, exposed key</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Loopback TLS, exposed key, main: exit 1, 691 ms</title><path d="M80 82h127.29a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-127.29z" class="rk was"/></g><text x="217.29" y="92" class="t n">exit 1, 691 ms</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Loopback TLS, exposed key, this change: exit 0, 697 ms</title><path d="M80 99h128.43a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-128.43z" class="rk now"/></g><text x="218.43" y="109" class="t n">exit 0, 697 ms</text><text x="4" y="133" class="t b">Remote start, missing key</text><text x="74" y="150" text-anchor="end" class="t s">main</text><g><title>Remote start, missing key, main: exit 1, 675 ms</title><path d="M80 140h124.25a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-124.25z" class="rk was"/></g><text x="214.25" y="150" class="t n">exit 1, 675 ms</text><text x="74" y="167" text-anchor="end" class="t s">this change</text><g><title>Remote start, missing key, this change: exit 1, 675 ms</title><path d="M80 157h124.25a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-124.25z" class="rk now"/></g><text x="214.25" y="167" class="t n">exit 1, 675 ms</text></svg><figcaption>Method: one hand start per bar on Linux x64, Node 24.21.0, a fresh Rerail home each, at main (a9101752c) and 01138399c. The first and third pairs start with <code>--host 0.0.0.0 --allow-remote</code> and the TLS files; the second with the TLS files alone. A second run from a separate checkout, main at c438bc813: 692 ms and 714 ms for the first pair.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Exit code and notice</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">Holds refactor 11cb52c2a. Loopback TLS start: exit 1 at main, exit 0 here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A daemon that serves this computer alone looks like any running daemon. A script or a remote client that asked for other machines must not take the start for started as asked, and a person must learn the key&#x27;s fix.</dd>
+<dt>Who meets it</dt><dd>The same person, and any script that starts the daemon and reads its exit code. Source: condition 2 of the ruling on issue #664.</dd>
+<dt>What it does</dt><dd><code>remoteAccessExit</code> returns 1 and writes one stderr line when the start had <code>--allow-remote</code> or <code>--public-host</code> and the daemon it started or found has <code>remoteRefused</code>. <code>printDaemon</code> prints <code>loopbackOnlyNotice</code> for the start and <code>rerail status</code>. <code>DaemonState</code> gains an optional <code>remoteRefused</code>. First, 11cb52c2a moves the launch options and dashboard link into <code>daemonStartLaunch</code>, <code>daemonStartReach</code> and <code>printDashboardLink</code>: 49 lines added, 26 removed, no behaviour change.</dd>
+<dt>Risk</dt><dd>Medium. A wrong exit code tells a script that other machines are served when they are not. The refactor moves the checks of <code>--host</code> and of the transport, and must keep their order.</dd>
+<dt>Check</dt><dd>Is exit 1 right while a daemon runs, or a code of its own (the description&#x27;s decision 2)? Main gives 1 to this command line. <code>remoteAccessExit</code> reads <code>--allow-remote</code> and <code>--public-host</code>; <code>--host</code> off loopback needs <code>--allow-remote</code>, so it is covered. A TLS start on loopback only exits 0 on http: <a href="#asks">ask 3</a>. In 11cb52c2a compare the old body with <code>daemonStartLaunch</code> and <code>daemonStartReach</code>: <code>assertHostBindable</code>, <code>parsePublicHosts</code>, <code>parseDaemonTransport</code>, then <code>parsePort</code>, as at main. A reader that does not know <code>remoteRefused</code> ignores it.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Exit codes of rerail daemon start with a key at mode 0644. A start that asked for other machines exits 1 at main with no daemon, and exits 1 here with a loopback daemon running. A TLS start on loopback only exits 1 at main and exits 0 here, on http." class="dg pic"><text x="4" y="17" class="t b">Remote start, exposed key</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Remote start, exposed key, main: exit 1, no daemon</title><path d="M80 24h101.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-101.1z" class="rk was"/></g><text x="191.1" y="34" class="t n">exit 1, no daemon</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Remote start, exposed key, this change: exit 1, loopback daemon</title><path d="M80 41h101.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-101.1z" class="rk now"/></g><text x="191.1" y="51" class="t n">exit 1, loopback daemon</text><text x="4" y="75" class="t b">Loopback TLS, exposed key</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Loopback TLS, exposed key, main: exit 1, no daemon</title><path d="M80 82h101.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-101.1z" class="rk was"/></g><text x="191.1" y="92" class="t n">exit 1, no daemon</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Loopback TLS, exposed key, this change: exit 0, on http</title><path d="M80 99h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="109" class="t n">exit 0, on http</text></svg><figcaption>Method: hand starts on Linux x64 at main (a9101752c) and at 01138399c, a key at mode <code>0644</code>, one run each. A second run from a separate checkout gave the same exit codes. On Windows 11 the daemon CLI test asserts both of the head&#x27;s codes.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>An exposed key: no daemon, or a loopback daemon? <span class="chip intent"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> the loopback daemon, on the ruling&#x27;s three conditions.</p>
+<p><b>Would change our mind:</b> a route to it from another machine, a forwarder aside.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Start again on loopback, without the remote options <span class='tag new'>chosen</span></td><td data-l="What a user gets">Hooks keep checking and recording. Other machines reach nothing. The key is never served.</td><td data-l="Cost">A second start attempt in the same process, only on an exposed key: 432 ms at e3e22bd70 against 421 ms at main on Linux x64, one start each.</td><td data-l="What it breaks">A remote start exits 1 with a daemon running, so a script must not read exit 1 as no daemon.</td></tr><tr><td class="k">Refuse to start, as main does</td><td data-l="What a user gets">No daemon to reason about.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">Under <code>RERAIL_AUTOSTART=0</code> nothing on the computer is checked or recorded until the key is fixed.</td></tr><tr><td class="k">Serve with the key and warn, as 0.1.4 does on Windows</td><td data-l="What a user gets">Remote access works.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">Any local account that can read the key can pose as the daemon.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a remote start with an exposed key</div><svg viewBox="0 0 340 122" role="img" aria-label="At main a daemon started with --host and a TLS key others can read reaches loadDaemonTls, which refuses the key. The process exits 1, no daemon runs, and nothing is recorded." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">daemon start --host ... --tls-key</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">loadDaemonTls refuses the key</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">exit 1: no daemon, nothing recorded</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 200" role="img" aria-label="With this change loadDaemonTls finds a private key others can read. The daemon starts again without --host, --public-host, --allow-remote and the TLS files, serves 127.0.0.1 over http and says why. The start that asked for other machines exits 1 while that daemon runs." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">daemon start --host ... --tls-key</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">loadDaemonTls: a private key others can read</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="104" text-anchor="middle" class="t s">start again without the remote options</text><line x1="170" y1="115" x2="170" y2="124" class="ar " marker-end="url(#ah)"/><rect x="20" y="125" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="143" text-anchor="middle" class="t s">serves 127.0.0.1 over http, and says why</text><line x1="170" y1="154" x2="170" y2="163" class="ar " marker-end="url(#ah)"/><rect x="20" y="164" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="182" text-anchor="middle" class="t s">the start exits 1: remote access was refused</text></svg></div></div><p><b>Evidence.</b> A code owner ruled on #664: serving this computer alone is within #503&#x27;s intent, on three conditions. The same code owner checked 646270e08: in every fallback case only <code>127.0.0.1</code> listens. Measured at 646270e08: every off-loopback IPv4 address refuses the port, 4 on Windows 11 and 11 on Linux x64, and a TLS handshake on loopback fails. <code>loopbackArguments</code> is unchanged since. The restart is the one new path, and its test fails without the fix.</p></details></div>
+<div class="dblock"><h3>To tell a key from another file: read the exposed key? <span class="chip answer"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 2</span></h3>
+<p><b>We chose</b> one read on the refusal path; nothing keeps, logs or serves it.</p>
+<p><b>Would change our mind:</b> a way to tell without reading it.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Parse the file once, on the refusal path <span class='tag new'>chosen</span></td><td data-l="What a user gets">A certificate, a file of text, a folder or a FIFO given as the key stops the start, as at main. So does a <code>--tls-cert</code> that would not serve with the key.</td><td data-l="Cost">One read of a key other accounts can already read, and one of the certificate, in the daemon process, before the loopback start.</td><td data-l="What it breaks">A code owner listed &quot;the exposed key is never read&quot; among what held at 646270e08. At this head it is read once.</td></tr><tr><td class="k">Never read it: any regular file others can read falls back</td><td data-l="What a user gets">The key&#x27;s bytes never enter the daemon process.</td><td data-l="Cost">Nothing. Not built as such: at d93341c02 any regular file others can read fell back, and the start still read it once, to learn that this account can.</td><td data-l="What it breaks">A certificate given as the key, or a file of text, starts a loopback daemon. The code owner&#x27;s check asks that only a file that parses as a key falls back.</td></tr></tbody></table></div><p><b>Evidence.</b> At the head <code>readPrivateKey</code> (<code>src/daemon/daemon.ts</code> line 804) runs only when <code>openToOthers</code> found other readers and calls <code>createPrivateKey</code> on the file&#x27;s bytes; <code>certificateServes</code> pairs them with the certificate and keeps nothing. The loopback start gets <code>loopbackArguments</code>, which drop <code>--tls-key</code>, and a <code>--remote-refused</code> relaunch never calls <code>loadDaemonTls</code>. Linux x64 at 01138399c: without the parse the no-key unit case and the CLI case fail, and without the file check the FIFO case times out at 5,000 ms.</p></details></div>
+<div class="dblock"><h3>The restart: <code>--remote-refused</code>, or an edit to <code>runRerailDaemon</code>?</h3>
+<p><b>We chose</b> <code>--remote-refused</code>: editing <code>runRerailDaemon</code>, at complexity 15, is a new finding.</p>
+<p><b>Would change our mind:</b> a code owner who wants it refactored first.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k"><code>serveLoopback</code> rewrites <code>process.argv</code> with <code>--remote-refused</code> and the reason <span class='tag new'>chosen</span></td><td data-l="What a user gets">The restart relaunches a loopback daemon that still says why, also after the key is fixed. <code>runRerailDaemon</code> keeps main&#x27;s body.</td><td data-l="Cost">A daemon argument no person types, and a process that edits its own arguments, as the hook launcher does for a hook.</td><td data-l="What it breaks">After a restart the reason, key path included, sits on the daemon&#x27;s command line, as <code>--tls-key</code> did at the first start. Anyone who can launch the daemon can pass it; it only narrows what the daemon serves.</td></tr><tr><td class="k">Hand the relaunch arguments to <code>runRerailDaemon</code></td><td data-l="What a user gets">No argument is rewritten, and the restart&#x27;s arguments are explicit.</td><td data-l="Cost">An edit to a function at complexity 15, so a refactor of it first. Not built.</td><td data-l="What it breaks">Not run.</td></tr></tbody></table></div><p><b>Evidence.</b> At main the restart relaunches with <code>process.argv.slice(1)</code> (<code>src/daemon/daemon.ts</code> line 906). Linux x64: at 74eb6f8c7 the restart test fails, the relaunch arguments holding 12 entries, not 7; at 01138399c it passes there and on Windows 11. A real restart at the heap ceiling, the key made <code>0600</code> after the start: <code>https://0.0.0.0</code> at 646270e08, <code>http://127.0.0.1</code> with <code>remoteRefused</code> at 01138399c. <code>daemon.log</code> then holds 1 reason line at 98c2462b6, 2 at e3e22bd70. No test passes <code>--remote-refused</code> together with remote options.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="Pull request #672 is based on main at a9101752c and merges clean with main at c89f068ed. A code owner ruled on issue #664: yes, with three conditions. Nothing stands on it. It holds two changes and one refactor commit. In a trial merge it conflicts with the draft #657 in two files, and the release #631 removes the release note it rewrites." class="dg fit"><rect x="4" y="4" width="160" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at c89f068ed</text><text x="14" y="38" class="t s">merges clean</text><rect x="176" y="4" width="160" height="50" rx="8" class="bx good"/><text x="186" y="23" class="t b">Ruling on #664</text><text x="186" y="38" class="t s">yes, three conditions</text><line x1="84" y1="55" x2="84" y2="79" class="ar " marker-end="url(#ah)"/><line x1="256" y1="55" x2="256" y2="79" class="ar " marker-end="url(#ah)"/><text x="90" y="71" class="t s">based on a9101752c</text><text x="250" y="71" text-anchor="end" class="t s">ruled by</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#672</text><text x="170" y="116" text-anchor="middle" class="t s">two changes, one refactor</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="171" class="t b">#657, a draft</text><text x="12" y="187" class="t s">2 files</text><text x="12" y="201" class="t s">in conflict</text><rect x="116" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="124" y="171" class="t b">Release #631</text><text x="124" y="187" class="t s">removes</text><text x="124" y="201" class="t s">the note</text></svg></figure>
+<div><p>It merges clean with main. Refactor 11cb52c2a rides in it.</p>
+<p>Draft #657 conflicts in two files; the second to merge holds the home&#x27;s lock around both starts.</p>
+<details class="ev"><summary>The shared files, by pull request</summary><p>#657 (a draft): trial merges of e3e22bd70 with 50705c972 and with its head on 14 November, 2cb75efa0, conflict in <code>src/cli/daemon-entry.ts</code>, at the entry&#x27;s call, and in <code>src/daemon/daemon.ts</code>, at <code>RerailDaemonServices</code>. Composed at 50705c972 with 01138399c, the entry calls #657&#x27;s <code>runHomeDaemon</code>, which takes the home&#x27;s lock once and calls <code>serveRerailDaemon</code> for both starts: <code>tsc</code> and 97 daemon tests pass on Linux x64. #631 (the team&#x27;s release) removes the release note this branch rewrites; if it merges first, this branch adds an entry of its own. The description&#x27;s &quot;What and why&quot; names both.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>No code owner</b> has read e3e22bd70.</li>
+<li><b>Reach from another machine:</b> measured at 646270e08, not since.</li>
+<li><b>Hand starts:</b> Linux x64 only.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, eight limits that stay</summary><ul class="facts">
+<li><b>A forwarder the person runs.</b> Behind one, the loopback daemon answers plain http, a request naming the public host gets 421, and every route but the page&#x27;s files needs the access capability. Rerail&#x27;s clients send it only once the pinned certificate matches, which an http listener never presents.</li>
+<li><b><code>--remote-refused</code> with remote options.</b> No test launches a daemon with both. Read from the code: <code>remoteRefusal</code> strips the argument and <code>serveLoopback</code> passes the rest through <code>loopbackArguments</code>. One unit case would close it.</li>
+<li><b>The state reader&#x27;s check of <code>remoteRefused</code>.</b> At 646270e08, with that line removed, every test passed. The line is unchanged, and no test at the head writes a <code>daemon.json</code> whose <code>remoteRefused</code> is not a string.</li>
+<li><b>The refactor&#x27;s order of checks.</b> That 11cb52c2a keeps main&#x27;s order rests on one reading and on the CLI tests that already start a daemon. No test compares the launch options before and after.</li>
+<li><b>A real restart on Windows.</b> The restart test relaunches through Node&#x27;s <code>spawn</code>. A daemon&#x27;s own restart there goes through the native launcher, with a reason that holds double quotes. That path did not run.</li>
+<li><b>The whole suites.</b> The whole suites ran only in CI. Outside CI at e3e22bd70: the 49 unit test files and 15 integration files that import a changed module, start a real daemon or run <code>status</code>, and on Windows 11 the 49 and three of the 15.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A forwarder the person runs in front of the port reaches the loopback listener, as it reaches any daemon started with no options.</li>
+<li>A script that reads exit 1 from <code>rerail daemon start</code> as no daemon is wrong for an exposed key: the loopback daemon runs. It can read stderr, <code>rerail status</code> or <code>remoteRefused</code> in <code>daemon.json</code>.</li>
+<li>From 0.1.4: a Windows daemon that served other machines with such a key serves this computer alone, and a macOS or Linux start that failed leaves a loopback daemon. To serve them, fix the key and start again.</li>
+<li>The key is checked once, at the start. A key fixed while the daemon runs changes nothing, also across a restart at the heap ceiling, until <code>rerail daemon stop</code> and a new start.</li>
+<li>An exposed key costs one more start attempt, one read of the key and one of the certificate: 432 ms at e3e22bd70 against 421 ms at main for the remote start on Linux x64, one start each.</li>
+<li><code>runRerailDaemon</code> stays at complexity 15: this branch removes its <code>export</code> and nothing else.</li>
+<li>With an exposed key beside a <code>--tls-cert</code> that would not serve, the start exits 1 as at main and names the certificate, where main names the key. The key&#x27;s refusal shows at the next start.</li>
+<li>A defect of main, not changed here: with a private key and a FIFO as <code>--tls-cert</code>, the daemon blocks reading it and <code>rerail daemon start</code> gives up after 15 s. This change never reads a FIFO beside an exposed key.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Asks 1 to 3 rule on answers 1 to 3.</p>
+<ol class="lines">
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Does e3e22bd70 meet the three conditions of the ruling on <a href="https://github.com/neralabs/rerail/issues/664">#664</a>?</b> We recommend yes: a test fails without each fix.</div></li>
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>May the start read an exposed key once, to tell it from another file?</b> We recommend yes: condition 3 needs it.</div></li>
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Should a loopback-only TLS start, which gets http, exit 0?</b> We recommend yes: condition 2 names remote starts only.</div></li>
+<li><div><b>Should refactor 11cb52c2a be its own pull request first?</b> We recommend keeping it; it leaves on your word.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description&#x27;s &quot;How you tested it&quot; is the record; one comment answers the code owner&#x27;s check.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43560638959 at e3e22bd70, read on 14 November 2026</td><td data-l="Result">Success at 05:24 UTC, on its first attempt: 18 jobs passed, 3 skipped (the Rust engine and two conformance jobs), none failed. The pull request lists 24 checks: 19 passed and 5 skipped, two of the skipped being jobs that follow an approval.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Each fix at the commit that adds its test, Node 24.21.0; the certificate and <code>daemon.log</code> cases over 98c2462b6</td><td data-l="Result">The exposed-key CLI case over main&#x27;s source fails with the refusal. At 16f501b78 a certificate given as the key starts the daemon (&quot;promise resolved instead of rejecting&quot;). At b8bd0f7e3 the remote start exits 0 (&quot;expected +0 to be 1&quot;). At 74eb6f8c7 the restart&#x27;s arguments hold 12 entries, not 7. Over 98c2462b6 a misspelled <code>--tls-cert</code> starts a loopback daemon, and a restart logs 1 reason line, not 2.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Hand starts at main (a9101752c), at 646270e08 and at 01138399c, a fresh Rerail home each: 11 starts, by <code>--tls-key</code>, reach and <code>--tls-cert</code>; run again at e3e22bd70 against main at c89f068ed</td><td data-l="Result">Exit codes at main, 646270e08, 01138399c. A key at <code>0644</code>, remote: 1, 0, and 1 beside a loopback daemon. The same key, TLS on loopback only: 1, 0, 0. Missing, misspelled, in an unreadable directory, a directory, a file of text, the certificate, a FIFO: 1, 0, and 1 with main&#x27;s message. A key at mode <code>000</code>, or no <code>--tls-cert</code>: 1, 1, 1. The 01138399c codes hold at e3e22bd70.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Hand starts with a key at <code>0644</code> beside eight kinds of <code>--tls-cert</code>, on loopback and with <code>--allow-remote</code>, at main (a9101752c), 98c2462b6 and e3e22bd70</td><td data-l="Result">Missing, a path through a file, a folder, a file at mode <code>000</code>, a file of text, the key itself, another key&#x27;s certificate: on loopback 1, 0, 1; remote 1, 1 beside a loopback daemon, 1. At e3e22bd70 no daemon runs and stderr is main&#x27;s for that certificate beside a private key. A FIFO, on loopback: 1, 0, 1 with main&#x27;s refusal of the key, after 451 ms.</td></tr><tr><td class="k">Linux x64 and Windows 11 x64</td><td data-l="What ran">At e3e22bd70: 49 unit test files and 15 integration files, those that import a changed module, start a real daemon or run <code>status</code>; on Windows 11 the 49 and three of the 15, <code>integration/daemon-cli.test.ts</code> among them</td><td data-l="Result">Linux, unit: 48 files passed, 1 skipped; 1,191 tests passed, 5 skipped, 0 failed. Linux, integration: 14 files passed, 1 skipped; 49 tests passed, 4 skipped, 0 failed, <code>integration/updater-cli.test.ts</code> on a second machine after npm failed on the first. Windows 11: 52 files passed; 1,196 tests passed, 22 skipped, 0 failed, none outside main&#x27;s baseline; <code>daemon-cli</code> 8 of 8, <code>daemon-tls</code> 13 and 3 POSIX-only skipped.</td></tr><tr><td class="k">Linux x64, a separate checkout</td><td data-l="What ran">Each fix removed in turn, eight at 01138399c and two at e3e22bd70, then the two changed test files</td><td data-l="Result">At 01138399c eight removals each fail a test: the exit code, the found-running exit, the stderr line, the key parse, the file check (the FIFO case times out at 5,000 ms), the plain error for unread readers, the argument rewrite, the read of <code>--remote-refused</code>. At e3e22bd70: the certificate check, and the reason line (&quot;expected 1 to be 2&quot;). Unchanged, the head passes 8 of 8 and 16 of 16.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">A real restart at the heap ceiling: at 646270e08 and 01138399c with the key made <code>0600</code> after the start, at 98c2462b6 and e3e22bd70 for <code>daemon.log</code></td><td data-l="Result">At 646270e08 the next daemon listened at <code>https://0.0.0.0</code> with a TLS fingerprint. At 01138399c it listened at <code>http://127.0.0.1</code> with <code>remoteRefused</code> kept. <code>daemon.log</code> held 1 reason line for the 2 daemons at 98c2462b6, and 2 at e3e22bd70.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s complexity scan, main against 01138399c, and again over the diff at e3e22bd70; a trial composition of 01138399c with #657 at 50705c972</td><td data-l="Result">Scan: 12 functions over the ceiling at main, 11 at the head, 0 new; <code>runDaemonStartCommand</code> goes from 13 to 4; at e3e22bd70 no new finding. Composition: <code>tsc</code> exits 0, the build exits 0, and 97 daemon tests pass; not run again at e3e22bd70.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b><code>--remote-refused</code> with remote options.</b> The description says the restart comes back on loopback. Read at the head: a daemon launched with <code>--remote-refused</code> and <code>--host 0.0.0.0</code> together also serves loopback, since <code>serveLoopback</code> filters its arguments through <code>loopbackArguments</code>. No test launches that pair.</li>
+<li><b>What runs before the refusal.</b> Read at the head: before <code>loadDaemonTls</code>, <code>runRerailDaemon</code> parses its arguments and calls <code>searchGitFrom</code> with the workspace root (<code>src/daemon/daemon.ts</code> lines 957 to 962). Between the refusal and the second start the process writes one line to stderr and rewrites <code>process.argv</code>. The second start parses and searches again, and opens everything else for the first time.</li>
+<li><b>The refactor&#x27;s order of checks.</b> Read in 11cb52c2a: <code>assertHostBindable</code>, <code>parsePublicHosts</code>, <code>parseDaemonTransport</code>, then <code>parsePort</code> run in main&#x27;s order. The launch object&#x27;s keys change order, <code>port</code> and <code>cwd</code> now after the transport; <code>daemonArguments</code> reads each by name.</li>
+<li><b>Four asks.</b> The description&#x27;s &quot;For the maintainers to decide&quot; asks no new ruling and points here for the four points the review settles. This report puts them as asks: whether e3e22bd70 meets the three conditions, the one read of the exposed key, exit 0 for a loopback-only TLS start, and whether refactor 11cb52c2a leaves as its own pull request. The comment on the pull request asks only the last.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #672, its diff, a code owner&#x27;s comment, the three automated reviews and its CI, and issue #664 with its ruling, read on GitHub on 14 November 2026 at about 05:30 UTC. Rerail at main (c89f068ed) for each quoted intent. The run records of the change for the measurements, each with the commit it ran at.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
