@@ -20,6 +20,7 @@ pub mod capture;
 pub mod codec;
 pub mod edits;
 pub mod huff;
+pub mod inplace;
 pub mod events;
 pub mod layout;
 pub mod lp;

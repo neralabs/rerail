@@ -228,3 +228,69 @@ off the others for no saving in bytes.
   `indirectBytesRequired`.
 - **simdjson's tape:** 8-byte words; an open holds the index of its close.
 - **Succinct trees:** BP with a range min-max tree (Navarro and Sadakane), DFUDS, LOUDS (Jacobson).
+
+## E10, first results: F15, X and B (2026-11-14)
+
+`tape16 inplace <cap>` builds each candidate per file, checks every answer for every node against the
+tree (0 wrong on every corpus and candidate), and costs each question on one CPU thread of the M5.
+The readers are monomorphized, so each accessor inlines as a real reader's would. Instructions
+include the loop around each call. The load average was 30–60.
+
+- **F15:** format 15's image, read as it lies.
+- **X:** explicit and bit-packed: code at the language's width; size, back distance, start (frame of
+  reference) and length with patched exceptions, a block of 256 nodes at a time.
+- **B:** balanced parentheses with rank9 and excess summaries a word and per 32 words, plus X's
+  code, start and length by preorder rank. A node is its open's position.
+
+**Bytes a node:**
+
+| | impl/sqlite | data-layer, every 10th | rerail, every 5th |
+|---|---|---|---|
+| F15 | 8.66 | 9.00 | 9.34 |
+| X | **5.49** | **4.88** | **5.06** |
+| B | **4.13** | **3.60** | **3.69** |
+
+By part (data-layer; the others are within 0.4):
+
+| | structure | code | start | length |
+|---|---|---|---|---|
+| X | size 0.68 + back 0.96 | 0.70 | 1.48 | 1.05 |
+| B | parentheses 0.25 + summaries 0.12 | 0.70 | 1.48 | 1.05 |
+
+**ns a call** (data-layer; instructions in brackets):
+
+| | F15 | X | B |
+|---|---|---|---|
+| sweep: code in a set | 1.0 (24) | 1.4 (29) | 2.8 (55) |
+| code at random | 0.9 (20) | 1.3 (28) | 2.8 (52) |
+| start + end at random | 5.3 (81) | 5.2 (98) | 8.4 (127) |
+| subtree end at random | 1.2 (25) | 2.6 (45) | 12.6 (95) |
+| children of a node, all of them | 3.8 (50) | 7.9 (98) | 15.2 (193) |
+| parent at random | 247 (5,234) | 6.2 (98) | 18.1 (168) |
+
+**E7's mixes, ns a node** (data-layer):
+
+| | F15 | X | B |
+|---|---|---|---|
+| median rule | 2.3 | 3.3 | 6.7 |
+| 121 rules, all | 12.2 | 18.0 | 33.7 |
+| schema-introspection (5 parents a node) | 1,269 | 81 | 183 |
+| heaviest rule | 125 | 181 | 333 |
+
+On rerail, F15's parent costs 4.9 µs and the tree walk 24.5 µs a node. With no parent stored,
+format 15 walks back over every preceding node, so large files make it worse.
+
+What this says:
+
+- **Positions are the lever.** Start and length are 2.5 B a node, 50–70% of X and B. The structure
+  is 1.6 B in X and 0.37 B in B; codes are 0.7–1.1 B. Positions are next: mldb's predictor plus
+  residual (M), Elias–Fano (BE), and lengths predicted from the subtree.
+- **X costs 0.55× F15's bytes for 1.3–2× its per-call time,** and it has a parent: 6 ns, against
+  F15's backward walk.
+- **B saves 1.2–1.4 B a node more than X, but the structure costs 2–5× more.** `findclose` (subtree
+  end, next sibling) takes 12.6 ns against 2.6, and every field read pays a rank (2.8 ns against 1.3
+  for a code). Only 1.3 of B's 3.6 B is not shared with X, so B's lead in bytes shrinks as
+  positions shrink, while its cost does not.
+- **Next:** M and BE (positions), BH (B with explicit sizes for large subtrees); disk bytes and load
+  cost for both loading shapes; the M5 built without scalar popcount, standing in for M1 and M3;
+  then the questions as Metal kernels.
