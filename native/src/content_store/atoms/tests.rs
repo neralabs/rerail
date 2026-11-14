@@ -1,9 +1,28 @@
 use super::super::*;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-fn path(label: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("rerail-atoms-{label}-{}-{nonce}.sqlite", std::process::id()))
+/// A test database's path, in a directory of its own that goes with it: the store's side files (WAL, locks, the
+/// files database) too. Bound before the stores opened on it, so it is dropped after them.
+struct TestPath {
+    path: std::path::PathBuf,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestPath {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl AsRef<std::path::Path> for TestPath {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+fn path(label: &str) -> TestPath {
+    let dir = tempfile::Builder::new().prefix(&format!("rerail-atoms-{label}-")).tempdir().unwrap();
+    TestPath { path: dir.path().join("store.sqlite"), _dir: dir }
 }
 
 /// The database's segments, read on a connection of its own: (first, count).
@@ -126,7 +145,8 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
 
 #[test]
 fn shared_scratch_writes_do_not_use_the_owner_commit_guard() {
-    let store = ContentStore::open(&path("owner-guard")).unwrap();
+    let owner = path("owner-guard");
+    let store = ContentStore::open(&owner).unwrap();
     let scratch_path = path("scratch-guard");
     let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
@@ -264,7 +284,7 @@ fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
 
 /// The database at `path`, copied to a path of its own: opened there, it is a new process's (its atoms are read
 /// from disk, not the ones this process holds for `path`).
-fn elsewhere(path: &std::path::Path, label: &str) -> std::path::PathBuf {
+fn elsewhere(path: &std::path::Path, label: &str) -> TestPath {
     rusqlite::Connection::open(path).unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     let copy = self::path(label);
     std::fs::copy(path, &copy).unwrap();
@@ -292,7 +312,8 @@ fn a_reopened_store_reads_only_the_segments_it_looks_up() {
     drop(store);
     assert_eq!(segments(&path), [(0, 1), (1, 1000), (1001, 1000)]);
     assert_eq!(key_rows(&path), (2001, Some(2001)), "a key per atom, written with its segment");
-    let store = ContentStore::open(&elsewhere(&path, "keyed-again")).unwrap();
+    let copy = elsewhere(&path, "keyed-again");
+    let store = ContentStore::open(&copy).unwrap();
     assert_eq!(store.atom("second-7").unwrap(), Some(ids[7]));
     let handle = store.atoms_handle();
     assert!(handle.state.read().atoms.holds(ids[999]), "the atom's segment is held");
@@ -311,7 +332,8 @@ fn a_hash_collision_finds_the_right_atom() {
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection.execute("INSERT INTO atom_key(h, id) VALUES (?1, 1)", [super::hash_str("y") as i64]).unwrap();
     drop(connection);
-    let store = ContentStore::open(&elsewhere(&path, "collision-again")).unwrap();
+    let copy = elsewhere(&path, "collision-again");
+    let store = ContentStore::open(&copy).unwrap();
     assert_eq!(store.atom("y").unwrap(), Some(2));
     assert_eq!(store.atom("x").unwrap(), Some(1));
     assert_eq!(store.intern_atoms(&["y", "z"]).unwrap(), [2, 3]);
@@ -385,7 +407,8 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     super::commit(&connection).unwrap();
     assert!(!store.atoms.pending());
     // Another arena's atoms are not this reservation's.
-    let other = ContentStore::open(&self::path("reserved-other")).unwrap();
+    let other_path = self::path("reserved-other");
+    let other = ContentStore::open(&other_path).unwrap();
     let r = super::reserving(&arena);
     other.intern_atoms(&["o"]).unwrap();
     assert!(other.atoms.pending(), "made in another arena: pending as usual");
@@ -557,7 +580,8 @@ fn pending_atoms_are_written_in_segments_of_bounded_size() {
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(segments_of(&path) > 3, "3 MB of strings in segments of 1 MB: {:?}", segments(&path));
     drop(store);
-    let store = ContentStore::open(&elsewhere(&path, "segments-again")).unwrap();
+    let copy = elsewhere(&path, "segments-again");
+    let store = ContentStore::open(&copy).unwrap();
     assert_eq!(store.atom_value(ids[299]).unwrap().as_deref(), Some(words[299].as_str()));
     assert_eq!(store.atom(&words[170]).unwrap(), Some(ids[170]));
 }

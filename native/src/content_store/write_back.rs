@@ -381,7 +381,7 @@ impl ContentStore {
         // come while it checkpoints are one.
         let (told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
-        rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
+        let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
             while tells.recv().is_ok() {
                 while tells.try_recv().is_ok() {}
@@ -477,6 +477,10 @@ impl ContentStore {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                 }
+                // The checkpointer ends with the writer: the last handle's drop (which joins this thread) returns
+                // with no connection of the store's left open, so the store's files may be moved or removed then.
+                drop(told);
+                let _ = checkpoints.join();
             })
             .expect("the store's writer thread");
         Lane { tx, thread }
