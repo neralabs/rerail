@@ -22,6 +22,7 @@ rerail-forest = { path = "../forest" }
 metal = "0.33.0"
 objc = "0.2.7"
 block = "0.1.6"
+core-foundation-sys = "0.8.7"
 
 [build-dependencies]
 cc = "=1.10.0"

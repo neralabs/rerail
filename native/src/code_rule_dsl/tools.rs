@@ -635,7 +635,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -712,8 +712,10 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         },
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
+        #[cfg(feature = "tape-cache")]
+        Some("upkeep") => upkeep_command(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
-        Some(command @ ("dump" | "gc")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
+        Some(command @ ("dump" | "gc" | "upkeep")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
         _ => Err(USAGE.into()),
     }
 }
@@ -955,6 +957,66 @@ fn gc_command(args: &[String]) -> Result<String, String> {
         before as f64 / 1048576.0,
         after as f64 / 1048576.0
     );
+    Ok(out)
+}
+
+/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
+/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
+/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
+/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
+#[cfg(feature = "tape-cache")]
+fn upkeep_command(args: &[String]) -> Result<String, String> {
+    use crate::content_store::ContentStore;
+    use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
+    use rerail_accel::upkeep::{configure, register, run_now, settings};
+    let mut s = settings();
+    let mut stores = Vec::new();
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--cpu" => {
+                let p: f64 = args.next().ok_or("--cpu requires a value")?.parse().map_err(|_| "--cpu takes a percentage")?;
+                s.cpu = (p / 100.0).max(0.01);
+            }
+            "--jobs" => {
+                let list = args.next().ok_or("--jobs requires a value")?;
+                let (out, only): (Vec<&str>, Vec<&str>) = list.split(',').map(str::trim).filter(|j| !j.is_empty()).partition(|j| j.starts_with('-'));
+                s.without = out.iter().map(|j| j[1..].to_owned()).collect();
+                s.only = (!only.is_empty()).then(|| only.iter().map(|j| j.to_string()).collect());
+            }
+            other => stores.push(other.to_owned()),
+        }
+    }
+    configure(s);
+    let e = |e: crate::content_store::StoreError| e.to_string();
+    let mut held = Vec::new();
+    let mut jobs = Vec::new();
+    for path in &stores {
+        if !Path::new(path).exists() {
+            return Err(format!("{path}: no such store"));
+        }
+        let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
+        jobs.push(register(Box::new(Collect::new(&store))));
+        jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
+        jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
+        held.push(store);
+    }
+    jobs.extend(crate::code_rule_dsl::logic::costs::upkeep_jobs());
+    let started = std::time::Instant::now();
+    let report = run_now();
+    let mut out = String::new();
+    for r in &report {
+        out += &format!(
+            "{:<48} {:>5} steps {:>9.1} ms wall {:>9.1} ms CPU{}\n",
+            r.name,
+            r.steps,
+            r.wall * 1e3,
+            r.cpu * 1e3,
+            r.last_error.as_ref().map_or(String::new(), |e| format!("  error: {e}"))
+        );
+    }
+    out += &format!("{:.2} s\n", started.elapsed().as_secs_f64());
+    drop(jobs);
     Ok(out)
 }
 

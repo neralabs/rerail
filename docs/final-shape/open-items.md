@@ -4829,6 +4829,23 @@ corpus tests pass with it, but none makes this case.
 **Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
 stratum above it, which sees both the facts and the answers.
 
+## O160. Re-sorting stored rows is not an upkeep job yet
+
+Decision 0190 §5: once 0164's frames keep sorted orders, their compaction past the dead-row bound (and an order for a
+relation probed by a key without one) is an upkeep job, one frame a step, published by the frame's swap.
+
+**Closure:** the job registered for each store, due from 0164's counters, with a test that a frame past its bound is
+rewritten in its key order on an idle machine and probes read it.
+
+## O161. Join orders observed to be slow are not tried again
+
+Decision 0190 §6: `plan_feedback` keeps each plan's measured cost per root, and `compiled_plans` its decisions, but
+nothing lists the joins whose cost is past their forecast, and nothing tries the other orders away from a run.
+
+**Closure:** the planner's alternative orders for a plan exposed, a bounded off-path run of one over the store's
+facts, and an upkeep job that records a winning order as the plan's kept choice (0090 §5), with a test on a join
+planned with a wrong estimate.
+
 ## Remeasured after the hub merge (2026-11-13)
 
 At 17bbc4cd7, the hub (9a203197e) merged into rr-align. Debug build, CPU, strict; load 19-43.

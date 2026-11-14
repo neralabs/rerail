@@ -52,6 +52,7 @@ mod search_index;
 mod snapshots;
 mod tree_diff;
 mod tree_pages;
+pub mod upkeep;
 /// G's tree result segments as copied, beside `tree_pages` (O19).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]

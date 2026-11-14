@@ -62,16 +62,26 @@ pub struct StorageMaintenance {
     stop: StdArc<AtomicBool>,
     workspaces: StdArc<Mutex<HashMap<WorkspaceId, (String, usize)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The store's upkeep jobs (decision 0190): its collection, its search indexes' backlog and its SQLite
+    /// file, run by `rerail_accel::upkeep` when the machine is idle (collection past the soft limit at once).
+    _jobs: Vec<rerail_accel::upkeep::Registered>,
 }
 
 impl StorageMaintenance {
     fn start(store: StdArc<ContentStore>) -> Self {
         let stop = StdArc::new(AtomicBool::new(false));
         let workspaces = StdArc::new(Mutex::new(HashMap::<WorkspaceId, (String, usize)>::new()));
+        use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
+        use rerail_accel::upkeep::register;
+        let jobs = vec![
+            register(Box::new(Collect::new(&store))),
+            register(Box::new(SearchIndex::new(&store))),
+            register(Box::new(SqliteFile::new(store.database_path(), Tables::All))),
+        ];
+        rerail_accel::upkeep::start();
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
         let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
-                let mut search_index_cursor = None;
                 loop {
                     std::thread::park_timeout(Duration::from_secs(30));
                     if thread_stop.load(Ordering::Acquire) {
@@ -92,23 +102,7 @@ impl StorageMaintenance {
                             .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
                             .collect::<Vec<_>>();
                         let _ = store.renew_workspace_leases(&leases, now + 120);
-                        // Above the soft limit, or with corpus runs' collection due (decision 0053): passes
-                        // for up to a second of each wake, each a bounded transaction.
-                        let pressed = store
-                            .capacity()
-                            .is_ok_and(|capacity| !matches!(capacity.state, CapacityState::Normal));
-                        let policy = crate::content_store::CorpusPolicy::default();
-                        if pressed || store.corpus_pass_wanted(&policy, now).unwrap_or(false) {
-                            let started = Instant::now();
-                            while started.elapsed() < Duration::from_secs(1) && !thread_stop.load(Ordering::Acquire) {
-                                match store.collect_corpus_pass(&policy, now) {
-                                    Ok(pass) if pass.did_work() => {}
-                                    _ => break,
-                                }
-                            }
-                        }
                     }
-                    index_stored_tapes(&store, &thread_stop, &mut search_index_cursor);
                 }
             })
             .expect("start content-store maintenance thread");
@@ -116,6 +110,7 @@ impl StorageMaintenance {
             stop,
             workspaces,
             thread: Some(thread),
+            _jobs: jobs,
         }
     }
 
@@ -141,6 +136,45 @@ impl StorageMaintenance {
     }
 }
 
+/// The search indexes' backlog as an upkeep job (decision 0190 §4): due while stored tapes have no index (idle
+/// work, run after a minute of waiting, as the maintenance thread's wake every 30 s did before).
+pub struct SearchIndex {
+    store: std::sync::Weak<ContentStore>,
+    name: String,
+    cursor: Option<crate::content_store::TapeId>,
+    stop: AtomicBool,
+}
+
+impl SearchIndex {
+    pub fn new(store: &StdArc<ContentStore>) -> Self {
+        let name = store.database_path().file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        SearchIndex { store: StdArc::downgrade(store), name: format!("search-index {name}"), cursor: None, stop: AtomicBool::new(false) }
+    }
+}
+
+impl rerail_accel::upkeep::Job for SearchIndex {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn due(&mut self) -> rerail_accel::upkeep::Due {
+        use rerail_accel::upkeep::Due;
+        let Some(store) = self.store.upgrade() else { return Due::No };
+        // From the start: a backlog below the cursor is the backlog too.
+        match store.tapes_without_search_index_after(grammar_version(), i64::from(tape::TAPE_FORMAT_VERSION), None, 1) {
+            Ok(b) if !b.is_empty() => Due::Idle { starve: Duration::from_secs(60) },
+            _ => Due::No,
+        }
+    }
+
+    fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> std::result::Result<rerail_accel::upkeep::Step, String> {
+        use rerail_accel::upkeep::Step;
+        let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
+        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until);
+        Ok(if self.cursor.is_none() { Step::Done } else { Step::More })
+    }
+}
+
 /// Builds the search (selector) indexes of stored tapes that have none, for at most about a
 /// second per maintenance wake: publication never waits on them, and a tape without an index is
 /// simply not narrowed (`restore_persisted_file`).
@@ -153,9 +187,18 @@ pub fn index_stored_tapes(
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
 ) {
-    let started = Instant::now();
+    index_stored_tapes_until(store, stop, cursor, Instant::now() + Duration::from_secs(1));
+}
+
+/// [`index_stored_tapes`] until `until`.
+pub fn index_stored_tapes_until(
+    store: &ContentStore,
+    stop: &AtomicBool,
+    cursor: &mut Option<crate::content_store::TapeId>,
+    until: Instant,
+) {
     let mut grammars = HashMap::<i64, Arc<tape::Grammar>>::new();
-    while started.elapsed() < Duration::from_secs(1) && !stop.load(Ordering::Acquire) {
+    while Instant::now() < until && !stop.load(Ordering::Acquire) {
         let Ok(backlog) = store.tapes_without_search_index_after(
             grammar_version(),
             i64::from(tape::TAPE_FORMAT_VERSION),
