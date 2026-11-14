@@ -486,6 +486,10 @@ impl Versions {
         let v = &self.0[k.v as usize].2;
         Body::of(v, v.rule(RuleId(k.id)).expect("a rule of its version"))
     }
+    /// The version rule `k` is a rule of, held, and its id there (what outlives the run: an upkeep job's).
+    pub fn held(&self, k: RuleKey) -> (Arc<Version>, RuleId) {
+        (self.0[k.v as usize].2.clone(), RuleId(k.id))
+    }
     /// Rule `r` as the planner reads it.
     pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
         let (v, id) = self.find(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))?;

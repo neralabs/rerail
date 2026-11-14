@@ -1,4 +1,4 @@
-# 0202: A Vue component's view is a guest document
+# 0235 (numbered 0202 when drafted): A Vue component's view is a guest document
 
 Status: decided (2026-11-14, in the work to run main's Vue rules directly: "the Vue view must be a guest
 document", "reuse main's view builder").

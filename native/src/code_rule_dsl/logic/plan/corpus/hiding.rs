@@ -181,7 +181,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 changed = true;
             }
             let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
-            // A kind read off a guest's node is its grammar's (decision 0202): `kind(f, k), fn_scope(k)` over a view's
+            // A kind read off a guest's node is its grammar's (decision 0235): `kind(f, k), fn_scope(k)` over a view's
             // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
             // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
             // read over a Vue component's view) finds none of its kinds.
@@ -281,7 +281,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 };
                 let Some(cols) = carried.get(a.rel.as_str()) else { continue };
                 // A column scoped already is copied too where it knows no grammar, or another: a util whose node
-                // reaches a guest relation (`host_node(p, h)` over a view's node, decision 0202) is scoped there, and
+                // reaches a guest relation (`host_node(p, h)` over a view's node, decision 0235) is scoped there, and
                 // read with a view's node of a known grammar it must name that grammar's kinds.
                 let spec = a.args.iter().enumerate().find_map(|(c, t)| match t {
                     Term::Var(v) => grammar_of(v).filter(|g| !cols.get(c).is_some_and(|f| f.scoped && f.grammar.as_deref() == Some(g.as_str()))).map(|g| (c, g)),
@@ -381,7 +381,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             let Literal::Atom(a) = l else { continue };
             let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             // A negation over a guest's node names its kind in the guest's grammar too (`!kind(d, "import_specifier")`
-            // over a view's node, decision 0202); it bounds nothing.
+            // over a view's node, decision 0235); it bounds nothing.
             if a.neg {
                 let grammar = cols.iter().find_map(|&c| match a.args.get(c) {
                     Some(Term::Var(v)) => facts.get(v.as_str()).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
@@ -767,7 +767,7 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
         if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
                 // A column rules fill from guests of several grammars (`""`: a rule per dialect of a view, decision
-                // 0202) says nothing of this rule's: a guest relation here names it.
+                // 0235) says nothing of this rule's: a guest relation here names it.
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
                     let grammar = f.grammar.clone().filter(|g| !g.is_empty());
                     facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, grammar, ..f.clone() });

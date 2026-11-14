@@ -109,7 +109,7 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
     out
 }
 
-/// The embedding a grammar name names for `host` (decision 0202): one its dialect embeds programs through
+/// The embedding a grammar name names for `host` (decision 0235): one its dialect embeds programs through
 /// (`GrammarDialect::embeds`), by its registry id (`script-block` for a `.vue` file).
 fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
     let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
@@ -355,7 +355,7 @@ impl Guests {
         }))
     }
 
-    /// The program host file `host` embeds through `via` (decision 0202): the embedder main registered for it
+    /// The program host file `host` embeds through `via` (decision 0235): the embedder main registered for it
     /// (`embed::Embedder`; a Vue component's view, `vue::view`) writes its text and its segments from the host's
     /// tree, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
     /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
@@ -516,7 +516,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     Ok(parsed)
 }
 
-/// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0202): the rules over
+/// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0235): the rules over
 /// a view read W's values (`value`, a key's text) as over a file, and a value is read off the document's tape. Not
 /// memoised: a host embeds one program, and a file's tape is the store's.
 fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {

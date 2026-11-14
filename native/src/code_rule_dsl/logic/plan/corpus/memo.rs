@@ -208,7 +208,18 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
 /// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// `by`: the queued write that would store it, when `store` is not set: not held and none queued, nothing is.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, by: Option<crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Held already (a warm run's every source): read here, before the first wave, and only its pin queued, as
+    // `stored_source` does; the writer's job, which reads and stores, is for a source not held yet.
+    if let Ok(Some(id)) = cache.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).map(|mut f| f.pop().flatten()) {
+        late.lock().expect("the late sources").push(id);
+        cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+        return;
+    }
+    if !store && by.is_some_and(|k| !cache.queued(&k)) {
+        return;
+    }
     let late = std::sync::Arc::clone(late);
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None,
@@ -227,10 +238,6 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
         }),
     );
 }
-
-/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0146 §4): the plan's runs are
-/// every root's, so worktrees that take turns keep theirs.
-const MEMO_RUNS: i64 = 32;
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
@@ -547,11 +554,10 @@ impl Found {
 
 }
 
-/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. The
-/// frames found are marked as used by this run, behind it (a lookup writes nothing itself: decision 0104).
+/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. A
+/// lookup writes nothing, and marks nothing (decisions 0104, 0227).
 pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
     off();
-    let plan = plan_digest(program);
     let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
     let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
@@ -595,32 +601,15 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
     } else {
         store.admit_parts_of(&space, &rel, &parts)?
     };
+    // A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept manifest names its
+    // content (`collect_unreachable_frames`), not by the runs that read it.
     let mut out = Vec::new();
-    let mut used = Vec::new();
     for (i, digest, part) in wanted {
         let Some(frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
-            used.push(part);
             out.push((i, Found::Frame(frame)));
         }
-    }
-    if !used.is_empty() {
-        // The use counts the run it is of, once however many windows mark it: without the run's token (`0`) each mark
-        // counts a run, and a run's later windows age out (`MEMO_RUNS`) the entries its first ones used. A wave runs on
-        // a job of the run (`threads::Jobs::spawn` carries its token): one without it is a thread the run did not
-        // start, and is refused here, where it would otherwise lose the store's entries one run later.
-        let token = super::run_token();
-        if token == 0 && crate::code_rule_dsl::logic::profile::inside_waves() {
-            return Err(StoreError::Invalid("the memo's frames were used in a wave on a thread that carries no run (threads::Jobs::spawn carries it)".into()));
-        }
-        // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
-        // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
-        // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
-        if rel.name == outputs_rel(plan).name {
-            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), token, MEMO_RUNS);
-        }
-        store.queue_frame_parts_used(space, rel, used, token, MEMO_RUNS);
     }
     Ok(out)
 }
@@ -684,6 +673,10 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
+    if held.is_empty() {
+        return Ok(());
+    }
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
@@ -703,7 +696,6 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
     }
     let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
-    let token = super::run_token();
     let syms = program.syms.clone();
     store.write_back_syms(
         crate::content_store::write_back::Syms::Mapped,
@@ -741,11 +733,8 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
             }
             let space = crate::content_store::local_space(&plan);
             store.keep_frames(&space, &puts, &[], None)?;
-            let parts: Vec<i64> = puts.iter().filter(|p| p.rel.name == "local").map(|p| p.part).collect();
-            store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)?;
-            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)?;
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
-            // one file of the 20, was kept `MEMO_RUNS` runs: 450 MB of one space).
+            // one file of the 20, was kept 32 runs: 450 MB of one space).
             let mut keys: Vec<u64> = puts.iter().map(|p| p.digest).collect();
             keys.sort_unstable();
             keys.dedup();

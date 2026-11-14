@@ -843,7 +843,7 @@ pub enum Placement {
     At([u32; 2]),
     /// A program an embedder wrote (`embed::Embedder`: a Vue component's view, a Blade view's PHP): copied stretches
     /// and written tokens, each standing for the host bytes its segment names, in any order (`SegmentMap`, decision
-    /// 0202). A node is placed where its first segment stands (`FileRanges::primary`, as main reports one) and lies
+    /// 0235). A node is placed where its first segment stands (`FileRanges::primary`, as main reports one) and lies
     /// in the host inside the least range holding all it stands for (`SegmentMap::bounds`, which `host_node` reads).
     Segments(Arc<crate::code_rule_dsl::embed::segments::SegmentMap>),
 }
@@ -893,7 +893,7 @@ impl Placement {
             (Placement::At(at), _) => Placement::At(*at),
             (_, Placement::At(at)) => Placement::At(self.host(*at)),
             // A document inside an embedder's program, or a program inside a guest, stands at the bytes it lies in
-            // as a whole: segments do not compose with a string's map (open in decision 0202).
+            // as a whole: segments do not compose with a string's map (open in decision 0235).
             (Placement::Segments(_), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) => Placement::At(self.host(*within)),
             (_, Placement::Segments(map)) => {
                 let r = map.bounds(0..u32::MAX as usize);
@@ -2111,7 +2111,7 @@ impl Extra {
     }
 
     /// Document `p`'s W values, read off its tape (`Document::tape`): a file's, or an embedded program's that keeps
-    /// one (a Vue view, decision 0202).
+    /// one (a Vue view, decision 0235).
     fn values(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
@@ -2849,7 +2849,7 @@ impl Batch {
                 tree.document(&p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
-                // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0202).
+                // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0235).
                 if d.tape.is_some() {
                     extra.values(&p, d, dialect, &mut string)?;
                 }

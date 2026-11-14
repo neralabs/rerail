@@ -1,4 +1,4 @@
-// blade/view: a template's compiled view as a guest document (decision 0202).
+// blade/view: a template's compiled view as a guest document (decision 0235).
 //
 // The PHP main compiles a Blade template to (`embedded: compiled-view`), written by main's view builder and placed
 // at the Blade construct each of its tokens stands for, as vue/view.rr's Vue view is:

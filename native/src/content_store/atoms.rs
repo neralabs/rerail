@@ -673,6 +673,9 @@ impl Atoms {
             flushed.store(false, Ordering::Relaxed);
             let (hook, held) = (Arc::clone(&flushed), Arc::clone(&atoms));
             connection.commit_hook(Some(move || {
+                // This hook replaces the one every connection is given for the warm check (`RERAIL_WARM`).
+                // SAFETY: called by SQLite on this connection's thread, inside its commit hook.
+                unsafe { super::hazards::warm_commit(handle as *mut ffi::sqlite3) };
                 let flushed = hook.swap(false, Ordering::AcqRel);
                 if flushed || !held.pending() {
                     return false;
@@ -1609,7 +1612,8 @@ impl super::ContentStore {
         let ids = self.atoms.intern_all(values)?;
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {
-            if self.atoms.due_now() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
+            // Due, and with atoms a flush would write (not only those a component reserves, `Atoms::pending`).
+            if self.atoms.due_now() && self.atoms.pending() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
                 self.queue_atoms_flush();
             }
         } else if self.atoms.due() {

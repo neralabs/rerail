@@ -1,5 +1,5 @@
 // tsx/compare: the text a JSON rule's `compare` reads in its `key` and `unquoted` modes, as main's matcher reads it
-// (decision 0202). The translator writes `cmp_key(l, t), cmp_key(r, t)` for `text: "key"`, and likewise
+// (decision 0235). The translator writes `cmp_key(l, t), cmp_key(r, t)` for `text: "key"`, and likewise
 // `cmp_unquoted`.
 //   cmp_key(n, x)        ESLint's getStaticPropertyName of n (main's `value/key.rs`)
 //   cmp_unquoted(n, x)   n's text, one pair of matching outer quotes taken off
