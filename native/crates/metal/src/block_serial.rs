@@ -1349,6 +1349,21 @@ fn records_source(programs: &[&BlockNative]) -> String {
              constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
              constant uint record_meta_{p}[{slots}] = {{{meta}}};\n\
              constant ulong record_tails_{p}[{nt}] = {{{tails}}};\n\
+             constant uchar record_tests_{p}[256] = {{{tests}}};\n\
+             // The word of the token at `s` of `len` bytes: its first eight bytes and its length\n\
+             // to a slot, compared, and a word past eight bytes its other words.\n\
+             static inline uint record_word_{p}(device const uint4* bytes, FileRow f, uint s, uint len) {{\n\
+             \x20 const ulong key = record_cut(record_load8(bytes, f, s), len);\n\
+             \x20 const uint slot = uint(((key ^ ulong(len)) * {mult}ul) >> {shift}u);\n\
+             \x20 const uint meta = record_meta_{p}[slot];\n\
+             \x20 uint word = (record_keys_{p}[slot] == key && (meta & 0xffu) == len) ? meta >> 8u : 0u;\n\
+             \x20 if (word != 0u && len > 8u) {{\n\
+             \x20   bool all = true;\n\
+             \x20   for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
+             \x20   word = all ? word : 0u;\n\
+             \x20 }}\n\
+             \x20 return word;\n\
+             }}\n\
              static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
              \x20 const uint cap = max(f.len, 1u);\n\
              \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
@@ -1360,23 +1375,37 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
              \x20   bad = bad || l < s || s < after;\n\
              \x20   const uint len = l + 1u - s;\n\
-             \x20   const ulong raw = record_load8(bytes, f, s);\n\
-             \x20   const uint kind = record_kinds_{p}[uint(raw & 0xfful)];\n\
-             \x20   const ulong key = record_cut(raw, len);\n\
-             \x20   const uint slot = uint(((key ^ ulong(len)) * {mult}ul) >> {shift}u);\n\
-             \x20   const uint meta = record_meta_{p}[slot];\n\
-             \x20   uint word = (record_keys_{p}[slot] == key && (meta & 0xffu) == len) ? meta >> 8u : 0u;\n\
-             \x20   if (word != 0u && len > 8u) {{\n\
-             \x20     bool all = true;\n\
-             \x20     for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
-             \x20     word = all ? word : 0u;\n\
-             \x20   }}\n\
-             \x20   uint marks = 0u;{marks}{gaps}\n\
+             \x20   const uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20   const uint word = record_word_{p}(bytes, f, s, len);\n\
+             \x20   uint marks = 0u;{marks}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
+             {unplaced}\
              \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
              }}\n",
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
+            // The token tests (`Records::checks`): by its first byte, the tests of a token's
+            // rule, each a bit; a count over its words, a run from a window of one word or two.
+            tests = list(&mut (0..256usize).map(|b| {
+                let rule = r.ends.get(b).copied().unwrap_or(rerail_compiler::records::NO_RULE);
+                r.checks.iter().enumerate().filter(|(_, c)| c.rule == rule).fold(0u32, |a, (i, _)| a | 1 << i).to_string()
+            })),
+            checks = r
+                .checks
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let o = c.o;
+                    let test = if c.count {
+                        format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
+                    } else {
+                        let need = format!("{:#x}ul", !0u64 >> (64 - c.least));
+                        format!("if (len >= {n}u) {{ const uint sh = s % 64u; ulong win = out[f.out_base + {o}u * f.groups + s / 64u] >> sh; if (sh + {n}u > 64u) win |= out[f.out_base + {o}u * f.groups + s / 64u + 1u] << (64u - sh); bad = bad || (win & {need}) == {need}; }}", n = c.least)
+                    };
+                    assert!(i < 8, "at most 8 token tests");
+                    format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {test} }}")
+                })
+                .collect::<String>(),
             slots = t.keys.len(),
             keys = list(&mut t.keys.iter().map(|k| format!("{k:#x}ul"))),
             meta = list(&mut t.meta.iter().map(|m| format!("{m}u"))),
@@ -1399,6 +1428,24 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     format!(" if (((out[f.out_base + {o}u * f.groups + s / 64u] >> (s % 64u)) & 1ul) != 0ul{word}) marks |= {}u;", 1u32 << k)
                 })
                 .collect::<String>(),
+            // `else escape` (`Records::unplaced`): lane 0 reads the bytes past the last grammar
+            // token's start (the extras' passed over).
+            unplaced = if r.unplaced == 0 {
+                String::new()
+            } else {
+                let before = match r.extra.map(|e| r.marks[usize::from(e)].0) {
+                    Some(o) => format!("record_bit(out, f, {o}u, starts[j])"),
+                    None => "false".into(),
+                };
+                let tests: String = r
+                    .marks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(m, _)| r.unplaced >> m & 1 == 1)
+                    .map(|(_, &(o, _))| format!(" bad = bad || record_any(out, f, {o}u, from, f.len - 1u);"))
+                    .collect();
+                format!("\x20 if (lane == 0u && f.len > 0u) {{ int j = int(n) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{tests} }}\n")
+            },
             // The gap marks (`records::gap_marks`): a grammar token's from the bytes after the
             // grammar token before it, the extras' tokens before it passed over by their mark.
             gaps = if r.gaps == 0 {
@@ -1414,10 +1461,15 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     .iter()
                     .enumerate()
                     .filter(|&(m, _)| r.gaps >> m & 1 == 1)
-                    .map(|(m, &(o, _))| format!(" if (record_any(out, f, {o}u, from, s)) marks |= {}u;", 1u32 << m))
+                    .map(|(m, &(o, _))| {
+                        // `unless after`: none after a grammar token of these words.
+                        let none: String = r.unless.iter().filter(|&&(u, _)| usize::from(u) == m).map(|&(_, w)| format!(" && wb != {w}u")).collect();
+                        format!(" if (record_any(out, f, {o}u, from, s){none}) marks |= {}u;", 1u32 << m)
+                    })
                     .collect();
+                let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
                 format!(
-                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{tests} }}",
+                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{wb}{tests} }}",
                     gaps = r.gaps,
                     here = is_extra("s"),
                     before = is_extra("starts[j]"),
