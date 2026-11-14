@@ -70,8 +70,24 @@ scatter). Each loop is bounded by its candidate range. Any other shape keeps the
     411 ms to 31 ms; the GPU strata's host CPU from 659 ms to 52 ms;
   - `kind` stays on the CPU;
   - the process takes 6.9 s of CPU against 7.1 s on the CPU binding; 1,629 violations either way.
-- Open: placement still prices every upload, though a relation an earlier stratum of the chunk uploaded is found
-  resident. A device subgraph's results still come back to the store between strata.
+- PostHog, profiled cold runs of the same build at the same load (average 63–66), 29,885 files: the outputs are
+  identical (29,747 violations).
+  - On the CPU: 487 s wall, 446 s CPU, 3.51 T instructions.
+  - On Metal: 654 s wall, 481 s CPU, 3.66 T instructions.
+  - On Metal, no stratum is refused for an axis, and 2.2 M rows of `sym_of` are still refused for the device's
+    budget. Uploads total 906 MB, against 14,435 copies found resident.
+  - `wstart` runs on the GPU 2135 times, about 14 files a run. Its price says 3.56 s on the device against 7.36 s
+    on the CPU. In fact its device runs take about 7.5 s of host CPU, the same as on the CPU (7.69 s), plus 17.8 s
+    of GPU time. The price leaves out the pass after the wave: 1.2 s, about 236 ns a row back on PostHog's store,
+    against the 75 ns measured on hogql.
+  - The extra wall time is spread over every stratum the main thread waits on, including those on the CPU (`kind`,
+    `literal_str`), with the same CPU in each. The waits on the GPU's AST matcher batches double (9.5 → 19.9 s),
+    which accounts for about 10 s of it.
+- Open:
+  - Placement still prices every upload, though a relation an earlier stratum of the chunk uploaded is found
+    resident.
+  - A device subgraph's results still come back to the store between strata.
+  - The device price omits the after-wave pass and the GPU lane's latency.
 - Tests:
   - `setfix::device::tests::past_the_bound_head_the_device_keeps_one_witness` (the CPU's rows; a binding per
     document, never per node);
