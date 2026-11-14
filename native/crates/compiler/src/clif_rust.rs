@@ -710,6 +710,8 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
     let u = |e: String| set(format!("unsafe {{ {e} }}"));
     Ok(match op {
         Opcode::Band if is(rt, types::I8X16) => u(format!("vandq_u8({}, {})", args[0], args[1])),
+        Opcode::Isub if is(rt, types::I8X16) => u(format!("vsubq_u8({}, {})", args[0], args[1])),
+        Opcode::Iadd if is(rt, types::I8X16) => u(format!("vaddq_u8({}, {})", args[0], args[1])),
         Opcode::Bor if is(rt, types::I8X16) => u(format!("vorrq_u8({}, {})", args[0], args[1])),
         Opcode::Bxor if is(rt, types::I8X16) => u(format!("veorq_u8({}, {})", args[0], args[1])),
         Opcode::Bnot if is(rt, types::I8X16) => u(format!("vmvnq_u8({})", args[0])),

@@ -495,6 +495,30 @@ impl Needs {
     pub fn has(&self, b: u8) -> bool {
         self.set[usize::from(b >> 6)] >> (b & 63) & 1 == 1
     }
+
+    /// The union of two needs: a bit of either's.
+    pub fn union(self, o: Needs) -> Needs {
+        let mut set = self.set;
+        for (s, w) in set.iter_mut().zip(o.set) {
+            *s |= w;
+        }
+        Needs { set, lo: self.lo.min(o.lo), hi: self.hi.max(o.hi) }
+    }
+
+    /// The set as runs of bytes, `(first, last)` each, in order.
+    pub fn ranges(&self) -> Vec<(u8, u8)> {
+        let mut v: Vec<(u8, u8)> = Vec::new();
+        for b in 0..=255u8 {
+            if !self.has(b) {
+                continue;
+            }
+            match v.last_mut() {
+                Some(r) if r.1.checked_add(1) == Some(b) => r.1 = b,
+                _ => v.push((b, b)),
+            }
+        }
+        v
+    }
 }
 
 /// What output `o` needs of the bytes (`Needs`), where its instructions say: byte tests, their

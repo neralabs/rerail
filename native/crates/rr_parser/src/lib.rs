@@ -1506,6 +1506,23 @@ pub mod tests {
         assert_eq!(filtered, vec![b"-".to_vec(), b"0".to_vec()]);
     }
 
+    /// What a rule's count tests need of the bytes, together (`native_cpu_bytes::needs`): a
+    /// string's, a control byte or a backslash from the byte before it (`escaped`'s run) to
+    /// its last. A string with none of them skips its tests' call, by one vector compare.
+    #[test]
+    fn a_strings_tests_need_a_control_byte_or_a_backslash() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let mut by_rule: std::collections::BTreeMap<u8, Option<rerail_compiler::native_cpu_bytes::Needs>> = Default::default();
+        for k in r.checks.iter().filter(|k| k.count) {
+            let n = rerail_compiler::native_cpu_bytes::needs(&c.native, k.o);
+            let e = by_rule.entry(k.rule).or_insert(n);
+            *e = e.zip(n).map(|(a, b)| a.union(b));
+        }
+        let shown: Vec<_> = by_rule.values().map(|n| n.map(|n| (n.ranges(), n.lo, n.hi))).collect();
+        assert!(shown.contains(&Some((vec![(0, 0x1f), (b'\\', b'\\')], -1, 0))), "{shown:?}");
+    }
+
     /// The code bits of the gap marks tier 2 on the CPU tests itself
     /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
     fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {

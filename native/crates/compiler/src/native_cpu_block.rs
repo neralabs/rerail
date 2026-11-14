@@ -2479,6 +2479,54 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(least));
         f.ins().brif(long, on, &[], join, &[refuse.into(), hits.into()]);
         f.switch_to_block(on);
+        // What the tests need of the bytes, together (`native_cpu_bytes::needs`): a token whose
+        // bytes (and the few its masks look past) fit one vector has none of them where no byte
+        // there is in the set, a compare a run of bytes, and the call is skipped.
+        let needs = rd.bytes.and_then(|(b, _)| {
+            tests.iter().filter(|(t, _)| t.count).map(|(t, _)| crate::native_cpu_bytes::needs(b.native, t.o)).try_fold(None, |a: Option<crate::native_cpu_bytes::Needs>, n| n.map(|n| Some(a.map_or(n, |a| a.union(n)))))
+        }).flatten();
+        if let Some(n) = needs.filter(|n| n.lo >= -8 && n.hi <= 8 && (1..=4).contains(&n.ranges().len())) {
+            let (vec, call) = (f.create_block(), f.create_block());
+            let span = f.ins().iadd_imm(len, i64::from(n.hi - n.lo));
+            let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 16);
+            f.ins().brif(fits, vec, &[], call, &[]);
+            f.switch_to_block(vec);
+            let at = f.ins().iadd(c.bytes, s);
+            let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, n.lo);
+            let mut any: Option<Value> = None;
+            for (a, b) in n.ranges() {
+                let m = if a == b {
+                    let k = f.ins().iconst(types::I8, i64::from(a));
+                    let k = f.ins().splat(types::I8X16, k);
+                    f.ins().icmp(IntCC::Equal, v, k)
+                } else {
+                    let lo = f.ins().iconst(types::I8, i64::from(a));
+                    let lo = f.ins().splat(types::I8X16, lo);
+                    let w = f.ins().iconst(types::I8, i64::from(b - a) + 1);
+                    let w = f.ins().splat(types::I8X16, w);
+                    let d = if a == 0 { v } else { f.ins().isub(v, lo) };
+                    if u16::from(b - a) + 1 == 256 { f.ins().icmp(IntCC::Equal, v, v) } else { f.ins().icmp(IntCC::UnsignedLessThan, d, w) }
+                };
+                any = Some(match any {
+                    Some(x) => f.ins().bor(x, m),
+                    None => m,
+                });
+            }
+            let any = any.expect("a range");
+            let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), any);
+            let w0 = f.ins().extractlane(wide, 0);
+            let w1 = f.ins().extractlane(wide, 1);
+            // The lanes of the span alone.
+            let w0 = cut_to(f, w0, span);
+            let rest = f.ins().iadd_imm(span, -8);
+            let zero = f.ins().iconst(types::I64, 0);
+            let rest = f.ins().smax(rest, zero);
+            let w1 = cut_to(f, w1, rest);
+            let w1 = f.ins().select(rest, w1, zero);
+            let some = f.ins().bor(w0, w1);
+            f.ins().brif(some, call, &[], join, &[refuse.into(), hits.into()]);
+            f.switch_to_block(call);
+        }
         let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
         let signature = f.import_signature(sig.clone());
         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });

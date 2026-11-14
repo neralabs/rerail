@@ -626,3 +626,22 @@ Now a refusal is a branch to a cold block that sets the file's flag in memory (t
 after the extracts', which the file's end ORs into); the loop carries nothing for it. The
 main function: 159 stack accesses, from 173. Measured with the slots (`jit_against_aot`,
 load average 88): tier 1 ahead of time 274 instructions a node, from 279; tier 1 + 2, 516.
+
+## A short token's tests by one vector compare
+
+A string's two tests (a bad byte, a bad `\u`) need a control byte or a backslash: the union
+of what their masks need (`Needs::union`) is `0x00..=0x1f` and `\`, from the byte before the
+token (an `escaped`'s run) to its last. Most strings have neither.
+
+So where a rule's count tests need a set of at most four runs of bytes, within eight bytes
+of the token, the loop first tests them on the token's bytes by one 16-byte vector: a
+compare a run (`v - a < b - a + 1`), the lanes of the span kept, both halves ORed. None set:
+no test can hold, and the fused call is skipped. A token too long for one vector calls as
+before. The bytes read stay in the buffer: 16 zero bytes before each file (`FRONT`), its
+last block padded, 64 after the last file; a zero past the file is a control byte, so at
+worst the call is made.
+
+Guard: `a_strings_tests_need_a_control_byte_or_a_backslash`. Measured (`jit_against_aot`,
+load average 53): tier 1 ahead of time 263 instructions a node, from 274; tier 1 + 2, 505
+from 516. The JIT's is unchanged (362): Cranelift's vector code for the compare costs about
+the call it saves.
