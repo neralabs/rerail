@@ -53,10 +53,15 @@ full".
 A sample of those five sessions' stream jobs puts the joins at about half their work. The fixed cost left, in
 order:
 
-- planning, about 12%: a session's delta rules are first seen in it (2,887 first-sight plans in session 14), and
-  the search's map lookups hash string keys with SipHash;
-- opening, 5%: kept relations that come without a full-row order or sketches have them made again from every row
-  (`Rel::based`);
+- planning, about 12%: a session's delta rules are first seen in it (2,887 first-sight plans in session 14). The
+  search's SipHash lookups are not the lever: the planner's per-step maps (`card`, `delta_rows`, `fan`, `obs`, the
+  search's `kinds` and `best_of`) moved to Fx measured within noise (steps 12–16, two rounds), and were left as
+  they were. The count of first-sight plans is.
+- opening: 1.3% of the whole step-14 sample, not the 5% first read; `Rel::based` is 6 of its 88 samples. Most of
+  it was a syntax view's constant filter scanning through the trait's per-row default, a document search per row:
+  the view's own document-by-document scan had been left outside its `Source` impl by a merge. Fixed in
+  712e08427 (sessions within 1%, process −1%). A filter on a column no index answers still reads every node of
+  the batch each session.
 - the main thread's placement of each reached stratum (`form`, 50 µs each).
 
 ## Tests
