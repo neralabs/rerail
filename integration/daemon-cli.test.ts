@@ -4,8 +4,9 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
 import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
@@ -148,6 +149,51 @@ describe("Rerail daemon CLI", () => {
     }
   }, 90_000);
 
+  // A restart at the heap ceiling launches the next daemon with this process's arguments (`process.argv`). A daemon that
+  // serves this computer alone comes back as that daemon, saying why, never with the arguments that asked for other
+  // machines, which would reach them once the key is fixed though no one started it so.
+  test("comes back from a heap-ceiling restart on loopback, still saying why, once its TLS key is fixed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const keyFile = join(root, "key.pem");
+    const stateFile = join(root, "daemon.json");
+    const relaunchFile = join(root, "relaunch.json");
+    try {
+      const { cert, key } = selfSignedCertificate();
+      await writeFile(join(root, "cert.pem"), cert);
+      await writeFile(keyFile, key);
+      await letOthersRead(keyFile, 0o644);
+      // The daemon process as its entry point runs it, then the arguments a restart would relaunch it with.
+      const script = join(root, "daemon.mjs");
+      await writeFile(script, [
+        `const { serveRerailDaemon } = await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "dist", "daemon", "daemon.js")).href)});`,
+        "await serveRerailDaemon(process.argv.slice(2));",
+        `(await import("node:fs")).writeFileSync(${JSON.stringify(relaunchFile)}, JSON.stringify(process.argv.slice(2)));`,
+      ].join("\n"));
+      const local = ["--dev", "--port", "0", "--state-file", stateFile];
+      const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
+      spawn(process.execPath, [script, ...local, ...remote], { env, stdio: "ignore" });
+      const relaunch = await vi.waitFor(async () => JSON.parse(await readFile(relaunchFile, "utf8")) as string[], { timeout: 30_000, interval: 100 });
+      const why = String((JSON.parse(await readFile(stateFile, "utf8")) as { remoteRefused?: unknown }).remoteRefused);
+      expect(relaunch).toEqual([...local, "--remote-refused", why]);
+      expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
+      // Launched with those arguments once the key is private, the next daemon still serves this computer alone.
+      await makePrivate(keyFile);
+      spawn(process.execPath, [join(process.cwd(), ENTRY_POINTS.daemon), ...relaunch], { env, stdio: "ignore" });
+      const state = await vi.waitFor(
+        async () => JSON.parse(await readFile(stateFile, "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(state).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/u), remoteRefused: why });
+      const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
+      expect(health.status).toBe(200);
+    } finally {
+      await rerail(cli, ["daemon", "stop"], env);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   // A --tls-key that names no file this account can read is a mistake in the command, not a key others can read: the
   // start fails with the reason main gives, naming the key, and no daemon runs, on this computer or for others.
   test("refuses to start when --tls-key names no file", async () => {
@@ -250,6 +296,12 @@ async function lockOut(keyFile: string): Promise<string> {
   const refusal = await letOthersRead(keyFile, 0o044);
   if (process.platform === "win32") await promisify(execFile)("icacls", [keyFile, "/deny", `${userInfo().username}:(RD)`], { windowsHide: true });
   return refusal;
+}
+
+/** Makes `keyFile` its owner's alone, as the daemon's printed fix does: mode 0600, or on Windows read for this account alone. */
+async function makePrivate(keyFile: string): Promise<void> {
+  if (process.platform !== "win32") return await chmod(keyFile, 0o600);
+  await promisify(execFile)("icacls", [keyFile, "/inheritance:r", "/grant:r", `${userInfo().username}:R`], { windowsHide: true });
 }
 
 /**
