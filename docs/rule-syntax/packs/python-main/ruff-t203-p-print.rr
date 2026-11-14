@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // T203(n): a finding at node n, from clause `pprint-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation T203(at: node, f: node) "Log the value through `logging` (`pprint.pformat` keeps the layout), or remove this call if it was debug output; leave it where the program's job is to write to the terminal."
+.violation T203(at: loc, f: node) "Log the value through `logging` (`pprint.pformat` keeps the layout), or remove this call if it was debug output; leave it where the program's job is to write to the terminal."
     suppress noqa "T203"
 T203(F, n) :- kind(n, "call"),
     ( field(n, "function", c1), t203_callee(c1, F)

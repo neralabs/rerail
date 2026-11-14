@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -13,10 +13,7 @@
 .violation SIM222(at: node) "Drop the operands after the always-truthy value in this `or`; they never run, so the result is that value."
     suppress noqa "SIM222"
 SIM222(n) :- sim222_value(n), !sim222_skip(n), (sim222_tok_precedes_11(n) ; sim222_prev_skip(n)),
-    ( sim222_tok_precedes_11(n)
-    ; next_sibling(s1, n), glob("or", s1), next_sibling(s2, s1), sim222_clean(s2)
-    ),
-    sim222_run_has_trigger(n).
+    (sim222_tok_precedes_11(n) ; sim222_tok_follows_23(n, s1), sim222_clean(s1)), sim222_run_has_trigger(n).
 
 // or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
 .decl sim222_or_op(n: node)
@@ -183,9 +180,9 @@ sim222_has_next(n) :- sim222_tok_follows_12(n), child(p15, n, _), sim222_or_op(p
 
 // next_short(n): the JSON util `next-short`, used where the JSON says `matches: "next-short"`
 .decl sim222_next_short(n: node)
-sim222_next_short(n) :- next_sibling(n, s1), glob("or", s1), next_sibling(s1, s2), sim222_short(s2).
-sim222_next_short(n) :- sim222_tok_follows_14(n), child(p10, n, _), sim222_or_op(p10),
-    next_sibling(p10, s11), glob("or", s11), next_sibling(s11, s12), sim222_short(s12).
+sim222_next_short(n) :- sim222_tok_precedes_14(n, s2), sim222_short(s2).
+sim222_next_short(n) :- sim222_tok_follows_15(n), child(p18, n, _), sim222_or_op(p18),
+    sim222_tok_precedes_16(p18, s20), sim222_short(s20).
 
 // trigger(n): the JSON util `trigger`, used where the JSON says `matches: "trigger"`
 .decl sim222_trigger(n: node)
@@ -198,14 +195,14 @@ sim222_clean(n) :- node(_, n, _, _, _), !sim222_trigger(n),
 
 // prev_skip(n): the JSON util `prev-skip`, used where the JSON says `matches: "prev-skip"`
 .decl sim222_prev_skip(n: node)
-sim222_prev_skip(n) :- next_sibling(s1, n), glob("or", s1), next_sibling(s2, s1),
-    (!sim222_or_op(s2), sim222_skip(s2) ; sim222_or_op(s2), child(s2, c1, _), sim222_tok_follows_16(c1), sim222_skip(c1)).
+sim222_prev_skip(n) :- sim222_tok_follows_17(n, s2),
+    (!sim222_or_op(s2), sim222_skip(s2) ; sim222_or_op(s2), child(s2, c1, _), sim222_tok_follows_19(c1), sim222_skip(c1)).
 
 // run_has_trigger(n): the JSON util `run-has-trigger`, used where the JSON says `matches: "run-has-trigger"`
 .decl sim222_run_has_trigger(n: node)
 sim222_run_has_trigger(n) :- sim222_trigger(n).
 sim222_run_has_trigger(n) :- within_stop(n, p1, sim222_stop_42), sim222_or_op(p1), child(p1, c2, _),
-    sim222_tok_follows_14(c2), sim222_trigger(c2).
+    sim222_tok_follows_20(c2), sim222_trigger(c2).
 
 // in_boolean_test(n): the JSON util `in-boolean-test`, used where the JSON says `matches: "in-boolean-test"`
 .decl sim222_in_boolean_test(n: node)
@@ -524,45 +521,106 @@ sim222_tok_precedes_13(n) :- structural_after(n, g18), match("\\s*", g18), child
 sim222_tok_precedes_13(n) :- structural_after(n, g18),
     match("(?s)^(?:\\s*(?:or)(?:\\W.*)?)$", g18).
 
-// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim222_tok_follows_14(n: node)
-.stored sim222_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim222_tok_follows_14(n) :- next_sibling(s3, n), glob("or", s3).
-sim222_tok_follows_14(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
-    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
-    match("or", t4).
-sim222_tok_follows_14(n) :- structural_before(n, g5),
-    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g5).
+// tok_precedes_14(n, m): m is the named node after n, with one token between them that matches "^or$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim222_tok_precedes_14(n: node, m: node)
+.stored sim222_tok_precedes_14 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim222_tok_precedes_14(n, m) :- next_sibling(n, m), structural_after(n, g3),
+    match("(?s)^\\s*(?:or)\\s*$", g3).
+sim222_tok_precedes_14(n, m) :- next_sibling(n, m), structural_after(n, g3),
+    match("\\s*", g3), child(p6, n, _), structural_before(m, g4), match("\\s*", g4),
+    node(_, n, _, _, en10), o7 = en10 + strlen(g3), token(p6, _, t5, o7, e8),
+    node(_, m, _, st9, _), st9 = e8 + strlen(g4), match("or", t5).
 
 // tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim222_tok_follows_15(n: node)
 .stored sim222_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim222_tok_follows_15(n) :- next_sibling(s4, n), glob("or", s4).
-sim222_tok_follows_15(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
-    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
-    match("or", t5).
-sim222_tok_follows_15(n) :- structural_before(n, g6),
-    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g6).
+sim222_tok_follows_15(n) :- next_sibling(s11, n), glob("or", s11).
+sim222_tok_follows_15(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("or", t12).
+sim222_tok_follows_15(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g13).
 
-// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim222_tok_follows_16(n: node)
-.stored sim222_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim222_tok_follows_16(n) :- next_sibling(s2, n), glob("or", s2).
-sim222_tok_follows_16(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+// tok_precedes_16(n, m): m is the named node after n, with one token between them that matches "^or$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim222_tok_precedes_16(n: node, m: node)
+.stored sim222_tok_precedes_16 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim222_tok_precedes_16(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("(?s)^\\s*(?:or)\\s*$", g21).
+sim222_tok_precedes_16(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("\\s*", g21), child(p24, n, _), structural_before(m, g22),
+    match("\\s*", g22), node(_, n, _, _, en28), o25 = en28 + strlen(g21),
+    token(p24, _, t23, o25, e26), node(_, m, _, st27, _), st27 = e26 + strlen(g22),
+    match("or", t23).
+
+// tok_follows_17(n, m): m is the named node before n, with one token between them that matches "^or$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim222_tok_follows_17(n: node, m: node)
+.stored sim222_tok_follows_17 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim222_tok_follows_17(n, m) :- next_sibling(m, n), structural_before(n, g3),
+    match("(?s)^\\s*(?:or)\\s*$", g3).
+sim222_tok_follows_17(n, m) :- next_sibling(m, n), structural_before(n, g3),
+    match("\\s*", g3), child(p6, n, _), structural_after(m, g4), match("\\s*", g4),
+    node(_, n, _, st9, _), o7 = st9 - strlen(g3), token(p6, _, t5, e8, o7),
+    node(_, m, _, _, en10), en10 = e8 - strlen(g4), match("or", t5).
+
+// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_18(n: node)
+.stored sim222_tok_follows_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_18(n) :- next_sibling(s12, n), glob("or", s12).
+sim222_tok_follows_18(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("or", t13).
+sim222_tok_follows_18(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g14).
+
+// tok_follows_19(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_19(n: node)
+.stored sim222_tok_follows_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_19(n) :- next_sibling(s2, n), glob("or", s2).
+sim222_tok_follows_19(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
     node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
     match("or", t3).
-sim222_tok_follows_16(n) :- structural_before(n, g4),
+sim222_tok_follows_19(n) :- structural_before(n, g4),
     match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g4).
 
-// tok_precedes_17(n): a later sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim222_tok_precedes_17(n: node)
-.stored sim222_tok_precedes_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim222_tok_precedes_17(n) :- next_sibling(n, s8), glob("or", s8).
-sim222_tok_precedes_17(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_20(n: node)
+.stored sim222_tok_follows_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_20(n) :- next_sibling(s3, n), glob("or", s3).
+sim222_tok_follows_20(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("or", t4).
+sim222_tok_follows_20(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g5).
+
+// tok_precedes_21(n): a later sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_precedes_21(n: node)
+.stored sim222_tok_precedes_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_precedes_21(n) :- next_sibling(n, s8), glob("or", s8).
+sim222_tok_precedes_21(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
     node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
     match("or", t9).
-sim222_tok_precedes_17(n) :- structural_after(n, g10),
+sim222_tok_precedes_21(n) :- structural_after(n, g10),
     match("(?s)^(?:\\s*(?:or)(?:\\W.*)?)$", g10).
+
+// tok_follows_22(n, m): m is the named node before n, with one token between them that matches "^or$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim222_tok_follows_22(n: node, m: node)
+.stored sim222_tok_follows_22 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim222_tok_follows_22(n, m) :- next_sibling(m, n), structural_before(n, g17),
+    match("(?s)^\\s*(?:or)\\s*$", g17).
+sim222_tok_follows_22(n, m) :- next_sibling(m, n), structural_before(n, g17),
+    match("\\s*", g17), child(p20, n, _), structural_after(m, g18), match("\\s*", g18),
+    node(_, n, _, st23, _), o21 = st23 - strlen(g17), token(p20, _, t19, e22, o21),
+    node(_, m, _, _, en24), en24 = e22 - strlen(g18), match("or", t19).
+
+// tok_follows_23(n, m): m is the named node before n, with one token between them that matches "^or$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim222_tok_follows_23(n: node, m: node)
+.stored sim222_tok_follows_23 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim222_tok_follows_23(n, m) :- next_sibling(m, n), structural_before(n, g10),
+    match("(?s)^\\s*(?:or)\\s*$", g10).
+sim222_tok_follows_23(n, m) :- next_sibling(m, n), structural_before(n, g10),
+    match("\\s*", g10), child(p13, n, _), structural_after(m, g11), match("\\s*", g11),
+    node(_, n, _, st16, _), o14 = st16 - strlen(g10), token(p13, _, t12, e15, o14),
+    node(_, m, _, _, en17), en17 = e15 - strlen(g11), match("or", t12).
 
 // alt_18_u0_empty: level -1 of an unrolled recursion, empty
 .decl sim222_alt_18_u0_empty(n: node)
@@ -734,7 +792,7 @@ sim222_stop_40(n) :- sim222_not_or_op(n).
 // stop_42(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim222_stop_42(n: node)
 sim222_stop_42(n) :- sim222_not_or_op(n).
-sim222_stop_42(n) :- sim222_or_op(n), child(n, c1, _), sim222_tok_follows_16(c1), sim222_skip(c1).
+sim222_stop_42(n) :- sim222_or_op(n), child(n, c1, _), sim222_tok_follows_19(c1), sim222_skip(c1).
 
 // stop_43(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim222_stop_43(n: node)

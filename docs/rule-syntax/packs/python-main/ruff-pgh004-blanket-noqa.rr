@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // own_line(n): the JSON util `own-line`, used where the JSON says `matches: "own-line"`
 .decl pgh004_own_line(n: node)
@@ -30,7 +30,7 @@ pgh004_enabled(n) :- pgh004_demand_enabled(n), inside(n, p1, "module"),
 // PGH004(n, detail): findings from clauses `blanket-noqa`, `noqa-missing-colon`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PGH004(at: node, d: node, detail: symbol) "{detail}."
+.violation PGH004(at: loc, d: node, detail: symbol) "{detail}."
 PGH004(D, n, "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing") :- kind(n, "comment"),
     match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:])).*", n),
     !pgh004_missing_colon(n, D), pgh004_enabled(n).

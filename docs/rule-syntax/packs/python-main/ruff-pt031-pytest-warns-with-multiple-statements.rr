@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -90,7 +90,7 @@ pt031_warns_with(n, S) :- kind(n, "with_statement"),
 // PT031(n, detail): findings from clauses `several-statements`, `compound-statement`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT031(at: node, s: node, detail: symbol) "{detail} needed to trigger the warning."
+.violation PT031(at: loc, s: node, detail: symbol) "{detail} needed to trigger the warning."
     suppress noqa "PT031"
 PT031(S, n, "Keep only the statement expected to warn inside this `pytest.warns` block and move the other statements before or after it, unless they are") :- pt031_warns_with(n, S),
     field(n, "body", c1), kind(c1, "block"), !pt031_single_stmt_block(c1).

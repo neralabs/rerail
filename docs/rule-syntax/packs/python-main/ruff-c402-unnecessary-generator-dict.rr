@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // C402(n): a finding at node n, from clause `generator-dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C402(at: node, c402_call: node) "Rewrite `dict((k, v) for ...)` as a dict comprehension `{{k: v for ...}}`; leave it if `dict` here is not the builtin."
+.violation C402(at: loc, c402_call: node) "Rewrite `dict((k, v) for ...)` as a dict comprehension `{{k: v for ...}}`; leave it if `dict` here is not the builtin."
     suppress noqa "C402"
 C402(CALL, n) :- c402_call(n, CALL).
 C402(CALL, n) :- c402_in_annotation(n, CALL).

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on D are added to every rule.
-.violation PTH207(at: node, f: node, detail: symbol) "Use `Path(root).glob(pattern)` (or `rglob`) instead of {detail}."
+.violation PTH207(at: loc, f: node, detail: symbol) "Use `Path(root).glob(pattern)` (or `rglob`) instead of {detail}."
     suppress noqa "PTH207"
 PTH207(F, n, "`glob.glob(...)`; it lazily yields `Path` objects and includes hidden files, so wrap it in `list(...)` where a list is needed") :- kind(n, "call"),
     field(n, "function", c1), pth207_callee(c1, F),

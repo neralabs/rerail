@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -15,7 +15,7 @@ pth124_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "py.p
 // PTH124(n): findings from clauses `py-path-local`, `py-path-local-in-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH124(at: node, f: node) "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
+.violation PTH124(at: loc, f: node) "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
     suppress noqa "PTH124"
 PTH124(F, n) :- kind(n, "call"), field(n, "function", c1), pth124_callee(c1, F).
 PTH124(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),

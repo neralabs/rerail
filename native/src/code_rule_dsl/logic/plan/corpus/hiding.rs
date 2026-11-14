@@ -24,6 +24,7 @@
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Name, Program, Term};
+use rayon::prelude::*;
 use rustc_hash::FxHashMap as HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -139,14 +140,27 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
         let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
+        // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
+        let mut axes: Vec<String> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         let mut by_head: Option<HashMap<&str, Vec<usize>>> = None;
-        for (i, rule) in prog.rules.iter().enumerate() {
+        // Each rule's analysis reads the round's start alone: made on the pool's threads, used in order below.
+        let analysed: Vec<BTreeMap<String, Fact>> = prog
+            .rules
+            .par_iter()
+            .enumerate()
+            .map(|(i, rule)| {
+                if view(&rule.head.rel) || !reaches[i] {
+                    return BTreeMap::new();
+                }
+                analyse(rule, &base_locations, &carried, &seeds[i]).into_iter().map(|(v, f)| (v.to_owned(), f)).collect()
+            })
+            .collect();
+        for ((i, rule), facts) in prog.rules.iter().enumerate().zip(analysed) {
             if view(&rule.head.rel) {
                 continue;
             }
-            let facts: BTreeMap<String, Fact> = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
             // A variable that may be a guest's node of a known grammar, and may be a host's: the rule stays as it is
             // for the host's, and a clone with the variable seeded as the guest's reads the guest's copies. Copying
             // in place of the atom would drop the host's rows (`tv`'s nodes are both, and `tbv`'s `live_asg` read
@@ -177,6 +191,34 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         edits.push((i, k, Edit::Kindset(name)));
                         changed = true;
                     }
+                    continue;
+                }
+                // `has(r, f, "field")` and `inside(n, p, "field")` over a guest's node: the axis's kind set is named in
+                // the guest's grammar, as `nearest`'s is (`rr_has_rr_in_<grammar>_<set>`). Unqualified, the kind is
+                // the run language's, and the axis finds no guest node.
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                    && let Some((set, descendants)) = crate::code_rule_dsl::logic::front::axis(&a.rel)
+                    && !set.starts_with("rr_in_")
+                    && prog.kindsets.contains_key(set)
+                    && let Some(g) = a.args.iter().find_map(|t| match t {
+                        Term::Var(v) => grammar_of(v),
+                        _ => None,
+                    })
+                {
+                    let copy = format!("rr_in_{}_{set}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
+                    let prefix = if descendants { crate::code_rule_dsl::logic::front::DESCENDANTS } else { crate::code_rule_dsl::logic::front::AXIS };
+                    let name = format!("{prefix}{copy}");
+                    if made.insert(name.clone()) {
+                        let label = dialect_label(&g);
+                        let kinds = prog.kindsets.get(set).cloned().unwrap_or_default();
+                        kindsets.push((copy, kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
+                        if let Some(d) = prog.decls.get(a.rel.as_str()) {
+                            decls.push((name.clone().into(), d.clone()));
+                        }
+                        axes.push(name.clone());
+                    }
+                    edits.push((i, k, Edit::Rel(name)));
+                    changed = true;
                     continue;
                 }
                 let a = match l {
@@ -241,6 +283,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         prog.decls.extend(decls);
         prog.kindsets.extend(kindsets);
+        for axis in axes {
+            if !prog.inputs.contains(&axis) {
+                prog.inputs.push(axis);
+            }
+        }
         if !changed {
             break;
         }
@@ -253,7 +300,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     // and no rule reached it through the annotation either.
     let asking = asking(prog);
     let asks = |rel: &str| asking.contains(rel);
-    for ((rule, seed), reaches) in prog.rules.iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str()) && !asks(&r.head.rel)) {
+    // Each rule bounded on its own, on the pool's threads.
+    prog.rules.par_iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str()) && !asks(&r.head.rel)).for_each(|((rule, seed), reaches)| {
         let facts: BTreeMap<String, Fact> = if reaches { analyse(rule, &base_locations, &carried, seed).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
@@ -295,7 +343,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         for (v, doc_column) in bounded {
             rule.body.push(Literal::Cmp { l: Term::Var(v.into()), op: "<", r: Term::Int(bound_of(doc_column)) });
         }
-    }
+    });
     // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
     // `rr_shown_agg<k>(vars) :- atom, bounds`.
     let mut helpers: Vec<(Atom, Vec<(String, String)>, Vec<Literal>)> = Vec::new();
@@ -531,7 +579,7 @@ enum Edit {
 }
 
 /// What each derived relation's columns carry, to a fixpoint over the rules.
-fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool, reaches: &[bool]) -> HashMap<Name, Vec<Fact>> {
+fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &(dyn Fn(&str) -> bool + Sync), reaches: &[bool]) -> HashMap<Name, Vec<Fact>> {
     // Keyed by the heads' own names (a count each, no string made), each relation once.
     let mut carried: HashMap<Name, Vec<Fact>> = HashMap::default();
     for r in &prog.rules {
@@ -555,28 +603,32 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
             }
         }
     }
-    let fixpoint = |carried: &mut HashMap<Name, Vec<Fact>>, step: &dyn Fn(&BTreeMap<&str, Fact>, &Term, &mut Fact) -> bool| {
-        let mut queued = vec![true; prog.rules.len()];
-        let mut work: std::collections::VecDeque<usize> = (0..prog.rules.len()).collect();
-        while let Some(i) = work.pop_front() {
-            queued[i] = false;
-            let (rule, seed) = (&prog.rules[i], &seeds[i]);
-            let facts = if reaches[i] { analyse(rule, base, carried, seed) } else { BTreeMap::new() };
-            let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
-            let mut changed = false;
-            for (c, t) in rule.head.args.iter().enumerate() {
-                if let Some(slot) = cols.get_mut(c) {
-                    changed |= step(&facts, t, slot);
-                }
-            }
-            if changed {
-                for &j in readers.get(rule.head.rel.as_str()).into_iter().flatten() {
-                    if !queued[j] {
-                        queued[j] = true;
-                        work.push_back(j);
+    // In rounds: each round's rules analysed on the pool's threads against what the columns carried as it began, and
+    // applied in order. Both fixpoints are monotone (columns only gain, then only lose being definite), so the rounds
+    // reach what a rule at a time does.
+    let fixpoint = |carried: &mut HashMap<Name, Vec<Fact>>, step: &(dyn Fn(&BTreeMap<&str, Fact>, &Term, &mut Fact) -> bool + Sync)| {
+        let mut round: Vec<usize> = (0..prog.rules.len()).collect();
+        while !round.is_empty() {
+            let now: &HashMap<Name, Vec<Fact>> = carried;
+            let analysed: Vec<BTreeMap<&str, Fact>> = round
+                .par_iter()
+                .map(|&i| if reaches[i] && now.contains_key(prog.rules[i].head.rel.as_str()) { analyse(&prog.rules[i], base, now, &seeds[i]) } else { BTreeMap::new() })
+                .collect();
+            let mut next: BTreeSet<usize> = BTreeSet::new();
+            for (&i, facts) in round.iter().zip(analysed) {
+                let rule = &prog.rules[i];
+                let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
+                let mut changed = false;
+                for (c, t) in rule.head.args.iter().enumerate() {
+                    if let Some(slot) = cols.get_mut(c) {
+                        changed |= step(&facts, t, slot);
                     }
                 }
+                if changed {
+                    next.extend(readers.get(rule.head.rel.as_str()).into_iter().flatten().copied());
+                }
             }
+            round = next.into_iter().collect();
         }
     };
     fixpoint(&mut carried, &|facts, t, slot| match t {
@@ -647,6 +699,9 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
             "doc_root" => PAIR,
             // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
             "tape" => PAIR,
+            // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
+            // over a guest's root r makes c the guest's node.
+            r if crate::code_rule_dsl::logic::front::is_axis(r) => PAIR,
             r => base.get(r).map_or(&[], Vec::as_slice),
         };
         let vars: Vec<&'r str> = cols.iter().filter_map(|&c| var(a.args.get(c))).collect();

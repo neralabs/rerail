@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -101,7 +101,7 @@ ruf015_first_plain_in_annotation(n, W) :- (kind(n, "string") ; kind(n, "concaten
 // RUF015(n, detail): findings from clauses `first-of-comprehension`, `first-of-copy`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF015(at: node, w: node, detail: symbol) "{detail}."
+.violation RUF015(at: loc, w: node, detail: symbol) "{detail}."
     suppress noqa "RUF015"
 RUF015(W, n, "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration") :- ruf015_first_comp(n, W).
 RUF015(W, n, "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration") :- ruf015_first_comp_in_annotation(n, W).

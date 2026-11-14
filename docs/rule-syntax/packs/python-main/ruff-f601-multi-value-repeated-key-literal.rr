@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // F601(n): a finding at node n, from clause `multi-value-repeated-key-literal`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F601(at: node, keya: node) "Dictionary key literal `{keya}` repeated"
+.violation F601(at: loc, keya: node) "Dictionary key literal `{keya}` repeated"
     suppress noqa "F601"
 F601(KEYA, n) :- node(_, n, _, _, _), KEYA = n, f601_repeated_key(n).
 F601(KEYA, n) :- f601_in_annotation(n, KEYA).

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -152,14 +152,14 @@ pyi062_duplicate_member(n, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DU
 // PYI062(n): a finding at node n, from clause `duplicate-literal-member`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI062(at: node, dup: node) "Remove the repeated member `{dup}` from this Literal; an earlier member already covers it."
+.violation PYI062(at: loc, dup: node) "Remove the repeated member `{dup}` from this Literal; an earlier member already covers it."
     suppress noqa "PYI062"
 PYI062(DUP, n) :- pyi062_alt_15(n), pyi062_duplicate_member(n, DUP).
 
 // PYI062_duplicate_literal_member_in_string(n): a finding at node n, from clause `duplicate-literal-member-in-string`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI062_duplicate_literal_member_in_string(at: node, d: node) code "PYI062" "Remove the repeated member `{d}` from this Literal; an earlier member already covers it."
+.violation PYI062_duplicate_literal_member_in_string(at: loc, d: node) code "PYI062" "Remove the repeated member `{d}` from this Literal; an earlier member already covers it."
     suppress noqa "PYI062"
 PYI062_duplicate_literal_member_in_string(D, n) :- pyi062_string_duplicate_member(n, D).
 

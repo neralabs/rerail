@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -175,7 +175,7 @@ UP036(n) :- up036_version_compare(n), !up036_after_stop(n),
 // UP036_invalid_version_specifier(n): a finding at node n, from clause `invalid-version-specifier`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP036_invalid_version_specifier(at: node, v: node) code "UP036" "Fix this version in the `sys.version_info` comparison: no Python version component exceeds 255, so this specifier is invalid; write the version you meant."
+.violation UP036_invalid_version_specifier(at: loc, v: node) code "UP036" "Fix this version in the `sys.version_info` comparison: no Python version component exceeds 255, so this specifier is invalid; write the version you meant."
     suppress noqa "UP036"
 UP036_invalid_version_specifier(V, n) :- up036_version_compare(n), !up036_after_stop(n),
     ( child(n, c1, _), up036_comparator(c1), up036_int_big(c1), up036_alt_13(c1, V)

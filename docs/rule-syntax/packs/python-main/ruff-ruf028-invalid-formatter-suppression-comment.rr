@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // off_family(n, key): 3 copies of one rule set (`off`, `on`, `skip`), folded into one: row `key` of
 // off_family_case gives the strings each copy had.

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // F722(n): a finding at node n, from clause `forward-annotation-syntax-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722(at: node, c: node) "Syntax error in forward annotation"
+.violation F722(at: loc, c: node) "Syntax error in forward annotation"
     suppress noqa "F722"
 F722(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")), f722_alt_2(n, C),
     count : { value(n, v2), match("(?:\\\\\\r?\\n)+\\S(?s:.*)", v2) } = 0,
@@ -36,7 +36,7 @@ f722_jaxtyping_shape_of(n) :- child(p11, n, _), kind(p11, "type"), f722_tok_foll
 // F722_forward_annotation_semantic_syntax_error(n): a finding at node n, from clause `forward-annotation-semantic-syntax-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722_forward_annotation_semantic_syntax_error(at: node, e: node) code "F722" "Syntax error in forward annotation"
+.violation F722_forward_annotation_semantic_syntax_error(at: loc, e: node) code "F722" "Syntax error in forward annotation"
     suppress noqa "F722"
 F722_forward_annotation_semantic_syntax_error(E, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     f722_semantic_error(n, E), !f722_alt(n, "4").
@@ -58,7 +58,7 @@ f722_semantic_error(n, E) :- f722_demand_semantic_error(n), f722_semantic_error_
 // F722_forward_annotation_await_outside_function(n): a finding at node n, from clause `forward-annotation-await-outside-function`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722_forward_annotation_await_outside_function(at: node, a: node) code "F722" "Remove the `await` from this string annotation; it is not valid outside a function."
+.violation F722_forward_annotation_await_outside_function(at: loc, a: node) code "F722" "Remove the `await` from this string annotation; it is not valid outside a function."
     suppress noqa "F722"
 F722_forward_annotation_await_outside_function(A, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     f722_await_outside_function(n, A),

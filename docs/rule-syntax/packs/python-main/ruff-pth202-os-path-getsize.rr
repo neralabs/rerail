@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -22,7 +22,7 @@ pth202_single_filename_arg(n) :- child(n, c2, _), kind(c2, "argument_list"),
 // PTH202(n): a finding at node n, from clause `os-path-getsize`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH202(at: node, f: node, s: loc) "Use `Path({s}).stat().st_size` instead of `os.path.getsize({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+.violation PTH202(at: loc, f: node, s: loc) "Use `Path({s}).stat().st_size` instead of `os.path.getsize({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH202"
 PTH202(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth202_callee(c1, F),
     pth202_arg_filename_1(n, a2), S = a2,
@@ -40,7 +40,7 @@ pth202_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth
 // PTH202_os_path_getsize_in_annotation(n): a finding at node n, from clause `os-path-getsize-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH202_os_path_getsize_in_annotation(at: node, f: node) code "PTH202" "Use `Path(...).stat().st_size` instead of `os.path.getsize(...)`; leave it where the argument is a bytes path or a file descriptor."
+.violation PTH202_os_path_getsize_in_annotation(at: loc, f: node) code "PTH202" "Use `Path(...).stat().st_size` instead of `os.path.getsize(...)`; leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH202"
 PTH202_os_path_getsize_in_annotation(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1),

@@ -144,8 +144,20 @@ pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rus
         .prepare("SELECT rowid FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT ?2")?
         .query_map(rusqlite::params![machine, limit], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    // The lanes and forms, by a seek each down `samples_by_form` (a skip scan): `DISTINCT` read every one of the
+    // machine's index entries, half a million, 0.03-0.2 s of a process's first run.
     let groups: Vec<(String, String)> = db
-        .prepare("SELECT DISTINCT lane, forms FROM samples WHERE machine = ?1")?
+        .prepare(
+            "WITH RECURSIVE g(id) AS (
+                 SELECT (SELECT rowid FROM samples WHERE machine = ?1 ORDER BY lane, forms LIMIT 1)
+                 UNION ALL
+                 SELECT (SELECT coalesce(
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane = p.lane AND s.forms > p.forms ORDER BY s.forms LIMIT 1),
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane > p.lane ORDER BY s.lane, s.forms LIMIT 1))
+                   FROM samples p WHERE p.rowid = g.id)
+                 FROM g WHERE g.id IS NOT NULL)
+             SELECT lane, forms FROM g JOIN samples ON samples.rowid = g.id",
+        )?
         .query_map([&machine], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     let mut newest = db.prepare("SELECT rowid FROM samples WHERE machine = ?1 AND lane = ?2 AND forms = ?3 ORDER BY at DESC LIMIT ?4")?;
@@ -414,28 +426,62 @@ fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, com
 /// The samples read and the rates fitted, once the read has run.
 static FITTED: Mutex<Option<(usize, usize)>> = Mutex::new(None);
 
-/// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a job reads the stored
-/// ones and fits the prices. Without a store (`RERAIL_COSTS=off`, or in tests) nothing is kept.
+/// Whether the stored statistics have been read (`start`'s thread): what `ready` waits for.
+static READ_DONE: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::sync::Condvar::new());
+/// `start` ran: before it, there is nothing to wait for.
+static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a thread reads the stored
+/// ones and fits the prices, beside the run's preparation; what reads them waits for it (`ready`). Without a store
+/// (`RERAIL_COSTS=off`, or in tests) nothing is kept.
 pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
+        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
+        let done = || {
+            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            READ_DONE.1.notify_all();
+        };
         if path().is_none() {
+            done();
             return;
         }
         sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
+            ready();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 write();
             }
         });
-        let _ = std::panic::catch_unwind(read);
+        // Read beside the run (its preparation reads none of it): a tenth of a second of a cold batch's first run.
+        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
+            crate::code_rule_dsl::logic::profile::behind_the_run();
+            let _ = std::panic::catch_unwind(read);
+            done();
+        });
+        if spawned.is_err() {
+            let _ = std::panic::catch_unwind(read);
+            done();
+        }
         // The upkeep of the statistics' store, and the model's retraining, for the process's life (decision 0190).
         std::mem::forget(upkeep_jobs());
         rerail_accel::upkeep::start();
     });
+}
+
+/// Waits until the stored statistics are read, if `start` began reading them: the executors' prices and the SQL
+/// plans' observations are read from here on, before the first wave (decision 0104).
+pub fn ready() {
+    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
+    if *done || !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    while !*done {
+        done = READ_DONE.1.wait(done).unwrap_or_else(|p| p.into_inner());
+    }
 }
 
 /// The statistics' upkeep jobs (decision 0190), registered: their store's SQLite file, and the model's

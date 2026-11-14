@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF051(n): a finding at node n, from clause `if-key-in-dict-del`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF051(at: node, del: node, d: loc, k: loc) "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
+.violation RUF051(at: loc, del: node, d: loc, k: loc) "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
     suppress noqa "RUF051"
 RUF051(DEL, n, D, K) :- kind(n, "if_statement"),
     count : { child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")) } = 0,

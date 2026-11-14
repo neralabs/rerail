@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // end_of_function(n): the JSON util `end-of-function`, used where the JSON says `matches: "end-of-function"`
 .decl b015_end_of_function(n: node)

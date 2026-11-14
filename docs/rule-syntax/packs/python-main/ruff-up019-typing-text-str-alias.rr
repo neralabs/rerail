@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // UP019(n): a finding at node n, from clause `typing-text`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP019(at: node, t: node) "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
+.violation UP019(at: loc, t: node) "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
     suppress noqa "UP019"
 UP019(T, n) :- up019_text_ref(n), node(_, n, _, _, _), T = n.
 UP019(T, n) :- up019_text_in_string(n, T).

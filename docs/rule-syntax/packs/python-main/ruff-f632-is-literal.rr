@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // F632(n, detail): findings from clauses `is-literal-is`, `is-literal-is-not`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F632(at: node, o: loc, c: node, detail: symbol) "Use {detail} to compare this literal value."
+.violation F632(at: loc, o: loc, c: node, detail: symbol) "Use {detail} to compare this literal value."
     suppress noqa "F632"
 // O: not bound by this rule, so empty (unset) here, as in ast-grep.
 F632(C, O, n, "`==` instead of `is`") :- f632_is_literal_op(n), child(p1, n, _),

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl ruf001_plain_string(n: node)
@@ -109,7 +109,7 @@ ruf001_without_unambiguous(n, CH) :- !ruf001_unambiguous(n), (ruf001_symbol(n, C
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation RUF001(at: node, ch: node) "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+.violation RUF001(at: loc, ch: node) "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_raw(CH, n) :- ruf001_string_text(n),
     count : { ruf001_in_string_annotation(n), ruf001_future_seen(n) } = 0, ruf001_with_unambiguous(n, CH).
@@ -121,7 +121,7 @@ RUF001_raw(CH, n) :- ruf001_string_text(n),
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation RUF001_with_unambiguous_stub(at: node, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+.violation RUF001_with_unambiguous_stub(at: loc, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_with_unambiguous_stub_raw(CH, n) :- ruf001_string_text(n), !ruf001_in_string_annotation(n),
     ruf001_with_unambiguous(n, CH).
@@ -132,7 +132,7 @@ RUF001_with_unambiguous_stub_raw(CH, n) :- ruf001_string_text(n), !ruf001_in_str
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation RUF001_with_unambiguous_deferred_annotations(at: node, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+.violation RUF001_with_unambiguous_deferred_annotations(at: loc, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_with_unambiguous_deferred_annotations_raw(CH, n) :- ruf001_string_text(n),
     !ruf001_in_string_annotation(n), ruf001_with_unambiguous(n, CH).
@@ -173,12 +173,12 @@ ruf001_up_1(n, p) :- ruf001_demand_in_string_annotation(n), within(n, p), ruf001
 ruf001_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl RUF001_raw(at: node, ch: node)
+.decl RUF001_raw(at: loc, ch: node)
 RUF001(v0, v1) :- RUF001_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl RUF001_with_unambiguous_stub_raw(at: node, ch: node)
+.decl RUF001_with_unambiguous_stub_raw(at: loc, ch: node)
 RUF001_with_unambiguous_stub(v0, v1) :- RUF001_with_unambiguous_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // pythonVersion {"min": "3.14"} excludes Python 3.10, main's default: no findings.
-.decl RUF001_with_unambiguous_deferred_annotations_raw(at: node, ch: node)
+.decl RUF001_with_unambiguous_deferred_annotations_raw(at: loc, ch: node)

@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // RUF021(n): a finding at node n, from clause `unparenthesized-and-in-or`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF021(at: node, c: node) "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
+.violation RUF021(at: loc, c: node) "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
     suppress noqa "RUF021"
 RUF021(C, n) :- ruf021_and_in_or(n), node(_, n, _, _, _), C = n.
 RUF021(C, n) :- ruf021_and_in_or_in_string(n, C).

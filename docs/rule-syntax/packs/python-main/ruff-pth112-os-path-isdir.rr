@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH112(n): a finding at node n, from clause `os-path-isdir`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH112(at: node, f: node, s: loc) "Use `Path({s}).is_dir()` from pathlib instead of `os.path.isdir({s})`; leave it where the argument is a bytes path or a file descriptor."
+.violation PTH112(at: loc, f: node, s: loc) "Use `Path({s}).is_dir()` from pathlib instead of `os.path.isdir({s})`; leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH112"
 PTH112(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth112_callee(c1, F),
     pth112_arg_s_1(n, a2), S = a2,

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // template_string(n): the JSON util `template-string`, used where the JSON says `matches: "template-string"`
 .decl ruf016_template_string(n: node)
@@ -104,7 +104,7 @@ ruf016_slice_in_annotation(n, B) :- (kind(n, "string") ; kind(n, "concatenated_s
 // RUF016(n, detail): findings from clauses `invalid-index`, `invalid-index-in-annotation`, `invalid-slice-bound`, `invalid-slice-bound-in-annotation`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF016(at: node, b: node, detail: symbol) "{detail} type raises a TypeError."
+.violation RUF016(at: loc, b: node, detail: symbol) "{detail} type raises a TypeError."
     suppress noqa "RUF016"
 RUF016(B, n, "Index this list, tuple, string or bytes literal with an integer or a slice; any other index") :- ruf016_index_hit(n, B).
 RUF016(B, n, "Index this list, tuple, string or bytes literal with an integer or a slice; any other index") :- ruf016_index_in_annotation(n, B).
@@ -114,7 +114,7 @@ RUF016(B, n, "Use an integer (or None) for each bound and step of this slice; an
 // RUF016_invalid_tuple_index_span(n): findings from clauses `invalid-tuple-index-fallback`, `invalid-tuple-index-span`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF016_invalid_tuple_index_span(at: node, i: node) code "RUF016" "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError."
+.violation RUF016_invalid_tuple_index_span(at: loc, i: node) code "RUF016" "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError."
     suppress noqa "RUF016"
 RUF016_invalid_tuple_index_span(I, n) :- ruf016_tuple_hit(n), n ~ `$V[$$$I]`,
     !ruf016_tuple_span(n, I).

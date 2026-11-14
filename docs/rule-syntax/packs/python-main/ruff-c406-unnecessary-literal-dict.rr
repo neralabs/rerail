@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C406(n): a finding at node n, from clause `unnecessary-literal-dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C406(at: node, call: node) "Rewrite `dict([(k, v), ...])` as the dict literal `{{k: v, ...}}` and `dict([])` as `{{}}`; leave it when a pair unpacks with `*`, as in `(k, *v)`."
+.violation C406(at: loc, call: node) "Rewrite `dict([(k, v), ...])` as the dict literal `{{k: v, ...}}` and `dict([])` as `{{}}`; leave it when a pair unpacks with `*`, as in `(k, *v)`."
     suppress noqa "C406"
 C406(CALL, n) :- c406_target(n), node(_, n, _, _, _), CALL = n.
 C406(CALL, n) :- c406_in_annotation(n, CALL).

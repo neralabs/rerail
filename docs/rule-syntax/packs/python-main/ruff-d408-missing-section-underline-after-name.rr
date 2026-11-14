@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // D408(n): findings from clauses `underline-after-blank-shared`, `underline-after-blank-numpy`, `underline-after-blank-google`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D408(at: node, name: node) "Move this underline up to the line directly below the section name, removing the blank lines between them."
+.violation D408(at: loc, name: node) "Move this underline up to the line directly below the section name, removing the blank lines between them."
     suppress noqa "D408"
 D408(NAME, n) :- kind(n, "string_content"), child(p1, n, _), d408_docstring_of(p1),
     count : { value(p1, v2), match("(?s:.*)\\n([ \\t]*)\\.\\. [^\\n]*(?:\\n(?:[ \\t]*\\n)*\\1[ \\t]+[^\\s][^\\n]*)*?\\n(?:[ \\t]*\\n)*\\1[ \\t]+(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[ \\t]*(?:\\n|\\z)(?s:.*)", v2) } = 0,

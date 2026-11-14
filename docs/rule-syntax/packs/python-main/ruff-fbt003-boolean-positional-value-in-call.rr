@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -13,7 +13,7 @@
 // FBT003(n): a finding at node n, from clause `boolean-positional-value-in-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FBT003(at: node, b: node) "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
+.violation FBT003(at: loc, b: node) "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
     suppress noqa "FBT003"
 FBT003(B, n) :- (kind(n, "true") ; kind(n, "false")), node(_, n, _, _, _), B = n, fbt003_argument_position(n).
 FBT003(B, n) :- fbt003_string_booleans(n, B).

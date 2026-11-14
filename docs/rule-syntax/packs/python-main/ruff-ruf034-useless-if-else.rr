@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // RUF034(n): a finding at node n, from clause `useless-if-else`.
 // Each rule below is one way the JSON `rule` can match.
@@ -16,7 +16,7 @@ RUF034(n) :- kind(n, "conditional_expression"), n ~ `$A if $C else $B`,
 // RUF034_useless_if_else_in_string_annotation(n): a finding at node n, from clause `useless-if-else-in-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF034_useless_if_else_in_string_annotation(at: node, cond: node) code "RUF034" "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
+.violation RUF034_useless_if_else_in_string_annotation(at: loc, cond: node) code "RUF034" "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
     suppress noqa "RUF034"
 RUF034_useless_if_else_in_string_annotation(COND, n) :- ruf034_in_string(n, COND).
 

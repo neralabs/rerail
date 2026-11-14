@@ -20,6 +20,7 @@ const WORD: usize = 0; // [A-Za-z0-9_]
 const BLANK: usize = 1; // ' ', '\t', '\f'
 const EOL: usize = 2; // '\n', '\r'
 const STOP: usize = 3; // what may end a string's text: '\'', '"', '`', '\\', '{', '}', '\n', '\r'
+const SPACE: usize = 4; // ' ': a line's indent
 
 // The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
 const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
@@ -94,22 +95,24 @@ pub fn is_word(c: u8) -> bool {
 
 /// One block's masks.
 #[inline(always)]
-unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 4] {
+unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 5] {
     unsafe {
         let v = S::load(b);
         let c = S::classify(v, &LO, &HI);
-        let word = S::nonzero(S::and(c, S::splat(C_WORD)));
-        let blank = S::nonzero(S::and(c, S::splat(C_BLANK)));
-        let eol = S::nonzero(S::and(c, S::splat(C_EOL)));
+        // Each mask one test, packed once (`test` stays a vector).
+        let word = S::to_bitmask(S::test(c, S::splat(C_WORD)));
+        let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
+        let eol = S::to_bitmask(S::test(c, S::splat(C_EOL)));
         let others = S::or(S::or(S::eq(v, S::splat(b'`')), S::eq(v, S::splat(b'\\'))), S::or(S::eq(v, S::splat(b'{')), S::eq(v, S::splat(b'}'))));
-        let stop = S::nonzero(S::and(c, S::splat(C_EOL | C_QUOTE))) | S::to_bitmask(others);
-        [word, blank, eol, stop]
+        let stop = S::to_bitmask(S::or(S::test(c, S::splat(C_EOL | C_QUOTE)), others));
+        let space = S::to_bitmask(S::eq(v, S::splat(b' ')));
+        [word, blank, eol, stop, space]
     }
 }
 
 /// Stage 1 over `src`: each block's masks, the last block's padded.
 #[inline(always)]
-unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<[u64; 4]> {
+unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<[u64; 5]> {
     let mut out = Vec::with_capacity(src.len().div_ceil(64));
     let mut at = 0;
     while let Some(b) = src.get(at..at + 64) {
@@ -120,21 +123,21 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<[u64; 4]> {
         let mut b = [0u8; 64];
         let n = src.len() - at;
         b[..n].copy_from_slice(&src[at..]);
-        let [word, blank, eol, stop] = unsafe { masks::<S>(&b) };
+        let [word, blank, eol, stop, space] = unsafe { masks::<S>(&b) };
         let past = !0u64 << n;
-        out.push([word & !past, blank & !past, eol | past, stop | past]);
+        out.push([word & !past, blank & !past, eol | past, stop | past, space & !past]);
     }
     out
 }
 
 rerail_simd8::dispatch! {
-    fn stage1_best(src: &[u8]) -> Vec<[u64; 4]> = stage1, on stage1_on;
+    fn stage1_best(src: &[u8]) -> Vec<[u64; 5]> = stage1, on stage1_on;
 }
 
 /// The text's masks (stage 1), for the lexer's scans (stage 2).
 pub struct Blocks<'s> {
     src: &'s [u8],
-    m: Vec<[u64; 4]>,
+    m: Vec<[u64; 5]>,
 }
 
 impl<'s> Blocks<'s> {
@@ -176,6 +179,12 @@ impl<'s> Blocks<'s> {
         self.next(at, BLANK, false)
     }
 
+    /// The end of a run of spaces from `at`: a line's indent.
+    #[inline]
+    pub fn space_end(&self, at: usize) -> usize {
+        self.next(at, SPACE, false)
+    }
+
     /// The first `\n` or `\r` from `at` (or the text's length): a comment's end.
     #[inline]
     pub fn eol(&self, at: usize) -> usize {
@@ -213,8 +222,8 @@ mod tests {
     use super::*;
 
     /// The masks one byte at a time.
-    fn scalar(src: &[u8]) -> Vec<[u64; 4]> {
-        let mut out = vec![[0u64; 4]; src.len().div_ceil(64)];
+    fn scalar(src: &[u8]) -> Vec<[u64; 5]> {
+        let mut out = vec![[0u64; 5]; src.len().div_ceil(64)];
         for (b, o) in out.iter_mut().enumerate() {
             for i in 0..64 {
                 let at = b * 64 + i;
@@ -228,6 +237,7 @@ mod tests {
                 o[BLANK] |= bit(matches!(c, b' ' | b'\t' | 0x0c));
                 o[EOL] |= bit(matches!(c, b'\n' | b'\r'));
                 o[STOP] |= bit(matches!(c, b'\'' | b'"' | b'`' | b'\\' | b'{' | b'}' | b'\n' | b'\r'));
+                o[SPACE] |= bit(c == b' ');
             }
         }
         out

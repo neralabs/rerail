@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -134,7 +134,7 @@ ruf013_tuple_first_allows_none(n) :- (kind(n, "type") ; kind(n, "parenthesized_e
 // RUF013(n): a finding at node n, from clause `implicit-optional`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF013(at: node, w: node) "Allow `None` explicitly: write `{w} | None` here (`Optional[{w}]` before Python 3.10), or give the parameter a default other than `None`."
+.violation RUF013(at: loc, w: node) "Allow `None` explicitly: write `{w} | None` here (`Optional[{w}]` before Python 3.10), or give the parameter a default other than `None`."
     suppress noqa "RUF013"
 RUF013(W, n) :- kind(n, "typed_default_parameter"), field(n, "value", c1),
     ruf013_none_value(c1), field(n, "type", c2), ruf013_reported_type(c2, W).

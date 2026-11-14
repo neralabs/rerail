@@ -1544,6 +1544,7 @@ mod literal {
     }
     pub use rerail_lang_python::code_rule_dsl::literal::identifier_words;
     pub use rerail_lang_python::code_rule_dsl::literal::percent;
+    pub use rerail_lang_python::code_rule_dsl::literal::format_tape;
     pub use rerail_lang_php::code_rule_dsl::literal::php_string;
     pub mod phpdoc {
         pub use rerail_lang_php::code_rule_dsl::literal::phpdoc::*;
@@ -1615,6 +1616,13 @@ pub(crate) mod logic {
     #[cfg(test)]
     mod costs_tests;
     pub mod convert;
+    // The JSON translator's tests (decision 0175) run in the engine's test binary.
+    #[path = "json_rules"]
+    pub mod json_rules {
+        pub use rerail_logic::code_rule_dsl::logic::json_rules::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     #[path = "front"]
     pub mod front {
         pub use rerail_rr::code_rule_dsl::logic::front::*;
@@ -4745,7 +4753,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, ecma::Ecma, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, ecma::Ecma, format::Format, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4764,6 +4772,8 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
     language::register_base(Family::Json, &Pack::<Json>::NEW);
+    register(Family::Format, &Pack::<Format>::NEW);
+    language::register_base(Family::Format, &Pack::<Format>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -4814,6 +4824,7 @@ pub(crate) fn install_languages() {
         core_rr::register_dialect_facts(Family::Python, &python_core::PythonFacts);
         core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
         core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
+        core_rr::register_dialect_facts(core_rr::Family::Format, &literal::format_tape::FormatFacts);
     }
     // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
     workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
@@ -4902,6 +4913,20 @@ pub(crate) fn install_languages() {
         if cfg!(feature = "lang-python") {
             // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Python, name: "lean Python parser", rank: 0, runs: true, parser: &tape::python_lean::Lean });
+        }
+        // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
+        if cfg!(feature = "lang-python") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: &literal::format_tape::FormatStrings(language::GrammarDialect::PercentFormat) });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: &literal::format_tape::FormatStrings(language::GrammarDialect::BraceFormat) });
+        }
+        // The lean ECMAScript parser (`tape::ecma_lean`, decision 0184); a file it refuses goes to
+        // the dialect's tree-sitter grammar.
+        if cfg!(feature = "lang-javascript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::JAVASCRIPT });
+        }
+        if cfg!(feature = "lang-typescript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::TYPESCRIPT });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &tape::ecma_lean::TSX });
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser

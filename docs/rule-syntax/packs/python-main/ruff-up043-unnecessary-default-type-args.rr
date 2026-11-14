@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -127,7 +127,7 @@ up043_direct_ref(n, T) :- up043_string_content(n), parsed(n, "annotation", r1), 
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP043(at: node, t: node) "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults."
+.violation UP043(at: loc, t: node) "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults."
     suppress noqa "UP043"
 UP043_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
 UP043_raw(T, n) :- up043_direct_ref(n, T).
@@ -136,7 +136,7 @@ UP043_raw(T, n) :- up043_direct_ref(n, T).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP043_default_type_args(at: node, t: node) code "UP043" "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults."
+.violation UP043_default_type_args(at: loc, t: node) code "UP043" "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults."
     suppress noqa "UP043"
 UP043_default_type_args_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
 UP043_default_type_args_raw(T, n) :- up043_direct_ref(n, T).
@@ -171,8 +171,8 @@ up043_alt_22(n, T) :- up043_direct_ref(n, T).
 up043_stop_1_precedes(x, y) :- precedes_stop(x, y, up043_stop_1).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl UP043_raw(at: node, t: node)
+.decl UP043_raw(at: loc, t: node)
 UP043(v0, v1) :- UP043_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // pythonVersion {"min": "3.13"} excludes Python 3.10, main's default: no findings.
-.decl UP043_default_type_args_raw(at: node, t: node)
+.decl UP043_default_type_args_raw(at: loc, t: node)

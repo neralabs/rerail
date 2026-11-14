@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -51,7 +51,7 @@ up024_alias_in_annotation(n, ALIAS) :- (kind(n, "string") ; kind(n, "concatenate
 // UP024(n): a finding at node n, from clause `os-error-alias`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP024(at: node, alias: node) "Replace `{alias}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
+.violation UP024(at: loc, alias: node) "Replace `{alias}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
     suppress noqa "UP024"
 UP024(ALIAS, n) :- up024_alias_site(n), node(_, n, _, _, _), ALIAS = n.
 UP024(ALIAS, n) :- up024_alias_in_annotation(n, ALIAS).

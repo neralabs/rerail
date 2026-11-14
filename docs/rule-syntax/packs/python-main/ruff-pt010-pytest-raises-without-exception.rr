@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT010(n): a finding at node n, from clause `raises-without-exception`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT010(at: node, f: node) "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
+.violation PT010(at: loc, f: node) "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
     suppress noqa "PT010"
 PT010(F, n) :- kind(n, "call"), field(n, "function", c1), pt010_raises(c1, F),
     field(n, "arguments", c2), kind(c2, "argument_list"),

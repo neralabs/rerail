@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PYI024(n): a finding at node n, from clause `collections-named-tuple`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI024(at: node, nt: node) "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
+.violation PYI024(at: loc, nt: node) "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
     suppress noqa "PYI024"
 PYI024(NT, n) :- pyi024_nt_ref(n), node(_, n, _, _, _), NT = n.
 PYI024(NT, n) :- kind(n, "dotted_name"), inside(n, p1, "case_pattern"),

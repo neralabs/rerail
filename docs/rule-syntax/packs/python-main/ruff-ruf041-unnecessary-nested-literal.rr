@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -84,7 +84,7 @@ RUF041(n) :- ruf041_lit(n), ruf041_holds_lit(n), !ruf041_under_lit(n).
 // RUF041_nested_literal_in_string(n): a finding at node n, from clause `nested-literal-in-string`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF041_nested_literal_in_string(at: node, c: node) code "RUF041" "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."
+.violation RUF041_nested_literal_in_string(at: loc, c: node) code "RUF041" "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."
     suppress noqa "RUF041"
 RUF041_nested_literal_in_string(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf041_lit(c2), ruf041_holds_lit(c2),

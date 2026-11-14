@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // E721(n): a finding at node n, from clause `type-comparison`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation E721(at: node, cmp: node) "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks"
+.violation E721(at: loc, cmp: node) "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks"
     suppress noqa "E721"
 E721(CMP, n) :- e721_offending_op(n), child(p1, n, _), kind(p1, "comparison_operator"),
     node(_, p1, _, _, _), CMP = p1.

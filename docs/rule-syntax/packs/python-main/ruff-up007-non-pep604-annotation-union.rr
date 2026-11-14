@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -164,7 +164,7 @@ up007_typing_context(n) :- up007_future_annotations(n), up007_up_2(n, p1).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP007(at: node, name: node) "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+.violation UP007(at: loc, name: node) "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n, (!up007_quoted_union(n) ; up007_typing_context(n)).
 UP007_raw(NAME, n) :- up007_union_in_string(n, NAME).
@@ -173,7 +173,7 @@ UP007_raw(NAME, n) :- up007_union_in_string(n, NAME).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP007_union_annotation_stub(at: node, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+.violation UP007_union_annotation_stub(at: loc, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_union_annotation_stub_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n,
     (!up007_quoted_union(n) ; up007_in_type_checking(n) ; up007_in_annotation(n) ; up007_in_type_param(n)).
@@ -183,7 +183,7 @@ UP007_union_annotation_stub_raw(NAME, n) :- up007_union_in_string(n, NAME).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP007_union_annotation_future_annotations(at: node, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+.violation UP007_union_annotation_future_annotations(at: loc, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_union_annotation_future_annotations_raw(NAME, n) :- up007_future_annotations(n),
     up007_alt_9(n, NAME).
@@ -239,12 +239,12 @@ up007_alt_9(n, NAME) :- up007_union_node(n), node(_, n, _, _, _), NAME = n, up00
 up007_alt_9(n, NAME) :- up007_union_in_string(n, NAME).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl UP007_raw(at: node, name: node)
+.decl UP007_raw(at: loc, name: node)
 UP007(v0, v1) :- UP007_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl UP007_union_annotation_stub_raw(at: node, name: node)
+.decl UP007_union_annotation_stub_raw(at: loc, name: node)
 UP007_union_annotation_stub(v0, v1) :- UP007_union_annotation_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // pythonVersion {"max": "3.9"} excludes Python 3.10, main's default: no findings.
-.decl UP007_union_annotation_future_annotations_raw(at: node, name: node)
+.decl UP007_union_annotation_future_annotations_raw(at: loc, name: node)

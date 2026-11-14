@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C413(n, detail): findings from clauses `list-call-around-sorted`, `reversed-call-around-sorted`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C413(at: node, call: node, detail: symbol) "{detail}."
+.violation C413(at: loc, call: node, detail: symbol) "{detail}."
     suppress noqa "C413"
 C413(CALL, n, "Remove the `list()` call around `sorted()`; `sorted()` already returns a new list") :- c413_target(n),
     node(_, n, _, _, _), CALL = n.

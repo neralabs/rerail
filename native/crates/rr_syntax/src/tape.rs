@@ -203,6 +203,8 @@ fields! {
     Key = "key",
     Separator = "separator",
     Type = "type",
+    // a pattern's selector: `n ~ `ctx` at "kind"`
+    Selector = "selector",
 }
 
 /// The anonymous kind of a token written `text` (punctuation, a directive keyword, a reserved word), if it is one.

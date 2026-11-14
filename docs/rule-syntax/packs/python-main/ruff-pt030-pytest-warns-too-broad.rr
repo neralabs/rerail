@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -138,7 +138,7 @@ pt030_ann_string_callable(n, W) :- kind(n, "string"),
 // PT030(n): a finding at node n, from clause `context-manager-form`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT030(at: node, w: node) "Give `pytest.warns({w})` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it."
+.violation PT030(at: loc, w: node) "Give `pytest.warns({w})` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it."
     suppress noqa "PT030"
 PT030(W, n) :- pt030_flagged_warning(n, W), !pt030_in_callable_form(n).
 PT030(W, n) :- pt030_ann_string_context_manager(n, W).
@@ -146,7 +146,7 @@ PT030(W, n) :- pt030_ann_string_context_manager(n, W).
 // PT030_callable_form(n): a finding at node n, from clause `callable-form`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT030_callable_form(at: node, w: node) code "PT030" "`pytest.warns({w}, func)` ignores `match=`; call the function inside `with pytest.warns({w}, match=...):` instead, or expect a more specific warning class."
+.violation PT030_callable_form(at: loc, w: node) code "PT030" "`pytest.warns({w}, func)` ignores `match=`; call the function inside `with pytest.warns({w}, match=...):` instead, or expect a more specific warning class."
     suppress noqa "PT030"
 PT030_callable_form(W, n) :- pt030_flagged_warning(n, W), pt030_in_callable_form(n).
 PT030_callable_form(W, n) :- pt030_ann_string_callable(n, W).

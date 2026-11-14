@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
 .decl d411_doc_stmt(n: node)
@@ -46,7 +46,7 @@ d411_directive_hides_header(n) :- child(p1, n, _), kind(p1, "string"),
 // D411(n): findings from clauses `no-blank-line-before-section-numpy`, `no-blank-line-before-section-google`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D411(at: node, n: node) "Add a blank line before the `{n}` section so it is separated from the text above."
+.violation D411(at: loc, n: node) "Add a blank line before the `{n}` section so it is separated from the text above."
     suppress noqa "D411"
 D411(N, n) :- kind(n, "string_content"), child(p1, n, _), d411_docstring(p1), d411_alt_6(n, N),
     d411_numpy_mode(n), !d411_directive_hides_header(n).

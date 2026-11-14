@@ -380,6 +380,17 @@ impl FromIterator<((String, String), [i64; 4])> for ColStats {
 
 /// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
+/// The climbs `Stats::steps` priced, by kind and set: each a function of the tree's statistics alone, so a model's
+/// plans made on several threads (`keeps::estimate`) share them.
+#[derive(Debug, Default)]
+struct StepsCache(parking_lot::Mutex<HashMap<(Option<String>, String), f64>>);
+
+impl Clone for StepsCache {
+    fn clone(&self) -> Self {
+        StepsCache(parking_lot::Mutex::new(self.0.lock().clone()))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
@@ -413,7 +424,7 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
-    steps_cache: RefCell<HashMap<(Option<String>, String), f64>>,
+    steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
@@ -493,7 +504,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
-            steps_cache: RefCell::new(HashMap::new()),
+            steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
@@ -519,7 +530,7 @@ impl Stats {
             })
             .collect());
         self.docs = Some(docs);
-        self.steps_cache.borrow_mut().clear();
+        self.steps_cache.0.lock().clear();
     }
 
     /// Whether any column of `rel` has statistics (read or measured).
@@ -664,7 +675,7 @@ impl Stats {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
             }),
-            steps_cache: RefCell::new(HashMap::new()),
+            steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
@@ -689,7 +700,7 @@ impl Stats {
     /// Expected parent reads to climb from `kind` to the nearest ancestor in `kset` (an absorbing Markov chain).
     fn steps(&self, kind: Option<&str>, kset: &str) -> f64 {
         let key = (kind.map(str::to_owned), kset.to_owned());
-        if let Some(&s) = self.steps_cache.borrow().get(&key) {
+        if let Some(&s) = self.steps_cache.0.lock().get(&key) {
             return s;
         }
         let members: HashSet<&str> = self.kindsets.get(kset).into_iter().flatten().map(String::as_str).collect();
@@ -719,7 +730,7 @@ impl Stats {
                 }
             }
         }
-        self.steps_cache.borrow_mut().insert(key, out);
+        self.steps_cache.0.lock().insert(key, out);
         out
     }
 }
@@ -820,7 +831,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
-            steps_cache: RefCell::new(HashMap::default()),
+            steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
@@ -915,8 +926,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
-const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 10] = [const { std::sync::atomic::AtomicU64::new(0) }; 10];
+const PLAN_CACHE_NAMES: [&str; 10] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price"];
 /// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
 /// ran, ran over a search's work, or its inputs grew past what that allows.
 static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
@@ -937,6 +948,17 @@ thread_local! {
 fn plan_site(site: &'static str) {
     PLAN_SITE.with(|c| c.set(site));
 }
+/// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
+/// §7).
+static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+/// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
+/// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
+static LAZY: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn lazy_probes_counted() -> (u64, u64) {
+    (LAZY[0].load(std::sync::atomic::Ordering::Relaxed), LAZY[1].load(std::sync::atomic::Ordering::Relaxed))
+}
+
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -1070,7 +1092,21 @@ const REPLAN_ROWS: f64 = 10_000.0;
 /// 0.8 µs a unit of work. The candidates follow from the joins `j`: with the delta first, `(j-1)·2^(j-2)+1` (`fgp`'s
 /// 12 joins 11,265, `lcbind`'s 9 1,025, `lgpar`'s 6 81, as counted); without, `j·2^(j-1)`; past `GREEDY`, `j²`.
 const SEARCH_FIXED_ROWS: f64 = 400.0;
-fn search_rows(b: &Body<'_>, first: Option<usize>) -> f64 {
+/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. `RERAIL_LAZY_PROBES=off`
+/// plans every probe when its stratum opens, as before (a measurement aid).
+fn lazy_probes() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LAZY_PROBES").map_or(true, |v| v != "off"));
+    *ON
+}
+
+/// Decision 0123 §7: a kept order priced at `priced` rows of work, under what a search costs, whose line did `ran` rows,
+/// a search's work or more, when it last ran. A search can pay there, and costs less than the line ran.
+pub fn mispriced(priced: f64, ran: Option<f64>, b: &Body<'_>, first: Option<usize>) -> bool {
+    let search = search_rows(b, first);
+    ran.is_some_and(|ran| ran >= search.max(SEARCH_WORK) && priced <= search)
+}
+
+pub fn search_rows(b: &Body<'_>, first: Option<usize>) -> f64 {
     let j = (0..b.len()).filter(|&i| b.is_join(i)).count() as f64;
     let candidates = if j > GREEDY as f64 {
         j * j
@@ -1185,7 +1221,7 @@ type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc
 /// when it last ran, its inputs grown by no more than that allows, keeps its order with no search and no pricing;
 /// in a run, a probe is searched again only once its work has paid for its searches. `RERAIL_PLAN_BUDGET=off`
 /// plans as before (a measurement aid).
-pub(in crate::code_rule_dsl) const SEARCH_WORK: f64 = 250.0;
+pub const SEARCH_WORK: f64 = 250.0;
 
 pub(in crate::code_rule_dsl) fn plan_budget() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_PLAN_BUDGET").is_ok_and(|v| v == "off"));
@@ -1491,7 +1527,9 @@ impl Drop for KeepPlans {
             let counts: Vec<String> = PLAN_CACHE.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late", counts.join(", "), miss.join(", "), st[0], st[1], st[2]);
+            let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            let lazy = lazy_probes_counted();
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -1829,6 +1867,16 @@ impl Model {
         Ok(())
     }
 
+    /// Whether the line has no kept plan to start from (`plan_rule_reused` would search it: its first sight).
+    /// Its key, when so.
+    pub(in crate::code_rule_dsl) fn first_sight(&self, b: &Body<'_>, first: Option<usize>) -> Option<PlanKey> {
+        if plan_fresh() {
+            return None;
+        }
+        let key = self.reused_key(b, first);
+        matches!(plans_find(&key, b.len(), self.stats.nodes.max(1.0)), Some(None)).then_some(key)
+    }
+
     /// Decision 0123, step 2: a round's requested statistics, made in one batch before any of its plans is made
     /// (step 3). Each is made as a kept relation's are (`resolve`): counted from its postings, or measured. This is
     /// where one batch goes to another maker (a classifier on the device) as a whole.
@@ -1921,6 +1969,18 @@ impl Model {
                 super::profile::decision("planning budget missed: inputs grew (decision 0122)", || format!("{}product ×{}; most by {what}, from {} rows, ×{}; ran {}", if driver { "" } else { "kept order not led by its delta; " }, bucket(product), bucket(from), bucket(g), bucket(k.5.unwrap_or(0.0))));
             }
         }
+        // A kept order priced under what a search costs, whose line did a search's work or more when it last ran
+        // (decision 0123 §7): its price was wrong by enough that a search can pay, and costs less than the line ran.
+        // So an order taken without a search (`greedy first`, where its price is under a search's) is held to what it
+        // did. Until the line runs again, the new plan is not held to the old work (`ran` is cleared).
+        let mispriced = kept.as_ref().is_some_and(|k| mispriced(k.1 * nodes, k.5, b, first));
+        let kept = if mispriced {
+            plan_cache(9);
+            super::profile::decision("plan cache (decision 0038)", || "searched: a kept order priced under a search ran over a search's work (decision 0123 §7)".into());
+            None
+        } else {
+            kept
+        };
         if let Some((_, _, _, _, Some(priced), _)) = &kept
             && near(&priced.sizes, &sizes)
             && self.valid_live_driver(&priced.got.0.0, b, first)
@@ -1989,7 +2049,7 @@ impl Model {
                     super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into())
                 }
             }
-        } else {
+        } else if !mispriced {
             plan_cache(1);
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
@@ -2000,7 +2060,7 @@ impl Model {
         PLANS.with(|p| {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
-                let ran = plans_get(&key).and_then(|k| k.5);
+                let ran = if mispriced { None } else { plans_get(&key).and_then(|k| k.5) };
                 plans_put(p, key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
@@ -2907,14 +2967,17 @@ impl Model {
             (done == full_mask).then_some((work, rows, order, bound, rest))
         };
         static PROBE: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
-        let (probe, greedy_first) = *PROBE.get_or_init(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var_os("RERAIL_PLAN_GREEDY_FIRST").is_some()));
+        let (probe, greedy_first) = *PROBE.get_or_init(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
-        // Greedy first (a spike, `RERAIL_PLAN_GREEDY_FIRST`): its order where its work is under what the search would
-        // cost (`search_rows`), so the order a search finds could save less than the search costs.
+        // Greedy first (decision 0123 §7; `RERAIL_PLAN_GREEDY_FIRST=off` searches as before): its order where its work
+        // is under what the search would cost (`search_rows`), so the order a search finds could save less than the
+        // search costs. An order so taken that ran over a search's work is searched at its next plan
+        // (`plan_rule_reused`, `mispriced`).
         let cheap_greedy = (greedy_first && fixed.is_none() && joins.len() >= 3 && joins.len() <= GREEDY)
             .then(|| greedy(&mut candidates))
             .flatten()
             .filter(|g| g.0 <= search_rows(b, first));
+        SEARCHES[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(g) = cheap_greedy {
             super::profile::decision("plan cache (decision 0038)", || "greedy first: its work under a search's".into());
             best_of.insert(full_mask, g);
@@ -3788,10 +3851,10 @@ impl Model {
     }
 
     /// Whether a statement of `prog` may read `relation`: its inputs, batch inputs and derived relations, and
-    /// the tape relations the `nearest` walks read (`node_order` for a descent by preorder key), and views the run planned from.
+    /// the tree relations the `nearest` walks read, and views the run planned from.
     fn declared(&self, prog: &Program, relation: &Relation) -> bool {
         match relation {
-            Relation::Input { rel, .. } => prog.inputs.contains(rel) || matches!(rel.as_str(), "tape" | "node" | "node_order"),
+            Relation::Input { rel, .. } => prog.inputs.contains(rel) || matches!(rel.as_str(), "tape" | "node" | "child" | "node_order"),
             Relation::Batch { rel, .. } => self.inputs.batch.contains_key(rel),
             Relation::Derived { rel, .. } | Relation::Bound { rel, .. } => {
                 // Or a view the run made and planned from (`rdl_kinds`: its statistics are the model's).
@@ -4140,26 +4203,28 @@ impl Model {
                         };
                         ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         a
-                    } else if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
-                        // Nodes numbered by definition: their order keys (`node_order`) keep preorder but are not
-                        // positions (a granule run's rank and an index in it), so no subtree is a run of keys. The
-                        // walk goes down by the parents (`tape(n, par, …)`, which the view answers from each node's
-                        // children), into the children of every node whose kind is not in the set: each node it
-                        // reaches has `a` as its nearest ancestor in the set. (Stepping over keys as positions found
-                        // none past the first: `workload.rr`'s `defines_class` was empty in the SQL executor.)
+                    } else {
+                        // Order keys preserve comparisons, not distances (decision 0121).
+                        // Follow child edges so traversal works across granule boundaries
+                        // and stops below a nested member of the nearest-kind set.
                         walk_columns.push("cur".to_owned());
+                        let child = col("c", "c");
                         let arms = vec![
                             Select {
-                                columns: with("s", vec![col("t", "n")]),
-                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "par"), col("s", a))])],
+                                columns: with("s", vec![child.clone()]),
+                                from: vec![
+                                    FromItem::cross(Relation::Cte(seed.clone()), "s"),
+                                    on("node", "k", vec![eq(col("k", "n"), col("s", a)), member(col("k", "kind"))]),
+                                    on("child", "c", vec![eq(col("c", "p"), col("s", a))]),
+                                ],
                                 ..Select::default()
                             },
                             Select {
-                                columns: with("w", vec![col("t", "n")]),
+                                columns: with("w", vec![child]),
                                 from: vec![
                                     FromItem::cross(Relation::Cte(walk.clone()), "w"),
                                     on("node", "k", vec![eq(col("k", "n"), col("w", "cur")), Expr::Unary { operator: SqlUnaryOperator::Not, input: Box::new(member(col("k", "kind"))) }]),
-                                    on("tape", "t", vec![eq(col("t", "par"), col("w", "cur"))]),
+                                    on("child", "c", vec![eq(col("c", "p"), col("w", "cur"))]),
                                 ],
                                 ..Select::default()
                             },
@@ -4172,67 +4237,6 @@ impl Model {
                         let arm = Select {
                             columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
                             from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w")],
-                            predicates,
-                            ..Select::default()
-                        };
-                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
-                        n
-                    } else {
-                        // A subtree is a run of preorder positions: the walk steps over preorder keys (`node_order`),
-                        // which are the node ids themselves when nodes are numbered in preorder
-                        // (`RERAIL_NODE_IDS=preorder`).
-                        let keyed = crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
-                        walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
-                        let size = col("t", "size");
-                        let start = if keyed { col("o", "k") } else { col("s", a) };
-                        let mut seed_from = vec![FromItem::cross(Relation::Cte(seed.clone()), "s")];
-                        if keyed {
-                            seed_from.push(on("node_order", "o", vec![eq(col("o", "n"), col("s", a))]));
-                        }
-                        seed_from.push(on("tape", "t", vec![eq(col("t", "n"), col("s", a))]));
-                        // The node at the walk's position.
-                        let at = if keyed { col("o", "n") } else { col("w", "cur") };
-                        let mut walk_from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            walk_from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
-                        }
-                        walk_from.push(on("node", "k", vec![eq(col("k", "n"), at.clone())]));
-                        walk_from.push(on("tape", "t", vec![eq(col("t", "n"), at.clone())]));
-                        let arms = vec![
-                            Select {
-                                columns: with("s", vec![bin(Op::Add, start.clone(), integer(1)), bin(Op::Add, start, size.clone())]),
-                                from: seed_from,
-                                predicates: vec![bin(Op::Greater, size.clone(), integer(0))],
-                                ..Select::default()
-                            },
-                            Select {
-                                columns: with(
-                                    "w",
-                                    vec![
-                                        Expr::Case {
-                                            branches: vec![(member(col("k", "kind")), bin(Op::Add, bin(Op::Add, col("w", "cur"), size), integer(1)))],
-                                            fallback: Box::new(bin(Op::Add, col("w", "cur"), integer(1))),
-                                        },
-                                        col("w", "stop"),
-                                    ],
-                                ),
-                                from: walk_from,
-                                predicates: vec![bin(Op::Less, col("w", "cur"), col("w", "stop"))],
-                                ..Select::default()
-                            },
-                        ];
-                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
-                        let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
-                        if env.contains_key(n) {
-                            predicates.push(eq(at.clone(), col("w", n)));
-                        }
-                        let mut from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
-                        }
-                        let arm = Select {
-                            columns: with("w", Vec::new()).into_iter().chain([(at, Some("near_out".to_owned()))]).collect(),
-                            from,
                             predicates,
                             ..Select::default()
                         };
@@ -4434,6 +4438,8 @@ struct Driving<'a> {
     lab: Option<super::native::component::lab::Capture>,
     /// Placed on the device but a shape its run does not take: why, reported once the stratum closes.
     not_taken: Option<&'static str>,
+    /// Per probe: not planned yet, until its delta has rows (decision 0123 §9).
+    unplanned: Vec<bool>,
 }
 
 struct Run<'a, 'b> {
@@ -5415,6 +5421,12 @@ fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> St
     }
 }
 
+/// A stratum's key as its span names it: at most 80 bytes of it.
+fn stratum_label(scc: &BTreeSet<String>) -> String {
+    let key = stratum_key(scc);
+    if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -5613,7 +5625,8 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: placement::Binding,
     explain: bool,
-    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it.
+    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it, and
+    /// each member it runs is a span under that (`stratum … (in a job)`).
     under: Option<String>,
 }
 
@@ -5793,16 +5806,18 @@ impl<'a> Strand<'a> {
         for (form, pieces) in forms {
             self.0.prog = form;
             let mut r = Default::default();
-            out.push(self.run_members(pieces, &mut times, &mut r));
+            out.push(self.run_members(pieces, &mut times, &mut r, None));
             reserved.push(r);
         }
         (out, reserved)
     }
 
-    /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint (its
-    /// device waves go out as its own batches): how many ran natively, and what stopped the next, if one did (a
-    /// decline and its reason, or an error).
-    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+    /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint: how many
+    /// ran natively, and what stopped the next, if one did (a decline and its reason, or an error). A member that
+    /// reads one waiting on its device wave has that wave flushed first. The members still waiting when the last has
+    /// run are left in `park` (decision 0123 §6): their launches go out with the level's wave, on the run's thread
+    /// (`resume_parked`). With no `park`, the component flushes them as its own wave.
+    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved, park: Option<&mut Vec<(usize, Box<Driving<'a>>)>>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
         let t0 = std::time::Instant::now();
         times.clear();
         times.resize(members.len(), (t0, t0));
@@ -5824,6 +5839,7 @@ impl<'a> Strand<'a> {
             while !waiting.is_empty() {
                 super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
                 for (k, d) in std::mem::take(waiting) {
+                    let _span = super::profile::span(|| format!("stratum {} (in a job, after its device wave)", stratum_label(&members[k].0)));
                     match run.native_resume(d)? {
                         Native::Ran => {}
                         Native::Waiting(d) => waiting.push((k, d)),
@@ -5844,7 +5860,7 @@ impl<'a> Strand<'a> {
                 return (0, Some(Err(e)));
             }
             times[k].0 = std::time::Instant::now();
-            let stop = match self.0.native_stratum(scc, rules) {
+            let stop = match { let _span = super::profile::span(|| format!("stratum {} (in a job)", stratum_label(scc))); self.0.native_stratum(scc, rules) } {
                 Ok(Native::Ran) => {
                     times[k].1 = std::time::Instant::now();
                     continue;
@@ -5862,10 +5878,47 @@ impl<'a> Strand<'a> {
                 Err(e) => (0, Some(Err(e))),
             };
         }
+        if let Some(park) = park {
+            park.append(&mut waiting);
+            return (members.len(), None);
+        }
         match finish(&mut self.0, &mut waiting, times) {
             Ok(()) => (members.len(), None),
             Err(e) => (0, Some(Err(e))),
         }
+    }
+
+    /// Runs `f` in the strand's reservation (decision 0114 §4), as `run_members` runs its members: what it made is added
+    /// to `reserved`.
+    fn reserving<R>(&mut self, reserved: &mut crate::content_store::atoms::Reserved, f: impl FnOnce(&mut Self) -> R) -> R {
+        let r = crate::content_store::atoms::reserving(&self.1);
+        let out = f(self);
+        reserved.extend(r.end());
+        out
+    }
+
+    /// Flushes the wave of the members `run_members` parked, on this thread, until none waits.
+    fn flush_parked(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut [(std::time::Instant, std::time::Instant)]) -> Result<()> {
+        while !waiting.is_empty() {
+            super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
+            self.resume_parked(members, waiting, times)?;
+        }
+        Ok(())
+    }
+
+    /// Resumes the members `run_members` parked (`waiting`) once the run's thread flushed their wave: those that wait
+    /// on a wave again stay in `waiting`, for the next flush.
+    fn resume_parked(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut [(std::time::Instant, std::time::Instant)]) -> Result<()> {
+        for (k, d) in std::mem::take(waiting) {
+            let _span = super::profile::span(|| format!("stratum {} (in a job, after its device wave)", stratum_label(&members[k].0)));
+            match self.0.native_resume(d)? {
+                Native::Ran => times[k].1 = std::time::Instant::now(),
+                Native::Waiting(d) => waiting.push((k, d)),
+                Native::Declined => return Err(Error::Plan(format!("{:?}: a stratum that waited on its wave declined", members[k].0))),
+                Native::Asking(..) => return Err(Error::Plan(format!("{:?}: requests posted off the run's thread", members[k].0))),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -6874,21 +6927,47 @@ impl<'a> Run<'a, '_> {
         }
         // Round 2 (decision 0123): the probes' statistics, and the whole plans' where one is made (below).
         let whole_wanted = |this: &Self, a: &Atom| !(wave0 && based.contains_key(a.rel.as_str()) || plan_budget() && this.model.card(&a.rel) < SEARCH_WORK);
-        let mut wanted = BTreeSet::new();
+        // Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows, not here. Not where a
+        // closure may be the component's form (one relation: `closure::recognize` reads its probe at open), nor where
+        // the probes run in SQL, nor a probe with a whole plan (it runs over the relation's first delta).
+        // The probes so left, with their keys: decided once.
         let rule_bodies: Vec<Body<'_>> = rules.iter().map(|r| vs.body(r)).collect::<Result<_>>()?;
+        let mut lazy: HashMap<(*const Rule, usize), PlanKey> = HashMap::new();
+        if lazy_probes() && !answering && rels.len() > 1 {
+            for (r, b) in rules.iter().zip(&rule_bodies) {
+                for (ai, a) in recursive(&r.body, scc) {
+                    if !whole_wanted(self, a) && let Some(key) = self.model.first_sight(b, Some(ai)) {
+                        lazy.insert((*r as *const Rule, ai), key);
+                    }
+                }
+            }
+        }
+        let mut wanted = BTreeSet::new();
         let round: Vec<(&Body<'_>, Option<usize>)> = rules.iter().zip(&rule_bodies).flat_map(|(r, b)| {
             let rec = recursive(&r.body, scc);
             let whole = rec.iter().any(|(_, a)| whole_wanted(self, a));
-            rec.into_iter().map(|(ai, _)| (b, Some(ai))).chain(whole.then_some((b, None))).collect::<Vec<_>>()
+            rec.into_iter().filter(|(ai, _)| !lazy.contains_key(&(*r as *const Rule, *ai))).map(|(ai, _)| (b, Some(ai))).chain(whole.then_some((b, None))).collect::<Vec<_>>()
         }).collect();
         self.model.wants(round, &mut wanted);
         self.model.make_statistics(prog, &wanted)?;
         let mut probes = Vec::new();
+        let mut unplanned: Vec<bool> = Vec::new();
         for (r, b) in rules.iter().zip(&rule_bodies) {
             // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
             let mut whole_plan: Option<Vec<Step>> = None;
             let mut whole_spec: Option<Option<Arc<JoinSpec>>> = None;
             for (ai, a) in recursive(&r.body, scc) {
+                if let Some(key) = lazy.remove(&(*r as *const Rule, ai)) {
+                    explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), None, 0.0, 0));
+                    lines.push(SpecLine::Unplanned { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()] });
+                    keys.push(Some(key));
+                    probes.push((*r, ai, Vec::new()));
+                    sql_probe.push(false);
+                    unplanned.push(true);
+                    LAZY[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    continue;
+                }
+                unplanned.resize(probes.len() + 1, false);
                 self.model.late(prog, b, Some(ai), false)?;
                 plan_site("a stratum's probe");
                 let _span = planning(r, "plan");
@@ -6992,6 +7071,25 @@ impl<'a> Run<'a, '_> {
         } else if placement::device_joins_off() {
             Some("device joins off (RERAIL_DEVICE_JOINS=off, a measurement aid)")
         } else {
+            // A probe not planned yet is planned now: the device compiles every probe at open.
+            let mut planned = Vec::new();
+            let due: Vec<usize> = (0..probes.len()).filter(|&k| unplanned[k]).collect();
+            for k in due {
+                let (r, ai) = (probes[k].0, probes[k].1);
+                let (order, spec, x) = self.plan_probe_now(r, ai, &ri, scc, native_rels, &planning)?;
+                explained[nseeds + k].2 = x;
+                probes[k].2 = order;
+                unplanned[k] = false;
+                planned.push((ri[r.head.rel.as_str()], ri[r.body[ai].atom().expect("a delta atom").rel.as_str()], spec));
+            }
+            let mut planned = planned.into_iter();
+            for l in &mut spec.lines {
+                if let SpecLine::Unplanned { head, delta } = l {
+                    let (h, d, join) = planned.next().expect("a plan per probe not planned");
+                    debug_assert_eq!((*head, *delta), (h, d));
+                    *l = SpecLine::Join { head: h, delta: d, join, whole: None };
+                }
+            }
             spec.lines.insert(0, SpecLine::Device);
             None
         };
@@ -7019,7 +7117,7 @@ impl<'a> Run<'a, '_> {
                 let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
                 for k in 0..probes.len() {
                     let r = probes[k].0;
-                    if sql_probe[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
+                    if sql_probe[k] || unplanned[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
                         continue;
                     }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
@@ -7054,6 +7152,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
+        unplanned.resize(probes.len(), false);
         let replanned_at = replanning::Watch::new(&ri, &probes);
         let d = Driving {
             scc: scc.clone(),
@@ -7085,8 +7184,31 @@ impl<'a> Run<'a, '_> {
             cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
             lab,
             not_taken,
+            unplanned,
         };
         self.drive(Box::new(d), native_rels, numbers)
+    }
+
+    /// A probe planned when its delta first has rows (decision 0123 §9), or when the device takes its stratum: its
+    /// order, its spec and its explanation. A probe with no native form for its order fails the run, as a replanned
+    /// probe does.
+    #[allow(clippy::type_complexity)]
+    fn plan_probe_now(&mut self, r: &'a Rule, ai: usize, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>, planning: &dyn Fn(&Rule, &str) -> super::profile::Span) -> Result<(Vec<Step>, Arc<JoinSpec>, Option<super::profile::RulePlan>)> {
+        let prog = self.prog;
+        let vs = Arc::clone(&self.versions);
+        let b = vs.body(r)?;
+        self.model.late(prog, &b, Some(ai), false)?;
+        plan_site("a stratum's probe, when its delta came");
+        let span = planning(r, "plan when its delta came");
+        let ((order, _, _), x) = self.model.plan_rule_reused(prog, &b, Some(ai))?;
+        drop(span);
+        let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
+        let spec = self
+            .whole_join_spec(&r.head, Order::new(&r.body, &order), Some(at), ri, scc, native_rels)
+            .ok_or_else(|| Error::Plan(format!("a probe of {} planned when its delta came has no native step", r.head)))?;
+        let x = x.map(|x| delta_sources(x, Order::new(&r.body, &order), at, scc));
+        LAZY[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok((order, spec, x))
     }
 
     /// A native stratum's driver: its component's chunks of waves to the fixpoint, replanned from live counts
@@ -7096,7 +7218,7 @@ impl<'a> Run<'a, '_> {
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let vs = Arc::clone(&self.versions);
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -7127,7 +7249,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -7185,6 +7307,30 @@ impl<'a> Run<'a, '_> {
                     replanned_at.record(i, slot, &self.model, r);
                 }
             }
+            // Decision 0123 §9: probes not planned yet whose delta has rows; planned now, as one round, and the run
+            // goes on. A probe whose delta never has rows is never planned.
+            if f.last() == Some(&"4") {
+                let due: Vec<usize> = (0..probes.len()).filter(|&k| unplanned[k] && replanned_at.delta_rows(k) > 0).collect();
+                if due.is_empty() {
+                    return Err(Error::Plan(format!("{name}: the run returned for a probe's plan, and none not planned has rows")));
+                }
+                let mut wanted = BTreeSet::new();
+                let due_bodies: Vec<(Body<'_>, usize)> = due.iter().map(|&k| Ok((vs.body(probes[k].0)?, probes[k].1))).collect::<Result<_>>()?;
+                self.model.wants(due_bodies.iter().map(|(b, ai)| (b, Some(*ai))), &mut wanted);
+                self.model.make_statistics(prog, &wanted)?;
+                for k in due {
+                    let (r, ai) = (probes[k].0, probes[k].1);
+                    let t0 = if profiling { super::profile::now() } else { 0.0 };
+                    let (order, spec, x) = self.plan_probe_now(r, ai, &ri, scc, native_rels, &planning)?;
+                    self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
+                    let e = &mut explained[nseeds + k];
+                    e.2 = x;
+                    e.3 += if profiling { super::profile::now() - t0 } else { 0.0 };
+                    probes[k].2 = order;
+                    unplanned[k] = false;
+                }
+                continue;
+            }
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
             }
@@ -7206,7 +7352,7 @@ impl<'a> Run<'a, '_> {
                 let wanted: BTreeSet<String> = (0..probes.len()).filter(|&k| wants_whole(k, self)).flat_map(|k| Model::read_by([probes[k].0])).map(str::to_owned).collect();
                 self.model.make_statistics(prog, &wanted)?;
                 for k in 0..probes.len() {
-                    if !wants_whole(k, self) {
+                    if unplanned[k] || !wants_whole(k, self) {
                         continue;
                     }
                     let r = probes[k].0;
@@ -7230,7 +7376,7 @@ impl<'a> Run<'a, '_> {
             // The probes searched again this chunk, then a round (decision 0123): their statistics in one batch.
             let mut replan: Vec<usize> = Vec::new();
             for k in 0..probes.len() {
-                if sql_probe[k] {
+                if sql_probe[k] || unplanned[k] {
                     continue;
                 }
                 // Decision 0122: a probe is searched again only once its work so far, and the delta it is about to
@@ -9772,7 +9918,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     };
                     b.collect(&mut run, stream)?;
                     b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
-                    b.retire_at(at, &mut run, stream, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
+                    b.retire_at(at, &mut run, stream, &ambient, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
                 }
                 None => issue::Got::Not,
             };

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // splat_ok(n): the JSON util `splat-ok`, used where the JSON says `matches: "splat-ok"`
 .decl ruf005_splat_ok(n: node)
@@ -71,7 +71,7 @@ ruf005_type_string(n, E) :- (kind(n, "string") ; kind(n, "concatenated_string"))
 // RUF005(n): findings from clauses `collection-literal-concatenation`, `collection-literal-concatenation-in-string-type`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF005(at: node, e: node) "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
+.violation RUF005(at: loc, e: node) "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
     suppress noqa "RUF005"
 RUF005(E, n) :- !ruf005_alt_6(n), child(n, c1, _), ruf005_outer_operand(c1, E).
 RUF005(E, n) :- ruf005_type_string(n, E).

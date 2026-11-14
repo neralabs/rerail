@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
 .decl d215_doc_stmt(n: node)
@@ -45,7 +45,7 @@ d215_checked(n) :- d215_docstring(n), !d215_directive_hidden(n),
 // D215(n): findings from clauses `indent-0`, `indent-1`, `indent-2`, `indent-3` and 9 more, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D215(at: node, name: node) "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
+.violation D215(at: loc, name: node) "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
     suppress noqa "D215"
 D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
     match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{0}[uUrR]*[\\\"'](?s:.*)", p1),

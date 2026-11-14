@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -40,7 +40,7 @@ c415_reversed_arg(n) :- kind(n, "argument_list"), child(n, c1, _), c415_reversal
 // C415(n): a finding at node n, from clause `reorders-anyway`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C415(at: node, m: node, f: loc) "Pass the iterable straight to `{f}()` without the `[::-1]` slice, since `{f}()` reorders the elements anyway; keep the slice only if `sorted()` must keep equal keys in reversed input order."
+.violation C415(at: loc, m: node, f: loc) "Pass the iterable straight to `{f}()` without the `[::-1]` slice, since `{f}()` reorders the elements anyway; keep the slice only if `sorted()` must keep equal keys in reversed input order."
     suppress noqa "C415"
 C415(M, n, F) :- kind(n, "call"), field(n, "function", c1), c415_alt_2(c1, F),
     field(n, "arguments", c3), c415_reversed_arg(c3), match("(?s)(?:\\*\\s*)?(?P<M>.*)", n).
@@ -55,7 +55,7 @@ c415_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c415_cal
 // C415_reversed_of_reversal(n): a finding at node n, from clause `reversed-of-reversal`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C415_reversed_of_reversal(at: node, m: node) code "C415" "`reversed()` of a `[::-1]` slice walks the original order: iterate the sequence itself (or `iter()` of it) instead of reversing it twice."
+.violation C415_reversed_of_reversal(at: loc, m: node) code "C415" "`reversed()` of a `[::-1]` slice walks the original order: iterate the sequence itself (or `iter()` of it) instead of reversing it twice."
     suppress noqa "C415"
 C415_reversed_of_reversal(M, n) :- kind(n, "call"), field(n, "function", c1),
     ( kind(c1, "list_splat"), child(c1, c2, _), c415_callee_reversed_of_reversal(c2)

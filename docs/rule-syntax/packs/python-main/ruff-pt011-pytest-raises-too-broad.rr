@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -86,7 +86,7 @@ pt011_ann_slot(n) :- pt011_tok_follows_11(n), child(p18, n, _), kind(p18, "keywo
 // PT011(n): a finding at node n, from clause `builtin`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT011(at: node, x: node) "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises({x})`, or expect a more specific exception, so unrelated `{x}` errors do not pass."
+.violation PT011(at: loc, x: node) "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises({x})`, or expect a more specific exception, so unrelated `{x}` errors do not pass."
     suppress noqa "PT011"
 PT011(X, n) :- pt011_exc(n, X), pt011_exc_slot(n).
 PT011(X, n) :- pt011_ann_string(n, X).
@@ -107,7 +107,7 @@ pt011_ann_string(n, X) :- kind(n, "string"),
 // PT011_socket_error(n): a finding at node n, from clause `socket-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT011_socket_error(at: node, x: node) code "PT011" "`{x}` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass."
+.violation PT011_socket_error(at: loc, x: node) code "PT011" "`{x}` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass."
     suppress noqa "PT011"
 PT011_socket_error(X, n) :- pt011_exc_socket_error(n, X), pt011_exc_slot(n).
 PT011_socket_error(X, n) :- pt011_ann_string_socket_error(n, X).

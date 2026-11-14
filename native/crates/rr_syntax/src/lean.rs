@@ -1473,6 +1473,11 @@ impl<L: Layout> Parser<'_, L> {
             }
             self.bump_as(Kind::CodeLiteral);
             self.field(Field::Pattern);
+            if self.is_word_at(0, b"at") && self.kind_at(1) == STR {
+                self.implied();
+                self.bump_as(Kind::String);
+                self.field(Field::Selector);
+            }
             self.close();
             return Ok(Lit::Other);
         }

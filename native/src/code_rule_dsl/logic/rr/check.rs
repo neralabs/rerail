@@ -97,7 +97,7 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let binds = sets.iter().skip(1).fold(sets.first().cloned().unwrap_or_default(), |a, b| a.intersection(b).cloned().collect());
             (binds, needs, true)
         }
-        Lit::Pattern { subject, pattern, neg: false } => {
+        Lit::Pattern { subject, pattern, neg: false, .. } => {
             let mut b = vars_of(subject);
             b.extend(rerail_rr_syntax::syntax::tick_vars(pattern));
             (b, none(), true)

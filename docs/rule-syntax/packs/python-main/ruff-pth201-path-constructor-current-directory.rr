@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -29,7 +29,7 @@ pth201_single_arg_list(n) :- kind(n, "argument_list"),
 // PTH201(n): findings from clauses `path-current-directory`, `path-current-directory-in-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH201(at: node, arg: node, f: loc) "Call `{f}()` with no argument instead of `{f}({arg})`; the constructor already defaults to the current directory."
+.violation PTH201(at: loc, arg: node, f: loc) "Call `{f}()` with no argument instead of `{f}({arg})`; the constructor already defaults to the current directory."
     suppress noqa "PTH201"
 PTH201(ARG, n, F) :- kind(n, "call"), field(n, "function", c1), pth201_callee(c1, F),
     field(n, "arguments", c2), kind(c2, "argument_list"),

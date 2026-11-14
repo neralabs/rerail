@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -87,7 +87,7 @@ NPY002_same_method(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
 // NPY002_string_annotation(n): a finding at node n, from clause `string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation NPY002_string_annotation(at: node, name: node) code "NPY002" "Call the matching method of a `np.random.default_rng()` generator instead of the legacy `{name}`; keep `{name}` where legacy seeded results must match."
+.violation NPY002_string_annotation(at: loc, name: node) code "NPY002" "Call the matching method of a `np.random.default_rng()` generator instead of the legacy `{name}`; keep `{name}` where legacy seeded results must match."
     suppress noqa "NPY002"
 NPY002_string_annotation(NAME, n) :- npy002_in_string(n, NAME).
 
