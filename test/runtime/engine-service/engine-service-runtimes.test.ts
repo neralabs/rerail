@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -291,6 +291,23 @@ describe("the engine service's idle close", () => {
     const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
     return {
       first, second, clock, service, session, send, databasePath,
+      /**
+       * The engine service of the next daemon, started on the same records with `now` as its clock, as one starts after
+       * this one died.
+       */
+      nextService: async (now: () => number) => {
+        const next = await startEngineService({
+          socketPath: process.platform === "win32" ? `${socketPath}-next` : join(root, "next.sock"),
+          storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0, now,
+          createAuditor: quietAuditor,
+        });
+        services.push(next);
+        return next;
+      },
+      /** When `sessionId` was last heard from: the time its newest recorded event was observed. */
+      heardAt: (sessionId: string) => lastObservedAt(databasePath, sessionId),
+      /** Makes the owner row of `sessionId` name process `pid`, as the runtime of that process left it. */
+      ownedBy: (sessionId: string, pid: number) => setOwnerProcess(databasePath, sessionId, pid),
       start: (sessionId: string, cwd = first) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) }),
       prompt: (sessionId: string, text: string, cwd = first) =>
         send({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, cwd), text }),
@@ -347,6 +364,48 @@ describe("the engine service's idle close", () => {
     await service.close();
     expect(ended("a")).toBe(quietAt);
     expect(live("a")).toBe(false);
+  });
+
+  // A daemon that ends without its stop (a machine restart, the heap limit, a kill) ends none of the sessions it had
+  // suspended, and no daemon after it holds them: each record read as open for good. The idle close of a daemon still
+  // running ends each at the first sweep past the idle limit after its last event.
+  it("ends a quiet session's record at the next daemon's start when its daemon died, at the idle limit after its last event", async () => {
+    const { clock, service, start, prompt, ended, live, heardAt, ownedBy, nextService } = await idleService();
+    await start("a");
+    await prompt("a", "last");
+    const answeredAt = Date.now();
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(ended("a")).toBeNull();
+    // Nothing is recorded as the session goes quiet: it was last heard from at its last event.
+    const lastHeard = heardAt("a");
+    expect(lastHeard).toBeLessThanOrEqual(answeredAt);
+    // The daemon dies: its stop never runs, and the process its owner row names is gone.
+    ownedBy("a", goneProcessId());
+    await nextService(() => lastHeard + 3 * 24 * 60 * 60_000);
+    expect(ended("a")).toBe(lastHeard + 60_000);
+    expect(live("a")).toBe(false);
+  });
+
+  // Main leaves the same gap for a session at work when its daemon dies. Ended at the next start, its record ends no
+  // later than that start; a session this daemon's process owns, or one whose owner still runs, is left as it is.
+  it("ends a session its daemon held open when it died at the next daemon's start at the latest, and none whose owner runs", async () => {
+    const { second, clock, service, start, ended, live, ownedBy, nextService } = await idleService();
+    await start("quiet-here", second);
+    clock.now += 60_000;
+    await start("at-work");
+    await start("other-daemon");
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    ownedBy("at-work", goneProcessId());
+    ownedBy("other-daemon", process.ppid);
+    const startedFrom = Date.now();
+    await nextService(Date.now);
+    const startedBy = Date.now();
+    expect(ended("at-work")).toBeGreaterThanOrEqual(startedFrom);
+    expect(ended("at-work")).toBeLessThanOrEqual(startedBy);
+    expect([ended("quiet-here"), live("quiet-here")]).toEqual([null, true]);
+    expect([ended("other-daemon"), live("other-daemon")]).toEqual([null, true]);
   });
 
   // The session's next event opens it and takes its suspension back. A suspension left in the service would end the
@@ -1075,6 +1134,36 @@ function ownedLive(databasePath: string, sessionId: string): boolean {
   } finally {
     controls.close();
   }
+}
+
+/** When `sessionId`'s newest recorded event was observed, read through a connection of its own. */
+function lastObservedAt(databasePath: string, sessionId: string): number {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    const row = database.prepare("SELECT observed_at AS at FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT 1").get(sessionId) as { at: number } | undefined;
+    if (row === undefined) throw new Error(`no event of ${sessionId}`);
+    return row.at;
+  } finally {
+    database.close();
+  }
+}
+
+/** Makes the owner row of `sessionId` name process `pid`, through a connection of its own. */
+function setOwnerProcess(databasePath: string, sessionId: string, pid: number): void {
+  const database = new Database(databasePath);
+  try {
+    const { changes } = database.prepare("UPDATE policy_session_owners SET process_id = ? WHERE session_id = ?").run(pid, sessionId);
+    if (changes !== 1) throw new Error(`no owner row of ${sessionId}`);
+  } finally {
+    database.close();
+  }
+}
+
+/** The id of a process that has exited, as the owner row of a daemon that died names one. */
+function goneProcessId(): number {
+  const { pid, status } = spawnSync(process.execPath, ["-e", ""]);
+  if (pid === undefined || status !== 0) throw new Error("the short-lived process did not run");
+  return pid;
 }
 
 /** When the database says `sessionId` ended, read through a connection of its own; null while it runs. */
