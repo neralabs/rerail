@@ -29,7 +29,7 @@ import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { rerailRunsIn } from "../engine/catalog/repository-model.js";
+import { rerailRunsIn, type RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
@@ -81,19 +81,56 @@ function daemonRecorded(): boolean {
 }
 
 /**
- * The check one-shot hooks make before anything else. Where a daemon is recorded and the database and the filesystem
- * alone show that it would answer stopped (`stoppedWithoutGit`), the hook answers stopped itself: no Git runs and no
- * request goes to the daemon, however busy it is. Anywhere else a running daemon answers, from its own environment and
- * open database; without one, the hook reads the database itself, which never starts a daemon. With no daemon recorded,
- * or an explicit database path (tests, embedded hosts), the database is read directly.
+ * How long a one-shot hook waits for the daemon's answer to its start check before it reads the database and the
+ * folders on disk itself (`stoppedWithoutGit`). An idle daemon answers a hook's first ask inside it every time measured
+ * on Linux (at most 26 ms) and 99 times in 100 on Windows 11, so beside one the hook only asks, as it always did. A
+ * daemon busy with other checkouts misses it, and a hook in a stopped checkout then answers without waiting for it.
+ */
+const DAEMON_ANSWER_GRACE_MS = 75;
+
+/**
+ * The check one-shot hooks make before anything else. A running daemon answers, from its own environment and open
+ * database. Where it has not answered within `DAEMON_ANSWER_GRACE_MS` and the database and the folders on disk alone
+ * show that it would say stopped (`stoppedWithoutGit`), the hook answers stopped itself and ends its request: no Git
+ * runs, and a busy daemon does not hold it. Without a daemon that answers, the hook reads the database itself, which
+ * never starts a daemon. With no daemon recorded, or an explicit database path (tests, embedded hosts), the database is
+ * read directly.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath === undefined && daemonRecorded()) {
-    if (knownStopped(workspace)) return false;
-    const answered = await readRepositoryState(workspace, host);
+    const answered = await daemonAnswer(host, workspace);
     if (answered !== null) return rerailRunsIn(answered);
   }
   return isRerailStarted(workspace, databasePath);
+}
+
+/**
+ * The daemon's answer to the start check (`readRepositoryState`), null where none came; or `stopped` where the daemon
+ * has not answered within the grace and `knownStopped` holds. The request ends on every way out, so a hook that
+ * answers before the daemon leaves no socket open and exits at once.
+ */
+async function daemonAnswer(host: RerailHost, workspace: string): Promise<RepositoryStartState | null> {
+  const request = new AbortController();
+  const answer = readRepositoryState(workspace, host, request.signal);
+  try {
+    if (!await settlesWithin(answer, DAEMON_ANSWER_GRACE_MS) && knownStopped(workspace)) return "stopped";
+    return await answer;
+  } finally {
+    request.abort();
+  }
+}
+
+/** Whether `pending` settles within `ms`; the timer ends either way. */
+async function settlesWithin(pending: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<false>(resolve => {
+    timer = setTimeout(resolve, ms, false);
+  });
+  try {
+    return await Promise.race([pending.then(() => true), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface HookOptions {

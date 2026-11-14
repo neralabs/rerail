@@ -515,6 +515,18 @@ describe("a state file Windows left behind", () => {
     expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, ...proving })).toBe(false);
   });
 
+  it("hands the engine's proof the caller's stop, so a caller that no longer needs the answer ends it", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
+    const stop = new AbortController();
+    const given: Array<AbortSignal | undefined> = [];
+    const machine = { ...windows([PIPE_NAME]), capabilityProof: async (_path: string, _token: string, _ms: number, signal?: AbortSignal) => {
+      given.push(signal);
+      return "refused" as const;
+    } };
+    expect(await recordedDaemonAlive(state, machine, stop.signal)).toBe(false);
+    expect(given).toEqual([stop.signal]);
+  });
+
   it("keeps the state of a daemon this user started elevated, found by its engine's proof, and drops one nothing proves", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
@@ -752,6 +764,36 @@ describe("the engine proof a lookup asks for", () => {
       await removeFolder(root);
     }
     expect(await engineCapabilityProof(socketPath, "capability", 1_000)).toBe("refused");
+  });
+
+  it("ends its question at once, as refused, when the caller stops it, and leaves the listener no connection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-proof-"));
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-proof-stopped-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    const closed: Array<Promise<unknown>> = [];
+    // Each connection is read, so its end, and then its close, reach the listener.
+    const listener = createServer(socket => {
+      closed.push(once(socket, "close"));
+      socket.resume();
+    });
+    listener.listen(socketPath);
+    await once(listener, "listening");
+    try {
+      const stop = new AbortController();
+      const proof = engineCapabilityProof(socketPath, "capability", 10_000, undefined, stop.signal);
+      while (closed.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+      const begun = performance.now();
+      stop.abort();
+      expect(await proof).toBe("refused");
+      await Promise.all(closed);
+      expect(performance.now() - begun).toBeLessThan(1_000);
+    } finally {
+      const done = Promise.withResolvers<void>();
+      listener.close(() => done.resolve());
+      await done.promise;
+      await removeFolder(root);
+    }
   });
 });
 

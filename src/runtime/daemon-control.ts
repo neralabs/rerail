@@ -492,9 +492,9 @@ export interface DaemonMachine {
   pipes(): readonly string[];
   /**
    * What the engine on `socketPath` answers when asked, within `timeoutMs`, to prove it holds `accessToken`, which it
-   * never sees (`engineCapabilityProof`).
+   * never sees (`engineCapabilityProof`); `stop` ends the request early.
    */
-  capabilityProof(socketPath: string, accessToken: string, timeoutMs: number): Promise<EngineProofAnswer>;
+  capabilityProof(socketPath: string, accessToken: string, timeoutMs: number, stop?: AbortSignal): Promise<EngineProofAnswer>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
   /**
@@ -525,7 +525,7 @@ const THIS_MACHINE: DaemonMachine = {
   kill: (pid, signal) => process.kill(pid, signal),
   env: process.env,
   pipes: listPipes,
-  capabilityProof: async (socketPath, accessToken, timeoutMs) => await engineCapabilityProof(socketPath, accessToken, timeoutMs),
+  capabilityProof: async (socketPath, accessToken, timeoutMs, stop) => await engineCapabilityProof(socketPath, accessToken, timeoutMs, undefined, stop),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   nodeExecutable: () => nodeExecutable(),
@@ -581,12 +581,12 @@ const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { pro
  * before it sends the capability the file records to the URL it records. A state file outlives a daemon killed without
  * its cleanup, and the pid it names can since belong to another process, which would get the capability. The pid must
  * be live, and on macOS and Linux this user's to signal: another user's process cannot be this user's daemon. Windows
- * asks more ({@link windowsRecordedDaemon}).
+ * asks more ({@link windowsRecordedDaemon}); `stop` ends its question to the engine early.
  */
-async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
+async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeoutMs: number, stop?: AbortSignal): Promise<RecordedDaemon> {
   const daemon = processState(state.pid, machine.kill);
   if (daemon === "gone") return "gone";
-  if (machine.platform === "win32") return await windowsRecordedDaemon(state, daemon === "running", machine, timeoutMs);
+  if (machine.platform === "win32") return await windowsRecordedDaemon(state, daemon === "running", machine, timeoutMs, stop);
   return daemon === "running" ? "alive" : "gone";
 }
 
@@ -600,18 +600,20 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeou
  * a daemon busy in an audit is, and dropping its state for that would lose a daemon that still runs. A state without a
  * capability is sent none, and the pid and pipe decide.
  */
-async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
+async function windowsRecordedDaemon(
+  state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number, stop?: AbortSignal,
+): Promise<RecordedDaemon> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
-  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs)];
+  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs, stop)];
 }
 
 /**
  * Whether the daemon `state` records may be sent the capability now ({@link recordedDaemon}); one whose engine is
- * silent may not.
+ * silent may not. `stop` ends the check early, as not alive, for a caller that no longer needs the answer.
  */
-export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
-  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS) === "alive";
+export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE, stop?: AbortSignal): Promise<boolean> {
+  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS, stop) === "alive";
 }
 
 /**

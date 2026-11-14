@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
@@ -467,16 +467,29 @@ describe("hook host durable state", () => {
   });
 });
 
+interface CountingDaemon {
+  /** The path of every request it got, in order. */
+  requests: string[];
+  /** How many start checks (`/api/presentation`) it held were ended by the hook before it answered them. */
+  ended: () => number;
+  close: () => Promise<void>;
+}
+
 /**
  * A daemon recorded in the Rerail home `home` that answers as a live one does and counts every request it gets: a
- * repository's start state is `repositoryState`, or what it gives for the folder asked about. On Windows a recorded
- * daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`), so it holds one.
+ * repository's start state is `repositoryState`, or what it gives for the folder asked about. With `answerWhen`, it
+ * holds each start check until the promise `answerWhen` gives for it settles, as a daemon busy with other checkouts
+ * does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
+ * engine pipe exists (`recordedDaemonAlive`), so it holds one.
  */
 async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
-): Promise<{ requests: string[]; close: () => Promise<void> }> {
+  answerWhen?: () => Promise<unknown>,
+): Promise<CountingDaemon> {
   const requests: string[] = [];
+  let ended = 0;
+  const closing = Promise.withResolvers<void>();
   const answers: Record<string, (url: URL) => unknown> = {
     "/healthz": () => ({ status: "ok", pid: process.pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } }),
     "/api/presentation": url => ({
@@ -484,9 +497,18 @@ async function countingDaemon(
       repositoryState: typeof repositoryState === "string" ? repositoryState : repositoryState(url.searchParams.get("repository") ?? ""),
     }),
   };
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(url.pathname);
+    if (url.pathname === "/api/presentation" && answerWhen !== undefined) {
+      let gone = false;
+      response.on("close", () => {
+        gone = !response.writableFinished;
+        if (gone) ended += 1;
+      });
+      await Promise.race([answerWhen(), closing.promise]);
+      if (gone) return;
+    }
     const answer = Object.hasOwn(answers, url.pathname) ? answers[url.pathname] : undefined;
     response.writeHead(answer === undefined ? 404 : 200, { "content-type": "application/json" });
     response.end(JSON.stringify(answer === undefined ? { error: "not-found" } : answer(url)));
@@ -502,11 +524,37 @@ async function countingDaemon(
   }));
   return {
     requests,
+    ended: () => ended,
     close: async () => {
+      closing.resolve();
       await releaseEndpoint();
       await new Promise<void>(resolve => server.close(() => resolve()));
     },
   };
+}
+
+/** A daemon busy with other checkouts the whole test: it answers no start check until it closes. */
+const busyTheWholeTest = (): Promise<never> => new Promise<never>(() => undefined);
+
+/**
+ * What `pending` gives, once it has: within 1 s, half the 2 s a hook waits on its read of a busy daemon before it gives
+ * up and reads the database through Git, so an answer here is one the hook gave without the daemon.
+ */
+async function answeredWellBeforeReadLimit<T>(pending: Promise<T>): Promise<T> {
+  const begun = performance.now();
+  const value = await pending;
+  expect(performance.now() - begun).toBeLessThan(1_000);
+  return value;
+}
+
+/**
+ * How many start checks `daemon` got and how many of them the hook ended, once every one has ended or 1 s has passed:
+ * well inside the 2 s a hook would otherwise wait on its read before giving up.
+ */
+async function endedStartChecks(daemon: CountingDaemon): Promise<{ asked: number; ended: number }> {
+  const asked = (): number => daemon.requests.filter(path => path === "/api/presentation").length;
+  for (let waited = 0; daemon.ended() < asked() && waited < 1_000; waited += 20) await delay(20);
+  return { asked: asked(), ended: daemon.ended() };
 }
 
 // Each host's session start, the one hook that may start a daemon, and a tool call, the hook every tool call runs.
@@ -537,20 +585,21 @@ describe("hooks where Rerail does not run", () => {
     vi.unstubAllEnvs();
   });
 
-  it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without a request to the daemon", async ({ run }) => {
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without waiting for a busy daemon, ending their request", async ({ run }) => {
     const root = await temporaryDirectory({ started: false });
     startTestRepository(root);
     stopTestRepository(root);
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
-      expect(await run(root)).toEqual({});
-      expect(daemon.requests).toEqual([]);
+      expect(await answeredWellBeforeReadLimit(run(root))).toEqual({});
+      const { asked, ended } = await endedStartChecks(daemon);
+      expect(ended).toBe(asked);
     } finally {
       await daemon.close();
     }
   });
 
-  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder outside Git that Rerail was never started in without a request to the daemon", async ({ run }) => {
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder outside Git that Rerail was never started in without waiting for a busy daemon", async ({ run }) => {
     const root = await temporaryDirectory({ started: false });
     // Rerail runs in another folder on the machine, so the database is there.
     const elsewhere = join(root, "elsewhere");
@@ -558,10 +607,11 @@ describe("hooks where Rerail does not run", () => {
     await mkdir(elsewhere);
     await mkdir(never);
     startTestRepository(elsewhere);
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
-      expect(await run(never)).toEqual({});
-      expect(daemon.requests).toEqual([]);
+      expect(await answeredWellBeforeReadLimit(run(never))).toEqual({});
+      const { asked, ended } = await endedStartChecks(daemon);
+      expect(ended).toBe(asked);
     } finally {
       await daemon.close();
     }
@@ -677,24 +727,112 @@ const agentGitSettings: Array<{ variable: string; arrange: (root: string) => { w
   },
 ];
 
-/** The hook host over this machine's Git, with the first word of each command Rerail starts Git with going onto `ran`. */
-async function hookHostCountingGit(ran: string[]): Promise<typeof import("../../src/harness/hook-host.js")> {
+/** What each proof of the hook start check (`stoppedWithoutGit`) found, in order. */
+interface ProofLog {
+  readonly found: Array<boolean | "threw">;
+  run(proof: () => boolean): boolean;
+  /** Marks the start of another start check: `ran` then waits for its proof. */
+  nextCheck(): void;
+  /** Settles once the proof of the start check under way has run. */
+  ran(): Promise<void>;
+}
+
+function proofLog(): ProofLog {
+  const found: Array<boolean | "threw"> = [];
+  const waiting: Array<{ count: number; resolve: () => void }> = [];
+  let before = 0;
+  const record = (result: boolean | "threw"): void => {
+    found.push(result);
+    for (const each of waiting.filter(entry => found.length >= entry.count)) each.resolve();
+  };
+  return {
+    found,
+    run: proof => {
+      try {
+        const result = proof();
+        record(result);
+        return result;
+      } catch (error) {
+        record("threw");
+        throw error;
+      }
+    },
+    nextCheck: () => {
+      before = found.length;
+    },
+    ran: () => {
+      const count = before + 1;
+      return found.length >= count ? Promise.resolve() : new Promise(resolve => waiting.push({ count, resolve }));
+    },
+  };
+}
+
+/** The hook host with what its start check does recorded. */
+interface StartCheckHost {
+  hookRerailStarted: typeof hookRerailStarted;
+  /** The first word of each command Rerail starts Git with. */
+  git: string[];
+  /** Each database it opens. */
+  opened: string[];
+  /** Each folder whose Git search it walks on disk (`gitSearchEnds`). */
+  walked: string[];
+  proofs: ProofLog;
+}
+
+/**
+ * The hook host over this machine's Git, database and folders, loaded afresh with its start check's seams recorded:
+ * Git commands, database opens, walks of Git's search and proofs, which `proof` replaces when given.
+ */
+async function startCheckHost(proof?: (workspace: string) => boolean): Promise<StartCheckHost> {
+  const seen = { git: [] as string[], opened: [] as string[], walked: [] as string[], proofs: proofLog() };
   vi.resetModules();
   vi.doMock("../../src/engine/git.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
     return {
       ...actual,
       runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => {
-        ran.push(args[0] ?? "");
+        seen.git.push(args[0] ?? "");
         return actual.runGit(cwd, args, options);
       },
       gitText: (cwd: string, args: readonly string[]) => {
-        ran.push(args[0] ?? "");
+        seen.git.push(args[0] ?? "");
         return actual.gitText(cwd, args);
       },
     };
   });
-  return await import("../../src/harness/hook-host.js");
+  vi.doMock("../../src/engine/storage/database.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+    const openRerailDatabase: typeof actual.openRerailDatabase = (path, options) => {
+      seen.opened.push(path);
+      return actual.openRerailDatabase(path, options);
+    };
+    return { ...actual, openRerailDatabase };
+  });
+  vi.doMock("../../src/engine/catalog/repository-identity.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
+    const gitSearchEnds: typeof actual.gitSearchEnds = workspace => {
+      seen.walked.push(workspace);
+      return actual.gitSearchEnds(workspace);
+    };
+    return { ...actual, gitSearchEnds };
+  });
+  vi.doMock("../../src/runtime/repository-start.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js");
+    const stoppedWithoutGit: typeof actual.stoppedWithoutGit = (workspace, databasePath) =>
+      seen.proofs.run(() => proof === undefined ? actual.stoppedWithoutGit(workspace, databasePath) : proof(workspace));
+    return { ...actual, stoppedWithoutGit };
+  });
+  const host = await import("../../src/harness/hook-host.js");
+  return { ...seen, hookRerailStarted: host.hookRerailStarted };
+}
+
+/**
+ * A daemon recorded in the Rerail home that answers each start check only once the hook has run its own proof for it,
+ * as a daemon busy with other checkouts answers after the hook's grace: the hook's own answer, where it gives one,
+ * comes first, and anywhere else it takes the daemon's.
+ */
+async function daemonAnsweringAfterProof(host: StartCheckHost, repositoryState: string | ((repository: string) => string)): Promise<CountingDaemon> {
+  return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran());
 }
 
 /** A Git repository at `<root>/app`, started and then stopped in its checkout, as `rerail stop` leaves it. */
@@ -704,6 +842,19 @@ function stoppedApp(root: string): string {
   stopTestRepository(app);
   return app;
 }
+
+/**
+ * A folder of each kind the start check meets, each with a daemon's answer that differs from the database's, so the
+ * hook's answer shows which one gave it.
+ */
+const foldersOfEachKind = [
+  { folder: "a stopped checkout", daemonSays: "started", started: true, make: (root: string) => stoppedApp(root) },
+  { folder: "a started checkout", daemonSays: "stopped", started: false, make: (root: string) => startedApp(root) },
+  {
+    folder: "a repository never started", daemonSays: "started", started: true,
+    make: (root: string) => { startedApp(root); return gitRepository(join(root, "never")); },
+  },
+];
 
 /**
  * Folders of which the database alone cannot show that the daemon reads them stopped, each with the daemon's answer the
@@ -733,7 +884,7 @@ const readFailures = [
     what: "a Drizzle query fails on SQLite's error", error: new DrizzleQueryError("select 1", [], corruptDatabase()), asked: true,
     outcome: "asks the daemon",
   },
-  { what: "the read itself fails", error: new TypeError("Cannot read properties of undefined"), asked: false, outcome: "throws, asking no daemon" },
+  { what: "the read itself fails", error: new TypeError("Cannot read properties of undefined"), asked: false, outcome: "throws and ends its request to the daemon" },
 ];
 
 /** `change` over the Rerail database, open for writing. */
@@ -861,91 +1012,97 @@ describe("the hook start check", () => {
     vi.doUnmock("../../src/engine/git.js");
     vi.doUnmock("../../src/runtime/repository-start.js");
     vi.doUnmock("../../src/engine/storage/database.js");
+    vi.doUnmock("../../src/engine/catalog/repository-identity.js");
     vi.resetModules();
     vi.unstubAllEnvs();
   });
 
-  it("answers stopped itself where the database shows the daemon would, running no Git and asking nothing", async () => {
+  it.each(foldersOfEachKind)("asks the daemon first, and takes its prompt answer in $folder without opening the database or reading its folders", async ({ make, daemonSays, started }) => {
+    const root = await temporaryDirectory({ started: false });
+    const workspace = make(root);
+    const host = await startCheckHost();
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonSays);
+    try {
+      expect({
+        started: await host.hookRerailStarted("claude-code", workspace), requests: daemon.requests, opened: host.opened, walked: host.walked,
+        proofs: host.proofs.found,
+      }).toEqual({ started, requests: ["/api/presentation"], opened: [], walked: [], proofs: [] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("answers stopped itself beside a daemon that has not answered in time, where the database shows it would say stopped, running no Git and ending its request", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     mkdirSync(join(app, "src"));
+    const host = await startCheckHost();
     // A daemon that would say started: an answer of stopped is the hook's own.
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    const ran: string[] = [];
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
-      const host = await hookHostCountingGit(ran);
-      expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), git: ran, requests: daemon.requests })
-        .toEqual({ started: false, git: [], requests: [] });
+      const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", join(app, "src")));
+      expect({ started, git: host.git, proofs: host.proofs.found, ...await endedStartChecks(daemon) })
+        .toEqual({ started: false, git: [], proofs: [true], asked: 1, ended: 1 });
     } finally {
       await daemon.close();
     }
   });
 
-  it("opens no database in a repository Rerail never recorded, which only its remote can place", async () => {
+  it("opens no database in a repository Rerail never recorded, which only its remote can place, and waits for the daemon", async () => {
     const root = await temporaryDirectory({ started: false });
     startedApp(root);
     const never = gitRepository(join(root, "never"));
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
-    const opened: string[] = [];
-    vi.resetModules();
-    vi.doMock("../../src/engine/storage/database.js", async () => {
-      const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
-      const openRerailDatabase: typeof actual.openRerailDatabase = (path, options) => {
-        opened.push(path);
-        return actual.openRerailDatabase(path, options);
-      };
-      return { ...actual, openRerailDatabase };
-    });
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
-      const host = await import("../../src/harness/hook-host.js");
-      expect({ started: await host.hookRerailStarted("claude-code", never), opened, requests: daemon.requests })
-        .toEqual({ started: false, opened: [], requests: ["/api/presentation"] });
+      expect({ started: await host.hookRerailStarted("claude-code", never), opened: host.opened, proofs: host.proofs.found, requests: daemon.requests })
+        .toEqual({ started: true, opened: [], proofs: [false], requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }
   });
 
-  it.each(foldersTheDaemonDecides)("leaves $folder to the daemon", async ({ make, daemonSays, started }) => {
+  it.each(foldersTheDaemonDecides)("waits for the daemon in $folder when it answers late, and takes its answer", async ({ make, daemonSays, started }) => {
     const root = await temporaryDirectory({ started: false });
     const workspace = make(root);
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonSays);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, daemonSays);
     try {
-      expect({ started: await hookRerailStarted("claude-code", workspace), requests: daemon.requests })
-        .toEqual({ started, requests: ["/api/presentation"] });
+      expect({ started: await host.hookRerailStarted("claude-code", workspace), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended() })
+        .toEqual({ started, proofs: [false], requests: ["/api/presentation"], ended: 0 });
     } finally {
       await daemon.close();
     }
   });
 
-  it("asks the daemon where this process cannot open the database, and with no daemon recorded its failure is the hook's", async () => {
+  it("waits for a late daemon where this process cannot open the database, and with no daemon recorded its failure is the hook's", async () => {
     const root = await temporaryDirectory({ started: false });
     const home = process.env.RERAIL_HOME!;
     const app = stoppedApp(root);
-    const daemon = await countingDaemon(home, "started");
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await writeFile(join(home, "rerail.sqlite"), "not a database");
-      expect({ started: await hookRerailStarted("claude-code", app), requests: daemon.requests })
-        .toEqual({ started: true, requests: ["/api/presentation"] });
+      expect({ started: await host.hookRerailStarted("claude-code", app), proofs: host.proofs.found, requests: daemon.requests })
+        .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }
     await rm(join(home, "daemon.json"));
-    await expect(hookRerailStarted("claude-code", app)).rejects.toThrow("not a database");
+    await expect(host.hookRerailStarted("claude-code", app)).rejects.toThrow("not a database");
   });
 
   it.each(readFailures)("$what: $outcome", async ({ error, asked }) => {
     const root = await temporaryDirectory({ started: false });
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    vi.resetModules();
-    vi.doMock("../../src/runtime/repository-start.js", async () => ({
-      ...await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js"),
-      stoppedWithoutGit: (): never => { throw error; },
-    }));
+    const host = await startCheckHost((): never => {
+      throw error;
+    });
+    // A daemon that answers late where the hook waits for it, and not at all where it must end its request.
+    const daemon = asked ? await daemonAnsweringAfterProof(host, "started") : await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
-      const host = await import("../../src/harness/hook-host.js");
       const started = host.hookRerailStarted("claude-code", root);
       await (asked ? expect(started).resolves.toBe(true) : expect(started).rejects.toBe(error));
-      expect(daemon.requests).toEqual(asked ? ["/api/presentation"] : []);
+      expect(await endedStartChecks(daemon)).toEqual({ asked: 1, ended: asked ? 0 : 1 });
     } finally {
       await daemon.close();
     }
@@ -954,24 +1111,38 @@ describe("the hook start check", () => {
   it("reads as main does where no daemon is recorded: through its own Git, once", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
-    const ran: string[] = [];
-    const host = await hookHostCountingGit(ran);
-    expect({ started: await host.hookRerailStarted("claude-code", app), git: ran }).toEqual({ started: false, git: ["rev-parse"] });
+    const host = await startCheckHost();
+    expect({ started: await host.hookRerailStarted("claude-code", app), git: host.git, proofs: host.proofs.found })
+      .toEqual({ started: false, git: ["rev-parse"], proofs: [] });
   });
 
-  it.each(agentGitSettings)("asks the daemon where the coding agent's $variable would have this process's Git read a started folder as stopped", async ({ variable, arrange }) => {
+  it("reads the database through its own Git in a started checkout whose daemon.json names a process that is gone", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const home = process.env.RERAIL_HOME!;
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+    await writeFile(join(home, "daemon.json"), JSON.stringify({
+      pid: gone, host: "127.0.0.1", port: 9, url: "http://127.0.0.1:9/", version: "test", databasePath: join(home, "rerail.sqlite"),
+      kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home,
+    }));
+    const host = await startCheckHost();
+    expect({ started: await host.hookRerailStarted("claude-code", app), git: host.git }).toEqual({ started: true, git: ["rev-parse"] });
+  });
+
+  it.each(agentGitSettings)("waits for a late daemon where the coding agent's $variable would have this process's Git read a started folder as stopped", async ({ variable, arrange }) => {
     const root = await temporaryDirectory({ started: false });
     // A person's environment sets neither of the two the test setup sets; each case sets only its own.
     vi.stubEnv("GIT_CONFIG_GLOBAL", undefined);
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", undefined);
     const { workspace, value } = arrange(root);
+    const host = await startCheckHost();
     // The daemon reads the folder from its own environment, as started.
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    const daemon = await daemonAnsweringAfterProof(host, "started");
     vi.stubEnv(variable, value);
     try {
       expect(workspaceStartState(workspace)).toBe("stopped");
-      expect({ started: await hookRerailStarted("claude-code", workspace), requests: daemon.requests })
-        .toEqual({ started: true, requests: ["/api/presentation"] });
+      expect({ started: await host.hookRerailStarted("claude-code", workspace), proofs: host.proofs.found, requests: daemon.requests })
+        .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }
@@ -980,8 +1151,10 @@ describe("the hook start check", () => {
   it("never answers stopped itself where the daemon reads otherwise, in any folder of these trees", { timeout: 120_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
     const folders = generatedTrees(root);
-    // A daemon asked about a folder's real path, as the hook sends it, answers as a live one reads it.
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonReads);
+    const host = await startCheckHost();
+    // A daemon asked about a folder's real path, as the hook sends it, answers as a live one reads it, late: only after
+    // the hook's own proof, so the hook answers itself wherever that proof shows stopped.
+    const daemon = await daemonAnsweringAfterProof(host, daemonReads);
     const wrong: string[] = [];
     const askedThoughStopped: string[] = [];
     try {
@@ -992,9 +1165,10 @@ describe("the hook start check", () => {
           const real = realpathSync.native(path);
           vi.stubEnv("GIT_CEILING_DIRECTORIES", ceiling ? dirname(real) : undefined);
           const reads = daemonReads(real);
-          const asked = daemon.requests.length;
-          const started = await hookRerailStarted("claude-code", path);
-          const answeredItself = daemon.requests.length === asked;
+          const proofsBefore = host.proofs.found.length;
+          host.proofs.nextCheck();
+          const started = await host.hookRerailStarted("claude-code", path);
+          const answeredItself = host.proofs.found.length > proofsBefore && host.proofs.found.at(-1) === true;
           if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) wrong.push(`${name}${ceiling ? " (ceiling)" : ""}: ${reads}`);
           if (!answeredItself && reads === "stopped" && !ceiling) askedThoughStopped.push(name);
         }

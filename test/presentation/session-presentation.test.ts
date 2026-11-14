@@ -16,8 +16,10 @@ import {
 } from "../../src/presentation/session-presentation.js";
 import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } from "../../src/engine/index.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
+import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { startTestRepository } from "../support/started-repository.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 let home: string;
@@ -424,6 +426,16 @@ describe("rules page", () => {
     expect(await readRepositoryState(cwd, "omp")).toBe("stopped");
     await record(join(home, "daemon.json"), { pid: 999_999 });
     expect(await readRepositoryState(cwd, "omp")).toBeNull();
+  });
+
+  it("lets a live daemon's answer decide the hook start check, and reads the database only once none answers", async () => {
+    startTestRepository(cwd, database);
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    // The daemon says stopped; this process's database, which says started, is not read.
+    expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
+    await record(join(home, "daemon.json"), { pid: 999_999 });
+    expect(await hookRerailStarted("claude-code", cwd)).toBe(true);
   });
 
   it("refuses a recorded daemon whose pid is gone or whose port is vacant", async () => {

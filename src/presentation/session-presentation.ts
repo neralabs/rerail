@@ -137,10 +137,18 @@ function unavailable(
   return presentation({ status, items: [{ text: reason, url: null }], presence, repositoryState });
 }
 
-/** Validate responses with the same contracts used by the daemon, without opening a database. */
-async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema): Promise<z.infer<Schema>> {
+/** The read's time limit, ended early as well by `stop` when the caller gives one. */
+function readSignal(stop: AbortSignal | undefined): AbortSignal {
+  const limit = AbortSignal.timeout(READ_TIMEOUT_MS);
+  return stop === undefined ? limit : AbortSignal.any([limit, stop]);
+}
+
+/** Validate responses with the same contracts used by the daemon, without opening a database. `stop` ends the read early. */
+async function get<Schema extends z.ZodType>(
+  daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema, stop?: AbortSignal,
+): Promise<z.infer<Schema>> {
   const response = await daemonFetch(daemon.state)(new URL(path, daemon.origin), {
-    headers: daemonAccessHeaders(daemon.state), signal: AbortSignal.timeout(READ_TIMEOUT_MS), redirect: "error",
+    headers: daemonAccessHeaders(daemon.state), signal: readSignal(stop), redirect: "error",
   });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
   const reader = response.body.getReader();
@@ -369,15 +377,15 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
 /**
  * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
  * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
- * Passive, and free of SQLite, so hosts that cannot load the binding (OMP runs on Bun) ask this
- * first. A one-shot hook asks it unless the database and the folders on disk show the daemon would say stopped
- * (`hookRerailStarted`).
+ * Passive, and free of SQLite, so hooks and hosts that cannot load the binding (OMP runs on Bun)
+ * ask this first. `stop` ends the request, as null, for a caller that no longer needs the answer: a one-shot hook that
+ * found out by itself that the daemon would say stopped (`hookRerailStarted`).
  */
-export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
+export async function readRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<RepositoryStartState | null> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state, undefined, stop))) return null;
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema, stop);
     return response.repositoryState;
   } catch {
     return null;
