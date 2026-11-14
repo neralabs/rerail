@@ -1,7 +1,7 @@
 # 0139: Tier 1 on the CPU in the block lexer's form
 
 Status: decided (2026-11-13); step 1 built, step 2 in part and step 3's marks built
-(2026-11-13); the rest to build.
+(2026-11-13). Its way on the CPU replaced by 0177 (a token loop); its constructs stay.
 The design: docs/parser-generators/36.
 
 ## Intro
@@ -173,3 +173,56 @@ Tier 1 through the JIT went 494.7M to 492.8M, ahead of time 471.8M to 469.9M.
 Spills stayed at 277: `f_dot`'s values now hold the registers in the rounds'
 place (4,189 points over them), live from the classes to the tokens that read
 them.
+
+## A float one token
+
+simdjson's number is one scalar, whatever is in it. A float is now one token
+too, its number's: the `fraction` token is gone. What makes it a float is a
+mark on the token after it, from the float's last digit. Tier 2 makes the
+leaf it just made a float there:
+
+```
+token number = start digit & int & ~prev(int) last numeral & ~next(numeral)
+mark float_after = frac_last          # hidden: skipped where no arm reads it
+choice numeric = number [relabel _ as float float_after]
+# no token after it to mark: the engine reads it
+escape "a float the file ends with" when last_byte & fill(frac_last, starts_g)
+```
+
+Its mark is the first one, as tier 2 reads it right after the number, before
+a line's marks on the same token. It is hidden: inside JSON or a raw line the
+number is merged into a leaf of another kind, and the mark is skipped.
+
+The grammar compiler had refused this shape: a `relabel` with no field broke
+its count of the nodes a choice leaves (`grammar::one_node`). Every rule with
+a field around a `numeric` became a call, and tier 2 grew to 4,928 words. A
+relabel to a kind alone (not `drop`) now keeps the count: 3,322 words, from
+3,563.
+
+Ahead of time the whole parse went 917.0M to 911.1M (tier 1 469.9M to
+465.9M, tier 2 404.3M to 402.5M). Through the JIT it went 1,020.3M to 1,026.0M:
+tier 1 492.8M to 501.5M, from the mark's mask. The 4,928-word form ran tier 2
+in 372.1M ahead of time; why the calls were cheaper is open.
+
+## Carries: tried, not kept
+
+`uesc` and `two` held the registers by their carries: each `prev` of a word
+another block made is a word held through the loop. Three ways to make fewer,
+measured ahead of time and through the JIT (tier 1, from 465.9M AOT and
+501.5M JIT):
+
+- **An `&` or `|` chain lowered from its earliest delay to its latest**, so a
+  delay's terms are one word before a `prev` brings it later: JIT 491.5M, AOT
+  477.6M. The program grew (356 to 360 operations, 79 to 81 `prev`s): a
+  grouped word replaces `prev`s other masks had shared. Chosen per chain, by
+  the `prev`s and operations it adds, it was no better through the JIT.
+- **`two` by its second byte**, a class of first bytes each (four carries,
+  not six): 24 operations, from 30; JIT 505.2M, AOT 469.3M (with the next).
+  Its two new classes cost more than the carries saved.
+- **`uesc`'s and `json_bad`'s escape bytes one word** (`escaped & u`,
+  `escaped & ~jesc`) before their carry to the string's delay: JIT 500.2M,
+  AOT 468.0M. Noise.
+
+So the points over the registers that the profile blames on a statement do
+not price it. The diffs are in the worktree's `tmp/` (`fold-by-delay.diff`,
+`fold-by-delay-chosen.diff`, `uesc-carries.diff`).

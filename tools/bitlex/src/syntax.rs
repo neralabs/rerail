@@ -50,6 +50,38 @@ pub enum Arg {
     S(Vec<u8>),
 }
 
+/// How a token ends, told at its start (`Stmt::Token`'s `run` and `pair`).
+#[derive(Clone, Debug)]
+pub enum TokenRule {
+    /// Its first byte, then the bytes of the mask after it, in a row.
+    Run(Expr),
+    /// One byte, or two where the mask holds at its first.
+    Pair(Expr),
+}
+
+impl TokenRule {
+    /// The token's last byte as a mask, from its start `s`:
+    ///
+    /// ```text
+    /// run R:  t = s | fill(prev(s) & R, ~R);   last = t & ~next(t & ~s)
+    /// pair P: last = (s & ~P) | prev(s & P)
+    /// ```
+    pub fn last(&self, s: &Expr) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let call = |f: &str, args: Vec<Expr>| Expr::Call(f.to_string(), args.into_iter().map(Arg::E).collect());
+        match self {
+            TokenRule::Run(r) => {
+                let after = call("fill", vec![and(call("prev", vec![s.clone()]), r.clone()), not(r.clone())]);
+                let t = or(s.clone(), after);
+                and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
+            }
+            TokenRule::Pair(p) => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Expr {
     Name(String),
@@ -295,10 +327,13 @@ pub enum Stmt {
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
-    /// `token K = start S [through T | last L]`: a token at each bit of `S`, running through
-    /// `T`'s bytes, or ending at the first bit of `L` at or after its start (a tier-1 mask: no
-    /// fill, docs/final-shape/decisions/0071).
-    Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr> },
+    /// `token K = start S [through T | last L | run R | pair P]`: a token at each bit of `S`,
+    /// running through `T`'s bytes, or ending at the first bit of `L` at or after its start (a
+    /// tier-1 mask: no fill, docs/final-shape/decisions/0071). `run R`: its first byte, then the
+    /// bytes of `R` after it in a row; `pair P`: one byte, two where `P` holds at its start. Both
+    /// are their `last` mask too (`TokenRule::last`), and a CPU ends the token at its start by
+    /// the rule (decision 0177), with no last mask.
+    Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr>, rule: Option<TokenRule> },
     Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
@@ -1349,8 +1384,20 @@ impl P {
                 self.want_kw("start")?;
                 let start = self.expr()?;
                 let through = if self.eat_kw("through") { Some(self.expr()?) } else { None };
-                let last = if through.is_none() && self.eat_kw("last") { Some(self.expr()?) } else { None };
-                Stmt::Token { kind, start, through, last }
+                let mut last = if through.is_none() && self.eat_kw("last") { Some(self.expr()?) } else { None };
+                let rule = if through.is_some() || last.is_some() {
+                    None
+                } else if self.eat_kw("run") {
+                    Some(TokenRule::Run(self.expr()?))
+                } else if self.eat_kw("pair") {
+                    Some(TokenRule::Pair(self.expr()?))
+                } else {
+                    None
+                };
+                if let Some(r) = &rule {
+                    last = Some(r.last(&start));
+                }
+                Stmt::Token { kind, start, through, last, rule }
             }
             "munch" => {
                 let kind = self.ident()?;

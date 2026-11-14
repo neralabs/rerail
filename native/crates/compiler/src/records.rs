@@ -37,6 +37,122 @@ pub struct Records {
     /// outputs) of its bits at the starts, and the word it needs too (its code, 0 for any). At
     /// most `MARKS`.
     pub marks: Vec<(u16, u16)>,
+    /// Each byte's end rule as a token's first byte (decision 0177): an index into `rules`.
+    /// Empty: every token's last byte is the `lasts` extract's.
+    pub ends: Vec<u8>,
+    pub rules: Vec<EndRule>,
+    /// The bytes between tokens (decision 0177, stage 2a), an output: with it, the tokens are
+    /// the loop's (`walk`), each at the first byte after the one before that it does not hold,
+    /// not the starts' extract's.
+    pub skip: Option<u16>,
+    /// The marks (bits of `marks`) a grammar token has from the bytes before it (decision 0177):
+    /// mark `k`'s bit at a token is whether its output holds anywhere after the grammar token
+    /// before (an extra's are not) up to its first byte. The other marks are their outputs' bits
+    /// at the token's first byte.
+    pub gaps: u32,
+    /// The mark whose bit tells an extra's token (a comment), if any: an extra has no gap mark.
+    pub extra: Option<u8>,
+}
+
+/// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
+/// alone, which the grammar's checks refuse.
+pub const NO_RULE: u8 = u8::MAX;
+
+/// How a token's last byte is found from its first (`Records::rules`), each by an output's
+/// words (an index into the program's outputs):
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EndRule {
+    /// The first byte, then the output's run after it: the last is the run's.
+    Run(u16),
+    /// The first byte, and the next where the output holds at the first.
+    Pair(u16),
+    /// The output's first bit at or after the first byte (its last-byte mask).
+    Last(u16),
+}
+
+/// A token's last byte from its first, `s`, by its rule, over the file's output words; `None`
+/// where a `Last` has no bit left. A run past the words ends at their end.
+pub fn last_by_rule(rule: EndRule, s: usize, outputs: &[Vec<u64>]) -> Option<usize> {
+    let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
+    match rule {
+        EndRule::Pair(o) => Some(s + usize::from(bit(o, s))),
+        EndRule::Run(o) => {
+            // The run from `s + 1`, a word at a time.
+            let w = words(o);
+            let mut i = s + 1;
+            loop {
+                let Some(&x) = w.get(i / 64) else { return Some(i - 1) };
+                let ones = (!(x >> (i % 64))).trailing_zeros() as usize;
+                let left = 64 - i % 64;
+                if ones < left {
+                    return Some(i + ones - 1);
+                }
+                i += left;
+            }
+        }
+        EndRule::Last(o) => {
+            let w = words(o);
+            let mut q = s / 64;
+            let mut x = w.get(q)? & (!0u64 << (s % 64));
+            while x == 0 {
+                q += 1;
+                x = *w.get(q)?;
+            }
+            Some(64 * q + x.trailing_zeros() as usize)
+        }
+    }
+}
+
+/// Every token's last byte by the rules (`last_by_rule`), from its first; `None` where a
+/// token has none (the file goes to the fallback).
+pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64>]) -> Option<Vec<u32>> {
+    starts
+        .iter()
+        .map(|&s| {
+            let first = bytes.get(s as usize).copied().unwrap_or(0);
+            match records.rules.get(usize::from(records.ends[usize::from(first)])) {
+                Some(&rule) => last_by_rule(rule, s as usize, outputs).map(|l| l as u32),
+                None => Some(s),
+            }
+        })
+        .collect()
+}
+
+/// The tokens by the loop (decision 0177, stage 2a), as the lean lexer's: each starts at the
+/// first byte from the end of the one before that `skip` (an output) does not hold, a word of
+/// it at a time, and ends by its first byte's rule (`last_by_rule`; no rule, the byte alone).
+/// A region's token ends at its region's last byte, so the loop never starts one inside it.
+/// The starts and the lasts.
+pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>) {
+    let n = bytes.len();
+    let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
+    let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
+    let (mut starts, mut lasts) = (Vec::new(), Vec::new());
+    let mut at = 0usize;
+    'tokens: while at < n {
+        let mut q = at / 64;
+        let mut x = held(q) & (!0u64 << (at % 64));
+        while x == 0 {
+            q += 1;
+            if 64 * q >= n {
+                break 'tokens;
+            }
+            x = held(q);
+        }
+        let s = 64 * q + x.trailing_zeros() as usize;
+        if s >= n {
+            break;
+        }
+        let l = match records.rules.get(usize::from(records.ends[usize::from(bytes[s])])) {
+            Some(&rule) => last_by_rule(rule, s, outputs).unwrap_or(s).max(s),
+            None => s,
+        };
+        starts.push(s as u32);
+        lasts.push(l as u32);
+        at = l + 1;
+    }
+    (starts, lasts)
 }
 
 /// The most marks a code holds.
@@ -199,5 +315,49 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         }
         codes.push(kind | word << KIND_BITS | marks << MARK_SHIFT);
     }
+    gap_marks(records, starts, outputs, &mut codes);
     (codes, bad)
+}
+
+/// Whether output `o` holds anywhere in bytes `a..=b` (`a > b`: none), a word at a time.
+pub fn any_in(outputs: &[Vec<u64>], o: u16, a: usize, b: usize) -> bool {
+    let w = outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    if a > b {
+        return false;
+    }
+    (a / 64..=b / 64).any(|q| {
+        let mut x = w.get(q).copied().unwrap_or(0);
+        if q == a / 64 {
+            x &= !0u64 << (a % 64);
+        }
+        if q == b / 64 && b % 64 != 63 {
+            x &= (1u64 << (b % 64 + 1)) - 1;
+        }
+        x != 0
+    })
+}
+
+/// The gap marks (`Records::gaps`) into the codes: each grammar token's, from its mark's output
+/// after the grammar token before it up to its first byte. An extra's token has none.
+pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) {
+    if records.gaps == 0 {
+        return;
+    }
+    let extra = |c: u32| records.extra.is_some_and(|e| c >> (MARK_SHIFT + u32::from(e)) & 1 == 1);
+    let mut from = 0usize;
+    for (k, &s) in starts.iter().enumerate().take(codes.len()) {
+        let s = s as usize;
+        if extra(codes[k]) {
+            codes[k] &= !(records.gaps << MARK_SHIFT);
+            continue;
+        }
+        let mut gap = 0u32;
+        for (m, &(o, _)) in records.marks.iter().enumerate().filter(|&(m, _)| records.gaps >> m & 1 == 1) {
+            if any_in(outputs, o, from, s) {
+                gap |= 1 << m;
+            }
+        }
+        codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | gap << MARK_SHIFT;
+        from = s + 1;
+    }
 }
