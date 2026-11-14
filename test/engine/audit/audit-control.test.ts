@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -81,6 +81,64 @@ describe("audit controls", () => {
     expect(controls.updateSettings("c", { mode: "log" }).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
     expect(() => controls.updateWorkspaceSettings(unseen, { steerStrategy: "undo" as never })).toThrow();
     controls.close(); sessionStore.close();
+  });
+
+  describe.runIf(process.platform === "win32")("on Windows, settings Rerail 0.1.4 saved under the folder as its session spelt it", () => {
+    /**
+     * A folder `App`, a session there that spells it as VS Code or a typed `cd` can (`c:\…\app`), and the key Rerail
+     * 0.1.4's store saved that session's settings under: the JS realpath, which keeps that spelling. This build keys
+     * the folder by the spelling the disk stores (`C:\…\App`).
+     */
+    async function spelledFixture() {
+      const { root, controls, sessionStore } = await fixture();
+      const stored = join(realpathSync.native(root), "App");
+      await mkdir(stored);
+      const spelled = join(dirname(stored).replace(/^[A-Z]:/u, drive => drive.toLowerCase()), "app");
+      sessionStore.openSession({ host: "claude-code", sessionId: "spelled", cwd: spelled });
+      const earlierKey = realpathSync(spelled);
+      expect(earlierKey).not.toBe(stored);
+      const rows = () => {
+        const database = openRerailDatabase(sessionStore.path);
+        try {
+          return Object.fromEntries(database.select().from(auditSettings).all().map(row => [row.workspaceRoot, row.settings]));
+        } finally { database.$client.close(); }
+      };
+      const saveAsEarlier = (settings: { scope: "ai-output" | "repository"; mode: "log" | "steer" }) => {
+        const database = openRerailDatabase(sessionStore.path);
+        try {
+          database.insert(auditSettings).values({ workspaceRoot: earlierKey, settings, updatedAt: 1 }).run();
+        } finally { database.$client.close(); }
+      };
+      return { stored, spelled, earlierKey, controls, sessionStore, rows, saveAsEarlier };
+    }
+
+    it("reads the audit mode 0.1.4 saved there, for the session and by the folder", async () => {
+      const { spelled, controls, sessionStore, saveAsEarlier } = await spelledFixture();
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      expect(controls.getSettings("spelled").settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "message" });
+      expect(controls.hasUserSettings("spelled")).toBe(true);
+      expect(controls.getWorkspaceSettings(spelled)?.mode).toBe("log");
+      controls.close(); sessionStore.close();
+    });
+
+    it("reads a row saved under the stored spelling before the one 0.1.4 saved", async () => {
+      const { stored, controls, sessionStore, saveAsEarlier } = await spelledFixture();
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      controls.updateWorkspaceSettings(stored, { mode: "steer" });
+      expect(controls.getSettings("spelled").settings.mode).toBe("steer");
+      controls.close(); sessionStore.close();
+    });
+
+    it("saves a change under the stored spelling over what 0.1.4 saved, and leaves 0.1.4's row as it was", async () => {
+      const { stored, earlierKey, controls, sessionStore, rows, saveAsEarlier } = await spelledFixture();
+      saveAsEarlier({ scope: "repository", mode: "log" });
+      controls.updateSettings("spelled", { steerStrategy: "rewind" });
+      expect(rows()).toEqual({
+        [stored]: { scope: "repository", mode: "log", steerStrategy: "rewind" },
+        [earlierKey]: { scope: "repository", mode: "log" },
+      });
+      controls.close(); sessionStore.close();
+    });
   });
 
   it("retries an interrupted repository audit in a later session, and never a completed one", async () => {

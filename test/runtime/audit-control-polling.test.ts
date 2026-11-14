@@ -1,8 +1,10 @@
-import { realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { codeRuleSchema, NativeCodeRuleEnforcer, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { auditSettings, audits, codeRuleSchema, NativeCodeRuleEnforcer, openRerailDatabase, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
@@ -78,6 +80,42 @@ describe("The runtime's audit control polling", () => {
       }, { timeout: 10_000, interval: 50 });
     } finally {
       other.close();
+      await runtime.dispose();
+    }
+  }, 20_000);
+});
+
+describe.runIf(process.platform === "win32")("A session in a Windows folder spelt otherwise than the disk stores it", () => {
+  it("checks in the Log mode Rerail 0.1.4 saved for that spelling, recording the broken rule without telling the coding agent", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const stored = join(root, "App");
+    await mkdir(stored);
+    // As VS Code or a typed `cd` can spell it; 0.1.4's store saved the settings under the JS realpath, which keeps it.
+    const spelled = join(dirname(stored).replace(/^[A-Z]:/u, drive => drive.toLowerCase()), "app");
+    expect(realpathSync(spelled)).not.toBe(stored);
+    const databasePath = join(root, "rerail.sqlite");
+    const database = openRerailDatabase(databasePath);
+    try {
+      database.insert(auditSettings).values({ workspaceRoot: realpathSync(spelled), settings: { scope: "ai-output", mode: "log" }, updatedAt: 1 }).run();
+    } finally { database.$client.close(); }
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: stored, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(catalog(), options),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "spelled", cwd: spelled } });
+      await runtime.codeRulesOpened("spelled");
+      await runtime.ingest({ kind: "call", eventId: "call", sessionId: "spelled", toolCallId: "w1", toolName: "write", input: { path: "created.py", content: "" } });
+      await writeFile(join(stored, "created.py"), "NEEDLE = 1\n");
+      const deliveries = await runtime.ingest({ kind: "result", eventId: "result", sessionId: "spelled", toolCallId: "w1", toolName: "write", output: "written" });
+      expect(deliveries).toEqual([]);
+      const reader = openRerailDatabase(databasePath);
+      try {
+        const checked = reader.select({ mode: audits.mode, violations: audits.violations }).from(audits).where(eq(audits.sessionId, "spelled")).all()
+          .filter(audit => audit.violations.some(violation => violation.ruleId === "test:needle"));
+        expect(checked.map(audit => audit.mode)).toEqual(["log"]);
+      } finally { reader.$client.close(); }
+    } finally {
       await runtime.dispose();
     }
   }, 20_000);
