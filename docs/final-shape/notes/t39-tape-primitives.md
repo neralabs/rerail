@@ -405,6 +405,79 @@ state):
   on Zen 3/4 and Sapphire Rapids. Sapphire Rapids' point reads on BE are slower (`findclose`, as in
   t38).
 
+### Step 7: same structure, same bits (E15)
+
+Requirement 3 of 0156 says a repeated subtree keeps the same bits, without hurting decoding.
+The spike's fixed record meets it (4b). XF does not yet. Its slots are in PFOR blocks, so each
+block picks its own width. And an escaped slot names its exception by its index in the block.
+So the same subtree in two blocks can be stored as different bits.
+
+`tape16 repeat <capture>` (`src/repeat.rs`) stores each file's codes and slots five ways:
+
+- **V0**, XF now: codes at the file's width, slots by PFOR blocks;
+- **V1**, one width a file, for codes and slots;
+- **V2**, one width a language, for codes and slots;
+- **V3**, the language's widths rounded up to bytes;
+- **V4**, one width a language, chosen to escape at most 2% of the slots.
+
+V1, V2 and V4 have no per-block widths. Their escape is the all-ones slot, which names nothing. Its
+value sits in the block's short list of escaped offsets, found by a binary search (8 probes at
+most). So equal values are always equal slots.
+
+A subtree counts as repeated if it has 8 nodes or more and its codes and sizes equal an earlier
+subtree's, in the same file or an earlier one. The test compares each node's stored fields:
+width, slot bits, and the escaped value. A subtree's last slot names the node after it, so that
+slot is left out. Positions are XF's (frame of reference and length), the same in every variant.
+
+Results on the quiet M3, one thread (sizes are the same on every machine):
+
+| | data-layer Python | data-layer JSON | rerail Rust | rerail TypeScript | rerail `.rr` | rerail JSON |
+|---|---|---|---|---|---|---|
+| nodes in repeats, within a file / across files | 20% / 43% | 7% / 79% | 17% / 31% | 19% / 30% | 13% / 47% | 56% / 17% |
+| V0: repeats as the same bits, within / across | 63% / 50% | 16% / 22% | 81% / 74% | 89% / 64% | 23% / 22% | 45% / 48% |
+| V1 | 100% / 45% | 100% / 18% | 100% / 51% | 100% / 41% | 100% / 52% | 100% / 43% |
+| V2, V3, V4 | 100% / 100% | 100% / 100% | 100% / 100% | 100% / 100% | 100% / 100% | 100% / 100% |
+| codes + slots in memory, B a node: V0 / V2 / V4 / V3 | 2.12 / 2.17 / 2.34 / 3.13 | 1.58 / 1.82 / 2.34 / 2.22 | 2.14 / 2.21 / 2.44 / 3.14 | 2.15 / 2.22 / 2.44 / 3.14 | 1.89 / 1.93 / 2.60 / 2.21 | 1.72 / 2.42 / 3.03 / 3.24 |
+| slots escaped, V2 | 9.3% | 13.7% | 6.4% | 6.7% | 9.5% | 18.7% |
+| slot read at random, ns: V0 / V2 / V4 | 2.2 / 1.9 / 1.3 | 3.0 / 2.6 / 2.1 | 2.3 / 1.8 / 1.3 | 2.2 / 1.5 / 1.1 | 2.8 / 2.0 / 1.9 | 2.4 / 6.1 / 1.6 |
+| codes + slots on disk, zstd with a dictionary, B a node: V0 / V2 / V3 | 1.15 / 1.10 / 0.75 | 0.41 / 0.37 / 0.34 | 1.32 / 1.32 / 0.91 | 1.23 / 1.23 / 0.88 | 0.84 / 0.71 / 0.56 | 0.64 / 0.60 / 0.42 |
+| positions on disk, zstd with a dictionary: as stored / relative (a ceiling) | 2.30 / 1.37 | 1.85 / 0.63 | 2.19 / 1.49 | 2.27 / 1.49 | 2.13 / 1.09 | 1.64 / 0.39 |
+
+The "relative" positions store each start's gap to the previous start, and each length. They
+cannot be read in place, so they are only a ceiling for what relative positions could give on
+disk. The dictionary is 112 KB, trained on the even files and measured on the odd ones. The load
+average on the M5 was 60–100, so the reads were rerun on the M3 at load 3. The M5's sizes are the
+same.
+
+- **XF as it is fails requirement 3.** Within a file, only 16–89% of the repeated nodes keep their
+  bits; across files, 22–74%. The cause is the per-block widths and the escape indices, as 4b
+  expected.
+- **One width a language meets it everywhere, for 2–3.5% more memory on code.** On Python, Rust,
+  TypeScript and `.rr`, V2 costs 0.04–0.08 B a node more than V0 (2.12 → 2.17 on data-layer
+  Python), and its reads are as fast or faster (1.5–2.0 ns against 2.2–2.8), since there is no
+  block header to read. The width is fixed per language, like the code numbering, so it is known
+  before a file starts and a writer can stream (t35 items 1–5). Codes at the language's width are
+  what makes repeats across files the same bits (t35 items 6–9).
+- **JSON is the exception.** Its leaf slots store the back distance to the next node's parent, and
+  in a long flat array that distance grows with the position in the array. So 14–19% of JSON's
+  slots escape at the cheapest width, and 87–98% of those are leaf slots (50–65% on code; counted
+  with `E15_ESC=1`). In rerail's JSON this costs +0.71 B a node, and random reads
+  take 2.5× as long (6.1 ns), because the escaped values sit in a separate list. Holding escapes
+  under 2% (V4) fixes the reads but costs more bytes everywhere. The lever is XF's leaf slot rather
+  than the width: parent is asked fewer than 0.01 times a node (E7), so a leaf could store a
+  sibling-relative distance, which stays small in a flat array. That is the next thing to price.
+- **The same bits up to a shift do not help zstd.** zstd sees bytes, and bit-packed repeats sit at
+  different bit offsets. V2 is within 0.05 B a node of V0 on disk; `.rr` gains 0.13. Rounding
+  to bytes (V3) makes codes and slots 28–35% smaller on disk (18% on data-layer JSON), but costs
+  about 1 B a node more in memory on Python, Rust and TypeScript (+47%). In-memory bytes are 0156's main measure, and the tape is never repacked when it is
+  loaded, so V3 is out.
+- **On disk, positions are the large term.** With a dictionary they are 2.1–2.3 B a node on code,
+  against 0.7–1.3 for codes and slots. A relative form would save 0.7–1.0 B a node on code and
+  1.2 on JSON, more than any change to the structure. But absolute positions are what make one
+  span two reads in place. The in-place relative forms T9 lists are a block base with offsets
+  relative to the subtree's start, an offset from the parent's start, or a start every K nodes.
+  They are the next tradeoff to price, alongside JSON's leaf slot.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -547,3 +620,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 5. **Metal.** Done: match, nearest, outermost and has as kernels on XF, MF and BE, with BE's carry
    as a scan (0.05–0.35 ns a node); `has` from counts, with no climb; spans.
 6. **Rerun everything on the seven machines.** Done (2026-11-14): every answer right everywhere.
+7. **Same structure, same bits (E15).** Done: one width a language, with escapes that name
+   nothing, keeps every repeat's bits for 2–3.5% more memory on code. Next: a leaf slot that stays
+   small in JSON's flat arrays, and positions in a relative form that is still read in place.

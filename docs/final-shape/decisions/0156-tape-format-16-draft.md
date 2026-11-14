@@ -546,6 +546,10 @@ keeps the same bits.
   and a mask (E8 gives the widths each field needs).
 - **Repetition.** A repeated subtree stored once and referenced, or LZ references into earlier
   records with an index from node to location. A read through a reference must stay a direct read.
+  Same bits, measured (E15, [t39](../notes/t39-tape-primitives.md) step 7): XF's per-block PFOR
+  widths keep only 16–89% of repeated nodes' bits within a file; one width a language, with
+  escapes that name nothing, keeps all of them, within and across files, for 2–3.5% more memory on
+  code. JSON's leaf slots are the exception.
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.

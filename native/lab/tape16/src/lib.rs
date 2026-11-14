@@ -26,6 +26,7 @@ pub mod events;
 pub mod layout;
 pub mod lp;
 pub mod measure;
+pub mod repeat;
 pub mod report;
 pub mod solution;
 pub mod span;

@@ -20,7 +20,7 @@ pub trait Image {
     fn image(&self, out: &mut Vec<u8>);
 }
 
-fn raw<T: Copy>(out: &mut Vec<u8>, v: &[T]) {
+pub(crate) fn raw<T: Copy>(out: &mut Vec<u8>, v: &[T]) {
     // SAFETY: plain integers, read as bytes.
     out.extend_from_slice(unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) });
 }
@@ -32,7 +32,7 @@ fn mask(w: u32) -> u64 {
 
 /// `w` bits at bit `bit` of `words` (one padding word at the end).
 #[inline(always)]
-fn extract(words: &[u64], bit: usize, w: u32) -> u64 {
+pub(crate) fn extract(words: &[u64], bit: usize, w: u32) -> u64 {
     let k = bit >> 6;
     let o = (bit & 63) as u32;
     // SAFETY: every writer pads one word past the last value, so k + 1 is in bounds.
@@ -41,7 +41,7 @@ fn extract(words: &[u64], bit: usize, w: u32) -> u64 {
     ((lo >> o) | ((hi << 1) << (63 - o))) & mask(w)
 }
 
-fn put(words: &mut Vec<u64>, bit: usize, w: u32, v: u64) {
+pub(crate) fn put(words: &mut Vec<u64>, bit: usize, w: u32, v: u64) {
     while words.len() < (bit + w as usize) / 64 + 2 {
         words.push(0);
     }
@@ -69,7 +69,7 @@ fn or_in(words: &mut [u64], bit: usize, w: u32, v: u64) {
     words[k + 1] |= (v >> 1) >> (63 - o);
 }
 
-fn bits_for(v: u64) -> u32 {
+pub(crate) fn bits_for(v: u64) -> u32 {
     64 - v.leading_zeros()
 }
 
@@ -284,6 +284,18 @@ impl PFor {
             return base + extract(&self.words, off + len * w as usize + (v - lim) as usize * ew as usize, ew);
         }
         base + v
+    }
+    /// Value i as stored: (its slot's width, the slot's bits, the exception's bits if the slot is an escape).
+    /// Two runs of values are the same bits (up to a shift) when their fields are equal.
+    pub fn field(&self, i: usize) -> (u32, u64, Option<u64>) {
+        let b = i / BLOCK;
+        let h = self.head[b];
+        let (w, ew, e, off) = ((h & 63) as u32, ((h >> 6) & 63) as u32, (h >> 12) & 511, (h >> 21) as usize);
+        let v = extract(&self.words, off + (i % BLOCK) * w as usize, w);
+        let lim = (1u64 << w) - e;
+        let len = (self.n - b * BLOCK).min(BLOCK);
+        let exc = (v >= lim).then(|| extract(&self.words, off + len * w as usize + (v - lim) as usize * ew as usize, ew));
+        (w, v, exc)
     }
     /// Block b's header, read once, for reading the block's values in order.
     #[inline(always)]
