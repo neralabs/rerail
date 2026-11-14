@@ -189,3 +189,18 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     within one call. A key is found from such a rule by address (`Versions::key`) until `run` takes a version.
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.5 G and warm 20.2 G
     after the `Order` step, 56.0 G and 20.0 G after the keys (the spread between runs is about ±1.5 G).
+- **Item 6, in progress** (2026-11-14).
+  - Step 1 in part: `RuleBuilder::lit_with` copies a literal of one rule into another through a `Rewrite`, and
+    `Rewrite::var` renames a variable where no term is asked for it (`nearest`'s). Stratification over a version is
+    still to come (step 3 needs it).
+  - Step 2 in part: the program `choose` gives is an overlay (`keeps::inline`): each pass an overlay of the one
+    before, a reader replaced by its copies (its literals before the read, the def's renamed, the head's equalities,
+    its literals after; a negated read by the product of its defs' negations), then the inlined relations' rules
+    removed. The copies keep the tree pass's order, names and origins, so their observations match. A fold
+    (`Builder::finish` folds an edit of half its parent) renumbers the rules; the pass maps them.
+  - Checked while porting: the overlay's rules, in order, and its origins and unfinished relations equalled the tree
+    pass's (`unfold_reads`) over the keeps, planner, corpus and session tests and dl1 (4,036 rules inlined across its
+    runs). The check and `unfold_reads` are gone. The run still reads a tree, decoded from the overlay (step 5), and
+    `choose`'s pricing still reads trees (`unfold`, `copies`).
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 45.4 G, warm 1.8 G (46.0 G
+    and 1.8 G after the hub merge).
