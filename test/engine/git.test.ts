@@ -444,6 +444,7 @@ describe("Git reads and their time limit", () => {
 
   it("answers with what Git printed when its output ended before its look past the time limit, and it exited after", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
+    vi.mocked(endProcessTree).mockClear();
     fakeReadTimers();
     const started = gitInPlace(PRINTS_AND_WAITS);
     const read = gitModifiedOrUntrackedPaths(root);
@@ -455,6 +456,8 @@ describe("Git reads and their time limit", () => {
     // That look saw Git's output end since the look before, so the read went on once more; Git exits now.
     child.stdin?.end();
     await expect(read).resolves.toEqual(["a.py"]);
+    // The look did not end it: on Windows that starts `taskkill /T /F`, slower than Git's exit here, which answers too.
+    expect(endProcessTree).not.toHaveBeenCalled();
   }, 30_000);
 
   it("ends a read whose Git's output ended before one look past the time limit, and which has not exited by the next", async () => {
