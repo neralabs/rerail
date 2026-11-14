@@ -1,5 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { request } from "node:http";
+import { once } from "node:events";
+import { request, type RequestOptions } from "node:http";
+import { connect, type Socket } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { isNamedPipe, pipeListed, pipeNameOf } from "./engine-pipe.js";
 
 /**
  * How a process asks whether the engine on a socket or pipe is this Rerail home's without presenting the home's access
@@ -15,6 +19,13 @@ const CHALLENGE = /^[0-9a-f]{64}$/u;
 const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
+/** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
+const PIPE_RETRY_MS = 50;
+/**
+ * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
+ * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
+ */
+const START_PIPE_WAIT_MS = 30_000;
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -46,31 +57,82 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 
 /**
  * What the listener on a socket or pipe made of a challenge ({@link engineCapabilityProof}): it answered with the proof
- * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or it said nothing for the
- * whole timeout (`silent`). An engine whose one event loop is inside an audit or a long garbage collection is silent as
- * well as a holder that never answers, so silence proves neither that the engine is this home's nor that it is not.
+ * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or no whole answer came
+ * within the timeout, counted from the ask (`silent`). An engine whose one event loop is inside an audit or a long
+ * garbage collection is silent as well as a holder that never answers, so silence proves neither that the engine is
+ * this home's nor that it is not.
  */
 export type EngineProofAnswer = "proved" | "refused" | "silent";
 
 /**
- * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
- * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process.
+ * The Windows named pipe `path` spelled `\\?\pipe\<name>`, which `CreateFile` opens as the same pipe. Node's connect
+ * opens it for overlapped I/O, so closing the socket cancels a read or a write in flight, whatever the holder does: a
+ * pipe opened as a file is synchronous, and a write that its holder never reads cannot be stopped. When every instance
+ * is taken, Node waits for a free one with `WaitNamedPipe`, up to 30 s in a thread that closing the socket does not
+ * stop and that keeps the process alive; `WaitNamedPipe` takes only `\\.\pipe\` names, so for this spelling that
+ * wait fails at once, with `ENOENT`.
  */
-export async function engineCapabilityProof(
-  socketPath: string,
-  accessToken: string,
-  timeoutMs = 2_000,
-  challenge: string = randomBytes(32).toString("hex"),
-): Promise<EngineProofAnswer> {
+function pipeConnectPath(path: string): string {
+  return String.raw`\\?\pipe` + "\\" + pipeNameOf(path);
+}
+
+/** Whether a connect to the pipe `path` failed with `error` only because every instance was taken: the pipe is listed. */
+function pipeBusy(error: unknown, path: string): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT" && pipeListed(path);
+}
+
+/** Whether `socket` connected; the error it failed with when it did not. */
+async function connected(socket: Socket): Promise<true | { error: unknown }> {
+  try {
+    await once(socket, "connect");
+    return true;
+  } catch (error) {
+    return { error };
+  }
+}
+
+/**
+ * A socket connected to the Windows named pipe `path` ({@link pipeConnectPath}), or the verdict when there is none by
+ * `deadline` (epoch ms). A pipe whose instances are all taken is tried again every {@link PIPE_RETRY_MS}, since a busy
+ * engine frees one as soon as its event loop runs again, and is no answer (`silent`) while it stays busy; a pipe that
+ * is gone, or that this user may not open, is `refused`.
+ */
+async function connectPipe(path: string, deadline: number): Promise<Socket | EngineProofAnswer> {
+  for (;;) {
+    const socket = connect(pipeConnectPath(path));
+    const outcome = await connected(socket);
+    if (outcome === true) return socket;
+    socket.destroy();
+    if (!pipeBusy(outcome.error, path)) return "refused";
+    if (Date.now() >= deadline) return "silent";
+    await sleep(PIPE_RETRY_MS);
+  }
+}
+
+/**
+ * How a proof's request reaches the listener on `socketPath`: a Windows pipe connected by {@link connectPipe} by
+ * `deadline` (epoch ms) before the request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux
+ * a path spelled like one is a Unix socket's. A pipe with no connection is the verdict.
+ */
+async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
+  if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
+  const socket = await connectPipe(socketPath, deadline);
+  return typeof socket === "string" ? socket : { createConnection: () => socket };
+}
+
+/**
+ * What the listener `route` reaches answers `challenge` with, by `answerBy` (epoch ms). The limit is a timer of its own,
+ * since a request's timeout starts only once its socket has connected and restarts at each byte read. Once there is a
+ * verdict the request is destroyed with its socket, so a listener that keeps the connection open holds nothing here.
+ */
+async function askForProof(route: RequestOptions, accessToken: string, challenge: string, answerBy: number): Promise<EngineProofAnswer> {
   const expected = engineProof(accessToken, challenge);
   const { promise, resolve } = Promise.withResolvers<EngineProofAnswer>();
   let answered = false;
   const outgoing = request({
-    socketPath,
+    ...route,
     method: "POST",
     path: ENGINE_PROOF_PATH,
-    agent: false,
     headers: { [ENGINE_CHALLENGE_HEADER]: challenge, "content-length": 0 },
   }, (response) => {
     answered = true;
@@ -86,22 +148,46 @@ export async function engineCapabilityProof(
     response.on("close", () => resolve("refused"));
   });
   // The silence is the verdict, before the destroy below reports it as an error.
-  outgoing.setTimeout(timeoutMs, () => {
+  const limit = setTimeout(() => {
     resolve("silent");
     outgoing.destroy(new Error("Engine proof timed out"));
-  });
+  }, Math.max(0, answerBy - Date.now()));
   outgoing.on("error", () => resolve("refused"));
   // Node can close the request before the response's `end`; only a request that never got a response is a refusal here.
   outgoing.on("close", () => {
     if (!answered) resolve("refused");
   });
   outgoing.end();
-  return await promise;
+  try {
+    return await promise;
+  } finally {
+    clearTimeout(limit);
+    outgoing.destroy();
+  }
 }
 
 /**
- * Whether the process listening on `socketPath` holds `accessToken` ({@link engineCapabilityProof}). A listener that
- * refuses, answers anything else, hangs up or stays silent for `timeoutMs` does not hold it.
+ * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
+ * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
+ * process. The answer comes within `timeoutMs` of the ask, whatever the listener does, and nothing of the ask outlives
+ * it: the connect is bounded ({@link proofRoute}), and so is the exchange ({@link askForProof}).
+ */
+export async function engineCapabilityProof(
+  socketPath: string,
+  accessToken: string,
+  timeoutMs = 2_000,
+  challenge: string = randomBytes(32).toString("hex"),
+): Promise<EngineProofAnswer> {
+  const deadline = Date.now() + timeoutMs;
+  const route = await proofRoute(socketPath, deadline);
+  return typeof route === "string" ? route : await askForProof(route, accessToken, challenge, deadline);
+}
+
+/**
+ * Whether the process listening on `socketPath` holds `accessToken`, as the engine start asks of a pipe another process
+ * holds ({@link engineCapabilityProof}). A Windows pipe whose instances are all taken is waited for up to
+ * {@link START_PIPE_WAIT_MS}, and the listener then has `timeoutMs` to answer. A listener that refuses, answers anything
+ * else, hangs up, stays silent or keeps every instance taken does not hold it.
  */
 export async function engineHoldsCapability(
   socketPath: string,
@@ -109,5 +195,6 @@ export async function engineHoldsCapability(
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<boolean> {
-  return await engineCapabilityProof(socketPath, accessToken, timeoutMs, challenge) === "proved";
+  const route = await proofRoute(socketPath, Date.now() + START_PIPE_WAIT_MS);
+  return typeof route !== "string" && await askForProof(route, accessToken, challenge, Date.now() + timeoutMs) === "proved";
 }

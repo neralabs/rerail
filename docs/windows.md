@@ -410,7 +410,9 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
   comparison, and a comparison that throws counts as a refusal, so such a holder does not hold the capability.
 - A holder that proves it is this home's engine stops the start: a second daemon must not run beside it. Any other
   holder is a squatter, and the engine listens on the same name with a random hex suffix, recorded in `daemon.json` as
-  `kernelSocketPath`, where hooks read it.
+  `kernelSocketPath`, where hooks read it. While every instance of the held pipe is taken, as when this home's engine
+  is busy, the start waits up to 30 s for a free one, as long as Node's own connect waits, so a busy engine of this
+  home that frees one in that time stops the start; the holder then has 2 s to answer.
 - Rerail 0.1.3 listened on the name with no check and no fallback, so a pipe another user created first made every
   daemon start fail. A probe that sent the capability to learn who holds the pipe would hand it to that user.
 
@@ -437,7 +439,12 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive. macOS and Linux treat `EPERM` as another user's.
+  daemon: its state file is kept and the lookup reports it unresponsive. The proof's limit counts from the ask and
+  covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe spelled
+  `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
+  process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
+  at once, and the proof tries again until its limit. The pipe is not opened as a file: a write its holder never reads
+  would then hold the process until the holder ends. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
   asks it before it sends the capability the file records to the URL it records: `lookupDaemon`, the MCP bridge
   (`src/api/mcp-bridge.ts`), and the status line, the rules link and the start check
