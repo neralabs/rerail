@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -20,6 +20,7 @@ import {
   DAEMON_KEEPS_RUNNING,
   isRerailStarted,
   readOnlyStartState,
+  RepositoryStartWatch,
   sessionNoteRules,
   startStateReader,
   stopRerail,
@@ -487,5 +488,109 @@ describe("repository start state", () => {
     } finally {
       creator.close();
     }
+  });
+});
+
+describe.runIf(process.platform === "win32")("On Windows, a folder outside Git that Rerail 0.1.4 stopped under the spelling it was reached by", () => {
+  const letters: string[] = [];
+  afterEach(() => {
+    for (const letter of letters.splice(0)) execFileSync("subst", [letter, "/d"], { stdio: "ignore" });
+  });
+
+  /** `folder` reached through a free drive letter mapped to its parent, as a mapped drive reaches it; the letter goes after the test. */
+  function throughLetter(folder: string): string {
+    const letter = [..."QRSTUVWXYZ"].map(name => `${name}:`).find(name => !existsSync(`${name}\\`));
+    if (letter === undefined) throw new Error("no free drive letter");
+    execFileSync("subst", [letter, dirname(folder)]);
+    letters.push(letter);
+    return `${letter}\\${basename(folder)}`;
+  }
+
+  /** `folder` as VS Code or a typed `cd` can spell it: the drive letter and the folder's own name in lower case. */
+  function inLowerCase(folder: string): string {
+    return join(dirname(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase()), basename(folder).toLowerCase());
+  }
+
+  /**
+   * A set-up, started repository of one folder outside Git, stored as `…\share\Stopped` and reached as `spell` spells
+   * it, holding the checkout row Rerail 0.1.4's store writes when `rerail stop` runs there: keyed by the JS realpath of
+   * the folder as spelt, which keeps that spelling, and stopped. With `recordedHere` this build recorded the folder
+   * before 0.1.4 stopped it (a session there), so its own row under the stored spelling is there too, following the
+   * repository.
+   */
+  async function stoppedBy014(spell: (folder: string) => string, recordedHere: boolean) {
+    const root = await temporary("rerail-start-earlier-");
+    const databasePath = join(root, "home", "rerail.sqlite");
+    const stored = join(realpathSync.native(root), "share", "Stopped");
+    mkdirSync(stored, { recursive: true });
+    const spelled = spell(stored);
+    expect(repositoryIdentityLocation(spelled).git).toBe(false);
+    const earlierKey = realpathSync(spelled);
+    expect(earlierKey).not.toBe(stored);
+    const database = openRerailDatabase(databasePath);
+    try {
+      const { repositoryKey, cloneId } = recordCheckout(database, spelled);
+      database.$client.prepare("UPDATE repositories SET started = 1, configured_at = 1 WHERE repository_key = ?").run(repositoryKey);
+      if (!recordedHere) database.$client.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(stored);
+      database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, 0, 1, 1)")
+        .run(earlierKey, repositoryKey, cloneId);
+    } finally {
+      database.$client.close();
+    }
+    return { databasePath, stored, spelled, earlierKey };
+  }
+
+  /** What each start check reads in `workspace`: the hook's without a daemon and `rerail status`'s, the daemon's, and a runtime's on each event. */
+  function startChecks(workspace: string, databasePath: string): Record<"hook" | "daemon" | "runtime", string> {
+    const database = openRerailDatabase(databasePath, { readonly: true });
+    const watch = new RepositoryStartWatch(databasePath, workspace);
+    try {
+      return { hook: workspaceStartState(workspace, databasePath), daemon: startStateReader(database)(workspace), runtime: watch.started() ? "started" : "stopped" };
+    } finally {
+      watch.close();
+      database.$client.close();
+    }
+  }
+
+  function checkoutRows(databasePath: string): unknown[] {
+    const database = openRerailDatabase(databasePath, { readonly: true });
+    try {
+      return database.$client.prepare("SELECT checkout_path AS path, started FROM checkouts ORDER BY checkout_path").all();
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  const STOPPED = { hook: "stopped", daemon: "stopped", runtime: "stopped" };
+
+  it.each([
+    ["through a mapped drive letter", throughLetter, false],
+    ["through a mapped drive letter, stopped by 0.1.4 after this build recorded the folder", throughLetter, true],
+    ["in another letter case", inLowerCase, false],
+    ["in another letter case, stopped by 0.1.4 after this build recorded the folder", inLowerCase, true],
+  ] as const)("reads the stop in every start check %s, and records nothing by reading", async (_case, spell, recordedHere) => {
+    const { databasePath, spelled } = await stoppedBy014(spell, recordedHere);
+    const rows = checkoutRows(databasePath);
+    expect(startChecks(spelled, databasePath)).toEqual(STOPPED);
+    expect(checkoutRows(databasePath)).toEqual(rows);
+  });
+
+  it("lets a start or stop made with this build decide there from then on, saved under the stored spelling, whatever 0.1.4 saves later", async () => {
+    const { databasePath, stored, spelled, earlierKey } = await stoppedBy014(throughLetter, false);
+    const start = recorder("terminal");
+    expect((await startRerail(spelled, start, started(databasePath))).previous).toBe("stopped");
+    expect(checkoutRows(databasePath)).toEqual([{ path: stored, started: 1 }, { path: earlierKey, started: 0 }]);
+    expect(startChecks(spelled, databasePath)).toEqual({ hook: "started", daemon: "started", runtime: "started" });
+
+    expect(stopRerail(spelled, recorder("terminal"), { databasePath })).toBe("started");
+    const database = openRerailDatabase(databasePath);
+    try {
+      // 0.1.4 starts the folder again, on its own row.
+      database.$client.prepare("UPDATE checkouts SET started = 1 WHERE checkout_path = ?").run(earlierKey);
+    } finally {
+      database.$client.close();
+    }
+    expect(checkoutRows(databasePath)).toEqual([{ path: stored, started: 0 }, { path: earlierKey, started: 1 }]);
+    expect(startChecks(spelled, databasePath)).toEqual(STOPPED);
   });
 });
