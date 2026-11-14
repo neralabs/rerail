@@ -50,7 +50,8 @@ export function ownerLockOf(token: string): string | undefined {
 /**
  * Takes a lock of a fresh id beside `databasePath` for the rest of this process's life, or until `release`. None
  * where the engine does not load or the lock cannot be taken, or where another start removed the file before this
- * process locked it: the service's runtimes then write rows without one, which a later start judges by their pid.
+ * process locked it: the service's runtimes then write rows without one, which a later start judges by their pid, and
+ * its quiet sessions end at the idle close. Which, and why, is reported.
  */
 export function holdOwnerLock(databasePath: string): OwnerLock {
   const id = randomUUID();
@@ -59,11 +60,18 @@ export function holdOwnerLock(databasePath: string): OwnerLock {
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     lock = loadNativeBinding().tryLockExclusive(path);
-  } catch {
-    return NO_LOCK;
+  } catch (error) {
+    return noOwnerLock(path, error);
   }
   if (lock !== null && existsSync(path)) return { id, release: () => lock.release() };
   lock?.release();
+  return noOwnerLock(path, lock === null ? "another process held its file as it was locked" : "another start removed its file before it was locked");
+}
+
+/** No lock, once the service's log says why none could be taken at `path`: `why`, a reason or what was thrown. */
+function noOwnerLock(path: string, why: unknown): OwnerLock {
+  const reason = why instanceof Error ? why.message : String(why);
+  process.stderr.write(`rerail: no owner lock in ${dirname(path)}: ${reason}; quiet sessions end at the idle close, and a later daemon judges this one's sessions by its process id\n`);
   return NO_LOCK;
 }
 
