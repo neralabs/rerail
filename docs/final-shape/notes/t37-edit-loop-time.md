@@ -185,11 +185,49 @@ What adoption needs:
 | Bazel or BuildBuddy remote execution | A rewrite of the build into rules_rust, with no incremental builds. |
 | sccache in general | Never caches incremental crates, nor anything that links. Only dependencies can be shared. |
 
-What the idle machines can do:
+### The farm (`scripts/build/farm`, 2026-11-14)
 
-- **A shared sccache backend.** Run MinIO (S3) or Redis on an idle machine. It helps fresh
-  worktrees, dependency bumps and toolchain changes. Every machine and session must then use one
-  rustc (see §5).
+Built instead of the options above: a `RUSTC_WRAPPER` with one sccache server for every worktree,
+and two other Macs for its misses (an M3 Max with 16 cores and an M1 Max with 10, the second in use).
+The README has how it works. Three parts:
+
+- **One cache for every worktree.** A patched sccache (upstream main with PRs #3021 and #3022)
+  hashes paths relative to the worktree and remaps them in the outputs. Decision 0224 removed the
+  checkout's path from the engine's crates. The farm also makes proc macros path-free
+  (`--remap-path-prefix`, a relative install name and debug map), since every crate above one
+  hashes its dylib.
+- **Misses on other Macs.** A library crate's compile goes to a host with free cores. Its sources,
+  its dependencies' `.rmeta` files and its `OUT_DIR` are copied there (only what changed) and the
+  outputs come back. Build scripts, proc macros and binaries stay here.
+- **Edits stay incremental.** A workspace crate that missed in the last 2 hours compiles
+  incrementally here, past the cache.
+
+A cold build of the CLI (`--bin rerail-engine`, `-j 36`, `nice -n 19`, load 45–100 from other
+sessions). CPU is this machine's: cargo's own (build scripts, proc macros) plus the farm server's,
+which runs every other compile.
+
+| Build | Wall | CPU here | Hits |
+|---|---|---|---|
+| empty cache, every compile here | 262 s | 1,273 s (270 + 1,003) | 0 of 378 |
+| empty cache, misses on the other Macs | 316 s | 734 s (336 + 398) | 0 of 378; 354 compiles remote, 382 s there |
+| a second worktree, cache filled by the first | 170 s | 402 s (293 + 110) | 376 of 378 |
+
+- Sharing is the large saving: a new worktree, or one that switches branches, compiles almost
+  nothing. The two misses are `rerail_lang` and `libmimalloc_sys`. Each bundles a static C library
+  built by its build script, whose archive names and debug info hold the checkout's path. That
+  needs the C builds to be path-independent (open).
+- Remote compiles cut this machine's CPU by 42% on a cold cache, but not the wall time under this
+  load. Small crates pay ssh and tar per compile, and the workspace crates on the critical path
+  compile here when the hosts are full.
+- Mistakes found on the way. sccache's own probes (`--emit=dep-info`) must not go remote. One ssh
+  connection serves only sshd's MaxSessions (10) and stalls the rest, so each slot has its own.
+  A host's load average counts the farm's own compiles. rustc bundles `-l static` libraries into
+  the rlib, so `-L native=` directories must be copied.
+- Not yet done: the farm is set up for this worktree only. Turning it on for every worktree is one
+  line in a `.cargo/config.toml` above them (README).
+
+What else the idle machines can do:
+
 - **Remote test runs.** This saves the most CPU here. Full suites and gates (45 CPU-minutes each)
   run on an idle machine over ssh, from a pushed branch, each machine keeping its own warm
   `target/`. The development machine keeps only edit, rebuild and targeted tests. Metal tests that
@@ -247,5 +285,5 @@ Still to do:
    - per-test times;
    - test groups;
    - a slow-test timeout.
-5. **A shared sccache backend, and the gates on the idle machines** (§4).
+5. **The farm for every worktree (§4), and the gates on the idle machines.**
 
