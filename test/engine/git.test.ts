@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
@@ -7,10 +7,12 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
+vi.mock("../../src/engine/child-process.js", { spy: true });
 
+import { endProcessTree } from "../../src/engine/child-process.js";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  gitInstalled, gitModifiedOrUntrackedListing, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
   readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
@@ -169,7 +171,8 @@ describe("GitReads", () => {
     await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
     await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
     await writeFile(join(root, "b.py"), "untracked\n");
-    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
+    // A stopped listing names no file changed, and says it cannot tell rather than none.
+    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toBeUndefined();
     await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
   });
 
@@ -246,6 +249,241 @@ describe("GitReads", () => {
     expect(running).toEqual([]);
     await expect(answers).resolves.toEqual([undefined, new Map()]);
   });
+});
+
+describe("gitModifiedOrUntrackedListing", () => {
+  it("says that a listing Git failed failed, where gitModifiedOrUntrackedPaths answers none", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    await writeFile(join(root, "b.py"), "untracked\n");
+    await expect(gitModifiedOrUntrackedListing(root)).resolves.toEqual({ ended: "printed", paths: ["b.py"] });
+    // Git cannot start in a folder that is not there.
+    const gone = join(root, "gone");
+    await expect(gitModifiedOrUntrackedListing(gone)).resolves.toEqual({ ended: "failed" });
+    await expect(gitModifiedOrUntrackedPaths(gone)).resolves.toEqual([]);
+  });
+});
+
+/**
+ * Lists the changed files of a repository whose clean filter leaves a process behind, outside the repository, that holds
+ * Git's stderr after Git exits while a file is there, and answers what the read answered within `waitMs`, or that it was
+ * still waiting. Git runs the filter to compare a.py, changed on disk, with the index. The wait ends once the listing is
+ * answered, and so does removing the repository. Each run of the filter writes `+` to `loops` before it starts its
+ * process, which writes `-` there as it ends: the test waits for that, so no process outlives it. The process looks for
+ * the file every 20 ms, so that wait is short.
+ */
+async function heldListing(waitMs: number): Promise<unknown> {
+  const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
+  const held = join(root, ".git", "held");
+  const loops = join(root, ".git", "loops");
+  const [heldPath, loopsPath] = [held, loops].map(path => path.replaceAll("\\", "/"));
+  const loop = `while [ -e '${heldPath}' ]; do sleep 0.02; done; echo - >> '${loopsPath}'`;
+  git(root, "config", "filter.held.clean", `echo + >> '${loopsPath}'; (cd / && ${loop}) </dev/null >/dev/null & cat`);
+  await writeFile(held, "");
+  await writeFile(join(root, "a.py"), "print(2)\n");
+  let late: NodeJS.Timeout | undefined;
+  try {
+    const read = gitModifiedOrUntrackedPaths(root);
+    return await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
+  } finally {
+    clearTimeout(late);
+    await rm(held, { force: true });
+    await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
+  }
+}
+
+/** How many of the processes `heldListing`'s filter started have not written their end to `loops`. */
+async function loopsRunning(loops: string): Promise<number> {
+  const marks = (await readFile(loops, "utf8").catch(() => "")).split("\n");
+  return marks.filter(mark => mark === "+").length - marks.filter(mark => mark === "-").length;
+}
+
+/** How far `clockAhead` has moved `performance.now()` in this test: one spy adds it, however often the clock moves. */
+const clock = { ahead: 0 };
+
+/** From now on `performance.now()` answers `ms` later than it did: the clock a read finds after the event loop stalled. */
+function clockAhead(ms: number): void {
+  if (clock.ahead === 0) {
+    const now = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => now() + clock.ahead);
+  }
+  clock.ahead += ms;
+}
+
+/**
+ * The timers a Git read looks at its time limit by, faked so a test moves them on (`vi.advanceTimersByTime`) and no test
+ * waits the limit out; with `limitTimer`, `setTimeout` too, the timer a read whose limit were a plain timer would end by.
+ * The clock stays real: `clockAhead` moves it.
+ */
+function fakeReadTimers({ limitTimer = false } = {}): void {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", ...(limitTimer ? ["setTimeout", "clearTimeout"] as const : [])] });
+}
+
+/** The last `count` Gits the reads started, oldest first. */
+function lastGits(count: number): ChildProcess[] {
+  return vi.mocked(execFile).mock.results.slice(-count).flatMap(result => result.type === "return" ? [result.value] : []);
+}
+
+/**
+ * How long a stall goes on once the Gits it waits for have exited, as a real stall goes on after Git finished. On Windows
+ * Node learns of an exit from a wait thread, which may tell it a moment later; on Linux the signal is in by then.
+ */
+const STALL_AFTER_EXIT_MS = process.platform === "win32" ? 500 : 0;
+
+/**
+ * A stall of `ms` once the current pass of the event loop reaches its immediates: it blocks the event loop until each of
+ * `gits` has exited (at most 5 s: on macOS an exited process this one has not reaped still answers as running) and
+ * `STALL_AFTER_EXIT_MS` more, then moves the clock and the faked timers `ms` on. Those timers come due before the event
+ * loop handles the exits, as after a stall in which Git finished.
+ */
+function stallUntilExited(gits: readonly ChildProcess[], ms: number): void {
+  const exited = (child: ChildProcess) => child.pid === undefined || processState(child.pid) === "gone";
+  setImmediate(() => {
+    const until = Date.now() + 5_000;
+    const blocked = new Int32Array(new SharedArrayBuffer(4));
+    while (!gits.every(exited) && Date.now() < until) Atomics.wait(blocked, 0, 0, 5);
+    Atomics.wait(blocked, 0, 0, STALL_AFTER_EXIT_MS);
+    clockAhead(ms);
+    vi.advanceTimersByTime(ms);
+  });
+}
+
+/** Runs `node -e script` in place of the next Git a read starts; resolves with that process. */
+function gitInPlace(script: string): Promise<ChildProcess> {
+  const started = Promise.withResolvers<ChildProcess>();
+  vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) => {
+    const child = actualChildProcess.execFile(process.execPath, ["-e", script, "--", ...(args ?? [])], options, callback);
+    started.resolve(child);
+    return child;
+  });
+  return started.promise;
+}
+
+/** In Git's place: prints a path and stays until its input ends (the test's, or the test process's). */
+const PRINTS_AND_WAITS = "require('node:fs').writeSync(1, 'a.py\\0'); process.stdin.on('end', () => process.exit(0)).resume()";
+
+/** Resolves once `child`'s output has given its first bytes. */
+async function firstOutput(child: ChildProcess): Promise<void> {
+  await new Promise(settle => child.stdout?.once("data", settle));
+}
+
+/**
+ * Once `child` has printed, tells the read its output ended, as Node does when Git closes it. No program can close its
+ * own output and go on running on every platform: on Windows libuv keeps descriptors 0 to 2 open.
+ */
+async function outputEnds(child: ChildProcess): Promise<void> {
+  await firstOutput(child);
+  child.stdout?.emit("end");
+}
+
+/** Resolves once the look a faked tick asked for has run: it runs one loop turn after the tick, before this. */
+async function afterLook(): Promise<void> {
+  await new Promise(settle => setImmediate(settle));
+}
+
+/** Answers that the read was still waiting, once `ms` has passed on a real timer. */
+async function stillWaiting(ms: number): Promise<string> {
+  return await new Promise<string>(settle => { setTimeout(settle, ms, `still waiting at ${ms / 1000} s`).unref(); });
+}
+
+describe("Git reads and their time limit", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    clock.ahead = 0;
+  });
+
+  it("answers with what Git printed when the event loop stalls past the time limit after Git finished", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    await writeFile(join(root, "a.py"), "print(2)\n");
+    const head = git(root, "rev-parse", "HEAD").trim();
+    vi.mocked(endProcessTree).mockClear();
+    fakeReadTimers({ limitTimer: true });
+    const reads = Promise.all([gitModifiedOrUntrackedPaths(root), gitHead(root)]);
+    // Both Gits finish during the stall, and the event loop handles their exits only once it ends, past the 10 s limit.
+    stallUntilExited(lastGits(2), 10_500);
+    await expect(reads).resolves.toEqual([["a.py"], head]);
+    // Neither read was ended: on Windows that ran `taskkill /T /F` on the pid of a Git already gone.
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("answers once Git has exited and its output has ended, while a process it started holds its stderr", async () => {
+    await expect(heldListing(5_000)).resolves.toEqual(["a.py"]);
+  }, 30_000);
+
+  it("ends a read whose Git prints nothing at its first look past the time limit on the clock, after a stall", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    fakeReadTimers();
+    // In Git's place, a program that prints nothing and stays until it is ended, as a Git kept waiting does.
+    const started = gitInPlace("process.stdin.resume()");
+    const read = gitModifiedOrUntrackedPaths(root);
+    await started;
+    // As if the event loop had stalled for 11 s as the read started: its first look, 1 s in by its timer, is 12 s in on
+    // the clock. A read whose limit were a timer of 10 s would still be waiting at 2 s.
+    clockAhead(11_000);
+    vi.advanceTimersByTime(1_000);
+    await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
+  }, 30_000);
+
+  it("answers with what Git printed when the stall that took the read past the time limit on the clock ended after Git finished", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    const head = git(root, "rev-parse", "HEAD").trim();
+    vi.mocked(endProcessTree).mockClear();
+    fakeReadTimers();
+    const read = gitHead(root);
+    clockAhead(10_000);
+    // Git finishes during a stall of 1 s, which takes the clock past the limit. The read's tick runs first after it,
+    // before the event loop handles Git's exit.
+    stallUntilExited(lastGits(1), 1_000);
+    await expect(read).resolves.toBe(head);
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    fakeReadTimers();
+    // In Git's place, a program that prints a path every 20 ms until it is ended, as a Git listing a large checkout does.
+    const printing = gitInPlace("setInterval(() => process.stdout.write('a.py\\0'), 20)");
+    const read = gitModifiedOrUntrackedPaths(root);
+    await firstOutput(await printing);
+    clockAhead(10_000);
+    vi.advanceTimersByTime(1_000);
+    // The read's next look finds it past the limit on the clock, with output still coming: it ends there, as a timer of
+    // the time limit ended it, and a walk asks the listing once more off its path. A read whose limit were a timer of
+    // 10 s would still be waiting at 2 s.
+    await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
+  }, 30_000);
+
+  it("answers with what Git printed when its output ended before its look past the time limit, and it exited after", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    vi.mocked(endProcessTree).mockClear();
+    fakeReadTimers();
+    const started = gitInPlace(PRINTS_AND_WAITS);
+    const read = gitModifiedOrUntrackedPaths(root);
+    const child = await started;
+    await outputEnds(child);
+    clockAhead(10_000);
+    vi.advanceTimersByTime(1_000);
+    await afterLook();
+    // That look saw Git's output end since the look before, so the read went on once more; Git exits now.
+    child.stdin?.end();
+    await expect(read).resolves.toEqual(["a.py"]);
+    // The look did not end it: on Windows that starts `taskkill /T /F`, slower than Git's exit here, which answers too.
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("ends a read whose Git's output ended before one look past the time limit, and which has not exited by the next", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    fakeReadTimers();
+    const started = gitInPlace(PRINTS_AND_WAITS);
+    const read = gitModifiedOrUntrackedPaths(root);
+    await outputEnds(await started);
+    clockAhead(10_000);
+    vi.advanceTimersByTime(1_000);
+    await afterLook();
+    // The next look finds nothing new since: Git is past the limit and not done, so the read ends it and answers late.
+    vi.advanceTimersByTime(1_000);
+    await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
+  }, 30_000);
 });
 
 describe("gitExcludeFiles", () => {
