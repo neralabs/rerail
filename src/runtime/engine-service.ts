@@ -455,10 +455,11 @@ export type ConnectionState = IncomingMessage | number | undefined;
  * Whether `socket` is still sending a request: it has sent none yet, or one whose body has not all arrived, or, after
  * an answer on a connection its client keeps open, bytes of a next request whose headers have not all arrived. So a
  * next request that stalls in its headers is cut off as a first one is. A kept connection that sends nothing after its
- * answer is not, and Node's keep-alive timeout ends it about 6 s after its last byte, as when the close made no looks:
- * a whole request its client sends there seconds later is answered. Bytes that came before the answer was written (a
- * client that sends its next request without waiting for the answer) count with the answered request, as on such an
- * idle connection.
+ * answer is not: Node's keep-alive timeout ends it about 6 s after that answer, as when the close made no looks, and a
+ * whole request its client sends there meanwhile is answered. So such a connection answered more than 4 s into the
+ * close holds it past the 10 s `rerail daemon stop` gives before its kill. Bytes that came before the answer was
+ * written (a client that sends its next request without waiting for the answer) count with the answered request, so
+ * that connection is left to the same timeout.
  */
 function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
   if (typeof state === "number") return socket.bytesRead > state;
