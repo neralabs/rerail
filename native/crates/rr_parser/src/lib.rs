@@ -1610,6 +1610,9 @@ pub mod tests {
         }
         rows.sort_by(|a, b| b.cmp(a));
         eprintln!("the CPU's form: {n} operations, {} outputs", cpu.outputs.len());
+        for (x, inst) in cpu.insts.iter().enumerate() {
+            eprintln!("  op {x:3} {inst:?}");
+        }
         for (only, mine, o, label) in rows {
             eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
         }
