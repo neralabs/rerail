@@ -5118,10 +5118,38 @@ domain is then a function of the rules, not of their order), and then run the fi
 
 A probe run as its whole plan (its delta is all of its relation, in a component's first wave) has no budget, so a
 slow whole plan runs to its end. The driver plans whole plans apart from the delta probes (`take_whole`), and a
-handoff would need the whole plan's own replacement and its rows left. Open.
+handoff would need the whole plan's own replacement and its rows left. **Closed (2026-11-14):** a whole plan has its
+probe's budget, and a cut one is checked, trialled and handed off as a seed is (decision 0206, *Whole plans*).
 
 ## O169. A trial's rows are made twice (decision 0207)
 
 A trial's rows are counted and dropped, then made again by the order that goes on. Over a sample that is most of
 the rows left, that work is done twice. The winner's rows could be kept (a component's relations are sets) and its
-sample's rows taken out of the rows left. Open.
+sample's rows taken out of the rows left. **Closed (2026-11-14):** the first finished trial's rows join the cut wave,
+and its sample leaves the rows left (`keep_trial_rows`, decision 0207).
+
+## O170. Statistics' maps move to one flat table (decision 0209)
+
+Every reader of `plan::Stats`' string-keyed maps moves to the flat table of numbered relations and columns
+(0209 §3). Until then the maps are views over it; the planner's tests hold unchanged at each step.
+
+Closed (2026-11-14). `plan::table` numbers each relation once in the process (`rel_id`). `Stats.card`,
+`delta_rows`, `fan`, `dfreq` and `Model.ndv` are arrays by those numbers (`RelMap`, `ColMap`: a relation's columns a
+block of slots in one array). The planner's prepared atoms (`AtomCols`) resolve their relation once and read slots;
+readers by name pay one lookup of the name, where each read built a `(String, usize)` key before. Planner tests: 116
+pass (the 115 unchanged, and the table's own). `ColStats` (input columns by name) stays as it is: its readers are the
+SQL statistics' loads, not the search.
+
+## O171. A trial's sample misses a skewed key's heavy rows (decision 0216)
+
+A trial (decision 0207) samples a line's rows at a stride. On `call_ret`, 23% of the rows (those of the 64
+largest functions) do 96% of the work, so a 9-row sample measures mostly light rows: 492 rows of work a row, where
+the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both. Open.
+
+## O172. Heavy values: deltas, processes, GPU (decision 0216)
+
+Heavy values are made by a full pass over a relation when a column is raised. Open:
+- a delta's Misra–Gries summary merged into the kept one (0209 §4), so a growing relation is not counted again;
+- a line's raised columns kept with its note across processes;
+- the GPU batch (0209 §6, step 4).
+

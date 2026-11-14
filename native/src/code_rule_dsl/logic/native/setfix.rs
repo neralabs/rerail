@@ -985,12 +985,16 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
                    /// A wave stopped at a probe that spent its budget (decision 0206): resumed by the next `run`.
                    cut: Option<Cut>,
                    /// The last cut, for the driver (`take_cut`).
-                   last_cut: Option<CutReport> }
+                   last_cut: Option<CutReport>,
+                   /// The rows of the cut probe's first trial to finish (O169): its probe, its sample, the rows it
+                   /// made (flat, its head's width). Every finished trial over that sample made the same rows.
+                   trial_rows: Option<(usize, Rows0, Vec<i64>)> }
 
 /// A wave stopped at probe `next` (decision 0206): its rows so far, and the rows of its first step's atom it has
 /// left (`None`: all of them). The next `run` goes on with the probe's body as it is then (the replacement the
 /// driver planned), reading only those rows of that atom (`restricted`).
-struct Cut { fresh: Vec<Fresh>, next: usize, left: Option<Rows0>, step: Option<usize>, on_device: bool }
+/// `whole`: the probe ran its whole plan (O168), which goes on there.
+struct Cut { fresh: Vec<Fresh>, next: usize, left: Option<Rows0>, step: Option<usize>, on_device: bool, whole: bool }
 
 /// Where a step's rows are, so that rows left by one order are read as the same rows by another: an input's rows, or
 /// a component relation's (its delta's ids are the relation's).
@@ -1049,7 +1053,7 @@ impl Rows0 {
 /// it finished and those it left. `led`: that step read an atom's rows, so the rows finished are known; else none
 /// are, and all are left (its partial rows are kept: they are a set's).
 #[derive(Clone, Debug, PartialEq)]
-pub struct CutReport { pub probe: usize, pub work: u64, pub done: u64, pub left: u64, pub led: bool }
+pub struct CutReport { pub probe: usize, pub work: u64, pub done: u64, pub left: u64, pub led: bool, pub whole: bool }
 
 /// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
 /// in this process.
@@ -1564,7 +1568,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let key = (conn.at(), name.clone());
     reg.retain(|(k, _)| *k != key);
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, levels, deferred: Vec::new(), presenting: false, cut: None, last_cut: None };
+                               device: device_plans, seed_specs, levels, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
@@ -1921,9 +1925,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {} {d} (lo {}){}", store.rels[p.head].table, store.rels[p.delta.min(store.rels.len() - 1)].table, if p.delta == SEED { 0 } else { store.rels[p.delta].lo }, if whole { ", its whole plan" } else if p.whole.is_some() { ", has a whole plan" } else { "" });
             }
             let c0 = cpu_now();
-            // Decision 0206: a probe's budget (a seed's or a delta probe's, not a whole plan's), and the rows it has
-            // left after a cut.
-            let budget = if !whole { p.budget.get() } else { None };
+            // Decision 0206: a probe's budget (a seed's, a delta probe's or its whole plan's, O168), and the rows it
+            // has left after a cut.
+            let budget = p.budget.get();
             let only = if pi == start { resume_left.take().and_then(|(named, l)| match restricted(j, l.of, named) {
                 Some(i) => { CUTS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
                 // At a step no longer known: the run reads all its rows.
@@ -1936,7 +1940,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 if let Some(left) = spent.left {
                     p.budget.set(None);
                     CUTS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led }));
+                    cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }));
                 }
             }
             visits += n;
@@ -1954,8 +1958,10 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             report.left = left.as_ref().map_or(0, |l| l.n);
             drop(guard);
             // Its body as it is, the rows left are its first step's; a reprobe forgets that (`cut_step`).
-            comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device });
+            let whole = report.whole;
+            comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device, whole });
             comp.last_cut = Some(report);
+            comp.trial_rows = None;
             was_cut = true;
             break;
         }
@@ -2382,9 +2388,36 @@ pub struct TrialRun { pub work: u64, pub rows: u64, pub made: u64, pub cut: bool
 /// `step`: where `spec` reads those rows (it leads with the same atom); else where known (`restricted`). `None` when
 /// the sample cannot be placed in `spec`, or the probe is no join.
 pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec>, step: Option<usize>, sample: usize, budget: u64) -> Result<Option<TrialRun>> {
+    trial_over(conn, name, probe, spec, step, Err(sample), budget)
+}
+
+/// The rows `trial` draws its sample from, for probe `probe`: the rows its cut left, else every row its first step
+/// reads, as row ids of the relation they live in (decision 0209's split spike picks among them).
+pub fn trial_ids(conn: impl Scoped, name: &str, probe: usize) -> Result<Option<Vec<u32>>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
+    let cut = comp.cut.as_ref().filter(|c| c.next == probe);
+    if let Some(left) = cut.and_then(|c| c.left.as_ref()) {
+        return Ok(Some((0..left.bits.len() * 64).filter(|&b| left.bits[b / 64] >> (b % 64) & 1 == 1).map(|b| left.lo + b as u32).collect()));
+    }
+    let Some(p) = comp.probes.get(probe) else { return Ok(None) };
+    let Body::Join(own) = &p.body else { return Ok(None) };
+    let store = comp.store.read().unwrap();
+    let Some(Step::Atom { src, .. }) = own.steps.first() else { return Ok(None) };
+    Ok(Some(match src {
+        Src::Delta(r) => (store.rels[*r].lo as u32..store.rels[*r].hi as u32).collect(),
+        Src::Full(r) | Src::FullMulti(r, _) => (0..store.rels[*r].n as u32).collect(),
+        Src::In(r, _) => (0..r.len() as u32).collect(),
+    }))
+}
+
+/// `trial` over the rows `pick` names (`Ok`, among those `trial_ids` gives), or a sample of at most that many at a
+/// stride (`Err`).
+pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec>, step: Option<usize>, pick: std::result::Result<&[u32], usize>, budget: u64) -> Result<Option<TrialRun>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let mut comp = comp.lock().unwrap();
     let symbols = Arc::clone(&comp.store.read().unwrap().syms);
     let mut syms = Interner::for_loading(&symbols);
     let made = match spec {
@@ -2396,10 +2429,19 @@ pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec
         }
         None => None,
     };
-    let Some(Body::Join(own)) = comp.probes.get(probe).map(|p| &p.body) else { return Ok(None) };
+    let cut = comp.cut.as_ref().filter(|c| c.next == probe);
+    let from_cut = cut.and_then(|c| c.left.as_ref()).is_some();
+    let Some(p) = comp.probes.get(probe) else { return Ok(None) };
+    // The probe's own body: its whole plan where the cut stopped that (O168).
+    let own = match (&p.body, &p.whole, cut.is_some_and(|c| c.whole)) {
+        (_, Some(w), true) => w,
+        (Body::Join(j), _, _) => j,
+        _ => return Ok(None),
+    };
+    let head = p.head;
     let store = comp.store.read().unwrap();
     // The rows: those the cut left, else all the first step reads; a sample at a stride.
-    let (of, ids): (RowsOf, Vec<u32>) = match comp.cut.as_ref().filter(|c| c.next == probe).and_then(|c| c.left.as_ref()) {
+    let (of, ids): (RowsOf, Vec<u32>) = match cut.and_then(|c| c.left.as_ref()) {
         Some(left) => (left.of, (0..left.bits.len() * 64).filter(|&b| left.bits[b / 64] >> (b % 64) & 1 == 1).map(|b| left.lo + b as u32).collect()),
         None => {
             let Some(Step::Atom { src, .. }) = own.steps.first() else { return Ok(None) };
@@ -2412,8 +2454,11 @@ pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec
         }
     };
     if ids.is_empty() { return Ok(None) }
-    let stride = ids.len().div_ceil(sample.max(1)).max(1);
-    let picked: Vec<u32> = ids.iter().step_by(stride).copied().collect();
+    let picked: Vec<u32> = match pick {
+        Ok(only) => { let only: std::collections::HashSet<u32> = only.iter().copied().collect(); ids.iter().copied().filter(|i| only.contains(i)).collect() }
+        Err(sample) => { let stride = ids.len().div_ceil(sample.max(1)).max(1); ids.iter().step_by(stride).copied().collect() }
+    };
+    if picked.is_empty() { return Ok(None) }
     let rows = Rows0::of(of, &picked);
     let j = made.as_ref().unwrap_or(own);
     let named = if made.is_some() { step } else { Some(0) };
@@ -2422,14 +2467,53 @@ pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec
     let counts: Vec<[u64; 2]> = j.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
     let mut out = Vec::new();
     let n = rows.n;
+    let kept = rows.clone();
     let mut limited = Limited { limit: Some(Limit { budget, only: Some((at, rows)) }), spent: None };
     let got = run_join_in_each(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
     let spent = limited.spent;
     for (c, [a, b]) in j.counts.iter().zip(counts) { c[0].set(a); c[1].set(b); }
-    let made = got?;
+    let made_rows = got?;
     syms.check()?;
+    drop(store);
     CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Ok(spent.map(|s| TrialRun { work: s.work, rows: n, made, cut: s.left.is_some() }))
+    let run = spent.map(|s| TrialRun { work: s.work, rows: n, made: made_rows, cut: s.left.is_some() });
+    // O169: the first trial to finish over the rows a cut left keeps its rows, to be the wave's (`keep_trial_rows`).
+    if from_cut && run.is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
+        comp.trial_rows = Some((probe, kept, out));
+        let _ = head;
+    }
+    Ok(run)
+}
+
+/// O169: the rows the cut probe's first finished trial made join its wave, and its sample's rows leave the rows the
+/// probe has left: the order that goes on does not make them again. The rows kept.
+pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {
+    let comp = component(conn.db(), name)?;
+    let mut comp = comp.lock().unwrap();
+    let Some((probe, sample, rows)) = comp.trial_rows.take() else { return Ok(0) };
+    let head = comp.probes[probe].head;
+    let store = Arc::clone(&comp.store);
+    let store = store.read().unwrap();
+    let Some(cut) = comp.cut.as_mut().filter(|c| c.next == probe) else { return Ok(0) };
+    let Some(left) = cut.left.as_mut().filter(|l| l.of == sample.of) else { return Ok(0) };
+    let k = store.rels[head].k.max(1);
+    for row in rows.chunks_exact(k) {
+        cut.fresh[head].emitted += 1;
+        cut.fresh[head].offer(row, &store.rels[head]);
+    }
+    for (w, b) in sample.bits.iter().enumerate() {
+        let mut m = *b;
+        while m != 0 {
+            let id = sample.lo + (64 * w) as u32 + m.trailing_zeros();
+            m &= m - 1;
+            let at = id.wrapping_sub(left.lo) as usize;
+            if let Some(word) = left.bits.get_mut(at / 64) && *word >> (at % 64) & 1 == 1 {
+                *word &= !(1u64 << (at % 64));
+                left.n -= 1;
+            }
+        }
+    }
+    Ok((rows.len() / k) as u64)
 }
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
@@ -2534,6 +2618,7 @@ pub fn reprobe_spec(conn: impl Scoped, name: &str, i: usize, new: &Reprobe) -> R
             if levels.contains(&p.delta) { return Ok(()); }
             p.whole = Some(j);
             p.wkey = Some(Arc::clone(spec));
+            if let Some(c) = &mut comp.cut && c.next == i { c.step = None; }
             return Ok(());
         }
     };

@@ -116,9 +116,13 @@ pub(super) fn on() -> bool {
 }
 
 /// `RERAIL_JOINS_LOG`: each flag, choice and critical path to standard error.
-pub(super) fn log(what: impl FnOnce() -> String) {
+pub(super) fn logging() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_JOINS_LOG").is_some());
-    if *ON {
+    *ON
+}
+
+pub(super) fn log(what: impl FnOnce() -> String) {
+    if logging() {
         eprintln!("joins: {}", what());
     }
 }
@@ -177,6 +181,9 @@ struct Memo {
     forced: FxHashSet<PlanKey>,
     /// Lines whose orders were trialled in this process (decision 0207): once, and once more after a flag.
     trialled: FxHashSet<PlanKey>,
+    /// Columns raised to keep their heavy values (decision 0209 §4): a checked line's skewed join columns, and those
+    /// of lines on the measured path that ran over twice their price. Made from the start of each later plan.
+    raised: FxHashSet<(String, usize)>,
     dirty: bool,
 }
 
@@ -203,6 +210,23 @@ pub(super) fn steps(order: &[Step]) -> Vec<StoredStep> {
 pub(super) fn unstored(order: &[StoredStep]) -> Vec<Step> {
     order.iter().map(|&(at, mode)| Step { at: at.into(), mode }).collect()
 }
+
+/// Raises column `c` of `rel` to keep its heavy values (decision 0209 §4); whether it was not yet.
+pub(super) fn raise(rel: &str, c: usize) -> bool {
+    RAISED.store(true, Relaxed);
+    MEMO.write().raised.insert((rel.to_owned(), c))
+}
+
+/// Whether column `c` of `rel` keeps its heavy values.
+pub(super) fn raised(rel: &str, c: usize) -> bool {
+    RAISED.load(Relaxed) && MEMO.read().raised.contains(&(rel.to_owned(), c))
+}
+
+pub(super) fn any_raised() -> bool {
+    RAISED.load(Relaxed)
+}
+
+static RAISED: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn noted(key: &PlanKey) -> bool {
     NOTED.load(Relaxed) && MEMO.read().notes.contains_key(key)
