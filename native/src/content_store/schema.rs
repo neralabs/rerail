@@ -714,15 +714,13 @@ CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT
 -- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
 CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
 -- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
--- run, the last `frames::RUNS` runs'. A frame is collected once the run that put it is that old and no run since
+-- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
 -- used its relation.
 CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
     PRIMARY KEY (space, run)) WITHOUT ROWID;
--- Each run's use of a space by program (decision 0117 step 5, O-store-single-program): the relations it used, as
--- sorted keys, one row a program a run, each program's last `frames::RUNS`. Programs over one root share its space;
--- counted by the space's runs alone, one policy's frames went unused while the others ran, and were collected. A
--- frame is collected once the run that put it is that old and none of these rows names its relation. `frame_used`
--- (one row a run, of every program) is read no more: it stays for an older binary.
+-- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
+-- written when it first puts there. A relation's frames are kept while a live program's row names it
+-- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 "#;

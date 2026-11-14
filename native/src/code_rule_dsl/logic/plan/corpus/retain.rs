@@ -1943,6 +1943,10 @@ impl Retained {
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
         // Keyed by owner: a document a text owns is that symbol's atom, and its granule a part by it (decision 0170).
+        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability).
+        if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
+            return Ok(written);
+        }
         crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_keyed_by_symbols(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
         Ok(written)
     }

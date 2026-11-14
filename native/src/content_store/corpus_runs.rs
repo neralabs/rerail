@@ -85,6 +85,9 @@ pub struct CorpusKept {
 pub struct CorpusPass {
     pub kept: Option<CorpusKept>,
     pub plan_rows: usize,
+    /// The frames nothing live reaches, collected after a keep decision (decision 0227), and the seconds it took.
+    pub frames: super::frames::Unreachable,
+    pub frames_seconds: f64,
     pub collection: CollectionReport,
 }
 
@@ -92,7 +95,7 @@ impl CorpusPass {
     /// Whether the pass deleted anything (another may find more).
     pub fn did_work(&self) -> bool {
         let c = &self.collection;
-        self.kept.as_ref().is_some_and(|k| k.evicted > 0 || k.unlived > 0) || self.plan_rows > 0 || c.tapes > 0 || c.sources > 0 || c.snapshots > 0 || c.snapshot_files > 0
+        self.kept.as_ref().is_some_and(|k| k.evicted > 0 || k.unlived > 0) || self.plan_rows > 0 || self.frames.any() || c.tapes > 0 || c.sources > 0 || c.snapshots > 0 || c.snapshot_files > 0
     }
 }
 
@@ -729,6 +732,10 @@ impl ContentStore {
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
+            // What the decision left live reaches the frames it keeps; the rest go (decision 0227).
+            let started = std::time::Instant::now();
+            pass.frames = self.immediate_transaction(|tx| Ok(super::frames::collect_unreachable_frames(tx)?))?;
+            pass.frames_seconds = started.elapsed().as_secs_f64();
         }
         // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
         // frames (one statement), and one plan a pass left a store's dead builds for as many runs.

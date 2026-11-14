@@ -66,6 +66,9 @@ The frame's reads hold the digest and the path in full, so a part that collides 
 
 ## 4. What collects an entry
 
+Superseded in part by decision 0227: disuse no longer collects an entry; an entry goes once no kept manifest holds
+a source of its content.
+
 - **Its plan's death.** A plan no kept manifest names is dead (0053); collection deletes the plan's space with
   its other rows.
 - **Disuse.** Each run marks the parts it reads and writes as used, and parts no run of the plan used for

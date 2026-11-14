@@ -132,7 +132,7 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   - its hold on its plans and the hold's release, a source's pins, and the combined program's pins and their release:
     leases against a collection pass in another process while the run reads;
   - the frames' used marks (`frames`, `the frames' parts used`), by which relations unused for `RUNS` runs are
-    forgotten;
+    forgotten. Gone: decision 0227 keeps frames while a kept manifest reaches them, and a run marks nothing;
   - the run's atoms, if any were made (`flush_atoms`, `the pending atoms`), and the writer waits.
 
   The warm batch with the cutoff applied writes none of these, and collection still keeps what it needs, so skipping

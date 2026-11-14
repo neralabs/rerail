@@ -223,7 +223,7 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 ///
 /// The batch is one run of the frames' spaces too (O-store-single-program): its policies share one run token, as a
 /// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
-/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (`frames::RUNS`) by another
+/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (by recency, before decision 0227) by another
 /// policy's write: the next batch found its kept inputs and its memo entries gone.
 pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading);
 
