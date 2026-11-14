@@ -585,11 +585,39 @@ tree.
   numbers need those machines. The captures hold source text, so a pack carries the code of the
   repositories it was captured from.
 
+### 5. x86 hardware (Google Cloud, 4 vCPU, data-layer)
+
+Each machine ran the pack: a baseline x86-64 build (no POPCNT) and a `target-cpu=native` build
+(POPCNT, BMI2 and PDEP on all four). Every answer is right on every machine, build and corpus.
+Results are in `tmp/cap/remote/`.
+
+| ns, native build | M5 | Zen 3 (EPYC 7B13) | Zen 4 (EPYC 9B14) | Sapphire Rapids (8481C) | Haswell-era Xeon (n1) |
+|---|---|---|---|---|---|
+| MF, median-rule mix | 2.3 | 4.3 | 4.3 | 3.5 | 6.8 |
+| BE, median-rule mix | 4.6 | 7.7 | 7.7 | 8.1 | 15.7 |
+| X, 121 rules | 12.2 | 23.8 | 23.2 | 23.1 | 43.5 |
+| MF, 121 rules | 16.7 | 36.5 | 35.5 | 33.6 | 61.9 |
+| BE, 121 rules | 41.1 | 63.7 | 60.2 | 77.3 | 131 |
+| BE start (Elias–Fano select) | 9.1 | 11.5 | 11.1 | 12.9 | 21.9 |
+| MF end (gap: reads the next start) | 6.9 | 17.0 | 16.6 | 14.5 | 25.4 |
+| B subtree end (`findclose`) | 6.5 | 11.8 | 12.2 | 17.0 | 24.7 |
+| shape 2 load, MF | 30.6 | 48.4 | 45.2 | 52.0 | 85.8 |
+
+- **The ranking holds on x86:** X ≈ MF on the median rule, and the B family 2–3× slower. The cloud
+  cores are about 2× slower than the M5 a call, and the Haswell-era Xeon 3×.
+- **The baseline build costs Elias–Fano 2×** (Zen 3: BE start 26.1 → 11.5, 121 rules 98 → 64).
+  Without POPCNT the select's counts are done in software. So x86 builds need x86-64-v2 (POPCNT,
+  every Intel since Nehalem) at least. With v3 (BMI2), the select is PDEP.
+- **MF's gap end is its weak point on x86:** 14.5–17 ns against X's 6.3–6.5, because the gap needs a
+  second random read. On the 121-rule mix that makes MF 1.4–1.5× X on x86, against 1.4× on the M5.
+  XF with lengths (XF in the tables: 4.15 B/node) avoids it.
+- **`findclose` is relatively worse on Sapphire Rapids** (17 ns against Zen's 12).
+
 ### What the third round says
 
 - **MF is the X family's best: 3.37 B a node on data-layer at X's speed,** against format 15's 9.00
   and BE's 2.43. Its median-rule mix is 2.3 ns a node (BE 4.6). On all 121 rules it is 16.7 (BE 41.1).
 - **The B family still costs 2–3× on structure questions** and saves only 0.65 B against XF's
   structure.
-- **Still to measure:** M1, M3 and x86 hardware (a pack is ready); the forest's children walk as a
-  kernel one group a node.
+- **Still to measure:** M1 and M3 (the pack is ready); the forest's children walk as a kernel one
+  group a node.
