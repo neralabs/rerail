@@ -4945,6 +4945,10 @@ pub(crate) fn install_languages() {
             // The lean Markdown parser (`tape::markdown_lean`, decision 0205); a file it refuses
             // goes to tree-sitter-md.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Markdown, name: "lean Markdown parser", rank: 0, runs: true, parser: &tape::markdown_lean::Lean });
+            // The lean parser of Markdown's inline grammar (`tape::markdown_inline_lean`, decision
+            // 0234), for the inline texts Markdown's tapes embed; a text it refuses goes to
+            // tree-sitter-md-inline.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::MarkdownInline, name: "lean Markdown inline parser", rank: 0, runs: true, parser: &tape::markdown_inline_lean::Lean });
         }
         if cfg!(feature = "lang-sql") {
             // The lean SQL parser (`tape::sql_lean`, decision 0214); a file it refuses goes to

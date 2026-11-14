@@ -67,6 +67,8 @@ pub mod html_lean;
 pub mod css_lean;
 /// Markdown's tape from the lean parser (`rerail_markdown_lean`).
 pub mod markdown_lean;
+/// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
+pub mod markdown_inline_lean;
 /// SQL's tape from the lean parser (`rerail_sql_lean`).
 pub mod sql_lean;
 pub use wire::index_span;

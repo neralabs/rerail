@@ -32,6 +32,59 @@ pub fn first_of2(src: &[u8], from: usize, to: usize, a: u8, b: u8) -> usize {
     to
 }
 
+/// The end of the run of byte `c` from `from`: the first byte that is not `c`, or the text's end.
+#[inline]
+pub fn run_end(src: &[u8], from: usize, c: u8) -> usize {
+    let sc = u64::from_ne_bytes([c; 8]);
+    let mut i = from;
+    while i < src.len() {
+        // The bytes that differ from `c`; past the text's end, all do.
+        let mut m = !zero_bytes(load8(src, i) ^ sc) & 0x8080_8080_8080_8080;
+        if src.len() - i < 8 {
+            m |= !((1u64 << (8 * (src.len() - i))) - 1) & 0x8080_8080_8080_8080;
+        }
+        if m != 0 {
+            return i + (m.trailing_zeros() / 8) as usize;
+        }
+        i += 8;
+    }
+    src.len().max(from)
+}
+
+/// A byte class for `class_end`: one flag a byte value.
+pub type Class = [bool; 256];
+
+/// The class of the bytes in `set`, as a table (for a `static`).
+pub const fn class_of(set: &[u8]) -> Class {
+    let mut t = [false; 256];
+    let mut i = 0;
+    while i < set.len() {
+        t[set[i] as usize] = true;
+        i += 1;
+    }
+    t
+}
+
+/// The end of the run of bytes in class `class` from `from`: the first byte outside it, or the
+/// text's end. Each 8 bytes at once: 8 straight-line lookups, a lane each.
+#[inline]
+pub fn class_end(src: &[u8], from: usize, class: &Class) -> usize {
+    let mut i = from;
+    while i < src.len() {
+        let x = load8(src, i);
+        let lane = |k: u32| u64::from(!class[(x >> (8 * k)) as u8 as usize]) << (8 * k);
+        let mut m = lane(0) | lane(1) | lane(2) | lane(3) | lane(4) | lane(5) | lane(6) | lane(7);
+        if src.len() - i < 8 {
+            m |= !((1u64 << (8 * (src.len() - i))) - 1) & 0x0101_0101_0101_0101;
+        }
+        if m != 0 {
+            return i + (m.trailing_zeros() / 8) as usize;
+        }
+        i += 8;
+    }
+    src.len().max(from)
+}
+
 /// The 8 bytes at `i` (little-endian: byte `i` the lowest), zeros past the text's end.
 #[inline(always)]
 pub fn load8(src: &[u8], i: usize) -> u64 {
@@ -66,5 +119,20 @@ mod tests {
         }
         // A byte one past the searched one (0x7c, 0x7e) and a high byte are not found.
         assert_eq!(first_of2(b"|~\xfb\xfdxyz", 0, 7, b'{', b'}'), 7);
+    }
+
+    #[test]
+    fn runs_and_class_runs_end_where_a_byte_test_says() {
+        let s = b"__a___b________________c_x--x-";
+        let dash = class_of(b"-_abc");
+        for from in 0..=s.len() {
+            let want = (from..s.len()).find(|&i| s[i] != b'_').unwrap_or(s.len());
+            assert_eq!(run_end(s, from, b'_'), want, "run from {from}");
+            let want = (from..s.len()).find(|&i| !dash[s[i] as usize]).unwrap_or(s.len());
+            assert_eq!(class_end(s, from, &dash), want, "class from {from}");
+        }
+        // A high byte, and 0 past the end, are outside a class that holds neither.
+        assert_eq!(class_end(b"ab\xffc", 0, &dash), 2);
+        assert_eq!(run_end(b"\0\0", 0, 0), 2);
     }
 }

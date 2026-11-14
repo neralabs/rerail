@@ -2549,14 +2549,17 @@ fn ecma_implied_tokens() {
 }
 
 /// Writes a dialect's token automata (`TokenGrammar::automata_text`) to `RERAIL_AUTOMATA_OUT`, for a lean
-/// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` (the only one so far) writes
-/// `native/crates/sql_lean/automata.tsv`.
+/// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` writes `native/crates/sql_lean/automata.tsv`,
+/// `markdown-inline` `native/crates/markdown_inline_lean/automata.tsv`, `vue`
+/// `native/crates/vue_lean/automata.tsv`.
 #[test]
 #[ignore = "writes a lean parser's automata table; needs RERAIL_AUTOMATA_OUT"]
 fn token_automata_text() {
     let out = std::env::var("RERAIL_AUTOMATA_OUT").expect("set RERAIL_AUTOMATA_OUT");
     let dialect = match std::env::var("RERAIL_AUTOMATA_DIALECT").as_deref() {
         Ok("sql") | Err(_) => GrammarDialect::Sql,
+        Ok("markdown-inline") => GrammarDialect::MarkdownInline,
+        Ok("vue") => GrammarDialect::Vue,
         Ok(other) => panic!("no automata table for {other}"),
     };
     std::fs::write(out, tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar").automata_text()).unwrap();
@@ -4028,6 +4031,123 @@ fn markdown_parse_costs() {
         }
     }
     eprintln!("Markdown: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// Inline texts' tapes from the lean parser (the product's parser for Markdown's inline grammar,
+/// decision 0234) are tree-sitter-md-inline's, byte for byte, on hand-written cases: links of each
+/// kind, images, emphasis by its delimiters' runs, code and LaTeX spans, HTML tags, autolinks,
+/// references and line breaks. The corpus comparison is `rerail-markdown-inline-lean`'s `oracle`.
+#[test]
+fn markdown_inline_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::markdown_inline_lean;
+    let sources = [
+        "*a* _b_ and a*b",
+        "**c** and ~~e~~",
+        "`x` *a* _b_",
+        "[a] [b][] [c][d] [e](f \"t\") [](g) [h](<i j> 'k') [l](\"m\")",
+        "![a](b) ![c]",
+        "![d][]",
+        "[![f](g)](h)",
+        "`a` ``b ` c`` $x$ and `<a b=c.d>`",
+        "<a href=\"x.y\" b=c.d> </a> <br/> <x@y.z> <http://a.b>",
+        "&amp; &#12; &#x1F; \\* a\\\nb  \nc",
+        "[a *b] c* and *a [b* c]",
+    ];
+    let grammar = Grammar::new(GrammarDialect::MarkdownInline).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::MarkdownInline.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = markdown_inline_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Refused: an empty text; an HTML comment (not read yet); an emphasis delimiter tree-sitter may
+    // lex again after a reduction (`x __b c __d()`: its emphasis closes at `__d`); two trees of one
+    // score (`![c] ![d][e]`: an image and a shortcut link, or one full-reference image).
+    for refused in ["", "<!-- c -->", "x __b c __d()", "![c] ![d][e]"] {
+        assert!(markdown_inline_lean::encode(&grammar, refused, &|| false).is_err(), "accepted {refused:?}");
+    }
+}
+
+/// The product reads inline texts with the lean parser: a text's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a text it refuses goes to tree-sitter-md-inline.
+#[test]
+fn the_product_reads_markdown_inline_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::markdown_inline_lean;
+    let grammar = Grammar::new(GrammarDialect::MarkdownInline).unwrap();
+    assert!(tree_parser(GrammarDialect::MarkdownInline).is_some(), "the inline grammar's parser is installed");
+    let source = "Some *text* and [a link](b).";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = markdown_inline_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let refused = "a <!-- c --> b";
+    assert!(markdown_inline_lean::encode(&grammar, refused, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, refused, &|| false).unwrap().is_ok());
+}
+
+/// What an inline text's tape costs, by parser: the lean parser (`tape::markdown_inline_lean`, the
+/// product's) against tree-sitter-md-inline, over `RERAIL_PY_FILES` (a list of inline texts' paths,
+/// as `rerail-markdown-lean`'s `inline_texts` writes them): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn markdown_inline_parse_costs() {
+    use crate::code_rule_dsl::tape::markdown_inline_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::MarkdownInline;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| markdown_inline_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| markdown_inline_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(markdown_inline_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Markdown inline: {} texts of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
     for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
         eprintln!(
             "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",

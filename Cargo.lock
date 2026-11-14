@@ -3331,6 +3331,7 @@ dependencies = [
  "rerail-lang-rust",
  "rerail-lang-sql",
  "rerail-logic",
+ "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
  "rerail-metal",
  "rerail-parser-tests",
@@ -3518,6 +3519,7 @@ dependencies = [
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
+ "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
  "rerail-php-lean",
  "rerail-prof",
@@ -4042,6 +4044,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-markdown-inline-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

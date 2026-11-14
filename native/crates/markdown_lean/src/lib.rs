@@ -109,9 +109,68 @@ pub fn tape_text(tape: &Tape) -> String {
     out
 }
 
+/// Each node of a tape in preorder: its kind, span and depth (`tape_text`'s reading).
+#[cfg(test)]
+fn tape_nodes(tape: &Tape) -> Vec<(u16, u32, u32, usize)> {
+    tape_text(tape)
+        .lines()
+        .map(|l| {
+            let depth = (l.len() - l.trim_start().len()) / 2;
+            let name = l.trim_start().split([' ']).next().expect("a kind");
+            let kind = KINDS.iter().position(|k| k.0 == name).expect("a kind's name") as u16;
+            let span = &l[l.rfind('[').expect("a span") + 1..l.len() - 1];
+            let (s, e) = span.split_once("..").expect("s..e");
+            (kind, s.parse().expect("start"), e.parse().expect("end"), depth)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The inline guests of the files in `RERAIL_MD_FILES` (a list of paths), a file each in
+    /// `RERAIL_MD_INLINE_OUT`, and their list (`list.txt`): the input of the inline grammar's
+    /// oracle. A guest's text is the engine's (`guests::markdown_inline_text`): an `inline` or
+    /// `pipe_table_cell` node's bytes, less its `block_continuation` children after its first child.
+    #[test]
+    #[ignore = "writes the inline guests' texts; needs RERAIL_MD_FILES and RERAIL_MD_INLINE_OUT"]
+    fn inline_texts() {
+        let list = std::fs::read_to_string(std::env::var("RERAIL_MD_FILES").expect("set RERAIL_MD_FILES")).unwrap();
+        let out = std::path::PathBuf::from(std::env::var("RERAIL_MD_INLINE_OUT").expect("set RERAIL_MD_INLINE_OUT"));
+        std::fs::create_dir_all(&out).unwrap();
+        let (inline, cell, cont) = (K::Inline as u16, K::PipeTableCell as u16, K::BlockContinuation as u16);
+        let mut paths = String::new();
+        let (mut files, mut texts) = (0, 0);
+        for (n, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
+            let Ok(src) = std::fs::read(path) else { continue };
+            let Ok(t) = tape(&src) else { continue };
+            files += 1;
+            let nodes = tape_nodes(&t);
+            let mut k = 0;
+            for (i, &(kind, s, e, depth)) in nodes.iter().enumerate() {
+                if kind != inline && kind != cell {
+                    continue;
+                }
+                let kids = nodes[i + 1..].iter().take_while(|x| x.3 > depth).filter(|x| x.3 == depth + 1);
+                let (mut text, mut from) = (Vec::new(), s as usize);
+                for &(ck, cs, ce, _) in kids.skip(1) {
+                    if ck == cont {
+                        text.extend_from_slice(&src[from..cs as usize]);
+                        from = ce as usize;
+                    }
+                }
+                text.extend_from_slice(&src[from..e as usize]);
+                let file = out.join(format!("{n:05}-{k:04}.md"));
+                std::fs::write(&file, &text).unwrap();
+                paths.push_str(&format!("{}\n", file.display()));
+                k += 1;
+                texts += 1;
+            }
+        }
+        std::fs::write(out.join("list.txt"), paths).unwrap();
+        eprintln!("{files} files, {texts} inline texts");
+    }
 
     #[test]
     fn tables_fit_the_keys() {
