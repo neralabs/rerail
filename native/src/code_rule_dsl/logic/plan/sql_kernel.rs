@@ -99,15 +99,15 @@ pub fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     rules: &[&Rule],
-    planned: &[(Atom, Vec<Step>)],
+    planned: &[(&Rule, Vec<Step>)],
     recursive: bool,
 ) -> Result<u32> {
     let mut p = program_for(run, scc)?;
     let mut queries = Vec::new();
-    for (head, order) in planned {
-        let q = run.model.checked_query(run.prog, head, order, None, None)?;
+    for (rule, order) in planned {
+        let q = run.model.checked_query(run.prog, &rule.head, Order::new(&rule.body, order), None, None)?;
         p.steps.push(schedule::Step {
-            output: head.rel.to_string(),
+            output: rule.head.rel.to_string(),
             stratum: 0,
             reads: vec![],
             sql: String::new(),
@@ -128,7 +128,7 @@ pub fn component(
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
                     let q =
                         run.model
-                            .checked_query(run.prog, &rule.head, &order, Some(at), None)?;
+                            .checked_query(run.prog, &rule.head, Order::new(&rule.body, &order), Some(at), None)?;
                     p.steps.push(schedule::Step {
                         output: rule.head.rel.to_string(),
                         stratum: 0,

@@ -43,9 +43,9 @@
         let prog = super::super::super::rr::parse(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
         let body = &prog.rules[0].body;
         let order = vec![
-            Step { at: 1, lit: body[1].clone(), mode: None },
-            Step { at: 0, lit: body[0].clone(), mode: Some(Mode::Range) },
-            Step { at: 2, lit: body[2].clone(), mode: Some(Mode::Descend) },
+            Step { at: 1, mode: None },
+            Step { at: 0, mode: Some(Mode::Range) },
+            Step { at: 2, mode: Some(Mode::Descend) },
         ];
         let priced = Priced { sizes: vec![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
         let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)), Some(40.0));
@@ -61,7 +61,7 @@
         let ran = |r: f64| StoredPlan::of(&(kept.0.clone(), kept.1, None, kept.3, kept.4.clone(), Some(r))).unwrap();
         assert!(stored.same(&ran(70.0)) && !stored.same(&ran(90.0)));
         let back = stored.kept(body).expect("rebuilt over its body");
-        let same = |a: &[Step], b: &[Step]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.at == b.at && a.lit == b.lit && a.mode == b.mode);
+        let same = |a: &[Step], b: &[Step]| a == b;
         assert!(same(&back.0, &order) && (back.1, back.3) == (0.25, 1.5));
         let price = back.4.expect("its price");
         assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));

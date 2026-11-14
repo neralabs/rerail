@@ -63,4 +63,20 @@ Leaves first. Each item leaves every caller working.
 
 ## Done
 
-(none yet)
+- **Item 1, a step names its literal by position** (2026-11-13).
+  - `Step` is `{ at, mode }`, `Copy` and `Eq`. A plan is read through `Order` (a body and its steps), with `lit`,
+    `iter`, `lits` and `take`, so no reader indexes a body itself.
+  - The plan caches (`Kept`, `PLANS`, `SESSION_PLANS`, `Priced`) hold no trees.
+  - Every reader takes an `Order`: the SQL generator, the join specs, `ensure_indexes`, `observe`,
+    `observed_fans`, `delta_sources`, `shown`, `placement`, `keeps::observe_steps`, `emit`, `sql_kernel` and
+    `compose`.
+  - Each seed's order carries its rule (`Driving.orders`), as do `run`'s planned rules and the set fixpoint's
+    seeds. The made-up bodies (`rest`, the parts) are kept beside their plans.
+  - A kept plan is no longer compared literal by literal with its body. Its key (a digest of the body) already
+    names it.
+  - The coverage ledger (`gate/executor-coverage`) records the clearer message: "no SQL for @printf($a, $b)"
+    rather than a dump of the steps.
+  - Tests: the planner's (53 pass, 5 ignored), the corpus planner's (77), the session planner's and emit's (12),
+    and the coverage ledger's (2).
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 53.6 G
+    instructions (54.9 G before) and warm 19.3 G (19.8 G): steps no longer clone literals.

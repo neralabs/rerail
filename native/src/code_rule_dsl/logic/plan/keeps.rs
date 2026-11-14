@@ -1088,21 +1088,21 @@ fn pattern(l: &Literal, bound: &BTreeSet<String>) -> Option<String> {
 }
 
 /// A native stratum's steps for one plan of `rule` (`order`), each with its rows (in, out): kept per pattern.
-pub(super) fn observe_steps(rule: u64, order: &[super::Step], counts: &[(i64, i64)]) {
+pub(super) fn observe_steps(rule: u64, order: super::Order<'_>, counts: &[(i64, i64)]) {
     observing_into(|o, _| {
         let mut bound = BTreeSet::new();
-        for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
+        for (i, ((_, l), &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
             if i > 0
                 && n_in > 0
-                && let Some(p) = pattern(&s.lit, &bound)
+                && let Some(p) = pattern(l, &bound)
             {
                 for e in [o.steps.entry((rule, p.clone())).or_default(), o.pooled.entry(p).or_default()] {
                     e[0] += n_in as f64;
                     e[1] += n_out as f64;
                 }
             }
-            if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-                bound.extend(s.lit.vars());
+            if !matches!(l, Literal::Atom(l) if l.neg) {
+                bound.extend(l.vars());
             }
         }
     });
@@ -1146,15 +1146,15 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
         };
         let mut bound = BTreeSet::new();
         let (mut rows, mut work, mut before) = (1.0f64, 0.0f64, 1.0f64);
-        for (i, (s, st)) in order.iter().zip(&x.steps).enumerate() {
+        for (i, (l, st)) in super::Order::new(&rule.body, &order).lits().zip(&x.steps).enumerate() {
             let estimated = if before > 0.0 { st.rows / before } else { 1.0 };
             before = st.rows;
-            let factor = if i == 0 { st.rows } else { pattern(&s.lit, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
+            let factor = if i == 0 { st.rows } else { pattern(l, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
             work += rows + out;
             rows = out;
-            if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-                bound.extend(s.lit.vars());
+            if !matches!(l, Literal::Atom(l) if l.neg) {
+                bound.extend(l.vars());
             }
         }
         Some((work, out))
@@ -1497,11 +1497,11 @@ pub mod tests {
             let mut rows = 2_000.0;
             let mut counts = vec![(1u64, 2_000u64)];
             for s in &order[1..] {
-                let out = rows * factors(&s.lit);
+                let out = rows * factors(&rule.body[s.at]);
                 counts.push((rows as u64, out as u64));
                 rows = out;
             }
-            observe_steps(super::super::obs_rule(&rule.head, &rule.body), &order, &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
+            observe_steps(super::super::obs_rule(&rule.head, &rule.body), super::super::Order::new(&rule.body, &order), &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
             counts
         };
         // What the copy's steps did in other rules: `look` by name and scope 4 rows a binding, `x != 7` all of them.
@@ -1514,11 +1514,11 @@ pub mod tests {
         let mut rows = 2_000.0;
         let mut counts = vec![(1i64, 2_000i64)];
         for s in &order[1..] {
-            let out = rows * elsewhere(&s.lit);
+            let out = rows * elsewhere(&copy.body[s.at]);
             counts.push((rows as i64, out as i64));
             rows = out;
         }
-        observe_steps(0, &order, &counts);
+        observe_steps(0, super::super::Order::new(&copy.body, &order), &counts);
         let own = ran(reader, &|l| if matches!(l, Literal::Atom(a) if a.rel == "binding") { 3.0 } else { 0.75 });
         let build = ran(def, &|_| 1.0);
         observe(&[(super::super::obs_rule(&reader.head, &reader.body), &own), (super::super::obs_rule(&def.head, &def.body), &build)], &[Seen { rel: "ctx", rows: 2_000.0, cols: vec![(Some(2_000.0), Some(1.0)), (Some(300.0), Some(7.0)), (Some(250.0), Some(8.0))] }], nodes);

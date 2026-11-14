@@ -291,7 +291,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             for rule in rules {
                 let ((order, _, _), _) =
                     model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
-                let mut q = model.checked_query(prog, &rule.head, &order, None, None)?;
+                let mut q = model.checked_query(prog, &rule.head, super::Order::new(&rule.body, &order), None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
                 bind_names(&mut q.body, &names);

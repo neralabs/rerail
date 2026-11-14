@@ -185,12 +185,50 @@ impl Mode {
     }
 }
 
-/// A planned body literal: its position in the rule's body (T compared literals by identity), and its mode.
-#[derive(Clone, Debug)]
+/// A planned body literal: its position in the body it was planned for (T compared literals by identity), and its
+/// mode. A step names its literal and holds none (decision 0173): it is read beside its body, by `Order`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Step {
     pub at: usize,
-    pub lit: Literal,
     pub mode: Option<Mode>,
+}
+
+/// A plan read beside the body it orders: each step with its literal. Every reader of a plan's literals reads them
+/// here (`lit`, `iter`), so none indexes a body itself.
+#[derive(Clone, Copy, Debug)]
+pub struct Order<'b> {
+    pub body: &'b [Literal],
+    pub steps: &'b [Step],
+}
+
+impl<'b> Order<'b> {
+    pub fn new(body: &'b [Literal], steps: &'b [Step]) -> Order<'b> {
+        Order { body, steps }
+    }
+    /// Step `s`'s literal.
+    pub fn lit(&self, s: &Step) -> &'b Literal {
+        &self.body[s.at]
+    }
+    /// Each step with its literal, in order.
+    pub fn iter(self) -> impl DoubleEndedIterator<Item = (&'b Step, &'b Literal)> + ExactSizeIterator + Clone + 'b {
+        let body = self.body;
+        self.steps.iter().map(move |s| (s, &body[s.at]))
+    }
+    /// The literals, in order.
+    pub fn lits(self) -> impl DoubleEndedIterator<Item = &'b Literal> + ExactSizeIterator + Clone + 'b {
+        let body = self.body;
+        self.steps.iter().map(move |s| &body[s.at])
+    }
+    pub fn len(&self) -> usize {
+        self.steps.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+    /// The plan of its first `n` steps.
+    pub fn take(&self, n: usize) -> Order<'b> {
+        Order { body: self.body, steps: &self.steps[..n.min(self.steps.len())] }
+    }
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
@@ -1261,7 +1299,7 @@ impl StoredPlan {
     }
 
     fn kept(&self, body: &[Literal]) -> Option<Kept> {
-        let steps = |order: &[StoredStep]| order.iter().map(|&(at, mode)| Some(Step { at: at.into(), lit: body.get(usize::from(at))?.clone(), mode })).collect::<Option<Vec<_>>>();
+        let steps = |order: &[StoredStep]| order.iter().map(|&(at, mode)| (usize::from(at) < body.len()).then_some(Step { at: at.into(), mode })).collect::<Option<Vec<_>>>();
         let priced = match &self.priced {
             Some((sizes, order, work, rows)) => Some(Arc::new(Priced { sizes: sizes.clone(), got: ((steps(order)?, *work, *rows), None) })),
             None => None,
@@ -2252,7 +2290,7 @@ impl Model {
                     && !used.is_empty()
                     && let Ok(own) = free(self, false)
                 {
-                    if shown(&own.0.0) == shown(&got.0.0) {
+                    if shown(Order::new(body, &own.0.0)) == shown(Order::new(body, &got.0.0)) {
                         super::profile::decision("a join shape directive no longer needed (O-join-shape-directives)", || format!("{head}: the planner's own order is the directive's ({})", used.join("; ")));
                     } else {
                         super::profile::decision("join shape directives (O-join-shape-directives)", || format!("{head}: est work {:.0}, the planner's own {:.0} ({})", got.0.1, own.0.1, used.join("; ")));
@@ -2298,7 +2336,7 @@ impl Model {
             static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
             let log = LOG.get_or_init(|| std::env::var_os("RERAIL_STATS_SKEW_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(std::sync::Mutex::new));
             if let Some(f) = log {
-                let same = shown(&got.0.0) == shown(&truth.0);
+                let same = shown(Order::new(body, &got.0.0)) == shown(Order::new(body, &truth.0));
                 let _ = writeln!(f.lock().unwrap(), "{:.6}\t{}\t{:.1}\t{:.1}\t{head}", priced.1 / truth.1.max(1e-9), u8::from(same), priced.1, truth.1);
             }
         }
@@ -2686,7 +2724,7 @@ impl Model {
                 for i in rest.clone() {
                     let l = &body[i];
                     if !is_join(l) && ready(l, bound) {
-                        order.push(Step { at: i, lit: l.clone(), mode: None });
+                        order.push(Step { at: i, mode: None });
                         rest.retain(|&j| j != i);
                         bound.extend(l.vars());
                         progressed = true;
@@ -2731,7 +2769,7 @@ impl Model {
             }
             let mut placed: u64 = 0;
             for s in fixed {
-                let l = body.get(s.at).filter(|l| **l == s.lit).ok_or_else(|| Error::Plan("a kept plan of another body".into()))?;
+                let l = body.get(s.at).ok_or_else(|| Error::Plan("a kept plan of another body".into()))?;
                 if let Some(i) = joins.iter().position(|&j| j == s.at) {
                     if shape_waits(i, placed, &|v: &str| bound.contains(v)) {
                         return Err(Error::Plan("a kept plan its join shape directives do not admit".into()));
@@ -2743,7 +2781,7 @@ impl Model {
                     candidates += 1;
                     work += w;
                     rows = out;
-                    order.push(Step { at: s.at, lit: l.clone(), mode });
+                    order.push(Step { at: s.at, mode });
                 } else {
                     if !ready(l, &bound) {
                         return Err(Error::Plan("a kept filter cannot run".into()));
@@ -2824,7 +2862,7 @@ impl Model {
                     }
                 }
                 let Some((i, w, out, mode)) = best else { break };
-                order.push(Step { at: joins[i], lit: body[joins[i]].clone(), mode });
+                order.push(Step { at: joins[i], mode });
                 bound.extend(body[joins[i]].vars());
                 rows = close(&mut order, out, &mut bound, &mut rest);
                 work += w;
@@ -3055,7 +3093,7 @@ impl Model {
             }
             let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), filters.clone());
             for (i, mode) in path.into_iter().rev() {
-                order.push(Step { at: joins[i], lit: body[joins[i]].clone(), mode });
+                order.push(Step { at: joins[i], mode });
                 bound.extend(body[joins[i]].vars());
                 close(&mut order, 1.0, &mut bound, &mut rest);
             }
@@ -3119,24 +3157,24 @@ impl Model {
                 let mut bound = BTreeSet::new();
                 let mut r = 1.0;
                 for s in order {
-                    if let Literal::Atom(a) = &s.lit && !a.neg {
+                    if let Literal::Atom(a) = &body[s.at] && !a.neg {
                         let per = atom_rows(a, &bound);
                         r *= per;
                         // What every positive atom would cost here instead.
                         let others: Vec<String> = body
                             .iter()
-                            .filter_map(|l| if let Literal::Atom(o) = l && !o.neg && !order.iter().take_while(|t| !std::ptr::eq(*t, s)).any(|t| t.lit == *l) { Some(format!("{}={:.2}", o.rel, atom_rows(o, &bound))) } else { None })
+                            .filter_map(|l| if let Literal::Atom(o) = l && !o.neg && !order.iter().take_while(|t| !std::ptr::eq(*t, s)).any(|t| body[t.at] == *l) { Some(format!("{}={:.2}", o.rel, atom_rows(o, &bound))) } else { None })
                             .collect();
-                        eprintln!("    {:<40} per binding {per:.2}, rows {r:.1}   [{}]", s.lit.to_string(), others.join(" "));
+                        eprintln!("    {:<40} per binding {per:.2}, rows {r:.1}   [{}]", body[s.at].to_string(), others.join(" "));
                     } else {
-                        eprintln!("    {}", s.lit);
+                        eprintln!("    {}", body[s.at]);
                     }
-                    bound.extend(s.lit.vars());
+                    bound.extend(body[s.at].vars());
                 }
             }
             for (mask, b) in &best_of {
                 if mask.count_ones() == 2 {
-                    eprintln!("  prefix {:?}: work {:.0} rows {:.1}", shown(&b.2), b.0, b.1);
+                    eprintln!("  prefix {:?}: work {:.0} rows {:.1}", shown(Order::new(body, &b.2)), b.0, b.1);
                 }
             }
         }
@@ -3165,7 +3203,7 @@ impl Model {
             for s in &order {
                 // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
                 // delta comes first by construction, not by choice: nothing was passed over for it.
-                let passed: Vec<(String, f64, String)> = if is_join(&s.lit) && first != Some(s.at) {
+                let passed: Vec<(String, f64, String)> = if is_join(&body[s.at]) && first != Some(s.at) {
                     joins
                         .iter()
                         .filter(|&&j| j != s.at && !placed.contains(&j))
@@ -3195,13 +3233,13 @@ impl Model {
                         "derived".into()
                     }
                 };
-                let basis = match &s.lit {
+                let basis = match &body[s.at] {
                     Literal::Atom(a) if !a.neg => basis_of(a, &bound),
                     _ => String::new(),
                 };
-                let (access, src) = match &s.lit {
+                let (access, src) = match &body[s.at] {
                     Literal::Atom(a) if !a.neg => {
-                        if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                        if let Some((_, out, _)) = step(&body[s.at], r, &bound) {
                             r = out;
                         }
                         let c = cols(a, &bound);
@@ -3218,7 +3256,7 @@ impl Model {
                         (format!("anti-join on ({})", cols(a, &bound).join(", ")), source(&a.rel))
                     }
                     Literal::Nearest { .. } => {
-                        if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                        if let Some((_, out, _)) = step(&body[s.at], r, &bound) {
                             r = out;
                         }
                         (s.mode.map_or("nearest", Mode::name).to_owned() + " the tree", "tree".to_owned())
@@ -3235,8 +3273,8 @@ impl Model {
                         ("filter".to_owned(), String::new())
                     }
                 };
-                bound.extend(s.lit.vars());
-                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r, passed, basis });
+                bound.extend(body[s.at].vars());
+                steps.push(super::profile::StepPlan { literal: body[s.at].to_string(), access, source: src, rows: r, passed, basis });
             }
             super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
         });
@@ -3713,7 +3751,7 @@ impl Model {
         &self,
         prog: &Program,
         head: &Atom,
-        order: &[Step],
+        order: Order<'_>,
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<String> {
@@ -3725,14 +3763,14 @@ impl Model {
         &self,
         prog: &Program,
         head: &Atom,
-        order: &[Step],
+        order: Order<'_>,
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<Query> {
         // A rule whose SQL cannot be built says which rule and body it is, not only the variable: the cause first
         // (what a one-line reader, the executor coverage ledger, keeps), the rule after.
         let query = self.sql_query(prog, head, order, delta_at, tables).map_err(|e| match e {
-            Error::Plan(m) => Error::Plan(format!("{m}, in the SQL for {head} :- {}", order.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "))),
+            Error::Plan(m) => Error::Plan(format!("{m}, in the SQL for {head} :- {}", order.lits().map(ToString::to_string).collect::<Vec<_>>().join(", "))),
             e => e,
         })?;
         query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
@@ -3744,7 +3782,7 @@ impl Model {
         &self,
         prog: &Program,
         head: &Atom,
-        order: &[Step],
+        order: Order<'_>,
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<Query> {
@@ -3769,8 +3807,8 @@ impl Model {
             predicates,
             ..Select::default()
         };
-        for (idx, s) in order.iter().enumerate() {
-            match &s.lit {
+        for (idx, s) in order.steps.iter().enumerate() {
+            match order.lit(s) {
                 Literal::Atom(l) if !l.neg => {
                     let al = a_name();
                     let relation = match tables.and_then(|t| t.get(l.rel.as_str())) {
@@ -3783,8 +3821,8 @@ impl Model {
                     if s.mode == Some(Mode::Range) {
                         // docof($v, $d) with $d bound: $v lies in $d's node-id interval.
                         let lv = l.vars();
-                        let found = order.iter().find_map(|o| {
-                            let Literal::Atom(d) = &o.lit else { return None };
+                        let found = order.steps.iter().find_map(|o| {
+                            let Literal::Atom(d) = order.lit(o) else { return None };
                             let &(nc, dc) = self.docof.get(d.rel.as_str())?;
                             let Term::Var(v) = &d.args[nc] else { return None };
                             let dv = &d.args[dc];
@@ -3867,7 +3905,7 @@ impl Model {
                         // Only nonempty constants use this rewrite: an unconstrained reverse cat
                         // and cat with an empty prefix have different enumeration contracts.
                         if !env.contains_key(q.as_str()) && !env.contains_key(x.as_str()) {
-                            let prefix = order.iter().find_map(|step| match &step.lit {
+                            let prefix = order.steps.iter().find_map(|step| match order.lit(step) {
                                 Literal::Cmp { l: Term::Var(v), op: "=", r } if v == q &&
                                     (matches!(r, Term::Str(s) if !s.is_empty()) ||
                                      inputs.atoms.is_some() && matches!(r, Term::Int(n) if *n > 0)) => Some(r),
@@ -3993,7 +4031,7 @@ impl Model {
                     let (seed, walk, near) = (format!("seed{k}"), format!("walk{k}"), format!("near{k}"));
                     let seed_cols: Vec<String> = env.keys().cloned().collect::<BTreeSet<_>>().into_iter().collect();
                     if frm.is_empty() {
-                        return Err(Error::Plan(format!("the walk of {} reads nothing before it", s.lit)));
+                        return Err(Error::Plan(format!("the walk of {} reads nothing before it", order.lit(s))));
                     }
                     let (items, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.drain(..).unzip();
                     ctes.push(Cte::walk(
@@ -4111,7 +4149,7 @@ impl Model {
                     env.entry(out_var.clone()).or_insert_with(|| col(&near, "near_out"));
                     frm = vec![(FromItem::cross(Relation::Cte(near.clone()), near), Vec::new())];
                 }
-                Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", s.lit))),
+                Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", order.lit(s)))),
             }
         }
         let mut columns = Vec::new();
@@ -4274,7 +4312,8 @@ struct Driving<'a> {
     views: HashMap<String, (String, String)>,
     sql_views: bool,
     sql_probe: Vec<bool>,
-    orders: Vec<Vec<Step>>,
+    /// Each seed's order, with its rule (a seed seeded by SQL has none).
+    orders: Vec<(&'a Rule, Vec<Step>)>,
     probes: Vec<(&'a Rule, usize, Vec<Step>)>,
     order_rules: Vec<u64>,
     nseeds: usize,
@@ -4433,10 +4472,10 @@ pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
 
 impl Run<'_, '_> {
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
-    fn ensure_indexes(&mut self, order: &[Step]) -> Result<()> {
+    fn ensure_indexes(&mut self, order: Order<'_>) -> Result<()> {
         let mut bound = BTreeSet::new();
-        for s in order {
-            let a = match &s.lit {
+        for s in order.steps {
+            let a = match order.lit(s) {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
                 _ => None,
             };
@@ -4477,7 +4516,7 @@ impl Run<'_, '_> {
                     self.index_for(&a.rel, &cols)?;
                 }
             }
-            bound.extend(s.lit.vars());
+            bound.extend(order.lit(s).vars());
         }
         Ok(())
     }
@@ -5080,16 +5119,16 @@ impl Run<'_, '_> {
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
-fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
+fn observe(stats: &mut Stats, rule: u64, order: Order<'_>, counts: &[(i64, i64)]) {
     keeps::observe_steps(rule, order, counts);
     // A probe that ran no step past its first (its delta empty this chunk) observed nothing.
     if counts.iter().skip(1).all(|&(n_in, _)| n_in == 0) {
         return;
     }
     let mut bound = BTreeSet::new();
-    for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
+    for (i, (s, &(n_in, n_out))) in order.steps.iter().zip(counts).enumerate() {
         if i > 0
-            && let Literal::Atom(l) = &s.lit
+            && let Literal::Atom(l) = order.lit(s)
             && !l.neg
             && n_in != 0
         {
@@ -5097,25 +5136,25 @@ fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) 
             o[0] += n_in;
             o[1] += n_out;
         }
-        if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-            bound.extend(s.lit.vars());
+        if !matches!(order.lit(s), Literal::Atom(l) if l.neg) {
+            bound.extend(order.lit(s).vars());
         }
     }
 }
 
 /// The fanouts observed for each step of `order` (`observe`), where at least `OBS_MIN` bindings were counted:
 /// the prices `atom_rows` takes first, so a probe is replanned when one appears or moves (`replanning::Watch`).
-fn observed_fans(stats: &Stats, rule: u64, order: &[Step]) -> Vec<Option<f64>> {
+fn observed_fans(stats: &Stats, rule: u64, order: Order<'_>) -> Vec<Option<f64>> {
     let seen = stats.obs.get(&rule);
     let mut bound = BTreeSet::new();
-    order.iter().enumerate().map(|(i, s)| {
-        let fan = match &s.lit {
+    order.steps.iter().enumerate().map(|(i, s)| {
+        let fan = match order.lit(s) {
             Literal::Atom(l) if i > 0 && !l.neg => seen.and_then(|o| o.get(&atom_sig(l, &bound)))
                 .filter(|n| n[0] >= OBS_MIN).map(|n| n[1] as f64 / n[0] as f64),
             _ => None,
         };
-        if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-            bound.extend(s.lit.vars());
+        if !matches!(order.lit(s), Literal::Atom(l) if l.neg) {
+            bound.extend(order.lit(s).vars());
         }
         fan
     }).collect()
@@ -5282,9 +5321,9 @@ fn stratum_key(scc: &BTreeSet<String>) -> String {
 
 /// A delta probe's plan with the stratum's own relations named as read: the last wave's delta at `at`, else the
 /// rows so far.
-fn delta_sources(mut x: super::profile::RulePlan, order: &[Step], at: usize, scc: &BTreeSet<String>) -> super::profile::RulePlan {
-    for (i, st) in order.iter().enumerate() {
-        if let Literal::Atom(l) = &st.lit
+fn delta_sources(mut x: super::profile::RulePlan, order: Order<'_>, at: usize, scc: &BTreeSet<String>) -> super::profile::RulePlan {
+    for (i, st) in order.steps.iter().enumerate() {
+        if let Literal::Atom(l) = order.lit(st)
             && scc.contains(l.rel.as_str())
         {
             x.steps[i].source = if i == at { "delta (last wave)".into() } else { "this stratum".into() };
@@ -5293,14 +5332,14 @@ fn delta_sources(mut x: super::profile::RulePlan, order: &[Step], at: usize, scc
     x
 }
 
-fn shown(order: &[Step]) -> Vec<String> {
-    order.iter().map(|s| s.lit.to_string()).collect()
+fn shown(order: Order<'_>) -> Vec<String> {
+    order.lits().map(ToString::to_string).collect()
 }
 
-/// Whether two orders of one body are the same: each step's position, literal and mode (what `shown` compared as
-/// text, without writing either out).
+/// Whether two orders of one body are the same: each step's position and mode (what `shown` compared as text,
+/// without writing either out).
 fn same_order(a: &[Step], b: &[Step]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.at == y.at && x.mode == y.mode && x.lit == y.lit)
+    a == b
 }
 
 /// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated).
@@ -5768,11 +5807,11 @@ impl<'a> Run<'a, '_> {
     /// top): that probe stays SQL.
     /// `join_spec` for a whole body: `None` too when a head variable is bound by none of its steps (the native join
     /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
-    fn whole_join_spec(&self, h: &Atom, order: &[Step], at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<Arc<JoinSpec>> {
+    fn whole_join_spec(&self, h: &Atom, order: Order<'_>, at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<Arc<JoinSpec>> {
         let mut bound = BTreeSet::new();
-        for s in order {
+        for s in order.steps {
             let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
-            match &s.lit {
+            match order.lit(s) {
                 Literal::Atom(l) if !l.neg => l.args.iter().for_each(&mut add),
                 // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
                 Literal::Cmp { l, op, r: Term::Call(f, args) } if *op == "=" && f == "cat" => { add(l); args.iter().for_each(&mut add) }
@@ -5795,7 +5834,7 @@ impl<'a> Run<'a, '_> {
     fn join_spec(
         &self,
         h: &Atom,
-        order: &[Step],
+        order: Order<'_>,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
         scc: &BTreeSet<String>,
@@ -5837,15 +5876,15 @@ impl<'a> Run<'a, '_> {
                     d.str(t);
                 }
             };
-            for s in order {
-                digest_literal(d, &s.lit);
+            for s in order.steps {
+                digest_literal(d, order.lit(s));
                 d.u64(match s.mode {
                     None => 0,
                     Some(Mode::Range) => 1,
                     Some(Mode::Climb) => 2,
                     Some(Mode::Descend) => 3,
                 });
-                match &s.lit {
+                match order.lit(s) {
                     Literal::Atom(l) | Literal::Agg { atom: l, .. } => read(&l.rel, d),
                     Literal::Nearest { kindset, .. } => {
                         let kinds = prog.kindsets.get(kindset).map_or(&[][..], Vec::as_slice);
@@ -5862,7 +5901,7 @@ impl<'a> Run<'a, '_> {
     fn join_spec_made(
         &self,
         h: &Atom,
-        order: &[Step],
+        order: Order<'_>,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
         scc: &BTreeSet<String>,
@@ -5880,8 +5919,8 @@ impl<'a> Run<'a, '_> {
                     let mut same: Vec<&str> = vec![n.as_str()];
                     let mut i = 0;
                     while i < same.len() {
-                        for s in order {
-                            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = &s.lit {
+                        for s in order.steps {
+                            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = order.lit(s) {
                                 for (x, y) in [(a, b), (b, a)] {
                                     if x == same[i] && !same.contains(&y.as_str()) {
                                         same.push(y.as_str());
@@ -5891,7 +5930,7 @@ impl<'a> Run<'a, '_> {
                         }
                         i += 1;
                     }
-                    same.iter().find_map(|n| order.iter().find_map(|s| match &s.lit {
+                    same.iter().find_map(|n| order.steps.iter().find_map(|s| match order.lit(s) {
                         Literal::Atom(l) if !l.neg => l
                             .args
                             .iter()
@@ -6012,8 +6051,8 @@ impl<'a> Run<'a, '_> {
         };
         let kinds = |kset: &str| prog.kindsets[kset].join(",");
         let mut lines = Vec::new();
-        for (idx, s) in order.iter().enumerate() {
-            match &s.lit {
+        for (idx, s) in order.steps.iter().enumerate() {
+            match order.lit(s) {
                 Literal::Atom(l) => {
                     if s.mode == Some(Mode::Range) {
                         return None;
@@ -6305,7 +6344,7 @@ impl<'a> Run<'a, '_> {
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
             // The level batch keys its pairs by the spec's digest, as the stratum's join does.
-            if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
+            if let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), None, &ri, scc, &self.native_rels) {
                 out.push(spec);
             }
         }
@@ -6620,24 +6659,24 @@ impl<'a> Run<'a, '_> {
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
         // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
-        let first_missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> Option<usize> {
+        let first_missing = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> Option<usize> {
             let bare = Atom { rel: h.rel.clone(), args: Vec::new().into(), neg: false, gated: false };
-            (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
+            (1..=order.len()).find(|&k| this.join_spec(&bare, order.take(k), at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
         };
-        let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
+        let missing = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> String {
             match first_missing(this, h, order, at) {
                 Some(k) => {
-                    let s = &order[k - 1];
-                    format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+                    let s = &order.steps[k - 1];
+                    format!("{}{} has no native step", order.lit(s), if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
                 }
                 None => format!("the head {h} has no native form"),
             }
         };
         // The same step's kind (`decline_class`).
-        let missing_class = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
+        let missing_class = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> String {
             match first_missing(this, h, order, at) {
-                Some(k) if order[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
-                Some(k) => decline_class(&order[k - 1].lit, prog, native_rels),
+                Some(k) if order.steps[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
+                Some(k) => decline_class(order.lit(&order.steps[k - 1]), prog, native_rels),
                 None => "a head term".to_owned(),
             }
         };
@@ -6662,22 +6701,22 @@ impl<'a> Run<'a, '_> {
             let ((order, work, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            shape.add(&order, &r.head.args, work, false);
+            shape.add(Order::new(&r.body, &order), &r.head.args, work, false);
             if let Some(x) = &x {
-                shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
             }
-            let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
+            let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                     self.materialize(&reads)?;
-                    self.ensure_indexes(&order)?;
-                    let select = self.model.sql_select(prog, &r.head, &order, None, None)?;
+                    self.ensure_indexes(Order::new(&r.body, &order))?;
+                    let select = self.model.sql_select(prog, &r.head, Order::new(&r.body, &order), None, None)?;
                     self.insert_rows(&r.head, &select)?;
                     sql_seeded.insert(r.head.rel.to_string());
                     continue;
                 }
-                self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
-                self.why_class = Some(missing_class(self, &r.head, &order, None));
+                self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, Order::new(&r.body, &order), None)));
+                self.why_class = Some(missing_class(self, &r.head, Order::new(&r.body, &order), None));
                 return Ok(Native::Declined);
             };
             if let Some(x) = &x {
@@ -6687,7 +6726,7 @@ impl<'a> Run<'a, '_> {
             keys.push(Some(self.model.reused_key(&r.head, &r.body, None)));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(SpecLine::Seed { head: ri[r.head.rel.as_str()], join: spec });
-            orders.push(order);
+            orders.push((*r, order));
             order_rules.push(obs_rule(&r.head, &r.body));
         }
         // A stratum's relations were made empty by `run` unless the program states facts of them or a SQL seed derived
@@ -6749,21 +6788,21 @@ impl<'a> Run<'a, '_> {
                 let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let key = self.model.reused_key(&r.head, &r.body, Some(ai));
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
-                shape.add(&order, &r.head.args, work, true);
+                shape.add(Order::new(&r.body, &order), &r.head.args, work, true);
                 if let Some(x) = &x {
-                    shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                    shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
+                let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), Some(at), &ri, scc, &native_rels) else {
                     if answering {
                         let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
                         self.ensure(&reads)?;
                         self.materialize(&reads)?;
                         // The component's own relations are read through its views; only the others take indexes.
-                        let outside: Vec<_> = order.iter().filter(|st| st.lit.atom().is_none_or(|b| !scc.contains(b.rel.as_str()))).cloned().collect();
-                        self.ensure_indexes(&outside)?;
-                        let sql = self.model.sql_select(prog, &r.head, &order, Some(at), Some(&views))?;
+                        let outside: Vec<Step> = Order::new(&r.body, &order).iter().filter(|(_, l)| l.atom().is_none_or(|b| !scc.contains(b.rel.as_str()))).map(|(st, _)| *st).collect();
+                        self.ensure_indexes(Order::new(&r.body, &outside))?;
+                        let sql = self.model.sql_select(prog, &r.head, Order::new(&r.body, &order), Some(at), Some(&views))?;
                         explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
                         lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], sql });
                         keys.push(None);
@@ -6771,11 +6810,11 @@ impl<'a> Run<'a, '_> {
                         sql_probe.push(true);
                         continue;
                     }
-                    self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
-                    self.why_class = Some(missing_class(self, &r.head, &order, Some(at)));
+                    self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, Order::new(&r.body, &order), Some(at))));
+                    self.why_class = Some(missing_class(self, &r.head, Order::new(&r.body, &order), Some(at)));
                     return Ok(Native::Declined);
                 };
-                let x = x.map(|x| delta_sources(x, &order, at, scc));
+                let x = x.map(|x| delta_sources(x, Order::new(&r.body, &order), at, scc));
                 if let Some(x) = &x {
                     expect_axis_lookups(self.db, x);
                 }
@@ -6798,7 +6837,7 @@ impl<'a> Run<'a, '_> {
                 }
                 let whole = whole_plan.as_ref().expect("planned");
                 let wspec = if whole[0].at != ai && !small_batches(&a.rel) {
-                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, whole, None, &ri, scc, &native_rels)).clone()
+                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, Order::new(&r.body, whole), None, &ri, scc, &native_rels)).clone()
                 } else {
                     None
                 };
@@ -6880,7 +6919,7 @@ impl<'a> Run<'a, '_> {
                         None => {
                             let _span = planning(r, "plan whole at open");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -6902,7 +6941,7 @@ impl<'a> Run<'a, '_> {
         // relations' deltas are all their rows and the probes run their whole plans.
         // RDL_WAVE_TRACE: the component's planned joins, in probe order, before it runs (a stalled probe is named).
         if std::env::var_os("RDL_WAVE_TRACE").is_some() {
-            for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+            for (k, o) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate() {
                 eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
             }
         }
@@ -7004,7 +7043,7 @@ impl<'a> Run<'a, '_> {
             let steps = self.fx().steps(&name)?;
             // A line that did nothing this chunk observed nothing (decision 0122: no planning work for it).
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
-            for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
+            for ((o, &rule), line) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
                     observe(&mut self.model.stats, rule, o, line);
                 }
@@ -7012,7 +7051,7 @@ impl<'a> Run<'a, '_> {
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
             for (k, p) in probes.iter().enumerate() {
                 if steps.get(nseeds + k).is_some_and(|l| !idle(l)) {
-                    replanned_at.observed(k, observed_fans(&self.model.stats, order_rules[nseeds + k], &p.2));
+                    replanned_at.observed(k, observed_fans(&self.model.stats, order_rules[nseeds + k], Order::new(&p.0.body, &p.2)));
                 }
             }
             for (k, line) in steps.iter().enumerate() {
@@ -7069,7 +7108,7 @@ impl<'a> Run<'a, '_> {
                             self.model.late(prog, r, None, true)?;
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -7121,10 +7160,10 @@ impl<'a> Run<'a, '_> {
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let x = x.or_else(|| self.model.explain_order(prog, &r.head, &r.body, Some(ai), &new));
                 let e = &mut explained[nseeds + k];
-                e.2 = x.map(|x| delta_sources(x, &new, at, scc));
+                e.2 = x.map(|x| delta_sources(x, Order::new(&r.body, &new), at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
-                    .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
+                    .whole_join_spec(&r.head, Order::new(&r.body, &new), Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
                 self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
                 // The counts so far are the old order's: kept with it, and the new order's counted from nothing. Summed
@@ -7169,10 +7208,10 @@ impl<'a> Run<'a, '_> {
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
-            for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
+            for ((k, o), kind) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate().zip(kinds) {
                 // Each earlier order with its own counts (its time is in the current order's).
                 for (was, c) in earlier.get(k).into_iter().flatten() {
-                    super::profile::native(format!("{kind}: {}", shown(was).join(" , ")), c, 0.0);
+                    super::profile::native(format!("{kind}: {}", shown(Order::new(o.body, was)).join(" , ")), c, 0.0);
                 }
                 super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
@@ -7212,10 +7251,10 @@ impl<'a> Run<'a, '_> {
                 }
             }
             let empty = Vec::new();
-            for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+            for (k, o) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate() {
                 for (was, c) in earlier.get(k).into_iter().flatten() {
                     let work: u64 = super::profile::plan_work(c);
-                    text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(was).join(" , "));
+                    text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(Order::new(o.body, was)).join(" , "));
                 }
                 let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
                 let work: u64 = super::profile::plan_work(counted.get(k).unwrap_or(&empty));
@@ -7343,8 +7382,8 @@ impl<'a> Run<'a, '_> {
         }
         for (_, head, body) in &parts {
             let (order, _, _) = self.model.plan_rule(prog, head, body, None)?;
-            self.ensure_indexes(&order)?;
-            let select = self.model.sql_select(prog, head, &order, None, None)?;
+            self.ensure_indexes(Order::new(body, &order))?;
+            let select = self.model.sql_select(prog, head, Order::new(body, &order), None, None)?;
             self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
         }
         // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
@@ -7387,10 +7426,10 @@ impl<'a> Run<'a, '_> {
         let name = format!("sfx{}_{}", self.made.len(), rels[0]);
         let mut seed_plans = Vec::new();
         for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
-            seed_plans.push((&r.head, self.model.plan_rule(prog, &r.head, &r.body, None)?));
+            seed_plans.push((&r.head, &r.body, self.model.plan_rule(prog, &r.head, &r.body, None)?));
         }
         for r in &rels {
-            let rows: f64 = seed_plans.iter().filter(|(h, _)| h.rel == **r).map(|(_, p)| p.2).sum();
+            let rows: f64 = seed_plans.iter().filter(|(h, _, _)| h.rel == **r).map(|(_, _, p)| p.2).sum();
             let card = prior_stats(&mut self.model, prog, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
             self.model.stats.card.insert((*r).clone(), card);
         }
@@ -7407,7 +7446,7 @@ impl<'a> Run<'a, '_> {
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines: Vec<SpecLine> = rels.iter().map(|r| SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Rows }).collect();
-        let mut edges: Vec<(Atom, Vec<Step>)> = Vec::new();
+        let mut edges: Vec<(Atom, Vec<Literal>, Vec<Step>)> = Vec::new();
         let mut probes: Vec<(&Rule, Vec<Step>, usize, usize)> = Vec::new();
         for (j, r) in rules.iter().enumerate() {
             let (h, body) = (&r.head, &r.body);
@@ -7418,7 +7457,7 @@ impl<'a> Run<'a, '_> {
             if let [(ai, a)] = rec[..] {
                 let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
                 // The spec line and edge plan of a linear rule, or the reason it is a probe.
-                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Step>)>), String>> {
+                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Literal>, Vec<Step>)>), String>> {
                     let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
                     let mut hvars = BTreeSet::new();
                     h.args.iter().for_each(|t| t.vars(&mut hvars));
@@ -7472,7 +7511,7 @@ impl<'a> Run<'a, '_> {
                         }
                         let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
                         let src = Some((ehead.rel.to_string(), t));
-                        edge = Some((ehead, order));
+                        edge = Some((ehead, rest.clone(), order));
                         src
                     } else {
                         None
@@ -7494,17 +7533,17 @@ impl<'a> Run<'a, '_> {
                 probes.push((*r, order, at, ai));
             }
         }
-        for (h, (order, _, _)) in &seed_plans {
-            self.ensure_indexes(order)?;
-            let select = self.model.sql_select(prog, h, order, None, None)?;
+        for (h, body, (order, _, _)) in &seed_plans {
+            self.ensure_indexes(Order::new(body, order))?;
+            let select = self.model.sql_select(prog, h, Order::new(body, order), None, None)?;
             self.insert_rows(h, &select)?;
         }
-        for (ehead, order) in &edges {
-            self.ensure_indexes(order)?;
+        for (ehead, rest, order) in &edges {
+            self.ensure_indexes(Order::new(rest, order))?;
             let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
             self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
             if !ehead.args.is_empty() {
-                let select = self.model.sql_select(prog, ehead, order, None, None)?;
+                let select = self.model.sql_select(prog, ehead, Order::new(rest, order), None, None)?;
                 self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)), [])?;
             }
         }
@@ -7515,14 +7554,14 @@ impl<'a> Run<'a, '_> {
                 Literal::Atom(a) => a.rel.clone(),
                 _ => unreachable!(),
             };
-            if join && let Some(spec) = self.whole_join_spec(&r.head, order, Some(*at), &ri, scc, &none) {
+            if join && let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, order), Some(*at), &ri, scc, &none) {
                 lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], join: spec, whole: None });
                 continue;
             }
             let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
             self.ensure(&reads)?;
-            self.ensure_indexes(order)?;
-            let sql = self.model.sql_select(prog, &r.head, order, Some(*at), Some(&tables))?;
+            self.ensure_indexes(Order::new(&r.body, order))?;
+            let sql = self.model.sql_select(prog, &r.head, Order::new(&r.body, order), Some(*at), Some(&tables))?;
             lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], sql });
         }
         self.fx().open(&ComponentSpec { name: name.clone(), lines })?;
@@ -7553,12 +7592,12 @@ impl<'a> Run<'a, '_> {
                     continue;
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
-                let spec = if join { self.whole_join_spec(&r.head, &new, Some(nat), &ri, scc, &none) } else { None };
+                let spec = if join { self.whole_join_spec(&r.head, Order::new(&r.body, &new), Some(nat), &ri, scc, &none) } else { None };
                 let new_body = match spec {
                     Some(spec) => Reprobe::Join(spec),
                     None => {
-                        self.ensure_indexes(&new)?;
-                        Reprobe::Sql(self.model.sql_select(prog, &r.head, &new, Some(nat), Some(&tables))?)
+                        self.ensure_indexes(Order::new(&r.body, &new))?;
+                        Reprobe::Sql(self.model.sql_select(prog, &r.head, Order::new(&r.body, &new), Some(nat), Some(&tables))?)
                     }
                 };
                 self.fx().reprobe(&name, k, &new_body)?;
@@ -8112,8 +8151,8 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         if a.neg || !prog.inputs.iter().any(|x| x == &a.rel) {
             continue;
         }
-        let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
-        let mut query = model.checked_query(prog, h, &order, None, None)?;
+        let order = vec![Step { at: 0, mode: None }];
+        let mut query = model.checked_query(prog, h, Order::new(b, &order), None, None)?;
         // A projection is a set. Omit DISTINCT only when the head retains an input key;
         // otherwise alternate input supports must not multiply aggregate counts.
         let preserves=|t:&Term|match t{Term::Var(v)=>h.args.iter().any(|x|matches!(x,Term::Var(x) if x==v)),Term::Wild=>false,_=>true};
@@ -9705,16 +9744,17 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let t0 = if super::profile::on() { super::profile::now() } else { 0.0 };
             let ((order, work, _), x) = run.model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
             explained.push((x, if super::profile::on() { super::profile::now() - t0 } else { 0.0 }));
-            run.ensure_indexes(&order)?;
+            run.ensure_indexes(Order::new(&rule.body, &order))?;
+            let ord = Order::new(&rule.body, &order);
             outcome.chosen.push(Chosen {
                 rule: prog.rules.iter().position(|r| std::ptr::eq(r, *rule)).expect("a rule of the program"),
                 steps: order.iter().map(|s| (s.at, s.mode)).collect(),
                 head: rule.head.to_string(),
-                anchor: order.first().map_or_else(|| "scalar".into(),|s|s.lit.to_string()),
-                walks: order.iter().filter_map(|s| s.mode.map(|m| (s.lit.to_string(), m.name()))).collect(),
+                anchor: ord.lits().next().map_or_else(|| "scalar".into(), ToString::to_string),
+                walks: ord.iter().filter_map(|(s, l)| s.mode.map(|m| (l.to_string(), m.name()))).collect(),
                 work: work.round_ties_even() as i64,
             });
-            planned.push((rule.head.clone(), order));
+            planned.push((*rule, order));
         }
         drop(planning);
         if scc.iter().all(|r| run.views.contains(r)) {
@@ -9722,7 +9762,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             continue;
         }
         let recursive =
-            scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str())));
+            scc.len() > 1 || planned.iter().flat_map(|(r, o)| Order::new(&r.body, o).lits()).any(|l| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str())));
         let mut ran_native=false;
         if recursive {
             for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {} WHERE 0", crate::code_rule_dsl::logic::sql::ident(r)),[])?;}
@@ -9736,8 +9776,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // The device's hazards too: a stratum the native engine declines is never placed, so its shape is read here.
             let lacking = if super::profile::on() {
                 let mut shape = placement::Shape::default();
-                for (h, order) in &planned {
-                    shape.add(order, &h.args, 0.0, recursive);
+                for (r, order) in &planned {
+                    shape.add(Order::new(&r.body, order), &r.head.args, 0.0, recursive);
                 }
                 shape.lacking()
             } else {
@@ -9746,8 +9786,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             placement::record_fallback(&skey, &class, &why, lacking);
             super::profile::fallback(&skey, class);
             if recursive {outcome.iterations.insert(key,n as usize);}
-            for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
-                if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}
+            for (((r,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
+                if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",r.head.rel),Some(rule_no(rule)),x,*took,0,None,None);}
             }
         }
         let _refresh = super::profile::span(|| "refresh and distinct counts".into());

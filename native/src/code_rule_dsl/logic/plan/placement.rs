@@ -18,7 +18,7 @@
 //! (`DEVICE_FORMS`), and only under the Metal binding. Otherwise the stratum runs on the CPU, and the profile says
 //! where the GPU would have been cheaper and which forms it lacks: the work the device must take on next, by its cost.
 
-use super::{Mode, Step};
+use super::{Mode, Order, Step};
 use crate::code_rule_dsl::logic::front::{AggOp, Literal, Term};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -300,7 +300,7 @@ impl Shape {
     }
 
     /// Adds one planned rule: its steps in order, its head's terms and its planned work.
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: &[Step], head: &[Term], work: f64, recursive: bool) {
+    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_>, head: &[Term], work: f64, recursive: bool) {
         self.rules += 1;
         self.steps += order.len();
         self.work += work.max(0.0);
@@ -314,11 +314,11 @@ impl Shape {
         if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(|t| not_row(t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
-        for step in order {
+        for step in order.steps {
             if let Some(m @ (Mode::Range | Mode::Climb | Mode::Descend)) = step.mode {
                 self.note(Form::TreeAxis, || format!("a tree axis read as a {}", m.name()));
             }
-            match &step.lit {
+            match order.lit(step) {
                 Literal::Atom(a) => {
                     self.forms.insert(if a.neg { Form::Negation } else { Form::Join });
                     if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
@@ -336,7 +336,7 @@ impl Shape {
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
                 // text bound, made on the device when the head alone reads it; not in a recursive stratum.
                 Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
-                    Term::Var(v) => !recursive || order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
+                    Term::Var(v) => !recursive || order.steps.iter().any(|s| matches!(order.lit(s), Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
                     Term::Call(..) => false,
                     _ => true,
                 }) => {
@@ -376,10 +376,10 @@ impl Shape {
 
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows.
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: &[Step], plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
+    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
         let mut input = 1.0;
-        for (step, priced) in order.iter().zip(&plan.steps) {
-            if let Literal::Atom(a) = &step.lit
+        for (step, priced) in order.steps.iter().zip(&plan.steps) {
+            if let Literal::Atom(a) = order.lit(step)
                 && !a.neg
             {
                 // "lookup on (c0, c1)", "membership on (c0)", "range in document on (c0)"; a scan has no key.
@@ -572,8 +572,14 @@ pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::front::Atom;
 
-    fn atom(rel: &str, neg: bool) -> Step {
-        Step { at: 0, lit: Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false }), mode: None }
+    fn atom(rel: &str, neg: bool) -> Literal {
+        Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false })
+    }
+
+    /// Adds `lits`, planned in their order, to `shape`.
+    fn adds(shape: &mut Shape, lits: &[Literal], head: &[Term], work: f64, recursive: bool) {
+        let steps: Vec<Step> = (0..lits.len()).map(|at| Step { at, mode: None }).collect();
+        shape.add(Order::new(lits, &steps), head, work, recursive);
     }
 
     #[test]
@@ -582,7 +588,7 @@ pub mod tests {
         // term is the form it lacks.
         let mut big = Shape::default();
         let len = Term::Call("sha256".into(), [Term::Var("x".into())].into());
-        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
+        adds(&mut big, &[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
@@ -590,7 +596,7 @@ pub mod tests {
         assert!(p.why().contains("no computed term"), "{}", p.why());
         // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
-        plain.add(&[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
+        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
         assert!(plain.missing_none());
         let was = set_device(true);
         let p = place(&plain);
@@ -600,31 +606,31 @@ pub mod tests {
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
         // is a symbol); `lower(x)` is (a text the device makes into its arena).
-        let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
+        let cmp = |l: Term, r: Term| Literal::Cmp { l, op: "=", r };
         let doc = |v: &str| Term::Call("doc".into(), [Term::Var(v.into())].into());
         let mut docs = Shape::default();
-        docs.add(&[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
+        adds(&mut docs, &[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
         let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), [Term::Var("x".into()), Term::Var("y".into())].into()));
         let mut cat = Shape::default();
-        cat.add(&[atom("kind", false), made()], &[], 1.0, false);
+        adds(&mut cat, &[atom("kind", false), made()], &[], 1.0, false);
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
-        rec.add(&[atom("kind", false), made()], &[], 1.0, true);
+        adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
         let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), [Term::Var("x".into())].into()));
         let mut len = Shape::default();
-        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), [Term::Var("x".into())].into()))], &[], 1.0, false);
+        adds(&mut len, &[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), [Term::Var("x".into())].into()))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
         let mut low = Shape::default();
-        low.add(&[atom("kind", false), lower()], &[], 1.0, false);
+        adds(&mut low, &[atom("kind", false), lower()], &[], 1.0, false);
         assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
         let mut low_rec = Shape::default();
-        low_rec.add(&[atom("kind", false), lower()], &[], 1.0, true);
+        adds(&mut low_rec, &[atom("kind", false), lower()], &[], 1.0, true);
         assert!(low_rec.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
-        small.add(&[atom("kind", false)], &[], 10.0, false);
+        adds(&mut small, &[atom("kind", false)], &[], 10.0, false);
         let was = set_device(true);
         let p = place(&small);
         set_device(was);
@@ -641,7 +647,7 @@ pub mod tests {
         assert!(p.joins[1].probe_s < p.joins[0].probe_s, "the second probe finds the relation sorted");
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
-        rec.add(&[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
+        adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
 }
