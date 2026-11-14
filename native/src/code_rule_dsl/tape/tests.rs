@@ -3801,6 +3801,14 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         "SELECT CASE WHEN a BETWEEN 1 AND 2 THEN 'x' ELSE 'y' END, a::text, CAST(b AS int) FROM t /* c */;\n",
         "BEGIN;\nGRANT SELECT ON t TO r;\nCOMMIT;\n",
         "CREATE FUNCTION f(a int) RETURNS int AS $$ SELECT a $$ LANGUAGE sql;\n",
+        // pg_dump's forms (a Rails `db/structure.sql`).
+        "SET client_encoding = 'UTF8';\nSELECT pg_catalog.set_config('search_path', '', false);\n\n--\n-- Name: users; Type: TABLE\n--\n\nCREATE TABLE public.users (\n    id bigint NOT NULL,\n    email character varying DEFAULT ''::character varying NOT NULL,\n    name character varying(20),\n    created_at timestamp(6) without time zone NOT NULL\n);\n",
+        "CREATE SEQUENCE public.users_id_seq\n    START WITH 1\n    INCREMENT BY 1\n    NO MINVALUE\n    NO MAXVALUE\n    CACHE 1;\nALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;\nALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);\n",
+        "ALTER TABLE ONLY public.users\n    ADD CONSTRAINT users_pkey PRIMARY KEY (id);\nCREATE INDEX i ON public.users USING btree (lower((email)::text));\nCREATE TRIGGER t BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.f();\nCREATE MATERIALIZED VIEW v AS SELECT 1 WITH NO DATA;\nREFRESH MATERIALIZED VIEW v;\nTRUNCATE TABLE a, b RESTART IDENTITY CASCADE;\n",
+        // Window functions, filters, upserts, string casts.
+        "SELECT row_number() OVER (PARTITION BY a, b ORDER BY c DESC) AS n, sum(x) OVER w FROM t WINDOW w AS (PARTITION BY z);\nSELECT sum(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), count(*) FILTER (WHERE x > 1) FROM t;\n",
+        "INSERT INTO t (a, b) VALUES (1, 2) ON CONFLICT (a) DO UPDATE SET b = excluded.b WHERE t.b <> excluded.b RETURNING *;\nINSERT INTO t (a) VALUES (1) ON CONFLICT ON CONSTRAINT t_pkey DO NOTHING;\n",
+        "SELECT date '2020-01-01', timestamp with time zone '2020-01-01', interval '1 day' FROM t;\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();

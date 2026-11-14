@@ -101,18 +101,33 @@ These were found by the oracle, and the parser keeps each as tree-sitter reads i
 - **Small shapes:** a function in `from` is `relation > invocation`, with its alias; `float8` is a
   `double` leaf with no keyword in it; `(values …)` in `from` uses the relation's own parentheses; a
   send meta-command (`\g`, `\gset`, …) is a named `meta_command` in the program, in a `;` place; an
-  `alter table … add constraint` body is a `constraint` node.
+  `alter table … add constraint` body is a `constraint` node; `character varying` is one
+  `keyword_varchar` over both words, `keyword_varying` in it; a `filter (where …)` is the
+  invocation's last child; `name '…'` and `timestamp '…'` are a `literal` of the name or type and the
+  string (`_string_casting`), where `date` is an identifier.
+- **`not` after an expression** that no `in`, `like` or `between` follows ends the expression
+  (`default 0 not null`).
 
 ### Read
 
-`select` (with CTEs, set operations, joins, subqueries, `group by`, `having`, `order by`, `limit`,
-`offset`, `fetch`), `values`, `insert`, `update`, `delete`; `create table` (columns, column and
-table constraints, storage parameters), `create index`, `create view`, `create function`,
-`create extension`, `create schema`, `create type`, `create role`; `drop`; `alter table` (add and
-drop columns, add constraints, `set (…)` and `reset (…)`), `alter function`, `alter extension`;
-`grant`, `revoke`; transactions; `set`, `reset`; `comment on`; `call`; `do`; psql meta-commands.
-Expressions: literals, strings with continuations, dollar-quoted strings, parameters, casts,
-`case`, `exists`, `in`, `like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts.
+`select` (with CTEs, set operations, joins, subqueries, `group by`, `having`, `window`, `order by`,
+`limit`, `offset`, `fetch`), `values`, `insert` (with `on conflict`), `update`, `delete`,
+`truncate`; `create table` (columns, column and table constraints, storage parameters),
+`create index` (columns and function fields), `create view`, `create materialized view`,
+`create function`, `create trigger`, `create sequence`, `create extension`, `create schema`,
+`create type`, `create role`; `drop` (tables, views, materialized views, indexes, functions,
+sequences); `refresh materialized view`; `alter table` (`only`; add and drop columns, `alter column`'s
+`set`/`drop not null`, `set`/`drop default` and `type`, add constraints, `set (…)` and `reset (…)`),
+`alter sequence`, `alter function`, `alter extension`; `grant`, `revoke`; transactions; `set`,
+`reset`; `comment on`; `call`; `do`; psql meta-commands. Expressions: literals, strings with
+continuations, dollar-quoted strings, string casts, parameters, casts, `case`, `exists`, `in`,
+`like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts, window functions (`over`
+a name or a specification: `partition by`, `order by`, `rows`/`range`/`groups` frames), `filter`.
+
+pg_dump's output (a Rails `db/structure.sql`: `set` lines, extensions, tables with `character
+varying` and `timestamp(6) without time zone`, sequences and `owned by`, `alter table only … alter
+column … set default nextval(…)`, `add constraint`, `create index … using btree (lower(…))`,
+triggers, enums, views, functions) is read whole.
 
 ### Refused, for tree-sitter
 
@@ -120,11 +135,11 @@ A file is refused where the lean parser does not read the construct exactly:
 
 - any syntax error;
 - the statements not listed above: `create operator`, `operator class` and `family`, `aggregate`,
-  `trigger`, `sequence`, `materialized view` and `refresh`, `foreign data wrapper`, `transform`,
-  `access method`; `alter operator`; `truncate`, `copy`, `load`, `prepare`;
-- the clauses not listed above: `on conflict`, `partition by`, `inherits`, window functions
-  (`over`), `filter`, `tablesample`, `type 'literal'` casts, nested joins in parentheses, an index
-  field that is a function;
+  `foreign data wrapper`, `transform`, `access method`, `domain`; `alter operator`, `alter role`,
+  `alter index`; `copy`, `load`, `prepare`, `execute`, `explain`, `merge`, `vacuum`;
+- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, `lateral`,
+  index hints, nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized
+  index field;
 - forms of other dialects that tree-sitter-sql reads (backticks, `!`, Delta and Spark SQL);
 - bytes that are not UTF-8.
 
@@ -140,8 +155,12 @@ tree-sitter's, line by line, over the 600 files:
 
 | | same | differ | refused |
 |---|---|---|---|
-| clean texts (224) | 107 | 0 | 117 |
+| clean texts (224) | 117 | 0 | 107 |
 | texts with errors (376) | — | 0 | 376 |
+
+**Hand-written files** (scratch, not in the repository; their forms are in the engine test below):
+two `structure.sql` files of pg_dump's forms, window functions, upserts and string casts, their
+tapes from tree-sitter through `python_tape_expect`. All five the same.
 
 No tape differs. Of the texts with errors, 277 are sqlfluff's fixtures, many of other dialects
 (T-SQL, BigQuery, Snowflake, …); the rest are PostgreSQL's and TimescaleDB's tests, with forms
@@ -150,19 +169,20 @@ tree-sitter-sql does not read.
 **Engine tests:**
 
 - `sql_tapes_from_the_lean_parser_are_tree_sitters`: hand-written cases, byte for byte against
-  tree-sitter's encoded tape; four texts with errors are refused.
+  tree-sitter's encoded tape, among them pg_dump's forms, window functions, upserts and string
+  casts; four texts with errors are refused.
 - `the_product_reads_sql_with_the_lean_parser`: the engine's parse route gives the lean tape, and a
   refused file gets tree-sitter's.
 
-**Cost** (`sql_parse_costs`, profiling build, over the 107 corpus files the lean parser reads:
-126,535 bytes, 16,279 nodes):
+**Cost** (`sql_parse_costs`, profiling build, over the 117 corpus files the lean parser reads:
+152,219 bytes, 22,583 nodes):
 
-| | instructions a node | cycles a node | ns a byte |
-|---|---|---|---|
-| lean: the parser's columns | 975 | 232 | 7.5 |
-| lean: the tape | 1,023 | 230 | 7.4 |
-| tree-sitter-sql: parse | 4,142 | 1,002 | 32.1 |
-| tree-sitter-sql: the tape | 7,120 | 2,172 | 66.8 |
+| | instructions a node | cycles a node |
+|---|---|---|
+| lean: the parser's columns | 951 | 226 |
+| lean: the tape | 990 | 217 |
+| tree-sitter-sql: parse | 4,026 | 1,053 |
+| tree-sitter-sql: the tape | 6,978 | 1,895 |
 
 The lean tape costs a seventh of tree-sitter's in instructions, about a tenth in cycles.
 
@@ -174,10 +194,10 @@ and given back is not lexed again; the arena is sized from the text. The first b
 ## Open
 
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
-  The clean files' refusals are a long tail; the largest groups are operators (7 files) and
-  materialized views (6).
+  The clean files' refusals are a long tail of one or two files each; the largest group is
+  PostgreSQL's operator definitions (7 files), extension internals.
 - **The cost.** The lean tape is a seventh of tree-sitter's in instructions, where the other lean
-  parsers reach a twentieth. tree-sitter-sql's trees are fine-grained (every keyword a leaf), so tree-sitter's own
-  cost a node is low; the parser's remaining cost is its keyword questions (several a token, by
+  parsers reach a twentieth. tree-sitter-sql's trees are fine-grained (every keyword a leaf), so
+  tree-sitter's own cost a node is low; the parser's remaining cost is its keyword questions (several a token, by
   call) and the automata walk a node. A generated keyword dispatch (one table lookup a token,
   giving the set of keywords the word is) would replace most of the questions.

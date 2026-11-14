@@ -249,8 +249,11 @@ impl P<'_> {
                                 prec::PATTERN
                             } else if nx(K::KeywordBetween) {
                                 prec::BETWEEN
-                            } else {
+                            } else if nx(K::KeywordSimilar) {
                                 return self.refuse();
+                            } else {
+                                // No operator starts so: the expression ends (`default 0 not null`).
+                                break;
                             };
                             if level < min {
                                 break;
@@ -486,6 +489,12 @@ impl P<'_> {
                         }
                         let id = self.a.node(K::Interval, m);
                         self.a.nodes[id as usize].e = e as u32;
+                    } else if has(K::KeywordTimestamp) || has(K::KeywordTime) {
+                        // `_string_casting`: `timestamp [with time zone] '…'`, a literal of the type
+                        // and the string.
+                        let k = if has(K::KeywordTimestamp) { K::KeywordTimestamp } else { K::KeywordTime };
+                        self.builtin_type(k)?;
+                        self.string_cast(m)?;
                     } else {
                         return self.refuse();
                     }
@@ -634,7 +643,8 @@ impl P<'_> {
     fn name_atom(&mut self, all: bool) -> R<Atom> {
         let m = self.a.mark();
         let first = self.expect_ident(Ctx::Sure(&[kinds::FIRST_EXPRESSION]), f::NAME)?;
-        let mut parts = vec![first];
+        let mut parts = [first; 4];
+        let mut n = 1;
         let mut star = false;
         while self.at_punct(b".")? {
             let t = self.peek()?;
@@ -644,8 +654,13 @@ impl P<'_> {
                 break;
             }
             let Some(id) = self.ident(NONE, f::NAME)? else { return self.refuse() };
-            parts.push(id);
+            if n == 4 {
+                return self.refuse();
+            }
+            parts[n] = id;
+            n += 1;
         }
+        let parts = &parts[..n];
         self.a.stack.truncate(m);
         if star {
             if !all || parts.len() > 3 {
@@ -666,15 +681,40 @@ impl P<'_> {
             }
             self.push_reference(&parts, 0);
             self.arguments()?;
-            if self.is(K::KeywordOver)? || self.is(K::KeywordFilter)? || self.is(K::KeywordWithin)? {
+            if self.is(K::KeywordWithin)? {
                 return self.refuse();
             }
+            if self.is(K::KeywordFilter)? {
+                // `filter_expression`: `f(x) filter (where p)`, the invocation's last child.
+                let fm = self.a.mark();
+                self.expect(K::KeywordFilter)?;
+                self.expect_punct(b"(", K::TLParen)?;
+                self.where_()?;
+                self.expect_punct(b")", K::TRParen)?;
+                self.a.node(K::FilterExpression, fm);
+            }
             self.a.node(K::Invocation, m);
+            if self.kw(K::KeywordOver)?.is_some() {
+                // `window_function`: `f(x) over w | (…)`.
+                if self.at_punct(b"(")? {
+                    self.window_specification()?;
+                } else {
+                    self.expect_ident(Ctx::Unsure(&[]), 0)?;
+                }
+                self.a.node(K::WindowFunction, m);
+            }
             return Ok(Atom::Expr);
         }
         if self.peek()?.t == T::Str {
-            // `type 'literal'` (`_string_casting`).
-            return self.refuse();
+            // `_string_casting`: `name '…'` (`date '2020-01-01'`), a literal of the identifier and
+            // the string.
+            if parts.len() != 1 {
+                return self.refuse();
+            }
+            self.a.nodes[parts[0] as usize].field = 0;
+            self.a.stack.push(parts[0]);
+            self.string_cast(m)?;
+            return Ok(Atom::Expr);
         }
         // A field: `_qualified_field`, its last part the name, the parts before an object reference.
         match parts.len() {
@@ -814,6 +854,22 @@ impl P<'_> {
     }
 
     /// A built-in type, its first keyword `k`.
+    /// The string of a `_string_casting` (one `'…'`, no continuation), then the literal of the
+    /// children since `m` and it.
+    fn string_cast(&mut self, m: usize) -> R<()> {
+        let n = self.peek()?;
+        if n.t != T::Str || self.byte(n.s) != b'\'' {
+            return self.refuse();
+        }
+        self.take(n);
+        if self.peek()?.t == T::Str {
+            return self.refuse();
+        }
+        let id = self.a.node(K::Literal, m);
+        self.a.nodes[id as usize].e = n.e as u32;
+        Ok(())
+    }
+
     fn builtin_type(&mut self, k: K) -> R<()> {
         let m = self.a.mark();
         // A size in parentheses, as the type's field `name` (`size`, `precision`).
@@ -831,6 +887,8 @@ impl P<'_> {
             p.expect_punct(b")", K::TRParen)?;
             Ok(true)
         };
+        // The word `character` is `keyword_char`, or the start of `character varying`.
+        let k = if k == K::KeywordChar && self.is(K::KeywordCharacter)? { K::KeywordCharacter } else { k };
         let node = match k {
             K::KeywordInt | K::KeywordSmallint | K::KeywordBigint | K::KeywordTinyint | K::KeywordMediumint => {
                 self.expect(k)?;
@@ -881,7 +939,28 @@ impl P<'_> {
                 sized(self, f::SIZE)?;
                 Some(K::Varchar)
             }
-            K::KeywordCharacter => return self.refuse(),
+            K::KeywordCharacter => {
+                // `character varying`: one `keyword_varchar` over both words, `keyword_varying` in it
+                // (the token's second form). `character` alone is `keyword_char`.
+                let t = self.peek()?;
+                let save = (self.at, self.last_end, self.look);
+                self.take(t);
+                let varying = self.is(K::KeywordVarying)?;
+                (self.at, self.last_end, self.look) = save;
+                if varying {
+                    let w = self.a.mark();
+                    self.take(t);
+                    let v = self.expect(K::KeywordVarying)?;
+                    let e = self.a.nodes[v as usize].e as usize;
+                    self.node_span(K::KeywordVarchar, w, t.s, e);
+                    sized(self, f::SIZE)?;
+                    Some(K::Varchar)
+                } else {
+                    self.expect(K::KeywordChar)?;
+                    sized(self, f::SIZE)?;
+                    Some(K::Char)
+                }
+            }
             K::KeywordDouble => {
                 self.expect(k)?;
                 if self.is(K::KeywordPrecision)? {

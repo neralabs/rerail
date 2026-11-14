@@ -106,6 +106,8 @@ impl P<'_> {
             K::KeywordAlter => self.alter()?,
             K::KeywordSet => self.set_statement()?,
             K::KeywordReset => self.reset_statement()?,
+            K::KeywordRefresh => self.refresh()?,
+            K::KeywordTruncate => self.truncate()?,
             K::KeywordComment => self.comment_statement()?,
             K::KeywordGrant | K::KeywordRevoke => self.grant_or_revoke(k)?,
             K::KeywordBegin => {
@@ -249,7 +251,7 @@ impl P<'_> {
                 }
                 self.group_or_having()?;
                 if self.is(K::KeywordWindow)? {
-                    return self.refuse();
+                    self.window_clause()?;
                 }
                 self.tail()?;
             }
@@ -344,7 +346,7 @@ impl P<'_> {
         }
         self.group_or_having()?;
         if self.is(K::KeywordWindow)? {
-            return self.refuse();
+            self.window_clause()?;
         }
         self.tail()?;
         self.a.node(K::From, m);
@@ -352,7 +354,7 @@ impl P<'_> {
     }
 
     /// `where predicate`.
-    fn where_(&mut self) -> R<()> {
+    pub(super) fn where_(&mut self) -> R<()> {
         let m = self.a.mark();
         self.expect(K::KeywordWhere)?;
         self.expr(0, f::PREDICATE)?;
@@ -388,6 +390,107 @@ impl P<'_> {
     /// The clauses that end a query: `order by`, `limit`, `offset`; a `fetch` or `for` is refused.
     fn tail(&mut self) -> R<()> {
         if self.is(K::KeywordOrder)? {
+            self.order_by()?;
+        }
+        self.limit_offset()
+    }
+
+    /// `window w as (…), …`.
+    fn window_clause(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordWindow)?;
+        loop {
+            self.expect_ident(NONE, 0)?;
+            self.expect(K::KeywordAs)?;
+            self.window_specification()?;
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        self.a.node(K::WindowClause, m);
+        Ok(())
+    }
+
+    /// `(w partition by … order by … frame)`, each part optional.
+    pub(super) fn window_specification(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect_punct(b"(", K::TLParen)?;
+        let t = self.peek()?;
+        if matches!(t.t, T::Word | T::Quoted) && !self.is(K::KeywordPartition)? && !self.is(K::KeywordOrder)? && !self.is(K::KeywordRows)? && !self.is(K::KeywordRange)? && !self.is(K::KeywordGroups)? {
+            self.expect_ident(Ctx::Unsure(&[]), 0)?;
+        }
+        if self.is(K::KeywordPartition)? {
+            let p = self.a.mark();
+            self.expect(K::KeywordPartition)?;
+            self.expect(K::KeywordBy)?;
+            loop {
+                self.expr(0, 0)?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+            self.a.node(K::PartitionBy, p);
+        }
+        if self.is(K::KeywordOrder)? {
+            self.order_by()?;
+        }
+        if self.is(K::KeywordRows)? || self.is(K::KeywordRange)? || self.is(K::KeywordGroups)? {
+            self.window_frame()?;
+        }
+        self.expect_punct(b")", K::TRParen)?;
+        self.a.node(K::WindowSpecification, m);
+        Ok(())
+    }
+
+    /// `rows | range | groups [between] frame [and frame]`; `exclude` is refused.
+    fn window_frame(&mut self) -> R<()> {
+        let m = self.a.mark();
+        let k = self.words()?.first().map(|&(_, k)| k).unwrap_or(K::KeywordRows);
+        self.expect(k)?;
+        if self.kw(K::KeywordBetween)?.is_some() {
+            self.frame_definition()?;
+            if self.kw(K::KeywordAnd)?.is_some() {
+                self.frame_definition()?;
+            }
+        } else {
+            self.frame_definition()?;
+        }
+        if self.is(K::KeywordExclude)? {
+            return self.refuse();
+        }
+        self.a.node(K::WindowFrame, m);
+        Ok(())
+    }
+
+    /// `unbounded preceding | following`, `current row`, `n preceding | following` (a number or a
+    /// name; other expressions are refused).
+    fn frame_definition(&mut self) -> R<()> {
+        let m = self.a.mark();
+        if self.kw(K::KeywordUnbounded)?.is_some() {
+            if self.kw(K::KeywordPreceding)?.is_none() {
+                self.expect(K::KeywordFollowing)?;
+            }
+        } else if self.kw(K::KeywordCurrent)?.is_some() {
+            self.expect(K::KeywordRow)?;
+        } else {
+            let t = self.peek()?;
+            if t.t != T::Num || !self.src[t.s..t.e].iter().all(u8::is_ascii_digit) {
+                return self.refuse();
+            }
+            self.take(t);
+            let field = if self.is(K::KeywordPreceding)? { f::START } else { f::END };
+            self.a.leaf(K::Literal, field, t.s, t.e);
+            if self.kw(K::KeywordPreceding)?.is_none() {
+                self.expect(K::KeywordFollowing)?;
+            }
+        }
+        self.a.node(K::FrameDefinition, m);
+        Ok(())
+    }
+
+    /// `order by target, …`.
+    pub(super) fn order_by(&mut self) -> R<()> {
+        {
             let m = self.a.mark();
             self.expect(K::KeywordOrder)?;
             self.expect(K::KeywordBy)?;
@@ -410,6 +513,11 @@ impl P<'_> {
             }
             self.a.node(K::OrderBy, m);
         }
+        Ok(())
+    }
+
+    /// `limit`, `offset` (and `fetch`, `for`, refused).
+    fn limit_offset(&mut self) -> R<()> {
         if self.is(K::KeywordLimit)? {
             let m = self.a.mark();
             self.expect(K::KeywordLimit)?;
@@ -691,7 +799,7 @@ impl P<'_> {
             return self.refuse();
         }
         if self.is(K::KeywordOn)? {
-            return self.refuse();
+            self.on_conflict()?;
         }
         self.a.node(K::Insert, m);
         Ok(())
@@ -719,6 +827,40 @@ impl P<'_> {
     }
 
     /// `_set_values`: `set a = x, …`.
+    /// `_on_conflict`'s tokens in the insert: `on conflict [(targets) [where p] | on constraint c]
+    /// do nothing | do update set … [where p]`. A target's operator class is refused.
+    fn on_conflict(&mut self) -> R<()> {
+        self.expect(K::KeywordOn)?;
+        self.expect(K::KeywordConflict)?;
+        if self.punct(b"(", K::TLParen)?.is_some() {
+            loop {
+                self.expr(0, 0)?;
+                if matches!(self.peek()?.t, T::Word | T::Quoted) {
+                    return self.refuse();
+                }
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+            self.expect_punct(b")", K::TRParen)?;
+            if self.is(K::KeywordWhere)? {
+                self.where_()?;
+            }
+        } else if self.kw(K::KeywordOn)?.is_some() {
+            self.expect(K::KeywordConstraint)?;
+            self.expect_ident(NONE, 0)?;
+        }
+        self.expect(K::KeywordDo)?;
+        if self.kw(K::KeywordNothing)?.is_none() {
+            self.expect(K::KeywordUpdate)?;
+            self.set_values()?;
+            if self.is(K::KeywordWhere)? {
+                self.where_()?;
+            }
+        }
+        Ok(())
+    }
+
     fn set_values(&mut self) -> R<()> {
         self.expect(K::KeywordSet)?;
         loop {
@@ -729,12 +871,18 @@ impl P<'_> {
             // `_set_target`: a field.
             let n = self.a.mark();
             let first = self.expect_ident(NONE, f::NAME)?;
-            let mut parts = vec![first];
+            let mut parts = [first; 4];
+            let mut k = 1;
             while self.at_punct(b".")? {
                 let t = self.peek()?;
                 self.take(Tok { e: t.s + 1, ..t });
-                parts.push(self.expect_ident(NONE, f::NAME)?);
+                if k == 4 {
+                    return self.refuse();
+                }
+                parts[k] = self.expect_ident(NONE, f::NAME)?;
+                k += 1;
             }
+            let parts = &parts[..k];
             self.a.stack.truncate(n);
             match parts.len() {
                 1 => self.a.stack.push(parts[0]),
@@ -823,12 +971,18 @@ impl P<'_> {
             self.create_table()
         } else if kinds.contains(&K::KeywordIndex) || kinds.contains(&K::KeywordUnique) {
             self.create_index()
+        } else if kinds.contains(&K::KeywordMaterialized) {
+            self.create_materialized_view()
         } else if kinds.contains(&K::KeywordView) {
             self.create_view()
         } else if kinds.contains(&K::KeywordFunction) {
             self.create_function()
         } else if kinds.contains(&K::KeywordExtension) {
             self.create_extension()
+        } else if kinds.contains(&K::KeywordSequence) {
+            self.create_sequence()
+        } else if kinds.contains(&K::KeywordTrigger) {
+            self.create_trigger()
         } else if kinds.contains(&K::KeywordSchema) {
             self.create_schema()
         } else if kinds.contains(&K::KeywordType) {
@@ -1199,9 +1353,16 @@ impl P<'_> {
             let call = self.at_punct(b"(")? || self.at_punct(b".")?;
             (self.at, self.last_end, self.look) = save;
             if call {
-                return self.refuse();
+                // `function:invocation` (`lower(email)`).
+                self.atom(false)?;
+                let id = *self.a.stack.last().expect("an atom");
+                if self.a.nodes[id as usize].kind != K::Invocation {
+                    return self.refuse();
+                }
+                self.a.set_field(id, f::FUNCTION);
+            } else {
+                self.expect_ident(NONE, f::COLUMN)?;
             }
-            self.expect_ident(NONE, f::COLUMN)?;
             if self.is(K::KeywordCollate)? {
                 return self.refuse();
             }
@@ -1517,6 +1678,317 @@ impl P<'_> {
         Ok(())
     }
 
+    /// `create [or replace] [unlogged] materialized view [if not exists] v [(columns)] [using m]
+    /// [with (…)] [tablespace t] as query [with [no] data]`.
+    fn create_materialized_view(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordCreate)?;
+        if self.kw(K::KeywordOr)?.is_some() {
+            self.expect(K::KeywordReplace)?;
+        }
+        self.kw(K::KeywordUnlogged)?;
+        self.expect(K::KeywordMaterialized)?;
+        self.expect(K::KeywordView)?;
+        self.if_not_exists()?;
+        if self.object_reference(Ctx::Sure(&[&[K::KeywordIf]]), 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.punct(b"(", K::TLParen)?.is_some() {
+            loop {
+                self.expect_ident(NONE, 0)?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+            self.expect_punct(b")", K::TRParen)?;
+        }
+        if self.kw(K::KeywordUsing)?.is_some() {
+            self.expect_ident(NONE, f::ACCESS_METHOD)?;
+        }
+        if self.is(K::KeywordWith)? {
+            self.storage_parameters()?;
+        }
+        if self.kw(K::KeywordTablespace)?.is_some() {
+            self.expect_ident(NONE, f::TABLESPACE)?;
+        }
+        self.expect(K::KeywordAs)?;
+        let q = self.a.mark();
+        self.dml_read()?;
+        self.a.node(K::CreateQuery, q);
+        if self.kw(K::KeywordWith)?.is_some() {
+            self.kw(K::KeywordNo)?;
+            self.expect(K::KeywordData)?;
+        }
+        self.a.node(K::CreateMaterializedView, m);
+        Ok(())
+    }
+
+    /// `create [or replace] trigger t before | after | instead of event [or event …] on table
+    /// [for [each] row | statement] [when (e)] [from t] [deferrable …] execute function | procedure
+    /// f(arguments)`. `referencing` and `follows`/`precedes` are refused.
+    fn create_trigger(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordCreate)?;
+        if self.kw(K::KeywordOr)?.is_some() {
+            self.expect(K::KeywordReplace)?;
+        }
+        self.expect(K::KeywordTrigger)?;
+        self.if_not_exists()?;
+        if self.object_reference(Ctx::Sure(&[&[K::KeywordIf]]), 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.kw(K::KeywordBefore)?.is_none() && self.kw(K::KeywordAfter)?.is_none() {
+            self.expect(K::KeywordInstead)?;
+            self.expect(K::KeywordOf)?;
+        }
+        loop {
+            match self.words()?.first().map(|&(_, k)| k) {
+                Some(k @ (K::KeywordInsert | K::KeywordDelete | K::KeywordTruncate)) => {
+                    self.expect(k)?;
+                }
+                Some(K::KeywordUpdate) => {
+                    self.expect(K::KeywordUpdate)?;
+                    if self.kw(K::KeywordOf)?.is_some() {
+                        loop {
+                            self.expect_ident(NONE, 0)?;
+                            if self.punct(b",", K::TComma)?.is_none() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => return self.refuse(),
+            }
+            if self.kw(K::KeywordOr)?.is_none() {
+                break;
+            }
+        }
+        self.expect(K::KeywordOn)?;
+        if self.object_reference(NONE, 0)?.is_none() {
+            return self.refuse();
+        }
+        loop {
+            match self.words()?.first().map(|&(_, k)| k) {
+                Some(K::KeywordFor) => {
+                    self.expect(K::KeywordFor)?;
+                    self.kw(K::KeywordEach)?;
+                    if self.kw(K::KeywordRow)?.is_none() {
+                        self.expect(K::KeywordStatement)?;
+                    }
+                    if self.is(K::KeywordFollows)? || self.is(K::KeywordPrecedes)? {
+                        return self.refuse();
+                    }
+                }
+                Some(K::KeywordWhen) => {
+                    self.expect(K::KeywordWhen)?;
+                    self.expect_punct(b"(", K::TLParen)?;
+                    self.expr(0, 0)?;
+                    self.expect_punct(b")", K::TRParen)?;
+                }
+                Some(K::KeywordFrom) => {
+                    self.expect(K::KeywordFrom)?;
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                }
+                Some(K::KeywordNot) => {
+                    self.expect(K::KeywordNot)?;
+                    self.expect(K::KeywordDeferrable)?;
+                }
+                Some(K::KeywordDeferrable) => {
+                    self.expect(K::KeywordDeferrable)?;
+                }
+                Some(K::KeywordInitially) => {
+                    self.expect(K::KeywordInitially)?;
+                    if self.kw(K::KeywordImmediate)?.is_none() {
+                        self.expect(K::KeywordDeferred)?;
+                    }
+                }
+                Some(K::KeywordExecute) => break,
+                _ => return self.refuse(),
+            }
+        }
+        self.expect(K::KeywordExecute)?;
+        if self.kw(K::KeywordFunction)?.is_none() {
+            self.expect(K::KeywordProcedure)?;
+        }
+        if self.object_reference(NONE, 0)?.is_none() {
+            return self.refuse();
+        }
+        self.expect_punct(b"(", K::TLParen)?;
+        if !self.at_punct(b")")? {
+            loop {
+                let id = self.term()?;
+                self.a.set_field(id, f::PARAMETER);
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect_punct(b")", K::TRParen)?;
+        self.a.node(K::CreateTrigger, m);
+        Ok(())
+    }
+
+    /// `create [temporary | unlogged] sequence [if not exists] s options`.
+    fn create_sequence(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordCreate)?;
+        if self.kw(K::KeywordTemp)?.is_none() && self.kw(K::KeywordTemporary)?.is_none() {
+            self.kw(K::KeywordUnlogged)?;
+        }
+        self.expect(K::KeywordSequence)?;
+        self.if_not_exists()?;
+        if self.object_reference(Ctx::Sure(&[&[K::KeywordIf]]), 0)?.is_none() {
+            return self.refuse();
+        }
+        self.sequence_options()?;
+        self.a.node(K::CreateSequence, m);
+        Ok(())
+    }
+
+    /// `alter sequence [if exists] s options` (at least one).
+    fn alter_sequence(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordAlter)?;
+        self.expect(K::KeywordSequence)?;
+        self.if_exists()?;
+        if self.object_reference(Ctx::Sure(&[&[K::KeywordIf]]), 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.sequence_options()? == 0 {
+            return self.refuse();
+        }
+        self.a.node(K::AlterSequence, m);
+        Ok(())
+    }
+
+    /// `_sequence_option`s, as many as follow: `increment [by] n`, `[no] minvalue | maxvalue`,
+    /// `start [with] n`, `restart [[with] n]`, `cache n`, `[no] cycle`, `owned by none | t.c`.
+    /// The others (`as type`, `logged`, `sequence name`) are refused.
+    fn sequence_options(&mut self) -> R<usize> {
+        let mut n = 0;
+        loop {
+            let ws = self.words()?;
+            let Some(&(_, k)) = ws.first() else { return Ok(n) };
+            match k {
+                K::KeywordIncrement => {
+                    self.expect(k)?;
+                    self.kw(K::KeywordBy)?;
+                    self.numeric_only(f::INCREMENT)?;
+                }
+                K::KeywordMinvalue | K::KeywordMaxvalue => {
+                    self.expect(k)?;
+                    self.numeric_only(0)?;
+                }
+                K::KeywordNo => {
+                    self.expect(k)?;
+                    match self.words()?.first().map(|&(_, k)| k) {
+                        Some(k @ (K::KeywordMinvalue | K::KeywordMaxvalue | K::KeywordCycle)) => {
+                            self.expect(k)?;
+                        }
+                        _ => return self.refuse(),
+                    }
+                }
+                K::KeywordStart => {
+                    self.expect(k)?;
+                    self.kw(K::KeywordWith)?;
+                    self.numeric_only(f::START)?;
+                }
+                K::KeywordRestart => {
+                    self.expect(k)?;
+                    let with = self.kw(K::KeywordWith)?.is_some();
+                    let t = self.peek()?;
+                    if with || t.t == T::Num || t.t == T::Punct && matches!(self.byte(t.s), b'-' | b'+') {
+                        self.numeric_only(f::RESTART)?;
+                    }
+                }
+                K::KeywordCache => {
+                    self.expect(k)?;
+                    self.numeric_only(f::CACHE)?;
+                }
+                K::KeywordCycle => {
+                    self.expect(k)?;
+                }
+                K::KeywordOwned => {
+                    self.expect(k)?;
+                    self.expect(K::KeywordBy)?;
+                    if self.kw(K::KeywordNone)?.is_none() && self.object_reference(Ctx::Sure(&[&[K::KeywordNone]]), 0)?.is_none() {
+                        return self.refuse();
+                    }
+                }
+                K::KeywordAs | K::KeywordLogged | K::KeywordUnlogged | K::KeywordSequence => return self.refuse(),
+                _ => return Ok(n),
+            }
+            n += 1;
+        }
+    }
+
+    /// `_numeric_only`: a number, signed or not, as a `literal` given `field`.
+    fn numeric_only(&mut self, field: u8) -> R<()> {
+        let t = self.peek()?;
+        if t.t == T::Num {
+            self.take(t);
+            self.a.leaf(K::Literal, field, t.s, t.e);
+            return Ok(());
+        }
+        let c = self.byte(t.s);
+        if t.t != T::Punct || !matches!(c, b'-' | b'+') || !self.op_len(t.s, 1) {
+            return self.refuse();
+        }
+        let m = self.a.mark();
+        self.take(Tok { e: t.s + 1, ..t });
+        self.a.leaf(if c == b'-' { K::TMinus } else { K::TPlus }, 0, t.s, t.s + 1);
+        let n = self.peek()?;
+        if n.t != T::Num {
+            return self.refuse();
+        }
+        self.take(n);
+        let id = self.node_span(K::Literal, m, t.s, n.e);
+        self.a.set_field(id, field);
+        Ok(())
+    }
+
+    /// `refresh materialized view [concurrently] v [with [no] data]`.
+    fn refresh(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordRefresh)?;
+        self.expect(K::KeywordMaterialized)?;
+        self.expect(K::KeywordView)?;
+        self.kw(K::KeywordConcurrently)?;
+        if self.object_reference(NONE, 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.kw(K::KeywordWith)?.is_some() {
+            self.kw(K::KeywordNo)?;
+            self.expect(K::KeywordData)?;
+        }
+        self.a.node(K::RefreshStatement, m);
+        Ok(())
+    }
+
+    /// `truncate [table] t, … [restart | continue identity] [cascade | restrict]`: its tokens in the
+    /// statement (`_truncate_statement` is hidden). `only` and `t *` are refused.
+    fn truncate(&mut self) -> R<()> {
+        self.expect(K::KeywordTruncate)?;
+        self.kw(K::KeywordTable)?;
+        loop {
+            if self.is(K::KeywordOnly)? || self.object_reference(Ctx::Sure(&[&[K::KeywordOnly]]), 0)?.is_none() || self.at_punct(b"*")? {
+                return self.refuse();
+            }
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        if self.kw(K::KeywordRestart)?.is_some() || self.kw(K::KeywordContinue)?.is_some() {
+            self.expect(K::KeywordIdentity)?;
+        }
+        if self.kw(K::KeywordCascade)?.is_none() {
+            self.kw(K::KeywordRestrict)?;
+        }
+        Ok(())
+    }
+
     /// `drop table | view | index …`.
     fn drop(&mut self) -> R<()> {
         let m = self.a.mark();
@@ -1533,11 +2005,18 @@ impl P<'_> {
             (K::KeywordIndex, K::DropIndex)
         } else if next.contains(&K::KeywordFunction) {
             (K::KeywordFunction, K::DropFunction)
+        } else if next.contains(&K::KeywordMaterialized) {
+            (K::KeywordMaterialized, K::DropMaterializedView)
+        } else if next.contains(&K::KeywordSequence) {
+            (K::KeywordSequence, K::DropSequence)
         } else {
             return self.refuse();
         };
         self.expect(K::KeywordDrop)?;
         self.expect(k)?;
+        if node == K::DropMaterializedView {
+            self.expect(K::KeywordView)?;
+        }
         if node == K::DropIndex {
             self.kw(K::KeywordConcurrently)?;
             self.if_exists()?;
@@ -1925,9 +2404,13 @@ impl P<'_> {
         self.take(t);
         let function = self.is(K::KeywordFunction)?;
         let extension = self.is(K::KeywordExtension)?;
+        let sequence = self.is(K::KeywordSequence)?;
         (self.at, self.last_end, self.look) = save;
         if function {
             return self.alter_function();
+        }
+        if sequence {
+            return self.alter_sequence();
         }
         if extension {
             return self.alter_extension();
@@ -1983,6 +2466,9 @@ impl P<'_> {
                     self.kw(K::KeywordRestrict)?;
                 }
                 self.a.node(K::DropColumn, s);
+            } else if self.is(K::KeywordAlter)? {
+                self.alter_column()?;
+                self.a.node(K::AlterColumn, s);
             } else if (self.is(K::KeywordSet)? || self.is(K::KeywordReset)?) && self.next_is_paren()? {
                 // `set (…)`, `reset (…)`: storage parameters.
                 let kind = if self.kw(K::KeywordSet)?.is_some() { K::SetStorageParameters } else { self.expect(K::KeywordReset)?; K::ResetStorageParameters };
@@ -1996,6 +2482,55 @@ impl P<'_> {
             }
         }
         self.a.node(K::AlterTable, m);
+        Ok(())
+    }
+
+    /// `alter_column`'s children: `alter [column] c` then `set | drop not null`, `[set data] type t
+    /// [using e]`, `set default e`, `drop default`. The other actions are refused.
+    fn alter_column(&mut self) -> R<()> {
+        self.expect(K::KeywordAlter)?;
+        self.kw(K::KeywordColumn)?;
+        self.expect_ident(Ctx::Unsure(&[]), f::NAME)?;
+        let ws = self.words()?;
+        let Some(&(_, k)) = ws.first() else { return self.refuse() };
+        match k {
+            K::KeywordSet | K::KeywordDrop => {
+                self.expect(k)?;
+                let next = self.words()?.first().map(|&(_, k)| k);
+                match next {
+                    Some(K::KeywordNot) => {
+                        self.expect(K::KeywordNot)?;
+                        self.expect(K::KeywordNull)?;
+                    }
+                    Some(K::KeywordDefault) => {
+                        self.expect(K::KeywordDefault)?;
+                        if k == K::KeywordSet {
+                            self.expr(0, 0)?;
+                        }
+                    }
+                    Some(K::KeywordData) if k == K::KeywordSet => {
+                        self.expect(K::KeywordData)?;
+                        self.alter_column_type()?;
+                    }
+                    _ => return self.refuse(),
+                }
+            }
+            K::KeywordType => self.alter_column_type()?,
+            _ => return self.refuse(),
+        }
+        Ok(())
+    }
+
+    /// `type t [using e]` of `alter column`.
+    fn alter_column_type(&mut self) -> R<()> {
+        self.expect(K::KeywordType)?;
+        self.type_(f::TYPE)?;
+        if self.is(K::KeywordCollate)? {
+            return self.refuse();
+        }
+        if self.kw(K::KeywordUsing)?.is_some() {
+            self.expr(0, 0)?;
+        }
         Ok(())
     }
 
