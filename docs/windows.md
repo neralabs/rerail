@@ -504,7 +504,8 @@ preimages and held steers.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it
-  cannot read, a folder, or a file whose ACL keeps this account from reading it stops the start.
+  cannot read (`Get-Acl` fails), a folder, a file whose ACL keeps this account from reading it, or a file that holds no
+  private key stops the start.
 
 </details>
 

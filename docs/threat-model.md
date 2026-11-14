@@ -645,7 +645,8 @@ capability.
   (`serveRerailDaemon`), so it binds loopback alone, as a daemon started with no options does, and other machines reach
   nothing. `daemon.json` (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name the key and the
   command that makes it private. Any other `--tls-key` that is no key this account can read stops the start: a missing
-  path, a folder, a file this account may not read, or one whose readers it cannot read.
+  path, a folder, a FIFO, a file this account may not read, one that holds no private key (the certificate, when the
+  two are swapped), or one whose readers it cannot read.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)

@@ -1,4 +1,4 @@
-import { randomBytes, X509Certificate } from "node:crypto";
+import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
@@ -758,8 +758,8 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
- * A TLS private key file this account reads that the daemon may not serve with because other accounts can read it too.
- * Its message names the key and the command that makes it its owner's alone.
+ * A TLS private key file this account reads, which parses as a key, that the daemon may not serve with because other
+ * accounts can read it too. Its message names the key and the command that makes it its owner's alone.
  */
 export class TlsKeyExposedError extends Error {
   override readonly name = "TlsKeyExposedError";
@@ -770,10 +770,11 @@ export class TlsKeyExposedError extends Error {
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads and others can read
- * too is a `TlsKeyExposedError`, on which the daemon serves this computer alone (`serveRerailDaemon`). Any other path
- * that is no key this account can read (a missing or misspelled one, a folder, a file this account may not read, one
- * whose readers cannot be read) is a mistake in the command and stops the start. `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
+ * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
+ * (`serveRerailDaemon`). Any other path that is no key this account can read (a missing or misspelled one, a folder, a
+ * FIFO, a file this account may not read, one that holds no key such as the certificate, one whose readers cannot be
+ * read) is a mistake in the command and stops the start. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -787,17 +788,20 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
     const refusal = `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`;
-    throw (await readsAsFile(tls.keyFile)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+    throw (await readsAsPrivateKey(tls.keyFile)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
 }
 
-/** Whether this account can read `path` as a file. A folder or FIFO is never read: a FIFO's read waits for a writer. */
-async function readsAsFile(path: string): Promise<boolean> {
+/**
+ * Whether `path` is a regular file this account reads that parses as a private key. A folder or FIFO is never read (a
+ * FIFO's read waits for a writer); a certificate or any other file is no key.
+ */
+async function readsAsPrivateKey(path: string): Promise<boolean> {
   try {
     if (!(await stat(path)).isFile()) return false;
-    await readFile(path);
+    createPrivateKey(await readFile(path));
     return true;
   } catch {
     return false;
