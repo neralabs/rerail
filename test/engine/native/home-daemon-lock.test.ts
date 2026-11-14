@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -104,5 +104,14 @@ describe("the daemon lock of a Rerail home", () => {
     expect(taken).toBeDefined();
     leases.push(taken!);
     expect(homeDaemonHolder(home)).toBe(process.pid);
+  });
+
+  it("goes on without the lock when its file does not open, as where the engine does not load", async () => {
+    const home = await temporaryHome();
+    // A folder where the lock file goes: opening it fails on every platform, for any user.
+    await mkdir(join(home, LOCKS_DIR, "daemon.lock"), { recursive: true });
+    expect(homeDaemonLockHeld(home)).toBeUndefined();
+    // The daemon runs as on a machine without the lock, kept to one by its engine socket or pipe, never refused.
+    expect(await holdHomeDaemonLock(home)).toBeUndefined();
   });
 });
