@@ -518,11 +518,13 @@ describe("engine service", () => {
     delete process.env.RERAIL_ENGINE_SOCKET;
     startTestRepository(root);
     try {
-      // Codex has no footer, so a session that starts without a daemon says so in its one line.
+      // Codex has no footer, so a session that starts without a daemon says so in its one line, and why nothing runs.
       expect(await runCodexHook(
         { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
         { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
-      )).toEqual({ systemMessage: "Rerail ✕ not running · start it with: rerail daemon start" });
+      )).toEqual({
+        systemMessage: "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.",
+      });
       // The home holds only the database recording the repository start: no daemon state, log, or start lock.
       expect((await readdir(home)).filter(entry => !entry.startsWith("rerail.sqlite"))).toEqual([]);
     } finally {

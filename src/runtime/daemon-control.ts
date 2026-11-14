@@ -768,7 +768,7 @@ export function autostartOff(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.RERAIL_AUTOSTART === "0" || env.RERAIL_AUTOSTART === "false";
 }
 
-/** No daemon is running, and `RERAIL_AUTOSTART=0` kept the caller from starting one. */
+/** No daemon is running, and `RERAIL_AUTOSTART` (`0` or `false`) kept the caller from starting one. */
 export class AutostartOffError extends Error {
   override readonly name = "AutostartOffError";
 }
@@ -801,11 +801,25 @@ export async function daemonEngineEndpoint(
   const daemon = autostartOff(machine.env)
     ? await runningDaemon(control.home, deadline, machine)
     : await startedDaemon(control, replaceOtherPackage, deadline, machine);
-  if (daemon === undefined) throw new AutostartOffError("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+  // Only the lookup an off autostart makes finds no daemon, so this error spells the setting as the person set it.
+  if (daemon === undefined) {
+    throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+  }
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
-    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+    throw new Error(otherPackageDaemon(machine.env));
   }
   return engineEndpointOf(daemon.state);
+}
+
+/**
+ * Why the caller sends no event to the daemon of another package it found. An off autostart may not replace that
+ * daemon, so the error names the setting as the person set it. With autostart on, a start replaces it unless it was
+ * busy when the start looked and answered only later, so the error names no setting.
+ */
+function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
+  return autostartOff(env)
+    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`
+    : "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start";
 }
 
 /**
