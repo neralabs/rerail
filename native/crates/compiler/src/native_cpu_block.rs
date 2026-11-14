@@ -1663,15 +1663,21 @@ pub struct RecordTables {
     /// The extracts of the first and last bytes.
     pub starts: u16,
     pub lasts: u16,
-    /// Where each byte's end rule is (`Records::ends`), a byte each.
-    pub ends: usize,
     /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
     /// (`Records::nexts`).
     pub pairs: Vec<(usize, usize)>,
-    /// Where each byte's flag is, a byte each: some word starts with it. A token whose first
-    /// byte starts none looks up no word (the lean lexer's `words != 0`).
-    pub wordy: usize,
+    /// Where each first byte's entry is, four bytes each (`TOKEN_*`): its kind, its end rule,
+    /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
+    /// `TOKEN`.
+    pub token: usize,
 }
+
+/// A first byte's entry (`RecordTables::token`): the kind in its low byte, then the end rule
+/// (`Records::ends`), then 1 where some word starts with it (else no word is looked up, the
+/// lean lexer's `words != 0`), then its row in its pair table (`EndRule::Next`).
+const TOKEN_RULE: i64 = 8;
+const TOKEN_WORDY: i64 = 16;
+const TOKEN_PAIR_ROW: i64 = 24;
 
 impl RecordTables {
     pub fn new(r: &crate::records::Records) -> Result<Self, Error> {
@@ -1695,11 +1701,6 @@ impl RecordTables {
         for t in &table.tails {
             words.extend(t);
         }
-        // Each byte's end rule (decision 0177), a byte each.
-        let ends = 8 * words.len();
-        if !r.rules.is_empty() {
-            words.extend(r.ends.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 rules"))));
-        }
         let mut pairs = Vec::new();
         for t in &r.nexts {
             let rows = 8 * words.len();
@@ -1708,15 +1709,19 @@ impl RecordTables {
             words.extend(t.sets.iter().flatten());
             pairs.push((rows, sets));
         }
-        let wordy = 8 * words.len();
-        let mut flags = [0u8; 256];
-        for w in &r.words {
-            if let Some(&b) = w.first() {
-                flags[usize::from(b)] = 1;
-            }
+        let token = 8 * words.len();
+        let mut entries = [0u32; 256];
+        for (b, e) in entries.iter_mut().enumerate() {
+            let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
+            let wordy = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
+            let row = match r.rules.get(usize::from(rule)) {
+                Some(&crate::records::EndRule::Next(i)) => r.nexts[usize::from(i)].row.get(b).copied().unwrap_or(0),
+                _ => 0,
+            };
+            *e = u32::from(r.kinds[b]) | u32::from(rule) << TOKEN_RULE | u32::from(wordy) << TOKEN_WORDY | u32::from(row) << TOKEN_PAIR_ROW;
         }
-        words.extend(flags.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 flags"))));
-        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts, pairs, wordy })
+        words.extend(entries.chunks(2).map(|c| u64::from(c[0]) | u64::from(c[1]) << 32));
+        Ok(RecordTables { words, keys, meta, tails, table, starts: r.starts, lasts: r.lasts, pairs, token })
     }
 }
 
@@ -1765,11 +1770,6 @@ struct FileCols {
 const RECORD_PARAMS: usize = 14;
 
 impl FileCols {
-    /// The address of the file's byte `s`.
-    fn bytes_at(&self, f: &mut FunctionBuilder<'_>, s: Value) -> Value {
-        f.ins().iadd(self.bytes, s)
-    }
-
     fn values(&self) -> [Value; RECORD_PARAMS] {
         [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.keys, self.meta, self.len]
     }
@@ -2059,7 +2059,8 @@ impl Reads<'_> {
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value) {
+#[allow(clippy::too_many_arguments)]
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value) {
     use crate::records::EndRule;
     let ro = MemFlags::trusted().with_readonly();
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
@@ -2076,10 +2077,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let nohits = f.ins().iconst(types::I64, 0);
     // Output `o`'s word `q` (`q` below the file's blocks).
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
-    let at = c.bytes_at(f, s);
-    let first = f.ins().uload8(types::I64, ro, at, 0);
-    let ea = f.ins().iadd(c.tables, first);
-    let rule = f.ins().uload8(types::I32, ro, ea, t.ends as i32);
+    // The rule from the first byte's entry (`RecordTables::token`), loaded with its kind.
+    let rule = f.ins().ushr_imm(entry, TOKEN_RULE);
+    let rule = f.ins().band_imm(rule, 0xff);
+    let rule = f.ins().ireduce(types::I32, rule);
     let q0 = f.ins().ushr_imm(s, 6);
     let sh = f.ins().band_imm(s, 63);
     let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
@@ -2102,17 +2103,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let ended = if tests.is_empty() { ended } else { tested(f, &tests, rd, c, s, done, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
-            // `pair P`: the first byte's row, then the next byte's bit in the row's set, if
-            // inside the file (`PairTable`): two loads, as the lean lexer's table of tokens.
+            // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
+            // row's set, if inside the file (`PairTable`): the next byte from the token's
+            // bytes, one load of the set.
             EndRule::Next(i) => {
-                let (rows, sets) = t.pairs[usize::from(i)];
+                let (_, sets) = t.pairs[usize::from(i)];
                 let i1 = f.ins().iadd_imm(s, 1);
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, i1, c.len);
-                let at = f.ins().select(inside, i1, s);
-                let p = c.bytes_at(f, at);
-                let b = f.ins().uload8(types::I64, ro, p, 0);
-                let ra = f.ins().iadd(c.tables, first);
-                let row = f.ins().uload8(types::I64, ro, ra, rows as i32);
+                let b = f.ins().ushr_imm(raw, 8);
+                let b = f.ins().band_imm(b, 0xff);
+                let row = f.ins().ushr_imm(entry, TOKEN_PAIR_ROW);
                 let w = f.ins().ishl_imm(row, 2);
                 let hi = f.ins().ushr_imm(b, 6);
                 let w = f.ins().iadd(w, hi);
@@ -2771,11 +2771,19 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     } else {
         f.ins().uload32(fl, sa, 0)
     };
+    // The token's first eight bytes and its first byte's entry (`RecordTables::token`): its
+    // kind, rule, word flag and pair row, one load, as the lean lexer's `TOKEN`.
+    let from = f.ins().iadd(c.bytes, s);
+    let raw = f.ins().load(types::I64, fl, from, 0);
+    let first = f.ins().band_imm(raw, 0xff);
+    let ea = f.ins().ishl_imm(first, 2);
+    let ea = f.ins().iadd(tables, ea);
+    let entry = f.ins().uload32(ro, ea, t.token as i32);
     let mut refused = None;
     let mut retag = None;
     let mut hits = zero;
     let l = if ruled {
-        let (l, refuse, tag, h) = rule_last(f, r, t, &rd, c, s, limit, regs.as_ref(), heads);
+        let (l, refuse, tag, h) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), heads);
         refused = Some(refuse);
         retag = Some(tag);
         hits = h;
@@ -2803,11 +2811,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().iadd_imm(l, 1)
     };
     let len = f.ins().isub(next_after, s);
-    let from = f.ins().iadd(c.bytes, s);
-    let raw = f.ins().load(types::I64, fl, from, 0);
-    let first = f.ins().band_imm(raw, 0xff);
-    let ka = f.ins().iadd(tables, first);
-    let kind = f.ins().uload8(types::I64, ro, ka, 0);
+    let kind = f.ins().band_imm(entry, 0xff);
     // A reader's token's kind and marks (`Reader::retag`), where it gives them.
     let (kind, tag_marks) = match retag {
         Some(tag) if r.readers.iter().any(|rd| rd.retag.is_some()) => {
@@ -2822,8 +2826,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     };
     // A first byte no word starts: no word to look up, its code the kind and a reader's marks.
     let looked = f.create_block();
-    let wa = f.ins().iadd(tables, first);
-    let wordy = f.ins().uload8(types::I64, ro, wa, t.wordy as i32);
+    let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
     let plain = match tag_marks {
         Some(m) => f.ins().bor(kind, m),
         None => kind,

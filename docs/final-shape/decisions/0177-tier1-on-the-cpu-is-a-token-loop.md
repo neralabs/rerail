@@ -469,3 +469,18 @@ Tier 1's Rust: 16 functions, 255 KB. Its main function is the token loop: the re
 window inline (its 125 vector operations), each token's rule, reader, word and marks; the
 rest are calls (windows, readers, the carry, the end).
 
+## A token's one load
+
+The lean lexer reads a token's kind and length with one load (`TOKEN`, by its first byte).
+The loop read three tables by the first byte: the end rule, the kind, the word flag; a pair
+also loaded its next byte and its row. Now each first byte has one entry, four bytes
+(`RecordTables::token`):
+
+```text
+kind | rule << 8 | a word starts with it << 16 | its pair row << 24
+```
+
+A token loads its first eight bytes and its entry. The rule's jump, the kind, whether to
+look a word up and a pair's row are fields of the entry; a pair's next byte is the second
+of the eight. A pair loads its set's word, one load more.
+
