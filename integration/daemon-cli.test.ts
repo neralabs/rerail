@@ -106,7 +106,9 @@ describe("Rerail daemon CLI", () => {
   }, 15_000);
 
   // A TLS key other users can read keeps the daemon from other machines, never from this one: hooks reach it on
-  // loopback and keep recording, and the start, the log and the state file say why and how to fix the key.
+  // loopback and keep recording, and the start, the log and the state file say why and how to fix the key. A start
+  // that asked for other machines fails all the same, so a script or a remote client never takes it for started as
+  // asked; one that asked for none succeeds.
   test("serves this computer alone, saying why, when other users can read its TLS key", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     const cli = join(process.cwd(), "dist", "cli", "cli.js");
@@ -117,21 +119,34 @@ describe("Rerail daemon CLI", () => {
       await writeFile(join(root, "cert.pem"), cert);
       await writeFile(keyFile, key);
       const exposed = await letOthersRead(keyFile, 0o644);
-      const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
-      const { stdout } = await promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
-      expect(stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\//u);
+      const tls = ["--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
+      const started = await rerail(cli, ["daemon", "start", "--dev", "--port", "0", "--host", "0.0.0.0", "--allow-remote", ...tls], env);
+      expect(started.code).toBe(1);
+      expect(started.stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\//u);
       const state = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown };
       const why = String(state.remoteRefused);
       expect(why).toMatch(new RegExp(`^${exposed}$`, "u"));
-      expect(stdout).toContain(`This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`);
+      const notice = `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`;
+      const refusal = `rerail: other machines cannot reach this daemon, though this start asked for them, until its TLS key is fixed: ${why}`;
+      expect(started.stdout).toContain(notice);
+      expect(started.stderr).toContain(refusal);
       const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
       expect(health.status).toBe(200);
       expect(await readFile(join(root, "daemon.log"), "utf8")).toContain(`until its TLS key is fixed: ${why}`);
+      // Found running, it fails again for a start that asks for other machines, and serves one that asks for none.
+      const again = await rerail(cli, ["daemon", "start", "--public-host", "rerail.example", ...tls], env);
+      expect(again).toMatchObject({ code: 1, stdout: expect.stringContaining("The Rerail daemon is already running.") });
+      expect(again.stderr).toContain(refusal);
+      expect(await rerail(cli, ["daemon", "start"], env)).toMatchObject({ code: 0, stdout: expect.stringContaining(notice), stderr: expect.not.stringContaining("other machines cannot reach") });
+      expect((await rerail(cli, ["status"], env)).stdout).toContain(notice);
+      // A TLS start on loopback asks for no other machine: with the same key it serves this computer alone and succeeds.
+      expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
+      expect(await rerail(cli, ["daemon", "start", "--dev", "--port", "0", ...tls], env)).toMatchObject({ code: 0, stdout: expect.stringContaining(notice), stderr: expect.not.stringContaining("other machines cannot reach") });
     } finally {
-      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rerail(cli, ["daemon", "stop"], env);
       await rm(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 90_000);
 
   // A --tls-key that names no file this account can read is a mistake in the command, not a key others can read: the
   // start fails with the reason main gives, naming the key, and no daemon runs, on this computer or for others.
@@ -195,6 +210,13 @@ describe("Rerail daemon CLI", () => {
     }
   }, 15_000);
 });
+
+/** Runs the built CLI with `args`, resolving with its exit code and output whatever the code. */
+async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string; stderr: string }>();
+  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout, stderr) => resolve({ code: child.exitCode, stdout, stderr }));
+  return await promise;
+}
 
 /** `text` as a regular expression source that matches it alone. */
 function literal(text: string): string {
