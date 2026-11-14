@@ -613,11 +613,43 @@ Results are in `tmp/cap/remote/`.
   XF with lengths (XF in the tables: 4.15 B/node) avoids it.
 - **`findclose` is relatively worse on Sapphire Rapids** (17 ns against Zen's 12).
 
+### 6. M1 and M3 hardware (data-layer)
+
+The pack ran on an M1 Mac mini (16 GB, quiet) and an M3 Max (load 3–5). On Apple CPUs the
+`target-cpu=native` build matches the default build, within noise. Every answer is right, on the CPU
+and on Metal.
+
+| CPU, ns | M5 Max | M3 Max | M1 |
+|---|---|---|---|
+| MF, median-rule mix | 2.3 | 2.4 | 3.0 |
+| BE, median-rule mix | 4.6 | 5.1 | 6.5 |
+| X, 121 rules | 12.2 | 13.4 | 17.0 |
+| MF, 121 rules | 16.7 | 18.3 | 23.5 |
+| BE, 121 rules | 41.1 | 46.8 | 68.7 |
+| BE start (Elias–Fano select) | 9.1 | 10.1 | 14.1 |
+| B subtree end (`findclose`) | 6.5 | 7.3 | 11.0 |
+| shape 2 load, MF | 30.6 | 36.7 | 45.8 |
+
+| Metal, ns a question | M5 Max | M3 Max | M1 (8-core GPU) |
+|---|---|---|---|
+| MF start | 0.17 | 0.14 | 1.29 |
+| MF end | 0.29 | 0.23 | 4.50 |
+| MF subtree end | 0.06 | 0.07 | 1.14 |
+| MF parent | 0.06 | 0.07 | 1.09 |
+| B parent | 0.42 | 0.54 | 4.27 |
+| children (X / B) | 0.60 / 1.21 | 0.70 / 1.83 | 1.63 / 4.15 |
+
+- **M3 is within 10–15% of M5 on every candidate.** M1 is 1.3–1.7× M5, and the B family and
+  Elias–Fano suffer most there (BE 121 rules 1.7×, X 1.4×). The M1 is "not horrible" for X, M and
+  XF; BE is its worst case.
+- **On M1's GPU every question costs 1–4.5 ns,** 8–15× the M5's, and still at or above one CPU
+  thread for the X family. B's parent is 4× X's there too.
+- **The M1 Max** (a second M1, larger GPU) waits for its machine to quieten after a restart.
+
 ### What the third round says
 
 - **MF is the X family's best: 3.37 B a node on data-layer at X's speed,** against format 15's 9.00
   and BE's 2.43. Its median-rule mix is 2.3 ns a node (BE 4.6). On all 121 rules it is 16.7 (BE 41.1).
 - **The B family still costs 2–3× on structure questions** and saves only 0.65 B against XF's
   structure.
-- **Still to measure:** M1 and M3 (the pack is ready); the forest's children walk as a kernel one
-  group a node.
+- **Still to measure:** the M1 Max; the forest's children walk as a kernel one group a node.
