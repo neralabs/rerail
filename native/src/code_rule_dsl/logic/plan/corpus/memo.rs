@@ -293,6 +293,27 @@ pub(super) fn symbol_columns(plan: &[u8; 32], key: &str, width: usize) -> Option
     key_syms(&syms, key, width)
 }
 
+/// The first symbol of `entries`' rows (by memo plan `plan`'s columns) that is no atom of an arena of `atoms` atoms:
+/// its key and value. An entry is made of the run's rows, so each symbol in it is this process's; one past its atoms
+/// came from a read that gave the store's ids unmapped (decision 0170), and is caught here, where the entry is made,
+/// not by the writer mapping it later.
+fn foreign_symbol(entries: &[&Entry], plan: &[u8; 32], atoms: usize) -> Option<(String, i64)> {
+    let syms = SYMS.lock().expect("the memo's symbol columns").get(plan).cloned()?;
+    for entry in entries {
+        for (key, (w, rows)) in &entry.rows {
+            let Some(cols) = key_syms(&syms, key, *w) else { continue };
+            let at: Vec<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
+            if at.is_empty() || *w == 0 {
+                continue;
+            }
+            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c])).find(|&v| v < 0 || v as u64 >= atoms as u64) {
+                return Some((key.clone(), v));
+            }
+        }
+    }
+    None
+}
+
 /// Maps the symbols of `entries`' rows with `f` (decision 0170), by memo plan `plan`'s columns, in one call: every
 /// symbol of the batch gathered, mapped, and put back. `strict` (forked): an entry of a plan or relation with none
 /// registered is refused, its rows may name ids of the other numbering; else such rows are left as they are.
@@ -622,9 +643,15 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// one transaction (decision 0146). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
-pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
     off();
     let plan = plan_digest(program);
+    // The atom table the entries' symbols are numbered by: the writer maps them with it, or refuses them (below).
+    let made_under = store.atoms_handle();
+    let atoms = made_under.len();
+    if let Some((key, v)) = foreign_symbol(&entries.iter().map(|e| &e.3).collect::<Vec<_>>(), &plan, atoms) {
+        return Err(StoreError::Invalid(format!("the memo's entry for {key}: symbol {v} is no atom of this process's (it holds {atoms}): a read gave the store's ids unmapped")));
+    }
     if crate::code_rule_dsl::logic::profile::on() {
         let _t = crate::code_rule_dsl::logic::profile::span(|| "tally the entries (profiling)".into());
         tally(entries.iter().map(|e| &e.3));
@@ -657,8 +684,18 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
         bytes,
         keys,
         Box::new(move |store| {
+            // The entries' symbols are of the table they were made under: mapped by another (a second table of this
+            // store in the process), they would name other strings, or no atom (`symbol 4291 is no atom of this
+            // process's (it holds 2765)`, seen twice in concurrent cold runs). Refused, never mapped by the wrong one.
+            let writes_with = store.atoms_handle();
+            if !std::sync::Arc::ptr_eq(&made_under, &writes_with) {
+                return Err(StoreError::Invalid(format!(
+                    "the memo's entries were made under another atom table of this store than its writer's ({} atoms, forked {}; the writer's {} atoms, forked {})",
+                    made_under.len(), made_under.forked(), writes_with.len(), writes_with.forked()
+                )));
+            }
             // Forked (decision 0170): each entry's symbols as the store numbers them, in the writer's transaction.
-            let forked = store.atoms_handle().forked();
+            let forked = writes_with.forked();
             let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
             let mut stored = store.source_digests(&ids)?.into_iter();
             // Every entry's symbols mapped in one call.
@@ -702,6 +739,7 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
             Ok(())
         }),
     );
+    Ok(())
 }
 
 impl Entry {
@@ -901,10 +939,7 @@ impl Memo<'_> {
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
     pub(super) fn remember_all(self, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
         match self {
-            Memo::Stored(store) => {
-                remember_all(store, program, entries);
-                Ok(())
-            }
+            Memo::Stored(store) => remember_all(store, program, entries),
             Memo::Held(_) => {
                 for (content, path, key, entry) in &entries {
                     self.remember(*content, path, *key, program, entry)?;
@@ -916,10 +951,7 @@ impl Memo<'_> {
 
     pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => {
-                remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]);
-                Ok(())
-            }
+            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
             (Memo::Held(held), Content::Held(digest)) => {
                 let mut held = held.lock().expect("the session memo");
                 if held.len() >= HELD_ENTRIES {
@@ -1093,6 +1125,25 @@ pub mod tests {
         cut.rows.truncate(cut.rows.len() - 1);
         assert!(from_rows_projected(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
         assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
+    }
+
+    /// An entry symbol past the process's atoms is refused where the entry is made (decision 0170): a read gave the
+    /// store's ids unmapped. It was found only by the writer, mapping it later (`symbol 2767 is no atom of this
+    /// process's (it holds 2760)`), far from the read.
+    #[test]
+    fn an_entry_naming_no_atom_of_the_process_is_refused_where_it_is_made() {
+        let program = [77u8; 32];
+        let decls: BTreeMap<String, Vec<(String, String)>> = [("named".to_owned(), vec![("n".to_owned(), "number".to_owned()), ("s".to_owned(), "sym".to_owned())])].into();
+        register_syms(&program, &decls);
+        let plan = plan_digest(&program);
+        let mut entry = Entry { key: 1, ..Entry::default() };
+        entry.rows.insert("named".into(), (2, vec![9_999, 3, 10_000, 4]));
+        assert_eq!(foreign_symbol(&[&entry], &plan, 5), None, "numbers past the atoms are not symbols");
+        entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
+        assert_eq!(foreign_symbol(&[&entry], &plan, 5), Some(("named".to_owned(), 5)));
+        entry.rows.insert("base:named".into(), (2, vec![1, -1]));
+        entry.rows.insert("named".into(), (2, vec![1, 3]));
+        assert_eq!(foreign_symbol(&[&entry], &plan, 5), Some(("base:named".to_owned(), -1)));
     }
 
     #[test]

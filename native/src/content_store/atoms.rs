@@ -916,6 +916,55 @@ impl Atoms {
                         bytes.push_str(&format!("rerail-test-fork-{}-{i}-{j}", std::process::id()));
                         ends.push_str(&(bytes.len() as u32).to_le_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
                     }
+                    // With `RERAIL_TEST_FORK_FROM=<store>`, that store's atoms instead: real strings, which this process
+                    // may give ids of its own later. As another process would, in one write transaction on a connection
+                    // of its own: the strings the store holds then are left out (found by key, never stored twice).
+                    if let Ok(donor) = std::env::var("RERAIL_TEST_FORK_FROM") {
+                        let path = path.clone();
+                        let appended = std::thread::spawn(move || -> rusqlite::Result<(usize, i64)> {
+                            super::hazards::behind_the_run();
+                            let strings = |c: &rusqlite::Connection, schema: &str| -> rusqlite::Result<Vec<String>> {
+                                let mut st = c.prepare(&format!("SELECT ends, bytes FROM {schema}.atom_segment ORDER BY first"))?;
+                                let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                                let mut out = Vec::new();
+                                for (ends, bytes) in rows {
+                                    let mut start = 0usize;
+                                    for e in ends.chunks_exact(4) {
+                                        let end = u32::from_le_bytes(e.try_into().expect("4 bytes")) as usize;
+                                        out.push(String::from_utf8_lossy(&bytes[start..end]).into_owned());
+                                        start = end;
+                                    }
+                                }
+                                Ok(out)
+                            };
+                            let c = rusqlite::Connection::open(&path)?;
+                            c.busy_timeout(std::time::Duration::from_secs(60))?;
+                            c.execute("ATTACH ?1 AS donor", [&donor])?;
+                            c.execute_batch("BEGIN IMMEDIATE")?;
+                            let held: std::collections::HashSet<String> = strings(&c, "main")?.into_iter().collect();
+                            let mut seen = std::collections::HashSet::new();
+                            let fresh: Vec<String> = strings(&c, "donor")?.into_iter().filter(|t| !t.is_empty() && !held.contains(t) && seen.insert(t.clone())).collect();
+                            for chunk in fresh.chunks(4096) {
+                                let mut ends = Vec::new();
+                                let mut bytes = Vec::new();
+                                for t in chunk {
+                                    bytes.extend_from_slice(t.as_bytes());
+                                    ends.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                                }
+                                c.execute("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
+                            }
+                            let end: i64 = c.query_row("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
+                            c.execute_batch("COMMIT")?;
+                            Ok((fresh.len(), end))
+                        })
+                        .join();
+                        match appended {
+                            Ok(Ok((n, end))) => eprintln!("rerail: test fork after {k} ids: {n} strings of another store appended, the store ends at {end}"),
+                            Ok(Err(e)) => eprintln!("rerail: test fork after {k} ids: {e}"),
+                            Err(_) => eprintln!("rerail: test fork after {k} ids: the append panicked"),
+                        }
+                        return;
+                    }
                     let sql = format!(".timeout 60000\nBEGIN IMMEDIATE;\nINSERT INTO atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), x'{ends}', CAST('{bytes}' AS BLOB) FROM atom_segment;\nSELECT max(first) FROM atom_segment;\nCOMMIT;\n");
                     let out = std::process::Command::new("sqlite3").arg(&path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().and_then(|mut child| {
                         use std::io::Write as _;
@@ -923,7 +972,7 @@ impl Atoms {
                         child.wait_with_output()
                     });
                     match out {
-                        Ok(o) => eprintln!("rerail: test fork after {k} ids: 20 atoms appended at {} {}", String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim()),
+                        Ok(o) => eprintln!("rerail: test fork after {k} ids: atoms appended at {} {}", String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim()),
                         Err(e) => eprintln!("rerail: test fork after {k} ids: {e}"),
                     }
                 };
