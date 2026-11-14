@@ -1566,9 +1566,12 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 shape.extracts = body.extracts.len();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
-                { keep(&mut ir, general_id, &general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
-                let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
-                shape.outlined.push(Outlined { clif, disassembly: code });
+                // The general body where the pass still calls it (none without a block loop).
+                if calls_of(&context.func).contains(&general_id.as_u32()) {
+                    { keep(&mut ir, general_id, &general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
+                    let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
+                    shape.outlined.push(Outlined { clif, disassembly: code });
+                }
                 module.clear_context(&mut general_context);
                 for (id, func) in regions {
                     let mut region_context: Context = module.make_context();
@@ -3653,6 +3656,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // `tokens` runs it over the blocks whose outputs are final, `after` goes on to the next
         // block, `row_end` calls the file's end. Its state goes round the block loop.
         let tokened = records.is_some() && !part_calls.is_empty();
+        // The last pass's body makes nothing but constants, and stores none of them.
+        let bodiless = tokened && bodiless_body(native, slot_of, true);
         let (tokens, after, row_end) = (f.create_block(), f.create_block(), f.create_block());
         let states = if tokened { STATE_WORDS } else { 0 };
         f.append_block_params_for_function_params(entry);
@@ -3765,7 +3770,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         };
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
-        f.ins().brif(none, finish, &first, head, &first);
+        // A body that makes nothing (every output the token loop's, from the bytes): no block
+        // loop. The file goes to its end at once, and the token loop runs over it whole, as the
+        // lean lexer's one loop.
+        if bodiless {
+            f.ins().jump(finish, &first);
+        } else {
+            f.ins().brif(none, finish, &first, head, &first);
+        }
 
         // The head: the end, or the next block's body.
         f.switch_to_block(head);
@@ -3840,14 +3852,19 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             f.switch_to_block(after);
             let st = f.block_params(after).to_vec();
-            let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ready, cols.blocks);
-            let go = f.create_block();
             let st_args: Vec<BlockArg> = st.iter().map(|&v| v.into()).collect();
-            f.ins().brif(last, row_end, &st_args, go, &[]);
-            f.switch_to_block(go);
-            let args: Vec<BlockArg> = tp[..params].iter().chain(&st).map(|&v| v.into()).collect();
-            let more = f.ins().icmp(IntCC::UnsignedLessThan, tp[0], full_end);
-            f.ins().brif(more, body_block, &args, head, &args);
+            if bodiless {
+                // Every block final at once: the one part is the file's.
+                f.ins().jump(row_end, &st_args);
+            } else {
+                let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ready, cols.blocks);
+                let go = f.create_block();
+                f.ins().brif(last, row_end, &st_args, go, &[]);
+                f.switch_to_block(go);
+                let args: Vec<BlockArg> = tp[..params].iter().chain(&st).map(|&v| v.into()).collect();
+                let more = f.ins().icmp(IntCC::UnsignedLessThan, tp[0], full_end);
+                f.ins().brif(more, body_block, &args, head, &args);
+            }
 
             // The file's end: the loop's count and refusal for the end's function.
             f.switch_to_block(row_end);
@@ -3945,6 +3962,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     }
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    // A body that makes nothing has no block loop: its blocks, unreachable, are cut, and the
+    // hot loop is the token loop's.
+    if bodiless_body(native, slot_of, records.is_some()) {
+        context.compute_cfg();
+        context.compute_domtree();
+        context.eliminate_unreachable_code(module.isa()).map_err(|_| Error::BackendFailure)?;
+        hot.clear();
+    }
     // The regions' functions, each checked: it calls nothing and has no loop.
     let mut regions = Vec::new();
     let kept: Vec<(usize, usize)> = crate::native_cpu_pressure::across_calls(&context.func)
@@ -3970,7 +3995,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // The window and carry functions some function calls; the rest are not built (an output
     // the loop reads inline, a carry no window needs).
     let mut extra: Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)> = byte_calls.into_iter().map(|(_, id, _, func)| (id, func)).chain(carry_calls).collect();
-    let names = |func: &cranelift_codegen::ir::Function| -> Vec<u32> { func.params.user_named_funcs().values().map(|n| n.index).collect() };
+    let names = calls_of;
     let mut called: std::collections::HashSet<u32> = names(&context.func).into_iter().chain(regions.iter().flat_map(|(_, func)| names(func))).collect();
     loop {
         let more: Vec<u32> = extra.iter().filter(|(id, _)| called.contains(&id.as_u32())).flat_map(|(_, func)| names(func)).filter(|n| !called.contains(n)).collect();
@@ -3988,6 +4013,28 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
     }
     Ok((ascii_branch, gate_branches, round_branches, regions, kept, inlined))
+}
+
+/// The last pass's body makes nothing but constants and stores none (`forward`): every output
+/// is the token loop's, from the bytes, so the pass has no block loop.
+fn bodiless_body(native: &BlockNative, slot_of: &[u16], records: bool) -> bool {
+    records && slot_of.is_empty() && native.walks.is_empty() && native.insts.iter().all(|i| matches!(i, BlockInst::Const(_)))
+}
+
+/// The functions `func` calls (their user names' indexes, a `FuncId` each), by its calls left
+/// in its layout: a name declared but no longer called is not one.
+pub(crate) fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
+    let mut v = Vec::new();
+    for b in func.layout.blocks() {
+        for inst in func.layout.block_insts(b) {
+            if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst] {
+                if let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name {
+                    v.push(func.params.user_named_funcs()[r].index);
+                }
+            }
+        }
+    }
+    v
 }
 
 /// The walks' functions' names: the functions a pass may call besides its regions'.

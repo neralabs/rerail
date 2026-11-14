@@ -456,3 +456,16 @@ in the Rust). Tier 1's Rust: 17 functions, 276 KB, from 423 KB. The guard
 `the_cpu_reads_local_tests_at_the_token` holds the body empty; `rr_checks_its_unicode_escapes_at_the_string`
 the checks' cases, on the JIT and (`aot_tapes_are_the_jits`) ahead of time.
 
+## No block loop
+
+With the body empty, the token loop never waits on a block: each of its reads is from the
+bytes. The pass then has no block loop (`bodiless_body`): a file goes from its row to its
+end at once, which runs the token loop over it whole, then the end's function. The block
+loop's blocks are unreachable and cut (Cranelift's `eliminate_unreachable_code`), and the
+general body, which nothing calls, is not built. Tier 1 on the CPU is one loop over a file's
+windows and tokens, as the lean lexer is.
+
+Tier 1's Rust: 16 functions, 255 KB. Its main function is the token loop: the refill's
+window inline (its 125 vector operations), each token's rule, reader, word and marks; the
+rest are calls (windows, readers, the carry, the end).
+

@@ -193,3 +193,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177: no word lookup for a token whose first byte starts no word (`RecordTables::wordy`, a flag a byte from the grammar's words); a branch past the hash, as the lean lexer's `words != 0` | | | |
 | 0177: `escaped`'s carry loop a function of its own (`carry_fn`), called from a cold block; the byte-before test inline; tier 1's Rust 25 functions, 427 KB | | | |
 | 0177: tier 2's `\u` checks read `uesc` from the bytes on the CPU (its window a call; `rust_stream` through `clif_rust`); `Records::check_masks`; the CPU's body empty (2 constants); uncalled window/carry functions not built; tier 1's Rust 17 functions, 276 KB | | | |
+| 0177: no block loop where the body makes nothing (`bodiless_body`): the row to its end at once, the token loop over the file whole; the block loop cut as unreachable, the general body not built; tier 1's Rust 16 functions, 255 KB | | | |
