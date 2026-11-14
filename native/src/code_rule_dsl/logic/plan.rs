@@ -4087,10 +4087,47 @@ impl Model {
                         };
                         ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         a
+                    } else if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+                        // Nodes numbered by definition: their order keys (`node_order`) keep preorder but are not
+                        // positions (a granule run's rank and an index in it), so no subtree is a run of keys. The
+                        // walk goes down by the parents (`tape(n, par, …)`, which the view answers from each node's
+                        // children), into the children of every node whose kind is not in the set: each node it
+                        // reaches has `a` as its nearest ancestor in the set. (Stepping over keys as positions found
+                        // none past the first: `workload.rr`'s `defines_class` was empty in the SQL executor.)
+                        walk_columns.push("cur".to_owned());
+                        let arms = vec![
+                            Select {
+                                columns: with("s", vec![col("t", "n")]),
+                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "par"), col("s", a))])],
+                                ..Select::default()
+                            },
+                            Select {
+                                columns: with("w", vec![col("t", "n")]),
+                                from: vec![
+                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
+                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur")), Expr::Unary { operator: SqlUnaryOperator::Not, input: Box::new(member(col("k", "kind"))) }]),
+                                    on("tape", "t", vec![eq(col("t", "par"), col("w", "cur"))]),
+                                ],
+                                ..Select::default()
+                            },
+                        ];
+                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
+                        let mut predicates = Vec::new();
+                        if env.contains_key(n) {
+                            predicates.push(eq(col("w", "cur"), col("w", n)));
+                        }
+                        let arm = Select {
+                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
+                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w")],
+                            predicates,
+                            ..Select::default()
+                        };
+                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
+                        n
                     } else {
                         // A subtree is a run of preorder positions: the walk steps over preorder keys (`node_order`),
-                        // which are the node ids themselves when nodes are numbered in preorder. Ids by definition
-                        // are not contiguous in a subtree, so there each position is mapped back to its node.
+                        // which are the node ids themselves when nodes are numbered in preorder
+                        // (`RERAIL_NODE_IDS=preorder`).
                         let keyed = crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
                         walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
                         let size = col("t", "size");
