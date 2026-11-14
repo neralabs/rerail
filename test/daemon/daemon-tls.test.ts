@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -175,6 +175,46 @@ describe("TLS daemon", () => {
     await promisify(execFile)("mkfifo", ["-m", "0644", fifo]);
     const refused = loadDaemonTls({ certFile: join(root, "cert.pem"), keyFile: fifo });
     await expect(refused).rejects.toThrow(`${fifo} is open to other users (mode 0644)`);
+    await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+  }, 5_000);
+
+  it("stops the start, with the error a private key gets, for a certificate that would not serve with a key others can read", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const keyFile = join(root, "key.pem");
+    await writeFile(keyFile, key);
+    await writeFile(join(root, "cert.pem"), cert);
+    await writeFile(join(root, "text.pem"), "not a certificate\n");
+    await writeFile(join(root, "other.pem"), selfSignedCertificate().cert);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // What reading it gives, as a start with a private key reads it.
+    const readError = async (path: string): Promise<string> => await readFile(path, "utf8").then(() => "read", (error: Error) => error.message);
+    // A misspelled path and a folder fail to read; a file of text and the key itself hold no certificate; another key's
+    // certificate is not this key's. Each is a mistake in the command, which the start names once the key is private.
+    const certificates: [string, string][] = [
+      [join(root, "certt.pem"), await readError(join(root, "certt.pem"))], [root, await readError(root)],
+      [join(root, "text.pem"), "The TLS certificate is not a PEM X.509 certificate: "],
+      [keyFile, "The TLS certificate is not a PEM X.509 certificate: "], [join(root, "other.pem"), "key values mismatch"],
+    ];
+    for (const [certFile, error] of certificates) {
+      const refused = loadDaemonTls({ certFile, keyFile }, shared);
+      await expect(refused).rejects.toThrow(error);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    }
+    // The certificate it would serve with once the key is private: meanwhile it serves this computer alone.
+    await expect(loadDaemonTls({ certFile: join(root, "cert.pem"), keyFile }, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+  });
+
+  it.skipIf(process.platform === "win32")("stops the start at once for a FIFO certificate beside a key others can read", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const keyFile = join(root, "key.pem");
+    await writeFile(keyFile, selfSignedCertificate().key);
+    await chmod(keyFile, 0o644);
+    const fifo = join(root, "cert.pem");
+    await promisify(execFile)("mkfifo", ["-m", "0644", fifo]);
+    // Its read would wait for a writer: it is never read, and the start gets the key's refusal, as it does on main.
+    const refused = loadDaemonTls({ certFile: fifo, keyFile });
+    await expect(refused).rejects.toThrow(`${keyFile} is open to other users (mode 0644)`);
     await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
   }, 5_000);
 

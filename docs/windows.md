@@ -505,7 +505,7 @@ preimages and held steers.
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it
   cannot read (`Get-Acl` fails), a folder, a file whose ACL keeps this account from reading it, or a file that holds no
-  private key stops the start.
+  private key stops the start, and so does a `--tls-cert` that names no certificate for the key.
 
 </details>
 

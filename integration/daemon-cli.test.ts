@@ -231,6 +231,38 @@ describe("Rerail daemon CLI", () => {
     }
   }, 60_000);
 
+  // A --tls-cert the https start would refuse is a mistake in the command too. Beside a key others can read, the
+  // loopback daemon would serve no certificate, yet the start fails with the message that certificate gets beside a
+  // private key, as on main, so the mistake shows now and not once the key is fixed; no daemon runs.
+  test("refuses to start when --tls-cert names no certificate for a key others can read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const keyFile = join(root, "key.pem");
+    const misspelled = join(root, "certt.pem");
+    try {
+      await writeFile(keyFile, selfSignedCertificate().key);
+      await writeFile(join(root, "other.pem"), selfSignedCertificate().cert);
+      await letOthersRead(keyFile, 0o644);
+      const notFound = `ENOENT: no such file or directory, open '${literal(misspelled)}'`;
+      // A misspelled certificate, on loopback and for other machines; the key given as the certificate too; another
+      // key's certificate.
+      const starts: [string[], string][] = [
+        [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
+        [["--tls-cert", keyFile], "The TLS certificate is not a PEM X\\.509 certificate: "],
+        [["--tls-cert", join(root, "other.pem")], "key values mismatch"],
+      ];
+      for (const [options, message] of starts) {
+        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...options, "--tls-key", keyFile], { env });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`rerail daemon: ${message}`, "u")) });
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test("reads the start state from the database --database names, not the home's default", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
     try {

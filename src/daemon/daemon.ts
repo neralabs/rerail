@@ -3,6 +3,7 @@ import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import { createSecureContext } from "node:tls";
 import type { AddressInfo, Server as NetServer } from "node:net";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir, userInfo } from "node:os";
@@ -772,9 +773,10 @@ export class TlsKeyExposedError extends Error {
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
- * (`serveRerailDaemon`). Any other path that is no key this account can read (a missing or misspelled one, a folder, a
- * FIFO, a file this account may not read, one that holds no key such as the certificate, one whose readers cannot be
- * read) is a mistake in the command and stops the start. `access` is for tests.
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
+ * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one that holds
+ * no key such as the certificate, one whose readers cannot be read), and a certificate that would not serve with the
+ * key, is a mistake in the command and stops the start. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -788,24 +790,42 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
     const refusal = `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`;
-    throw (await readsAsPrivateKey(tls.keyFile)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+    const key = await readPrivateKey(tls.keyFile);
+    throw key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
 }
 
 /**
- * Whether `path` is a regular file this account reads that parses as a private key. A folder or FIFO is never read (a
- * FIFO's read waits for a writer); a certificate or any other file is no key.
+ * What `path` holds, read once, when it is a regular file this account reads that parses as a private key; undefined
+ * otherwise. A folder or FIFO is never read (a FIFO's read waits for a writer); a certificate or any other file is no key.
  */
-async function readsAsPrivateKey(path: string): Promise<boolean> {
+async function readPrivateKey(path: string): Promise<Buffer | undefined> {
   try {
-    if (!(await stat(path)).isFile()) return false;
-    createPrivateKey(await readFile(path));
-    return true;
+    if (!(await stat(path)).isFile()) return undefined;
+    const key = await readFile(path);
+    createPrivateKey(key);
+    return key;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/**
+ * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
+ * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
+ * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
+ * start throws for it beside a private key. A path that is no file or folder, a FIFO say, is never read (a FIFO's read
+ * waits for a writer) and serves nothing.
+ */
+async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+  const found = await stat(certFile).catch(() => undefined);
+  if (found !== undefined && !found.isFile() && !found.isDirectory()) return false;
+  const cert = await readFile(certFile, "utf8");
+  certificateFingerprint(cert);
+  createSecureContext({ cert, key });
+  return true;
 }
 
 /** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
