@@ -2172,7 +2172,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
     let store = comp.store.read().unwrap();
     let syms = store.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
-        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
+        if probed::on() { probed::note(&format!("{} [stats]", r.table), std::iter::empty()); }
         let cols = &r.sketches;
         let mut line = std::iter::once(r.n).chain(cols.iter().map(Sketch::ndv))
             .chain(cols.iter().map(|sk| sk.sq() as usize))
@@ -2440,19 +2440,37 @@ pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    Ok(store.rels.iter().map(|r| {
-        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
-        let cols = &r.sketches;
-        let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
-            .collect();
-        Live {
-            n: r.n as i64,
-            delta: (r.hi - r.lo) as i64,
-            ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
-            sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
-            freq,
-        }
+    Ok(store.rels.iter().map(live_of).collect())
+}
+
+/// `live`, of only the relations whose rows moved since the caller last read them (`seen`, its last reading of
+/// each: rows, delta's start and end); `None` for the others. A relation's statistics are its rows' count, its delta
+/// and its sketches, and the sketches change only as rows are pushed: equal readings, equal statistics. A wave of a
+/// component of 220 relations moves a few of them.
+pub fn live_changed(conn: impl Scoped, name: &str, seen: &mut Vec<[usize; 3]>) -> Result<Vec<Option<Live>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let store = comp.store.read().unwrap();
+    seen.resize(store.rels.len(), [usize::MAX; 3]);
+    Ok(store.rels.iter().zip(seen.iter_mut()).map(|(r, last)| {
+        let now = [r.n, r.lo, r.hi];
+        (*last != now).then(|| { *last = now; live_of(r) })
     }).collect())
+}
+
+fn live_of(r: &Rel) -> Live {
+    if probed::on() { probed::note(&format!("{} [stats]", r.table), std::iter::empty()); }
+    let cols = &r.sketches;
+    let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
+        .collect();
+    Live {
+        n: r.n as i64,
+        delta: (r.hi - r.lo) as i64,
+        ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
+        sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
+        freq,
+    }
 }
 
 /// Per probe, the rows its factored steps passed over since it was last asked (`JoinRule::passed_over`).
@@ -3884,7 +3902,7 @@ impl InRel {
         if self.view.is_some() || c >= self.k {
             return false;
         }
-        probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c));
+        if probed::on() { probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c)); }
         let Some(ix) = self.chains.iter().find(|ix| ix.cols.first() == Some(&c)).filter(|ix| ix.rows() >= self.n) else { return false };
         let (k, data) = (self.k, &self.rows);
         let mut firsts: Vec<i64> = Vec::new();

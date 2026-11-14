@@ -404,6 +404,14 @@ impl Clone for Index {
 }
 
 /// Rows `a` and `b` in the order on `cols` (`cmp_vals`), then by id (so a sort is the same whatever order it came in).
+/// A merge gallops (`Run::galloped`) where one run has under 1/`GALLOP` of the other's ids.
+const GALLOP: usize = 16;
+/// `RERAIL_GALLOP=off`: every merge walks both runs, as before (to compare).
+fn gallop_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !matches!(std::env::var("RERAIL_GALLOP").as_deref(), Ok("off")));
+    *ON
+}
+
 #[inline]
 fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
     let (ra, rb) = (data.row(a, k), data.row(b, k));
@@ -572,6 +580,18 @@ impl Run {
             }
         }
         let (an, bn) = (a.ids.len(), b.ids.len());
+        // A small run into a large one (a maintained relation's few new rows into its kept ones): each small id is
+        // placed by a binary search, and the large run's stretches between are copied whole. The same order as the
+        // merge below (both are total, ties by id), at m log n row comparisons, not n + m.
+        if gallop_on() && an.min(bn) * GALLOP < an.max(bn) {
+            return if an >= bn { Run::galloped(data, k, cols, a, b) } else { Run::galloped(data, k, cols, b, a) };
+        }
+        Run::walked(data, k, cols, a, b)
+    }
+
+    /// `merge` by walking both runs, a row comparison per id.
+    fn walked<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
+        let (an, bn) = (a.ids.len(), b.ids.len());
         let mut ids = Vec::with_capacity(an + bn);
         let tagged = !a.tags.is_empty() && !b.tags.is_empty();
         let mut tags = Vec::with_capacity(if tagged { ids.capacity() } else { 0 });
@@ -603,6 +623,47 @@ impl Run {
         if tagged {
             tags.extend_from_slice(&a.tags[i..]);
             tags.extend_from_slice(&b.tags[j..]);
+            return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints };
+        }
+        Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
+    }
+
+    /// `merge` of a small run into a large one: each of `small`'s ids at the first place in `large` whose id
+    /// orders after it, found by a binary search from the last place; `large`'s ids between are copied in stretches.
+    fn galloped<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], large: &Run, small: &Run) -> Run {
+        let (ln, sn) = (large.ids.len(), small.ids.len());
+        let tagged = !large.tags.is_empty() && !small.tags.is_empty();
+        let printed = !large.prints.is_empty() && !small.prints.is_empty();
+        let mut ids = Vec::with_capacity(ln + sn);
+        let mut tags = Vec::with_capacity(if tagged { ln + sn } else { 0 });
+        let mut prints = Vec::with_capacity(if printed { ln + sn } else { 0 });
+        // Whether `large`'s position `p` orders before `small`'s `q` (the merge's test).
+        let before = |p: usize, q: usize| {
+            if tagged && large.tags[p] != small.tags[q] { large.tags[p] < small.tags[q] } else { cmp_rows(data, k, cols, large.ids.get(p), small.ids.get(q)).is_le() }
+        };
+        let copy = |ids: &mut Vec<u32>, tags: &mut Vec<u16>, prints: &mut Vec<u8>, s: usize, e: usize| {
+            match &large.ids {
+                Ids::List(v) => ids.extend_from_slice(&v[s..e]),
+                Ids::Rows(lo, _) => ids.extend(lo + s as u32..lo + e as u32),
+            }
+            if tagged { tags.extend_from_slice(&large.tags[s..e]); }
+            if printed { prints.extend_from_slice(&large.prints[s..e]); }
+        };
+        let mut at = 0;
+        for q in 0..sn {
+            let (mut lo, mut hi) = (at, ln);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if before(mid, q) { lo = mid + 1 } else { hi = mid }
+            }
+            copy(&mut ids, &mut tags, &mut prints, at, lo);
+            ids.push(small.ids.get(q));
+            if tagged { tags.push(small.tags[q]); }
+            if printed { prints.push(small.prints[q]); }
+            at = lo;
+        }
+        copy(&mut ids, &mut tags, &mut prints, at, ln);
+        if tagged {
             return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints };
         }
         Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
@@ -1316,6 +1377,26 @@ pub mod tests {
         by10.tier(&rows, k, 2);
         assert_eq!(by10.runs(), 2);
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
+    }
+
+    /// A small run merged into a large one by binary searches (`galloped`) is the walking merge's run: the same ids,
+    /// tags, prints and fences, for full-row (tagged), prefix and printed orders, the small run on either side.
+    #[test]
+    fn a_galloped_merge_is_the_walking_merge() {
+        let k = 3;
+        let rows: Vec<i64> = (0..2100u32).flat_map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from(i % 500)]).collect();
+        for (cols, printed) in [(vec![0, 1, 2], false), (vec![0], false), (vec![1, 0], true), (vec![2], false)] {
+            let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
+            ix.add_run_in(&rows[..], k, 0, 2000, 1, &[]);
+            ix.add_run_in(&rows[..], k, 2000, 2100, 2, &[]);
+            let (large, small) = (&ix.runs[0].0, &ix.runs[1].0);
+            for (x, y) in [(large, small), (small, large)] {
+                let walked = Run::walked(&rows[..], k, &cols, x, y);
+                let galloped = if x.ids.len() > y.ids.len() { Run::galloped(&rows[..], k, &cols, x, y) } else { Run::galloped(&rows[..], k, &cols, y, x) };
+                assert_eq!(walked.ids.to_vec(), galloped.ids.to_vec(), "{cols:?}");
+                assert_eq!((&walked.tags, &walked.prints, &walked.fences), (&galloped.tags, &galloped.prints, &galloped.fences), "{cols:?}");
+            }
+        }
     }
 
     /// Rows known sorted (decision 0180) make runs in place that answer as the sorted runs do: whole and partial

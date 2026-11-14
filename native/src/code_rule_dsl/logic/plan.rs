@@ -4156,6 +4156,23 @@ impl Fx<'_> {
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
     }
+    /// `stats`, of only the relations whose rows moved since `seen` (`live_changed`): `None` for the others. Through
+    /// SQL, every relation's.
+    fn stats_changed(&self, name: &str, seen: &mut Vec<[usize; 3]>, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<Option<LiveRel>>> {
+        if !self.direct {
+            return Ok(self.stats(name, symbols_text)?.into_iter().map(Some).collect());
+        }
+        let _span = super::profile::span(|| "engine live statistics".into());
+        // `RERAIL_LIVE_ALL=on`: every relation's, each time (to compare).
+        static ALL: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on")));
+        if *ALL {
+            seen.clear();
+        }
+        Ok(super::native::component::live_changed(self.db, name, seen)?
+            .into_iter()
+            .map(|l| l.map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() }))
+            .collect())
+    }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
         if self.direct {
@@ -5278,24 +5295,71 @@ fn same_order(a: &[Step], b: &[Step]) -> bool {
 
 /// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated).
 fn cyclic_relations(scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
-    let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    // A relation reaches itself where it is in a strongly connected part of more than one relation, or reads itself:
+    // one pass over the edges (Tarjan's), not a walk from each relation (a 220-relation stratum walked 48,000 times).
+    let names: Vec<&str> = scc.iter().map(String::as_str).collect();
+    let at = |r: &str| names.binary_search(&r).ok();
+    let mut next: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
+    let mut own = vec![false; names.len()];
     for r in rules {
-        for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
-            next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+        let Some(h) = at(r.head.rel.as_str()) else { continue };
+        for a in r.body.iter().filter_map(Literal::atom) {
+            if let Some(b) = at(a.rel.as_str()) {
+                next[b].push(h);
+                own[b] |= b == h;
+            }
         }
     }
-    scc.iter().filter(|start| {
-        let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
-        while let Some(x) = todo.pop() {
-            if x == start.as_str() {
-                return true;
+    let n = names.len();
+    let (mut index, mut low, mut on) = (vec![usize::MAX; n], vec![0; n], vec![false; n]);
+    let (mut stack, mut count, mut cyclic) = (Vec::new(), 0, vec![false; n]);
+    for root in 0..n {
+        if index[root] != usize::MAX {
+            continue;
+        }
+        // Iteratively: (node, its next edge).
+        let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+        index[root] = count;
+        low[root] = count;
+        count += 1;
+        stack.push(root);
+        on[root] = true;
+        while let Some(&mut (v, ref mut e)) = work.last_mut() {
+            if let Some(&w) = next[v].get(*e) {
+                *e += 1;
+                if index[w] == usize::MAX {
+                    index[w] = count;
+                    low[w] = count;
+                    count += 1;
+                    stack.push(w);
+                    on[w] = true;
+                    work.push((w, 0));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
             }
-            if seen.insert(x) {
-                todo.extend(next.get(x).into_iter().flatten().copied());
+            work.pop();
+            if let Some(&(u, _)) = work.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut part = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on[w] = false;
+                    part.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let multi = part.len() > 1;
+                for w in part {
+                    cyclic[w] = multi || own[w];
+                }
             }
         }
-        false
-    }).cloned().collect()
+    }
+    names.iter().zip(cyclic).filter(|(_, c)| *c).map(|(r, _)| (*r).to_owned()).collect()
 }
 
 /// Positive body atoms of `scc`, by body position.
@@ -6638,6 +6702,8 @@ impl<'a> Run<'a, '_> {
         // This thread's CPU at the stratum's start, less what other strata spent while it waited.
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
         handoff.resize_with(nseeds + probes.len(), || None);
+        // Each relation's rows, delta start and end as its statistics were last read (`stats_changed`).
+        let mut live_seen: Vec<[usize; 3]> = Vec::new();
         loop {
             // Decision 0206: each join's budget (a seed's or a probe's), the work left before its line is next checked
             // against its price (`joins::next_due`), or before a replacement's own limit. A join that spends it is cut
@@ -6733,8 +6799,10 @@ impl<'a> Run<'a, '_> {
                 }
             }
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
-            let live = self.fx().stats(&name, &text_symbols)?;
+            // Only the relations whose rows moved since the last chunk: the others' statistics are as recorded.
+            let live = self.fx().stats_changed(&name, &mut live_seen, &text_symbols)?;
             for (i, (r, l)) in rels.iter().zip(live).enumerate() {
+                let Some(l) = l else { continue };
                 replanned_at.rows(i, l.n);
                 replanned_at.delta(i, l.delta);
                 self.model.stats.delta_rows.insert((*r).clone(), l.delta as f64);
@@ -10423,6 +10491,49 @@ impl Readiness {
 #[cfg(test)]
 mod search_tests {
     use super::*;
+    /// `cyclic_relations` by one pass over the edges is the walk from each relation: every relation that reaches
+    /// itself through the given rules' atoms (a self-read, or a strongly connected part of more than one), over
+    /// generated programs.
+    #[test]
+    fn cyclic_relations_are_those_that_reach_themselves() {
+        let walked = |scc: &BTreeSet<String>, rules: &[&Rule]| -> BTreeSet<String> {
+            let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+            for r in rules {
+                for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
+                    next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+                }
+            }
+            scc.iter().filter(|start| {
+                let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
+                while let Some(x) = todo.pop() {
+                    if x == start.as_str() { return true; }
+                    if seen.insert(x) { todo.extend(next.get(x).into_iter().flatten().copied()); }
+                }
+                false
+            }).cloned().collect()
+        };
+        let mut seed = 7u64;
+        let mut rand = |n: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % n };
+        for _ in 0..60 {
+            let n = 2 + rand(12) as usize;
+            let mut text: String = (0..n).map(|i| format!(".decl r{i}(x:number)\n")).collect();
+            text.push_str(".decl base(x:number)\nbase(1).\n");
+            for i in 0..n {
+                text.push_str(&format!("r{i}(x) :- base(x).\n"));
+                for _ in 0..rand(3) {
+                    let j = rand(n as u64);
+                    let neg = if rand(5) == 0 { format!(", !r{}(x)", rand(n as u64)) } else { String::new() };
+                    text.push_str(&format!("r{i}(x) :- r{j}(x), base(x){neg}.\n"));
+                }
+            }
+            text.push_str(&format!(".output {}\n", (0..n).map(|i| format!("r{i}")).collect::<Vec<_>>().join(",")));
+            let p = super::super::rr::parse(&text).unwrap();
+            // The relations taken as one part (a superset of each strongly connected part), with base outside it.
+            let scc: BTreeSet<String> = (0..n).map(|i| format!("r{i}")).collect();
+            let rules: Vec<&Rule> = p.rules.iter().collect();
+            assert_eq!(cyclic_relations(&scc, &rules), walked(&scc, &rules), "{text}");
+        }
+    }
 
     /// The guard as decision 0137 wrote it, over the same masks: a step sharing no variable with what is joined is
     /// refused while a connected step remains, where it or that connected step has no size of its own.
