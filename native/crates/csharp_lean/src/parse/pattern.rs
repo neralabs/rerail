@@ -7,16 +7,24 @@ impl<'a> P<'a> {
     /// `left is …`: an `is_expression` (a type) or an `is_pattern_expression`, as tree-sitter
     /// reads them:
     /// - a type that is no expression (`int`, `T[]`, `A<B>`) alone is an `is_expression`;
-    /// - a name before a binary operator is one too, and so is every `is name` in the chain the
-    ///   operator starts (`e is A || e is B`);
-    /// - every other is a pattern, whose constant takes the operators after it (`x is null || y`
-    ///   is `x is (null || y)`).
+    /// - a name before a binary operator is one too when the operator binds tighter than the
+    ///   constant's slot allows, or inside a constant that already absorbs (`Cmode`);
+    /// - every other is a pattern. At a chain's start (`Cmode::Start`) its constant takes the
+    ///   operators after it (`x is null || y` is `x is (null || y)`) when `constant_takes` agrees:
+    ///   with no other `is` in the range, or with a plain constant ending it;
+    /// - shapes whose reading depends on more than this (dotted names before an operator, a
+    ///   conditional access that wrapped the chain, a range ending at `?`) refuse.
     pub(super) fn is_tail(&mut self, left: N, s: Slot, min: u8) -> R<N> {
         let start = !self.in_constant;
         let is_expression = match self.is_type_ahead() {
             Some((false, _)) => true,
             // A name alone before an operator, where the `is` does not start its chain (or stands
             // in a constant): an `is_expression`.
+            // A dotted name there: tree-sitter's readings vary; not read.
+            Some((true, after)) if is_binary(after) && self.kind_at(2) == T::Dot => return self.refuse(),
+            // After a conditional access wrapped the chain before it (`a || b?.c != d || e is A ||`),
+            // likewise.
+            Some((true, after)) if is_binary(after) && self.wrapped_chain => return self.refuse(),
             Some((true, after)) => is_binary(after) && (min > P_CONST || self.in_constant),
             None => false,
         };

@@ -362,7 +362,8 @@ impl<'a> P<'a> {
                 }
                 T::PpElse => {
                     let a = self.open(K::PreprocElse, f::ALTERNATIVE, C_NONE)?;
-                    self.tk(K::PreprocElseInAttributeList, K::THashElse)?;
+                    // Its tape kind is `preproc_else`, whose `#else` is stored.
+                    self.tk(K::PreprocElse, K::THashElse)?;
                     self.one_attribute_list()?;
                     self.close(a);
                     break;
@@ -901,6 +902,12 @@ impl<'a> P<'a> {
 
     /// `base_list`: `:` types (with arguments) between `,`s; a record's first with arguments is
     /// its `primary_constructor_base_type`.
+    /// Whether tokens `from..to` are a name alone (dotted, generic or alias-qualified; no suffix).
+    fn name_type_at(&mut self, from: usize, to: usize) -> bool {
+        let mut owed = 0;
+        self.is_ident_at(from) && self.scan_name(from, &mut owed) == Some(to) && owed == 0
+    }
+
     fn base_list(&mut self, record: bool) -> R<()> {
         let n = self.open(K::BaseList, f::NONE, C_NONE)?;
         self.tk(K::BaseList, K::TColon)?;
@@ -913,7 +920,12 @@ impl<'a> P<'a> {
                 self.arguments(f::NONE)?;
                 self.close(b);
             } else {
-                self.ty(TYPE)?;
+                // A record's base names are `_name`s to tree-sitter (no `type`).
+                if record && e.is_some_and(|e| self.name_type_at(0, e)) {
+                    self.name(BARE)?;
+                } else {
+                    self.ty(TYPE)?;
+                }
                 if self.peek() == T::LParen {
                     self.arguments(f::NONE)?;
                 }
@@ -986,7 +998,7 @@ impl<'a> P<'a> {
                             self.leaf(K::TQuestion, f::NONE, C_NONE)?;
                         }
                     }
-                    T::Name if matches!(t.word, w::STRUCT | w::NOTNULL | w::UNMANAGED) && matches!(self.kind_at(1), T::Comma | T::LBrace | T::Semi | T::FatArrow) || t.word == w::STRUCT => {
+                    T::Name if matches!(t.word, w::STRUCT | w::NOTNULL | w::UNMANAGED) && (matches!(self.kind_at(1), T::Comma | T::LBrace | T::Semi | T::FatArrow) || self.is_word_at(1, w::WHERE)) || t.word == w::STRUCT => {
                         self.leaf(keyword(t.word).expect("a constraint"), f::NONE, C_NONE)?;
                     }
                     T::Name if t.word == w::NEW && self.kind_at(1) == T::LParen && self.kind_at(2) == T::RParen => {
@@ -1037,7 +1049,8 @@ impl<'a> P<'a> {
         }
         let n = self.open(K::Parameter, f::NONE, C_NONE)?;
         self.attribute_lists()?;
-        let bare_lambda = self.bare_lambda;
+        // The first parameter alone (`(ref` reads as an expression's start too).
+        let bare_lambda = std::mem::take(&mut self.bare_lambda);
         loop {
             let word = self.word_at(0);
             if !matches!(word, w::THIS | w::SCOPED | w::REF | w::OUT | w::IN | w::READONLY) {
@@ -1051,6 +1064,10 @@ impl<'a> P<'a> {
             }
             if word == w::REF && bare_lambda {
                 break;
+            }
+            // `(in T x, …) =>` and `(out T x, …) =>`: tree-sitter reads a tuple and fails.
+            if matches!(word, w::IN | w::OUT) && bare_lambda {
+                return self.refuse();
             }
             self.leaf(K::Modifier, f::NONE, C_NONE)?;
         }

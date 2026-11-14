@@ -377,7 +377,7 @@ impl<'a> P<'a> {
     }
 
     /// A `_name` from `k`: its end.
-    fn scan_name(&mut self, k: usize, owed: &mut u32) -> Option<usize> {
+    pub(super) fn scan_name(&mut self, k: usize, owed: &mut u32) -> Option<usize> {
         let mut k = k;
         if self.kind_at(k + 1) == T::ColonColon {
             if !self.is_ident_at(k + 2) {

@@ -96,10 +96,10 @@ impl<'a> P<'a> {
     /// An `expression` in slot `s`: an assignment, or a conditional and what it binds.
     pub(super) fn expr(&mut self, s: Slot) -> R<N> {
         self.deeper()?;
-        let (in_constant, cmode) = (self.in_constant, self.cmode);
-        (self.in_constant, self.cmode) = (false, Cmode::Plain);
+        let (in_constant, cmode, wrapped) = (self.in_constant, self.cmode, self.wrapped_chain);
+        (self.in_constant, self.cmode, self.wrapped_chain) = (false, Cmode::Plain, false);
         let left = self.binary_expr(s, 0)?;
-        (self.in_constant, self.cmode) = (in_constant, cmode);
+        (self.in_constant, self.cmode, self.wrapped_chain) = (in_constant, cmode, wrapped);
         let n = if let Some(op) = assignment(self.peek()) {
             if !self.lvalue_node(left) {
                 return self.refuse();
@@ -207,6 +207,9 @@ impl<'a> P<'a> {
 
     /// `left?.name` or `left?[args]`, and the postfix chain after it.
     fn conditional_access(&mut self, left: N, s: Slot) -> R<N> {
+        if matches!(left.kind, K::BinaryExpression | K::IsPatternExpression | K::IsExpression | K::AsExpression) {
+            self.wrapped_chain = true;
+        }
         let n = self.wrap(left, K::ConditionalAccessExpression, s, slot(f::CONDITION, Ctx::Expr));
         self.tk(K::ConditionalAccessExpression, K::TQuestion)?;
         if self.peek() == T::Dot {
@@ -299,6 +302,14 @@ impl<'a> P<'a> {
             return self.lambda(s);
         }
         if self.cast_ahead(close) {
+            // `(T)a.b<C>(…)`: tree-sitter reads `(T)a.b < C > (…)` at times; not read.
+            let mut k = close + 1;
+            while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
+                k += 2;
+            }
+            if self.is_ident_at(k) && self.kind_at(k + 1) == T::Lt && self.scan_type_args(k + 1).is_some_and(|e| self.kind_at(e) == T::LParen) {
+                return self.refuse();
+            }
             let n = self.open_in(K::CastExpression, s)?;
             self.tk(K::CastExpression, K::TLParen)?;
             self.ty(slot(f::TYPE, Ctx::Type))?;
@@ -495,6 +506,8 @@ impl<'a> P<'a> {
     /// A primary that starts with a word.
     fn name_primary(&mut self, s: Slot, t: Tok) -> R<N> {
         match t.word {
+            // `async` as a name (lambdas are read before this): tree-sitter fails on most uses.
+            w::ASYNC => self.refuse(),
             w::THIS => self.leaf_in(K::TThis, s),
             w::BASE => self.leaf_in(K::TBase, s),
             w::NULL => self.leaf_in(K::NullLiteral, s),
@@ -748,6 +761,34 @@ impl<'a> P<'a> {
             T::LBrace => {
                 let n = self.open_in(K::AnonymousObjectCreationExpression, s)?;
                 self.leaf(K::TNew, f::NONE, C_NONE)?;
+                // Names alone as members (`new { a, b, }`): with a trailing `,`, every `,` and the
+                // `}` are stored; without one, tree-sitter's reading is not known.
+                let close = self.matching(0).ok_or_else(|| Refusal::Parse(self.tok().start))?;
+                let mut bare = 0;
+                let mut j = 1;
+                while j < close {
+                    match self.kind_at(j) {
+                        T::LParen | T::LBracket | T::LBrace => j = self.matching(j).unwrap_or(close),
+                        _ if self.is_ident_at(j) && matches!(self.kind_at(j + 1), T::Comma | T::RBrace) && (j == 1 || self.kind_at(j - 1) == T::Comma) => bare += 1,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                if bare > 0 {
+                    // Each name and its `,` fill `{` … `}`.
+                    let all = self.kind_at(close - 1) == T::Comma && bare * 2 == close - 1;
+                    if !all {
+                        return self.refuse();
+                    }
+                    self.tk(K::AnonymousObjectCreationExpression, K::TLBrace)?;
+                    while self.peek() != T::RBrace {
+                        self.expr(EXPR)?;
+                        self.leaf(K::TComma, f::NONE, C_NONE)?;
+                    }
+                    self.leaf(K::TRBrace, f::NONE, C_NONE)?;
+                    self.close(n);
+                    return Ok(n);
+                }
                 self.list(K::AnonymousObjectCreationExpression, T::RBrace, true, true, |p| {
                     if p.is_ident() && p.kind_at(1) == T::Eq {
                         p.ident(BARE)?;
@@ -1095,6 +1136,8 @@ impl<'a> P<'a> {
     /// An `interpolation` from its braces at `at`: its expression, alignment and format, read
     /// over tokens lexed again from its bytes. Past its closing braces.
     fn interpolation(&mut self, at: usize, braces: usize) -> R<usize> {
+        // Extras not yet written were lexed past the string's start, in its content: none.
+        self.extras.truncate(self.e);
         let i = self.open_at(K::Interpolation, f::NONE, C_NONE, at as u32);
         self.piece(K::InterpolationBrace, f::NONE, at, at + braces);
         self.relex_at(at + braces);
@@ -1122,19 +1165,30 @@ impl<'a> P<'a> {
         } else if self.peek() != T::RBrace {
             return self.refuse();
         } else {
-            self.flush(e as u32)?;
+            // The closing braces' token takes the blanks before it.
+            let from = self.last_end as usize;
+            if !self.src[from..e].iter().all(|c| c.is_ascii_whitespace()) {
+                return self.refuse();
+            }
+            e = from;
         }
         let mut b = 0;
-        while self.src.get(e + b) == Some(&b'}') && b < braces {
+        while self.src[e + b..].first().is_some_and(|c| c.is_ascii_whitespace()) && self.src.get(e + b) != Some(&b'}') {
+            b += 1;
+        }
+        let blanks = b;
+        let mut b = 0;
+        while self.src.get(e + blanks + b) == Some(&b'}') && b < braces {
             b += 1;
         }
         if b != braces {
             return self.refuse();
         }
-        self.piece(K::InterpolationBrace, f::NONE, e, e + braces);
-        self.w.close(i.at, (e + braces) as u32);
-        self.last_end = (e + braces) as u32;
-        Ok(e + braces)
+        let end = e + blanks + braces;
+        self.piece(K::InterpolationBrace, f::NONE, e, end);
+        self.w.close(i.at, end as u32);
+        self.last_end = end as u32;
+        Ok(end)
     }
 
     // ---- Queries.

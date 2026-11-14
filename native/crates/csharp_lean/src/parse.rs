@@ -302,8 +302,10 @@ struct P<'a> {
     /// Reading a constant pattern that took the operators after its `is` (`x is null || y is
     /// null`): an `is` in it takes none.
     in_constant: bool,
-    /// In the parameters of a lambda with no modifiers: `ref T` is a `ref_type`.
+    /// At the first parameter of a lambda with no modifiers: `ref T` is a `ref_type`.
     bare_lambda: bool,
+    /// A conditional access wrapped an operator's chain in this expression (`a || b?.c`).
+    wrapped_chain: bool,
     /// How the next constant pattern reads (set by `is`).
     cmode: Cmode,
     /// The tokens dropped since the last node written (`tk`): their token index, parent, kind,
@@ -361,6 +363,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             in_constant: false,
             bare_lambda: false,
             cmode: Cmode::Plain,
+            wrapped_chain: false,
             dropped: Vec::new(),
             bare_after: None,
             closes: 0,
