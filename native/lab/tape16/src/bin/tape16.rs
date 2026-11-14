@@ -1337,7 +1337,8 @@ fn cmd_prim(path: &str) {
         for q in ["nearest, every node", "outermost, every node", "has, every node", "nearest, one node", "has, one node",
             "has, every node, backwards", "has, one node, skipping (exact summary)", "has, one node, by preorder steps",
             "has, one node, position lists", "every node of the set, a code sweep (a node)", "every node of the set, position lists (a node)",
-            "every node of the set, a sweep skipping by the exact summary (a node)"] {
+            "every node of the set, a sweep skipping by the exact summary (a node)", "every node of the set, 64 codes at a time (a node)",
+            "nearest, every node, from the S-nodes (64 codes at a time)", "outermost, every node, from the S-nodes", "has, every node, from the S-nodes (climbing)"] {
             rows.push(format!("{q} ({s})"));
         }
     }
@@ -1365,7 +1366,7 @@ fn cmd_prim(path: &str) {
         let post = prim::Postings::new(r, &l.kind_of);
         sum_bytes[c][2] += post.bytes();
         for (k, set) in l.sets.iter().enumerate() {
-            let row = k * 12;
+            let row = k * 16;
             let (tn, to, th) = &truths[k];
             let (_, x) = best3(|| prim::nearest_all(r, set, &mut near));
             wrong[c] += near.iter().zip(tn).filter(|(a, b)| a != b).count();
@@ -1420,8 +1421,24 @@ fn cmd_prim(path: &str) {
             wrong[c] += usize::from(every != want);
             cost[row + 11][c] += x;
             count[row + 11][c] += n as u64;
+            let (_, x) = best3(|| prim::every_groups(r, set, &mut every));
+            wrong[c] += usize::from(every != want);
+            cost[row + 12][c] += x;
+            count[row + 12][c] += n as u64;
+            let (_, x) = best3(|| prim::axis_groups(r, set, false, &mut near));
+            wrong[c] += near.iter().zip(tn).filter(|(a, b)| a != b).count();
+            cost[row + 13][c] += x;
+            count[row + 13][c] += n as u64;
+            let (_, x) = best3(|| prim::axis_groups(r, set, true, &mut near));
+            wrong[c] += near.iter().zip(to).filter(|(a, b)| a != b).count();
+            cost[row + 14][c] += x;
+            count[row + 14][c] += n as u64;
+            let (_, x) = best3(|| prim::has_groups(r, set, &mut flag));
+            wrong[c] += flag.iter().zip(th).filter(|(a, b)| a != b).count();
+            cost[row + 15][c] += x;
+            count[row + 15][c] += n as u64;
         }
-        let base = l.sets.len() * 12;
+        let base = l.sets.len() * 16;
         for (j, &f) in l.fields.iter().enumerate() {
             let (got, x) = best3(|| sample.iter().map(|&p| prim::field_one(r, &l.field_of, f, ids[p])).collect::<Vec<_>>());
             for (g, &p) in got.iter().zip(sample) {

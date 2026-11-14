@@ -110,6 +110,71 @@ impl Packed {
     pub fn bytes(&self) -> usize {
         self.words.len() * 8 + 1
     }
+    /// The codes from 0 to n, 64 at a time: `f(base, m)` with bit j of m set when value base + j is in `set`
+    /// (indexed by value). 64 values at width w fill exactly w words, so each group is w aligned words read
+    /// with constant shifts: the loop is compiled once per width, as generated code would be.
+    pub fn match_groups(&self, n: usize, set: &[bool], f: impl FnMut(usize, u64)) {
+        macro_rules! by_width {
+            ($($w:literal)*) => {
+                match self.w {
+                    $($w => match_w::<$w>(&self.words, n, set, f),)*
+                    _ => match_any(self, n, set, f),
+                }
+            };
+        }
+        by_width!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
+    }
+}
+
+/// `$body` once for each j in 0..64, with j a constant in each copy.
+macro_rules! unroll64 {
+    ($j:ident, $body:block) => {
+        unroll64!(@ $j, $body, 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+            32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63)
+    };
+    (@ $j:ident, $body:block, $($n:literal)*) => {
+        $({ const $j: usize = $n; $body })*
+    };
+}
+
+#[inline(always)]
+fn match_w<const W: usize>(words: &[u64], n: usize, set: &[bool], mut f: impl FnMut(usize, u64)) {
+    let full = n / 64;
+    let sp = set.as_ptr();
+    for g in 0..full {
+        // SAFETY: group g's words are g·W .. g·W + W, inside the array (n values at W bits, one word of padding).
+        let gw = unsafe { words.as_ptr().add(g * W) };
+        let mut m = 0u64;
+        unroll64!(J, {
+            let (k, o) = (J * W >> 6, J * W & 63);
+            // SAFETY: k + 1 ≤ W, inside the group's words and the padding word.
+            let v = unsafe {
+                if o + W <= 64 { *gw.add(k) >> o } else { (*gw.add(k) >> o) | (*gw.add(k + 1) << ((64 - o) & 63)) }
+            } & ((1u64 << W) - 1);
+            // SAFETY: every code indexes the set (the set covers the language's codes).
+            m |= u64::from(unsafe { *sp.add(v as usize) }) << J;
+        });
+        f(g * 64, m);
+    }
+    let rest = n - full * 64;
+    if rest > 0 {
+        let mut m = 0u64;
+        for j in 0..rest {
+            let v = extract(words, (full * 64 + j) * W, W as u32);
+            m |= u64::from(set[v as usize]) << j;
+        }
+        f(full * 64, m);
+    }
+}
+
+fn match_any(p: &Packed, n: usize, set: &[bool], mut f: impl FnMut(usize, u64)) {
+    for g in (0..n).step_by(64) {
+        let mut m = 0u64;
+        for j in 0..(n - g).min(64) {
+            m |= u64::from(set[p.get(g + j) as usize]) << j;
+        }
+        f(g, m);
+    }
 }
 
 /// A block of `BLOCK` values at a time: a base (the block's least value, if kept), a width `w`, and the values
@@ -271,6 +336,11 @@ pub trait Reader {
     /// A node's preorder number (its rank), and the code by rank: what a block summary is indexed by.
     fn rank(&self, id: usize) -> usize;
     fn code_by_rank(&self, r: usize) -> u32;
+    /// The codes by rank as one packed array, when the candidate keeps them so (a sweep then reads them 64 at a
+    /// time).
+    fn packed_codes(&self) -> Option<&Packed> {
+        None
+    }
     /// Ids are preorder numbers (rank is the identity), so a node is found from its rank.
     const PREORDER_IDS: bool;
 }
@@ -1146,6 +1216,9 @@ impl<P: Pos> Reader for XF<P> {
     fn code_by_rank(&self, r: usize) -> u32 {
         self.code(r)
     }
+    fn packed_codes(&self) -> Option<&Packed> {
+        Some(&self.code)
+    }
     const PREORDER_IDS: bool = true;
 }
 
@@ -1644,6 +1717,9 @@ impl<P: Pos> Reader for B<P> {
     #[inline(always)]
     fn code_by_rank(&self, r: usize) -> u32 {
         self.code.get(r) as u32
+    }
+    fn packed_codes(&self) -> Option<&Packed> {
+        Some(&self.code)
     }
     const PREORDER_IDS: bool = false;
 }

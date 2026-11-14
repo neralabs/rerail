@@ -181,6 +181,48 @@ the M5 under load, so compare columns:
   misses saved: 40 against 28 a node for the code sweep.
 - **Dropped.** The tape keeps one array a field, per block.
 
+### Step 3, second item: 64 codes at a time, and the axes driven by the S-nodes (M5, impl/sqlite and data-layer)
+
+XF, MF and BE keep the codes as one packed array at width w (9 bits for Python). 64 codes at width
+w fill exactly w aligned words. So a sweep compiled once per width reads a group with constant
+shifts, looks each code up in the set (one byte a code), and builds a 64-bit match mask. The
+matches come out of the mask by trailing zeros, as in simdjson. Nothing is decoded or stored: the
+mask lives in a register.
+
+The bulk axes then read only the S-nodes:
+
+- **`nearest` and `outermost`:** between two events (an S-node, or the end of an open one) the
+  answer is constant, so it is written as a run. Only an S-node's subtree end is read.
+- **`has`:** the nodes from one S-node up to the next, s, all have s as their next S-node. So each
+  has one exactly when it is an ancestor of s. A climb from s, while the parent is at or after the
+  S-node before, marks them, and each node is climbed over at most once.
+
+Every answer is right on all three corpora (rerail: functions 0.3–0.6 ns on every axis). ns a node, M5 under load (compare columns):
+
+| | XF before | XF now | BE before | BE now |
+|---|---|---|---|---|
+| every node of the set (fn), sqlite | 1.7 | **0.3** | 1.6 | **0.3** |
+| nearest, every node (fn), sqlite | 2.2 | **0.5** | 5.8 | **0.7** |
+| outermost, every node (fn), sqlite | 2.4 | 0.4 | 5.8 | 0.6 |
+| has, every node (fn), sqlite (before: read backwards) | 4.5 | **0.5** | 15.4 | **1.0** |
+| nearest, every node (call), sqlite | 2.7 | 1.2 | 6.8 | 1.9 |
+| has, every node (call), sqlite | 4.6 | 2.1 | 14.2 | 3.1 |
+| nearest / has, every node (fn), data-layer | 2.1 / 4.6 | 0.4 / 0.3 | 6.0 / 10.8 | 0.4 / 0.5 |
+| nearest / has, every node (string, 24% of nodes), data-layer | | 2.3 / 3.1 | | 3.2 / 7.5 |
+
+- **The code sweep is 5× faster:** 7 instructions a node instead of 28. That is within 0.2 ns of
+  the per-kind position lists (0.1 ns, 2.39 B a node), with no bytes stored. The first try, not
+  unrolled, was 22 instructions: its shifts were variable. Unrolling the 64 steps made each shift
+  a constant.
+- **Bulk axes cost what their sparse sets cost.** For functions, classes and blocks (0.04–1.9% of
+  nodes) the three axes cost 0.3–0.8 ns a node: the time to write the answer, plus the sweep.
+- **BE gets most of the gap back.** It reads a subtree end, or a parent, only at S-nodes and their
+  ancestors. So its 2.5–3× cost (t38, E12) shrinks to 1.0–2.4× on the bulk axes.
+- **Dense sets stay output-bound.** Strings are 24% of the data-layer's nodes, so there the S-node
+  methods cost about what the plain sweep costs.
+- So the bulk axes no longer need the plain sweeps. The plain sweeps stay in the lab as the
+  baseline.
+
 ## 4. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
@@ -202,6 +244,8 @@ In order. Each step is measured on all three corpora, every answer checked.
    price, not part of the design.
 3. **Layout.**
    - ~~Interleave each block's arrays~~: measured as XR, 1.3–1.7× slower; dropped.
+   - Done: the code sweep 64 codes at a time, and bulk `nearest`, `outermost` and `has` driven by
+     the S-nodes (0.3–0.8 ns a node for sparse sets).
    - Narrower codes a block: each block gets its own small code table (0.70 B a node today), so
      repeated structure gives repeated bits.
    - MF's gap end with the gap stored beside the next start.

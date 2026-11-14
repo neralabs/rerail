@@ -78,6 +78,44 @@ pub fn nearest_all<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
     }
 }
 
+/// `nearest_all` (or, with `outer`, `outermost_all`) from the S-nodes alone: the codes are matched 64 at a
+/// time, and only an S-node's subtree end is read. Between two events (an S-node, the end of an open one) the
+/// answer is constant, so it is written as a run.
+pub fn axis_groups<R: Reader>(r: &R, set: &[bool], outer: bool, out: &mut Vec<u32>) {
+    let n = r.len();
+    out.clear();
+    let mut stack: Vec<(u32, usize)> = Vec::with_capacity(32);
+    // Writes every node's answer up to rank t.
+    let fill = |out: &mut Vec<u32>, stack: &mut Vec<(u32, usize)>, t: usize| {
+        while out.len() < t {
+            while stack.last().is_some_and(|&(_, end)| end <= out.len()) {
+                stack.pop();
+            }
+            let (v, lim) = match stack.last() {
+                Some(&(a, end)) => (if outer { stack[0].0 } else { a }, end.min(t)),
+                None => (NONE, t),
+            };
+            out.resize(lim, v);
+        }
+    };
+    let mut on = |s: usize| {
+        fill(out, &mut stack, s + 1);
+        let id = r.id_of(s);
+        let end = r.subtree_end(id);
+        stack.push((s as u32, if R::PREORDER_IDS { end } else { r.rank(end) }));
+    };
+    match r.packed_codes() {
+        Some(p) => p.match_groups(n, set, |base, mut m| {
+            while m != 0 {
+                on(base + m.trailing_zeros() as usize);
+                m &= m - 1;
+            }
+        }),
+        None => (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
+    }
+    fill(out, &mut stack, n);
+}
+
 /// The outermost strict ancestor in S, for every node: the bottom of the same stack.
 pub fn outermost_all<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
     out.clear();
@@ -246,6 +284,38 @@ pub fn has_all_back<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
             Some(q) => id = q,
             None => break,
         }
+    }
+}
+
+/// has for every node from the S-nodes alone. The nodes from one S-node up to the next, s, all have s as their
+/// next S-node, so each has one exactly when it is an ancestor of s: a climb from s's parent while the parent
+/// is at or after the S-node before. (An ancestor of s before that S-node contains it too, so it was marked
+/// already.) Each node is climbed over at most once; the codes are matched 64 at a time.
+pub fn has_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
+    let n = r.len();
+    out.clear();
+    out.resize(n, false);
+    let mut prev = 0usize;
+    let mut on = |s: usize| {
+        let mut id = r.id_of(s);
+        while let Some(q) = r.parent(id) {
+            let k = if R::PREORDER_IDS { q } else { r.rank(q) };
+            if k < prev {
+                break;
+            }
+            out[k] = true;
+            id = q;
+        }
+        prev = s;
+    };
+    match r.packed_codes() {
+        Some(p) => p.match_groups(n, set, |base, mut m| {
+            while m != 0 {
+                on(base + m.trailing_zeros() as usize);
+                m &= m - 1;
+            }
+        }),
+        None => (0..n).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
     }
 }
 
@@ -530,6 +600,21 @@ pub fn every_sweep<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
             out.push(k as u32);
         }
     }
+}
+
+/// Every node of the set, 64 codes at a time: a match mask a group, its bits taken out by trailing zeros.
+/// A candidate without one packed code array falls back to the plain sweep.
+pub fn every_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
+    let Some(p) = r.packed_codes() else {
+        return every_sweep(r, set, out);
+    };
+    out.clear();
+    p.match_groups(r.len(), set, |base, mut m| {
+        while m != 0 {
+            out.push((base + m.trailing_zeros() as usize) as u32);
+            m &= m - 1;
+        }
+    });
 }
 
 /// The same from the position lists: each list read in order, merged.
