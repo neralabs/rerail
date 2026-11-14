@@ -1845,7 +1845,7 @@ fn end_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Record
 
 /// Output `o`'s window from the bytes (`native_cpu_bytes`), a function of its own: `(bytes,
 /// len, p)` to the output's bits for the file's bytes `p .. p + 64`.
-fn bytes_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16) -> Result<(), Error> {
+fn bytes_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(func, &mut builder_context);
     let entry = f.create_block();
@@ -1856,6 +1856,25 @@ fn bytes_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_b
     let file = crate::native_cpu_bytes::File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
     let mut heads = vec![];
     let w = bw.word(&mut f, &file, o, p[2], &mut heads);
+    f.ins().return_(&[w]);
+    f.seal_all_blocks();
+    f.finalize();
+    crate::native_cpu_shape::check(func, &heads, carries).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+}
+
+/// `escaped(a)`'s carry in (`Bytewise::carry_fn`), a function of its own: `(bytes, len, pos)`
+/// to the parity of `a`'s run that ends at `pos - 1`, a window at a time.
+fn carry_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_bytes::Bytewise<'_>, a: usize) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let entry = f.create_block();
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let k = Consts::make(&mut f);
+    let file = crate::native_cpu_bytes::File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
+    let mut heads = vec![];
+    let w = bw.carry_fn(&mut f, &file, a, p[2], &mut heads);
     f.ins().return_(&[w]);
     f.seal_all_blocks();
     f.finalize();
@@ -3526,7 +3545,7 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize), Error> {
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
-    let bytewise = crate::native_cpu_bytes::Bytewise::of(made);
+    let mut bytewise = crate::native_cpu_bytes::Bytewise::of(made);
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
@@ -3565,6 +3584,22 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         _ => Vec::new(),
     };
+    // Each `escaped`'s carry past a window's first byte, a function of its own (`carry_fn`):
+    // cold, out of the loops that read it.
+    let mut carry_calls = Vec::new();
+    if records.is_some() && !part_calls.is_empty() {
+        let plain = crate::native_cpu_bytes::Bytewise::of(made);
+        for a in plain.escaped_runs() {
+            let mut sig = words_signature(module, 3);
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+            let id = module.declare_function(&format!("{name}_carry{a}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+            carry_fn(&mut func, &plain, a)?;
+            carry_calls.push((id, func));
+            bytewise.carries.push((a, id, sig));
+        }
+    }
+    let carry_names: Vec<cranelift_codegen::ir::UserExternalName> = carry_calls.iter().map(|(id, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     // Each output the token loop makes from the bytes but the skip, a window function of its
     // own (`bytes_fn`); the skip's is the refill's, inline.
     let mut byte_calls = Vec::new();
@@ -3574,7 +3609,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
             let id = module.declare_function(&format!("{name}_bytes{o}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
-            bytes_fn(&mut func, &bytewise, o)?;
+            bytes_fn(&mut func, &bytewise, o, &carry_names)?;
             byte_calls.push((o, id, sig, func));
         }
     }
@@ -3902,6 +3937,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         owns.extend(walk_names(Some(&walks)));
         owns.extend(record_call.iter().chain(&part_calls).map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         owns.extend(byte_ids.iter().map(|(_, id, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
+        owns.extend(carry_names.iter().cloned());
         shape = crate::native_cpu_shape::check(&context.func, &heads, &owns);
     }
     if round == n_regions || !worth_calling(&context.func, &calls) {
@@ -3934,6 +3970,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     for (_, id, _, func) in byte_calls {
         regions.push((id, func));
     }
+    regions.extend(carry_calls);
     // The walks' functions, checked where they are built (`native_cpu_walk::build_walk`).
     for (w, built) in walks.built.into_inner().into_iter().enumerate() {
         if let Some(func) = built {

@@ -31,6 +31,9 @@ pub struct Bytewise<'a> {
     plan: Plan,
     /// Each instruction: made from the bytes alone.
     can: Vec<bool>,
+    /// The functions of `escaped(a)`'s carry in past the byte before (`carry_fn`): each
+    /// `(a, id, signature)`. Where `a` has none, its loop is inline (in that function itself).
+    pub carries: Vec<(usize, cranelift_module::FuncId, cranelift_codegen::ir::Signature)>,
 }
 
 /// Where the reads are: the file's first byte and length, and the body's constants.
@@ -57,7 +60,26 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can }
+        Bytewise { native, plan, can, carries: Vec::new() }
+    }
+
+    /// The runs whose `escaped` the bytes make: each `a`, once.
+    pub fn escaped_runs(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = self.native.insts.iter().enumerate().filter_map(|(x, i)| match *i {
+            BlockInst::Escaped(a) if self.can[x] => Some(usize::from(a)),
+            _ => None,
+        }).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// `escaped(a)`'s carry in at `pos` where `a` holds at `pos - 1`: a function of its own,
+    /// `(bytes, len, pos)` to the parity of `a`'s run that ends at `pos - 1`. Cold: a run of `a`
+    /// at a window's first byte.
+    pub fn carry_fn(&self, f: &mut FunctionBuilder<'_>, at: &File, a: usize, pos: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        let zero = f.ins().iconst(types::I64, 0);
+        self.carry_loop(f, at, a, pos, zero, heads)
     }
 
     /// Whether output `o` is made from the bytes.
@@ -186,9 +208,7 @@ impl<'a> Bytewise<'a> {
     /// Whether `a`'s run that ends at `pos - 1` is odd, 0 or 1: `escaped(a)` at `pos`. Where
     /// `a` does not hold at `pos - 1`, none; else a window at a time back to the run's start.
     fn carry_in(&self, f: &mut FunctionBuilder<'_>, at: &File, a: usize, pos: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
-        let (slow, head, join) = (f.create_block(), f.create_block(), f.create_block());
-        f.append_block_param(head, types::I64);
-        f.append_block_param(head, types::I64);
+        let (slow, join) = (f.create_block(), f.create_block());
         f.append_block_param(join, types::I64);
         let before = f.ins().iadd_imm(pos, -1);
         let mut memo = HashMap::new();
@@ -197,6 +217,27 @@ impl<'a> Bytewise<'a> {
         f.ins().brif(first, slow, &[], join, &[zero.into()]);
         f.switch_to_block(slow);
         f.set_cold_block(slow);
+        let parity = match self.carries.iter().find(|c| c.0 == a) {
+            Some((_, id, sig)) => {
+                let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+                let signature = f.import_signature(sig.clone());
+                let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+                let call = f.ins().call(callee, &[at.bytes, at.len, pos]);
+                f.inst_results(call)[0]
+            }
+            None => self.carry_loop(f, at, a, pos, zero, heads),
+        };
+        f.ins().jump(join, &[parity.into()]);
+        f.switch_to_block(join);
+        f.block_params(join)[0]
+    }
+
+    /// The parity of `a`'s run that ends at `pos - 1`, a window at a time back to its start.
+    fn carry_loop(&self, f: &mut FunctionBuilder<'_>, at: &File, a: usize, pos: Value, zero: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        let (head, join) = (f.create_block(), f.create_block());
+        f.append_block_param(head, types::I64);
+        f.append_block_param(head, types::I64);
+        f.append_block_param(join, types::I64);
         f.ins().jump(head, &[pos.into(), zero.into()]);
         // The run's bits from `e - 1` down, in the window that ends there.
         f.switch_to_block(head);

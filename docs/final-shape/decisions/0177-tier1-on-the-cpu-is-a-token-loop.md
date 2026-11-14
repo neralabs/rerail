@@ -429,3 +429,7 @@ A token whose first byte starts no word looks up none: the record tables carry a
 (`RecordTables::wordy`), made from the grammar's words, and the loop branches past the hash,
 as the lean lexer's `words != 0`. Punctuation, numbers and strings take no hash.
 
+`escaped(a)`'s carry past a window's first byte (a run of backslashes before it) is a
+function of its own a run (`carry_fn`); the loops that read it call it from a cold block, and
+keep only the test of the byte before inline.
+
