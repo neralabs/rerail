@@ -1301,14 +1301,14 @@ fn cmd_prim_gpu(path: &str) {
     let n = tree.len();
     println!("{}\n", rerail_tape_lab::measure::machine());
     println!("{path}: language {tag}, {nfiles} files as one forest, {n} nodes; GPU: one thread a group of 64 nodes, best of 8 warm dispatches; CPU: one thread, from the S-nodes, best of 3\n");
-    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has | BE nearest, carry by climbing | CPU nearest | CPU outermost | CPU has |");
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has, climbing | GPU has, from counts | GPU span | BE nearest, carry by climbing | CPU nearest | CPU outermost | CPU has |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for (s, kinds) in SETS {
         let set = names.set(tag, &codes, kinds);
         let share = tree.nodes.iter().filter(|x| set[codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())] as usize]).count() as f64 / n as f64;
         let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set).unwrap_or_else(|e| die(&e));
         for (name, r, c) in rows {
-            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3],
+            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
                 r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
         }
     }

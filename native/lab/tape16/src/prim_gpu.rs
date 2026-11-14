@@ -315,6 +315,144 @@ kernel void b_outer(SARGS) {
         out2[k] = a;
     }
 }
+
+// ---- has from counts: has(a) is "an S-node ranks after a and before a's close", so with S(r), the S-nodes
+// ranked below r (a scan of the groups' mask counts), it is S(close rank) − S(a + 1) > 0. No climb. ----
+#define CARGS device const uchar* buf [[buffer(0)]], constant uint* P [[buffer(1)]], device const uchar* tabs [[buffer(2)]], \
+    device const uchar* set [[buffer(3)]], device ulong* masks [[buffer(4)]], device uint* out [[buffer(5)]], \
+    constant uint& mode [[buffer(6)]], device atomic_uint* bad [[buffer(7)]], device uint* cnt [[buffer(14)]], \
+    device uint* cex [[buffer(15)]], device ulong2* span [[buffer(16)]], constant uint* lv [[buffer(12)]], \
+    constant uint& level [[buffer(13)]], uint g [[thread_position_in_grid]]
+
+kernel void c_leaf(CARGS) { if (g < lv[2]) cnt[g] = popcount(masks[g]); }
+kernel void c_up(CARGS) {
+    uint off = lv[1 + 2 * level], n = lv[2 + 2 * level], poff = lv[3 + 2 * level], pn = lv[4 + 2 * level];
+    if (g >= pn) return;
+    uint a = 0;
+    for (uint c = g * 64; c < min(n, g * 64 + 64); c++) a += cnt[off + c];
+    cnt[poff + g] = a;
+}
+kernel void c_down(CARGS) {
+    uint off = lv[1 + 2 * level], n = lv[2 + 2 * level], poff = lv[3 + 2 * level], pn = lv[4 + 2 * level];
+    if (g >= pn) return;
+    uint a = level + 2 == lv[0] ? 0 : cex[poff + g];
+    for (uint c = g * 64; c < min(n, g * 64 + 64); c++) { cex[off + c] = a; a += cnt[off + c]; }
+}
+// S-nodes ranked below r.
+inline uint s_below(device const uint* cex, device const uint* cnt, device const ulong* masks, uint groups, uint r) {
+    uint q = r >> 6;
+    if (q >= groups) return cex[groups - 1] + cnt[groups - 1];
+    return cex[q] + popcount(masks[q] & ((1ul << (r & 63)) - 1ul));
+}
+
+kernel void xf_hasc(CARGS) {
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    uint G = lv[2];
+    for (uint k = k0; k < min(x.n, k0 + 64); k++) {
+        out[k] = s_below(cex, cnt, masks, G, x.end(k)) > s_below(cex, cnt, masks, G, k + 1) ? 1u : 0u;
+    }
+}
+
+// BE: a node that closes in its group's walk has its close rank there (the opens so far); the few still open
+// at the walk's end find their close.
+kernel void b_hasc(CARGS) {
+    Rd r = { buf, P, 0 };
+    BC b = rd_b(r);
+    Tab tb = { tabs };
+    uint k0 = g * 64;
+    if (k0 >= b.n) return;
+    uint G = lv[2];
+    uint q = b_select1(b, k0, tb);
+    uint st[64], sq[64];
+    int sp = 0;
+    uint hi = min(64u, b.n - k0), c = 0;
+    while (q < b.nbits) {
+        ulong word = b.bits[q >> 6] >> (q & 63);
+        uint left = 64 - (q & 63);
+        bool done = false;
+        for (uint i = 0; i < left && q < b.nbits; i++, q++) {
+            if ((word >> i) & 1) {
+                if (c == hi) { done = true; break; }
+                st[sp] = k0 + c; sq[sp] = q; sp++;
+                c++;
+            } else if (sp > 0) {
+                sp--;
+                out[st[sp]] = s_below(cex, cnt, masks, G, k0 + c) > s_below(cex, cnt, masks, G, st[sp] + 1) ? 1u : 0u;
+            }
+        }
+        if (done) break;
+    }
+    for (int i = 0; i < sp; i++) {
+        uint cr = b.rank1(b.findclose(sq[i], tb));
+        out[st[i]] = s_below(cex, cnt, masks, G, cr) > s_below(cex, cnt, masks, G, st[i] + 1) ? 1u : 0u;
+    }
+}
+
+// ---- spans: (start, end) of every node ----
+kernel void xfl_span(CARGS) {
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r); PFor st = rd_pfor(r); PFor ln = rd_pfor(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    for (uint k = k0; k < min(x.n, k0 + 64); k++) { ulong s0 = st.get(k); span[k] = ulong2(s0, s0 + ln.get(k)); }
+}
+// MF: the starts first; then each end is the answer's start just past the subtree, less the gap.
+kernel void xfg_start(CARGS) {
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r); Pred st = rd_pred(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    for (uint k = k0; k < min(x.n, k0 + 64); k++) span[k].x = st.get(k);
+}
+kernel void xfg_end(CARGS) {
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r); Pred st = rd_pred(r); PFor gap = rd_pfor(r);
+    uint n = r.val(); ulong src = ulong(r.val()) | (ulong(r.val()) << 32);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    for (uint k = k0; k < min(n, k0 + 64); k++) {
+        uint nx = x.end(k);
+        ulong s1 = nx < n ? span[nx].x : src;
+        ulong z = gap.get(k);
+        span[k].y = ulong(long(s1) - (long(z >> 1) ^ -long(z & 1)));
+    }
+}
+// BE: ends in postorder; a close's postorder number is the closes before it (its position less the opens).
+kernel void b_span(CARGS) {
+    Rd r = { buf, P, 0 };
+    BC b = rd_b(r); Ef st = rd_ef(r); Ef en = rd_ef(r);
+    Tab tb = { tabs };
+    uint k0 = g * 64;
+    if (k0 >= b.n) return;
+    uint q = b_select1(b, k0, tb);
+    uint sk[64], sq[64];
+    int sp = 0;
+    uint hi = min(64u, b.n - k0), c = 0;
+    for (uint k = k0; k < k0 + hi; k++) span[k].x = st.get(k, tb);
+    while (q < b.nbits) {
+        ulong word = b.bits[q >> 6] >> (q & 63);
+        uint left = 64 - (q & 63);
+        bool done = false;
+        for (uint i = 0; i < left && q < b.nbits; i++, q++) {
+            if ((word >> i) & 1) {
+                if (c == hi) { done = true; break; }
+                sk[sp] = k0 + c; sq[sp] = q; sp++;
+                c++;
+            } else if (sp > 0) {
+                sp--;
+                span[sk[sp]].y = en.get(q - (k0 + c), tb);
+            }
+        }
+        if (done) break;
+    }
+    for (int i = 0; i < sp; i++) {
+        uint cp = b.findclose(sq[i], tb);
+        span[sk[i]].y = en.get(cp - b.rank1(cp), tb);
+    }
+}
 "#;
 
 pub struct Row {
@@ -322,17 +460,25 @@ pub struct Row {
     pub ns: [f64; 4],
     /// BE: nearest with the carry found by climbing (the first form), against the scan in `ns`.
     pub no_carry: Option<f64>,
+    /// has from counts (the mask counts scanned, then a formula a node), and every node's span.
+    pub has_counts: f64,
+    pub span: f64,
     pub wrong: usize,
 }
 
 /// One candidate, one set: the kernels `<pre>_match`, `<pre>_nearest`, `<pre>_has` over its image.
-pub fn run(pre: &str, image: &GpuImage, n: usize, set: &[bool], truth: (&[u32], &[u32], &[bool])) -> Result<Row, String> {
+pub fn run(pre: &str, span_kernels: &[&str], image: &GpuImage, n: usize, set: &[bool], truth: (&[u32], &[u32], &[bool]),
+    truth_span: &[(u64, u64)]) -> Result<Row, String> {
     let device = Device::system_default().ok_or("no Metal device")?;
     let src = format!("{}{}", crate::inplace_gpu::SOURCE, KERNELS);
     let lib = device.new_library_with_source(&src, &metal::CompileOptions::new()).map_err(|e| e.to_string())?;
-    let pipe = |name: &str| -> Result<metal::ComputePipelineState, String> {
-        let f = lib.get_function(&format!("{pre}_{name}"), None).map_err(|e| e.to_string())?;
+    let lib_pipe = |name: &str| -> Result<metal::ComputePipelineState, String> {
+        let f = lib.get_function(name, None).map_err(|e| e.to_string())?;
         device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())
+    };
+    let pipe = |name: &str| -> Result<metal::ComputePipelineState, String> {
+        let pref = format!("{pre}_{name}");
+        lib_pipe(if name.starts_with("c_") { name } else { &pref })
     };
     let (pm, pn, ph) = (pipe("match")?, pipe("nearest")?, pipe("has")?);
     let opts = MTLResourceOptions::StorageModeShared;
@@ -364,6 +510,8 @@ pub fn run(pre: &str, image: &GpuImage, n: usize, set: &[bool], truth: (&[u32], 
     let baux = device.new_buffer((n * 2).max(2) as u64, opts);
     let bout2 = device.new_buffer((n * 4).max(4) as u64, opts);
     let blv = buf(&u32s(&lv));
+    let (bcnt, bcex) = (device.new_buffer((off * 4) as u64, opts), device.new_buffer((off * 4) as u64, opts));
+    let bspan = device.new_buffer((n * 16).max(16) as u64, opts);
     let queue = device.new_command_queue();
     // A stage: pipeline, mode, level, threads.
     type Stage<'a> = (&'a metal::ComputePipelineState, u32, u32, usize);
@@ -392,6 +540,9 @@ pub fn run(pre: &str, image: &GpuImage, n: usize, set: &[bool], truth: (&[u32], 
                     enc.set_buffer(8 + i as u64, Some(b), 0);
                 }
                 enc.set_bytes(13, 4, (&level as *const u32).cast());
+                for (i, b) in [&bcnt, &bcex, &bspan].into_iter().enumerate() {
+                    enc.set_buffer(14 + i as u64, Some(b), 0);
+                }
                 let w = p.thread_execution_width();
                 enc.dispatch_threads(MTLSize::new(threads.max(1) as u64, 1, 1), MTLSize::new(w, 1, 1));
             }
@@ -445,9 +596,28 @@ pub fn run(pre: &str, image: &GpuImage, n: usize, set: &[bool], truth: (&[u32], 
         wrong += got().iter().zip(truth.1).filter(|(a, b)| a != b).count();
         no_carry = None;
     }
+    // has from counts: the mask counts scanned up and down the levels, then a formula a node.
+    let (pcl, pcu, pcd, phc) = (pipe("c_leaf")?, pipe("c_up")?, pipe("c_down")?, lib_pipe(&format!("{pre}_hasc"))?);
+    let mut st: Vec<Stage> = vec![(&pm, 0, 0, g), (&pcl, 0, 0, g)];
+    for l in 0..levels - 1 {
+        st.push((&pcu, 0, l as u32, lv[4 + 2 * l] as usize));
+    }
+    for l in (0..levels - 1).rev() {
+        st.push((&pcd, 0, l as u32, lv[4 + 2 * l] as usize));
+    }
+    st.push((&phc, 0, 0, g));
+    let t_hasc = time(&st, false);
+    wrong += got().iter().zip(truth.2).filter(|&(a, &b)| (*a == 1) != b).count();
+    // Spans.
+    let sp: Vec<metal::ComputePipelineState> = span_kernels.iter().map(|k| lib_pipe(k)).collect::<Result<_, _>>()?;
+    let st: Vec<Stage> = sp.iter().map(|p| (p, 0, 0, g)).collect();
+    let t_span = time(&st, false);
+    // SAFETY: shared storage of n (u64, u64), and the GPU is done with it.
+    let spans = unsafe { std::slice::from_raw_parts(bspan.contents().cast::<(u64, u64)>(), n) };
+    wrong += spans.iter().zip(truth_span).filter(|(a, b)| a != b).count();
     // SAFETY: as above.
     wrong += unsafe { *bbad.contents().cast::<u32>() } as usize;
-    Ok(Row { ns: [t_match, t_near, t_outer, t_has], no_carry, wrong })
+    Ok(Row { ns: [t_match, t_near, t_outer, t_has], no_carry, has_counts: t_hasc, span: t_span, wrong })
 }
 
 /// XF, MF and BE on one forest, for one set: (name, GPU row, CPU ns a node for nearest, outermost, has from
@@ -476,22 +646,23 @@ pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, set: &[bool]
         ([x0, x1, x2], wrong)
     }
     let t = (&tn[..], &to[..], &th[..]);
+    let ts: Vec<(u64, u64)> = tree.nodes.iter().map(|x| (x.start, x.end)).collect();
     let mut rows = Vec::new();
     let xf = XF::<ForLen>::new(tree, codes);
     let (c, w) = cpu(&xf, set, n, t);
-    let mut row = run("xf", &xf.gpu_image(), n, set, t)?;
+    let mut row = run("xf", &["xfl_span"], &xf.gpu_image(), n, set, t, &ts)?;
     row.wrong += w;
     rows.push(("XF", row, c));
     drop(xf);
     let mf = XF::<PredGap>::new(tree, codes);
     let (c, w) = cpu(&mf, set, n, t);
-    let mut row = run("xf", &mf.gpu_image(), n, set, t)?;
+    let mut row = run("xf", &["xfg_start", "xfg_end"], &mf.gpu_image(), n, set, t, &ts)?;
     row.wrong += w;
     rows.push(("MF", row, c));
     drop(mf);
     let be = B::<EfEf>::new(tree, codes);
     let (c, w) = cpu(&be, set, n, t);
-    let mut row = run("b", &be.gpu_image(), n, set, t)?;
+    let mut row = run("b", &["b_span"], &be.gpu_image(), n, set, t, &ts)?;
     row.wrong += w;
     rows.push(("BE", row, c));
     Ok(rows)
