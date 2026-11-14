@@ -1,5 +1,5 @@
-import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -231,8 +231,9 @@ describe("GitReads", () => {
     const pids = await mkdtemp(join(tmpdir(), "rerail-git-launched-"));
     roots.push(pids);
     const [headPid, blobsPid] = [join(pids, "head"), join(pids, "blobs")];
-    vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) =>
-      actualChildProcess.execFile(process.execPath, ["-e", LAUNCHER, "--", headPid, ...(args ?? [])], options, callback));
+    // The head's read starts its Git first, then the blobs' read.
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
+      actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", headPid, ...args], options));
     vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
       actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", blobsPid, ...args], options));
     const reads = new GitReads();
@@ -263,36 +264,113 @@ describe("gitModifiedOrUntrackedListing", () => {
   });
 });
 
+/** How many bytes the process `heldListing`'s filter leaves writes to the stderr it holds: 16 times a Linux pipe's 64 KiB. */
+const LEFTOVER_BYTES = 1024 * 1024;
+
 /**
- * Lists the changed files of a repository whose clean filter leaves a process behind, outside the repository, that holds
- * Git's stderr after Git exits while a file is there, and answers what the read answered within `waitMs`, or that it was
- * still waiting. Git runs the filter to compare a.py, changed on disk, with the index. The wait ends once the listing is
- * answered, and so does removing the repository. The process then writes a line to the stderr it holds, in a subshell
- * of its own, and writes how that subshell ended to `wrote` (`wrote 141`: a broken pipe's SIGPIPE ended it). Each run of
- * the filter writes `+` to `loops` before it starts its process, which writes `-` there as it ends: the test waits for
- * that, so no process outlives it. The process looks for the file every 20 ms, so that wait is short.
+ * What this process holds open: its descriptors, where the system lists them (Linux), and the pipes Node keeps open
+ * (on every system; one a stream holds unreferenced is not among them).
  */
-async function heldListing(waitMs: number): Promise<{ answer: unknown; wrote: string }> {
-  const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
-  const held = join(root, ".git", "held");
-  const loops = join(root, ".git", "loops");
-  const wrote = join(root, ".git", "wrote");
-  const [heldPath, loopsPath, wrotePath] = [held, loops, wrote].map(path => path.replaceAll("\\", "/"));
-  const loop = `while [ -e '${heldPath}' ]; do sleep 0.02; done; (echo left >&2); echo "wrote $?" >> '${wrotePath}'; echo - >> '${loopsPath}'`;
-  git(root, "config", "filter.held.clean", `echo + >> '${loopsPath}'; (cd / && ${loop}) </dev/null >/dev/null & cat`);
+interface HeldHandles {
+  readonly descriptors: number | undefined;
+  readonly pipes: number;
+}
+
+/** What this process holds open now ({@link HeldHandles}). */
+async function heldHandles(): Promise<HeldHandles> {
+  const descriptors = await readdir("/proc/self/fd").then(entries => entries.length, () => undefined);
+  return { descriptors, pipes: process.getActiveResourcesInfo().filter(resource => resource === "PipeWrap").length };
+}
+
+/** Resolves once this process holds no more than it held `before` ({@link HeldHandles}); fails after 5 s. */
+async function handlesBack(before: HeldHandles): Promise<void> {
+  await vi.waitFor(async () => {
+    const now = await heldHandles();
+    expect(now.pipes).toBeLessThanOrEqual(before.pipes);
+    expect(now.descriptors ?? 0).toBeLessThanOrEqual(before.descriptors ?? 0);
+  }, { timeout: 5_000, interval: 20 });
+}
+
+/** `path` as a POSIX shell, Git for Windows' among them, takes it. */
+function shellPath(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+/**
+ * Lists the changed files of a repository whose clean filter leaves a process behind, outside the repository and with
+ * no parent left, that holds Git's stderr while a file is there, and answers what the read answered within 5 s, or that
+ * it was still waiting. Git runs the filter to compare a.py, changed on disk, with the index. With `pastLimit` Git then
+ * waits for b.py's filter ({@link hangAfterHeld}), and once both have started the clock moves past the read's time
+ * limit: the read ends Git at its next look. The wait ends once the listing is answered, and so does removing the
+ * repository. The process then writes `LEFTOVER_BYTES` to the stderr it holds, in a subshell of its own, and writes how
+ * that subshell ended to `wrote` (`wrote 0`: every byte went; `wrote 141`: a broken pipe's SIGPIPE ended it). Each run
+ * of the filter writes `+` to `loops` before it starts its process, which writes `-` there as it ends: the test waits
+ * for that, and for b.py's filter to end, so no process outlives it. The process looks for the file every 20 ms, so
+ * that wait is short. `before` is what this process held open as the read started, after a first read, so what Node
+ * opens once for its first child process is in it.
+ */
+async function heldListing({ pastLimit = false } = {}): Promise<{ answer: unknown; wrote: string; before: HeldHandles }> {
+  const root = await repository({ ".gitattributes": "a.py filter=held\nb.py filter=hang\n", "a.py": "print(1)\n", "b.py": "print(1)\n" });
+  const inGit = (name: string): string => join(root, ".git", name);
+  const [held, loops, wrote, started, hung] = [inGit("held"), inGit("loops"), inGit("wrote"), inGit("started"), inGit("hung")];
+  const waitForFile = `while [ -e '${shellPath(held)}' ]; do sleep 0.02; done`;
+  const write = `(head -c ${LEFTOVER_BYTES} /dev/zero >&2); echo "wrote $?" >> '${shellPath(wrote)}'`;
+  const leftover = `echo + >> '${shellPath(started)}'; ${waitForFile}; ${write}; echo - >> '${shellPath(loops)}'`;
+  git(root, "config", "filter.held.clean", `echo + >> '${shellPath(loops)}'; ((cd / && ${leftover}) </dev/null >/dev/null &); cat`);
+  // Without a command for filter.hang, Git takes b.py as it is, and b.py is unchanged unless `pastLimit`.
+  if (pastLimit) await hangAfterHeld(root, held, hung);
   await writeFile(held, "");
   await writeFile(join(root, "a.py"), "print(2)\n");
+  await gitHead(root);
+  const before = await heldHandles();
+  if (pastLimit) fakeReadTimers();
   let late: NodeJS.Timeout | undefined;
   let answer: unknown;
   try {
     const read = gitModifiedOrUntrackedPaths(root);
-    answer = await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
+    if (pastLimit) await moveClockPastLimit([started, hung]);
+    answer = await Promise.race([read, new Promise(settle => { late = setTimeout(settle, 5_000, "still waiting at 5 s"); })]);
   } finally {
     clearTimeout(late);
     await rm(held, { force: true });
     await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
+    await hungGone(hung);
   }
-  return { answer, wrote: (await readFile(wrote, "utf8")).trim() };
+  return { answer, wrote: (await readFile(wrote, "utf8")).trim(), before };
+}
+
+/**
+ * In Git's place for b.py's clean filter, a Node program: it writes its pid to the file named second, then stays,
+ * reading nothing, until the file named first is gone, so Git waits for it. A shell waiting in a loop of `sleep` there
+ * is ended at the read's time limit while it may be starting a `sleep`: on Windows `taskkill /T` then left a shell
+ * running past the test once in 20 runs.
+ */
+const HANGS_UNTIL_GONE =
+  "const fs = require('node:fs'); const [held, hung] = process.argv.slice(2); fs.writeFileSync(hung, String(process.pid));" +
+  " setInterval(() => { if (!fs.existsSync(held)) process.exit(0); }, 20);";
+
+/** Has `root`'s clean filter for b.py run {@link HANGS_UNTIL_GONE} with `held` and `hung`, and changes b.py so Git runs it. */
+async function hangAfterHeld(root: string, held: string, hung: string): Promise<void> {
+  const script = join(root, ".git", "hang.js");
+  await writeFile(script, HANGS_UNTIL_GONE);
+  const command = [process.execPath, script, held, hung].map(part => `'${shellPath(part)}'`).join(" ");
+  git(root, "config", "filter.hang.clean", `exec ${command}`);
+  await writeFile(join(root, "b.py"), "print(2)\n");
+}
+
+/** Resolves once the program {@link HANGS_UNTIL_GONE} named in `hung` has ended, at once when none started; fails after 5 s. */
+async function hungGone(hung: string): Promise<void> {
+  const pid = Number(await readFile(hung, "utf8").catch(() => ""));
+  if (pid > 0) await vi.waitFor(() => expect(processState(pid)).toBe("gone"), { timeout: 5_000, interval: 10 });
+}
+
+/** Once each of `files` holds something, moves the clock and the read's look past its time limit. */
+async function moveClockPastLimit(files: readonly string[]): Promise<void> {
+  for (const file of files) {
+    await vi.waitFor(async () => expect(await readFile(file, "utf8").catch(() => "")).not.toBe(""), { timeout: 10_000, interval: 10 });
+  }
+  clockAhead(11_000);
+  vi.advanceTimersByTime(1_000);
 }
 
 /** How many of the processes `heldListing`'s filter started have not written their end to `loops`. */
@@ -324,7 +402,7 @@ function fakeReadTimers({ limitTimer = false } = {}): void {
 
 /** The last `count` Gits the reads started, oldest first. */
 function lastGits(count: number): ChildProcess[] {
-  return vi.mocked(execFile).mock.results.slice(-count).flatMap(result => result.type === "return" ? [result.value] : []);
+  return vi.mocked(spawn).mock.results.slice(-count).flatMap(result => result.type === "return" ? [result.value] : []);
 }
 
 /**
@@ -354,8 +432,8 @@ function stallUntilExited(gits: readonly ChildProcess[], ms: number): void {
 /** Runs `node -e script` in place of the next Git a read starts; resolves with that process. */
 function gitInPlace(script: string): Promise<ChildProcess> {
   const started = Promise.withResolvers<ChildProcess>();
-  vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) => {
-    const child = actualChildProcess.execFile(process.execPath, ["-e", script, "--", ...(args ?? [])], options, callback);
+  vi.mocked(spawn).mockImplementationOnce((_git, args, options) => {
+    const child = actualChildProcess.spawn(process.execPath, ["-e", script, "--", ...args], options);
     started.resolve(child);
     return child;
   });
@@ -410,14 +488,23 @@ describe("Git reads and their time limit", () => {
     expect(endProcessTree).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("answers once Git has exited and its output has ended, while a process it started holds its stderr", async () => {
-    expect((await heldListing(5_000)).answer).toEqual(["a.py"]);
+  it("answers once Git has exited and its output has ended, while a process it started goes on writing to Git's stderr", async () => {
+    // The process the clean filter left ends only once the read has answered, so the answer did not wait for it. It then
+    // writes a MiB, more than a pipe holds, to the stderr it holds: every byte goes, with no wait and no error. Once it
+    // has ended, nothing of the read is held open.
+    const listing = await heldListing();
+    expect(listing.answer).toEqual(["a.py"]);
+    expect(listing.wrote).toBe("wrote 0");
+    await handlesBack(listing.before);
   }, 30_000);
 
-  it("closes its end of Git's stderr once it answers, so a process Git started that writes there later gets a broken pipe", async () => {
-    // The read stops reading stderr once Git has exited and its output has ended. A process the clean filter left that
-    // writes there after that meets a pipe with no reader: SIGPIPE ends the subshell that wrote, and the process goes on.
-    expect((await heldListing(5_000)).wrote).toBe("wrote 141");
+  it("lets a process Git started write to Git's stderr after the read ended Git at its time limit, and keeps nothing of the read", async () => {
+    // Git waits for the clean filter past the read's limit, so the read ends Git there; the process the filter left
+    // goes on, outside Git's process tree, and writes a MiB to the stderr it holds as before.
+    const listing = await heldListing({ pastLimit: true });
+    expect(listing.answer).toBeUndefined();
+    expect(listing.wrote).toBe("wrote 0");
+    await handlesBack(listing.before);
   }, 30_000);
 
   it("ends a read whose Git prints nothing at its first look past the time limit on the clock, after a stall", async () => {

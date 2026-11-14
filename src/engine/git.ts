@@ -449,25 +449,54 @@ async function gitStdout(cwd: string, args: readonly string[], signal: AbortSign
  */
 type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readonly ended: "failed" | "timed-out" };
 
-/** Runs a Git command as `gitOutput` does, and says how it ended. */
+/**
+ * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
+ * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
+ * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
+ * its output has closed.
+ */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
   const executable = readerGit(signal);
   if (executable === undefined) return { ended: signal?.aborted === true ? "timed-out" : "failed" };
   const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-  const child = execFile(
-    executable,
-    [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => {
-      if (error === null && signal?.aborted !== true) settle({ ended: "printed", stdout });
-    },
-  );
-  releaseStderrOnceDone(child);
-  // execFile's own `close` listener comes first and answers with the output. This one answers every other end, saying
-  // whether the time limit or `signal` ended the read, and a Git that was ended and whose output stays open.
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const printed = gitPrinted(child, maxBuffer);
+  // This `close` listener comes first and answers with what a Git that exited with status 0 printed. The next answers
+  // every other end, saying whether the time limit or `signal` ended the read, and a Git that was ended and whose output
+  // stays open.
+  child.on("close", (status: number | null) => {
+    const stdout = printed(status);
+    if (stdout !== undefined && signal?.aborted !== true) settle({ ended: "printed", stdout });
+  });
   settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
   const [read] = await Promise.all([promise, exited(child)]);
   return read;
+}
+
+/**
+ * Reads what `child`, the Git of a read, prints: as UTF-8, and at most `maxBuffer` bytes, past which it ends Git
+ * ({@link endPastMaxBuffer}). Answers that text for the `status` Git exited with: only for 0, and only within
+ * `maxBuffer`.
+ */
+function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | null) => string | undefined {
+  const chunks: string[] = [];
+  let bytes = 0;
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    bytes += Buffer.byteLength(chunk);
+    if (bytes <= maxBuffer) chunks.push(chunk);
+    else endPastMaxBuffer(child);
+  });
+  return status => (status === 0 && bytes <= maxBuffer ? chunks.join("") : undefined);
+}
+
+/** Ends a Git that printed more than its read takes: closes its output, then sends it SIGTERM. */
+function endPastMaxBuffer(child: ChildProcess): void {
+  child.stdout?.destroy();
+  child.kill();
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
@@ -734,21 +763,6 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
 
 /** How long a read waits for Git's output to close once the Git it ended has exited. */
 const EXIT_DRAIN_MS = 500;
-
-/**
- * Stops reading `child`'s stderr, which no answer uses, once Git has exited and its stdout has ended: a process Git
- * started that outlives it (a repository's clean filter can leave one) may hold stderr open, and the read would wait for
- * it until its time limit, then answer that Git did not finish. Git's whole output is read by then, so it answers at once.
- */
-function releaseStderrOnceDone(child: ChildProcess): void {
-  let waiting = 2;
-  const done = (): void => {
-    waiting -= 1;
-    if (waiting === 0) child.stderr?.destroy();
-  };
-  child.once("exit", done);
-  child.stdout?.once("end", done);
-}
 
 /** How often a Git read looks at its time limit on the clock ({@link lookPastTimeLimit}). */
 const TIME_LIMIT_TICK_MS = 1_000;

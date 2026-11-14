@@ -64,9 +64,10 @@ const decodedReads = vi.hoisted(() => ({ count: 0 }));
 const readBuffers = vi.hoisted(() => ({ watching: false, seen: new Set<ArrayBufferLike>() }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
-  const { promisify } = await import("node:util");
-  const execFile = (...call: Parameters<typeof actual.execFile>) => {
-    if (Array.isArray(call[1])) {
+  // `git.ts` starts the Git of each read that does not block through `spawn`, with `-C <checkout>`; any other process
+  // goes through unchanged.
+  const spawn = (...call: Parameters<typeof actual.spawn>) => {
+    if (Array.isArray(call[1]) && call[1].includes("-C")) {
       const args = call[1] as readonly string[];
       if (asyncGitCalls.throwsNext !== undefined && args.includes(asyncGitCalls.throwsNext)) {
         asyncGitCalls.throwsNext = undefined;
@@ -83,10 +84,9 @@ vi.mock("node:child_process", async importOriginal => {
         call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
       }
     }
-    return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+    return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
   };
-  // `promisify(execFile)` resolves to `{ stdout, stderr }` through this symbol: the wrapper keeps it.
-  return { ...actual, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
+  return { ...actual, spawn };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
