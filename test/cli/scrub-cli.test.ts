@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, open } from "node:fs/promises";
+import { type FileHandle, mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -25,10 +25,51 @@ vi.mock("../../src/engine/storage/database.js", async () => {
     },
   };
 });
+/**
+ * Set to make another process's append land in the middle of each pass `rerail scrub` makes over a file it rewrites.
+ * A file opened read-write through `openNoFollow`, as the scrub opens a ledger and daemon.log, then holds each read that
+ * reaches the file's end until the file has grown, so the pass writes back with a line past its end that it never
+ * read. `held` gets the name of the file at each hold.
+ */
+const midPass = vi.hoisted(() => ({ held: undefined as string[] | undefined }));
+vi.mock("../../src/engine/no-follow.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/no-follow.js")>("../../src/engine/no-follow.js");
+  const { constants, statSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const { basename } = await vi.importActual<typeof import("node:path")>("node:path");
+  /** Resolves once the file at `path` is longer than `size` bytes; the appender adds a line every few milliseconds. */
+  const grown = async (path: string, size: number): Promise<void> => {
+    for (const deadline = Date.now() + 10_000; statSync(path).size <= size;) {
+      // An appender that stopped fails the pass, saying so, rather than holding it for good.
+      if (Date.now() > deadline) throw new Error(`nothing was appended to ${path} in 10 s`);
+      await new Promise(wake => setTimeout(wake, 5));
+    }
+  };
+  /** `handle` with each read that returns no bytes held until the file at `path` is longer than the handle saw. */
+  const holdAtEnd = (handle: FileHandle, path: string, held: string[]): FileHandle => {
+    const read = handle.read.bind(handle) as (...call: unknown[]) => ReturnType<FileHandle["read"]>;
+    handle.read = (async (...call: unknown[]) => {
+      const result = await read(...call);
+      if (result.bytesRead > 0) return result;
+      await grown(path, (await handle.stat()).size);
+      held.push(basename(path));
+      return result;
+    }) as FileHandle["read"];
+    return handle;
+  };
+  return {
+    ...actual,
+    openNoFollow: async (...args: Parameters<typeof actual.openNoFollow>) => {
+      const handle = await actual.openNoFollow(...args);
+      const held = midPass.held;
+      return held === undefined || args[1] !== constants.O_RDWR ? handle : holdAtEnd(handle, args[0], held);
+    },
+  };
+});
 
 const directories: string[] = [];
 afterEach(async () => {
   erase.failure = undefined;
+  midPass.held = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(path => removeFolder(path)));
@@ -227,13 +268,17 @@ describe("rerail scrub alongside running sessions", () => {
         + "fs.appendFileSync(ledger, JSON.stringify({ type: 'event', eventId: `appended-${i}` }) + '\\n'); Atomics.wait(pause, 0, 0, 1); }";
       const child = spawn(process.execPath, ["-e", appender, log, ledger, stop], { stdio: "ignore" });
       const exited = new Promise(resolve => child.once("exit", resolve));
+      const held: string[] = [];
       try {
         while (!readFileSync(log, "utf8").includes("appended 0")) await delay(5);
-        const appendedBefore = readFileSync(ledger, "utf8").split("appended-").length;
+        midPass.held = held;
         expect(await runScrubCommand([], () => "usage")).toBe(0);
-        // The appender kept writing for the whole run.
-        expect(readFileSync(ledger, "utf8").split("appended-").length).toBeGreaterThan(appendedBefore);
+        // The appender wrote while each pass held its file: the ledger's one pass, and both of the log's, the one that
+        // makes room and the one that writes the longer lines.
+        expect(held.filter(name => name === "events.jsonl").length).toBeGreaterThanOrEqual(1);
+        expect(held.filter(name => name === "daemon.log").length).toBeGreaterThanOrEqual(2);
       } finally {
+        midPass.held = undefined;
         writeFileSync(stop, "");
         await exited;
       }
