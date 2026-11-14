@@ -3,6 +3,7 @@
 //!
 //! Every relation an about row names has an id (`RELATION_COLUMNS`, made so by the builder), as every relation a
 //! rule, a declaration, a fact or the inputs and outputs name has: so an analysis keys all of them by `RelId`.
+use super::build::Builder;
 use super::version::Version;
 use super::{AtomId, Cell, RelId};
 
@@ -60,6 +61,8 @@ pub struct NativeRef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatticeRef {
     pub rel: RelId,
+    /// The key columns before the value column.
+    pub keys: usize,
     /// `LatticeDecl::lattice`: the merge's name, else the value column's type.
     pub lattice: AtomId,
 }
@@ -75,6 +78,8 @@ pub struct About {
     pub lattice: Vec<LatticeRef>,
     /// How many gates the program has (`Program::gates`).
     pub gates: usize,
+    /// The relations of no columns (`Program::nullary`), by relation id.
+    pub nullary: Vec<RelId>,
 }
 
 impl About {
@@ -117,10 +122,11 @@ impl About {
                     "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3])),
                     "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3])),
                     "lattice" => {
-                        if let (Some(rel), Some(ty)) = (r(1), row.get(3).copied().and_then(atom)) {
-                            about.lattice.push(LatticeRef { rel, lattice: ty });
+                        if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {
+                            about.lattice.push(LatticeRef { rel, keys: keys as usize, lattice: ty });
                         }
                     }
+                    "nullary" => about.nullary.extend(r(1)),
                     "lattice_merge" => merges.extend(r(1).zip(row.get(2).copied().and_then(atom))),
                     "gate" => about.gates += 1,
                     _ => {}
@@ -142,6 +148,7 @@ impl About {
         about.answers = answers.into_iter().map(|(req, _, p)| (req, p)).collect();
         about.natives.sort_unstable_by_key(|n| n.rel);
         about.lattice.sort_unstable_by_key(|l| l.rel);
+        about.nullary.sort_unstable();
         about
     }
 
@@ -149,10 +156,50 @@ impl About {
         self.natives.binary_search_by_key(&rel, |n| n.rel).ok().map(|k| &self.natives[k])
     }
     pub fn lattice_of(&self, rel: RelId) -> Option<AtomId> {
-        self.lattice.binary_search_by_key(&rel, |l| l.rel).ok().map(|k| self.lattice[k].lattice)
+        self.lattice_decl(rel).map(|l| l.lattice)
+    }
+    pub fn lattice_decl(&self, rel: RelId) -> Option<&LatticeRef> {
+        self.lattice.binary_search_by_key(&rel, |l| l.rel).ok().map(|k| &self.lattice[k])
     }
     /// Every produced relation with its request (`answers::produced`).
     pub fn produced(&self) -> impl Iterator<Item = (RelId, RelId)> + '_ {
         self.answers.iter().map(|&(req, p)| (p, req))
+    }
+}
+
+/// The about rows' program name (`program_image::ABOUT`): each row's first cell.
+fn program_cell(b: &mut Builder<'_>) -> Cell {
+    Cell::Str(b.atom(super::ABOUT))
+}
+
+/// Edits of a version's other fields, by type: a pass states what it changes, and never writes an about row itself.
+impl Builder<'_> {
+    /// Sets lattice relation `rel`'s key columns.
+    pub fn set_lattice_keys(&mut self, rel: &str, keys: usize) {
+        let a = self.atom(rel);
+        let mut rows = self.about_rows("lattice");
+        for row in &mut rows {
+            if row.get(1) == Some(&Cell::Str(a)) {
+                row[2] = Cell::Int(keys as i64);
+            }
+        }
+        self.set_about_rows("lattice", rows);
+    }
+    /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
+    pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
+        if rels.is_empty() {
+            return;
+        }
+        let p = program_cell(self);
+        let mut rows = self.about_rows("nullary");
+        let mut names: Vec<String> = rows.iter().filter_map(|r| match r.get(1) {
+            Some(&Cell::Str(a)) => Some(self.text(a).to_owned()),
+            _ => None,
+        }).collect();
+        names.extend(rels.iter().map(|r| r.as_ref().to_owned()));
+        names.sort_unstable();
+        names.dedup();
+        rows = names.iter().map(|n| vec![p, Cell::Str(self.atom(n))]).collect();
+        self.set_about_rows("nullary", rows);
     }
 }

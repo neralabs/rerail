@@ -47,13 +47,14 @@ mod encoder;
 pub mod extents;
 pub mod grouped;
 pub mod handles;
+pub mod passes;
 pub mod strings;
 mod tree;
 pub mod version;
 
 pub use about::{About, LatticeRef, NativeKind, NativeRef};
 pub use analyses::{Edges, Strata};
-pub use build::{Builder, Rel, RuleBuilder, T};
+pub use build::{Builder, Rel, Rewrite, RuleBuilder, Site, T};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
@@ -61,10 +62,11 @@ pub use strings::Strings;
 pub use tree::Tree;
 pub use version::{DeclRef, FactsRef, Made, Version};
 
-pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x03";
+pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
 /// name included (`about::RELATION_COLUMNS`), so a format-2 image is read again from its text.
-pub const FORMAT: u32 = 3;
+/// 4: a derivation's rules record their sources (`R::From`); the about rows hold no `fact_rel`.
+pub const FORMAT: u32 = 4;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
 const ABOUT: &str = "a";
 
@@ -145,10 +147,17 @@ pub enum R {
     ReadKeys,
     /// A delta's atoms of its parent's that it makes relations: (atom << 32 | relation), sorted.
     Promoted,
+    /// A derivation's rules' sources (§9): each rule's rule of the input it came from, `NO_RULE` for none; empty when
+    /// no rule has one.
+    From,
+    /// The same, by source: (source << 32 | rule), sorted.
+    FromIndex,
 }
-pub(crate) const REGIONS: usize = 38;
+pub(crate) const REGIONS: usize = 40;
+/// A rule that came from no rule (`R::From`).
+pub(crate) const NO_RULE: u32 = u32::MAX;
 /// Each region's item width in bytes. Buckets are 64-byte records.
-const WIDTH: [u32; REGIONS] = [8, 1, 4, 64, 64, 4, 4, 1, 4, 4, 8, 4, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 1, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8];
+const WIDTH: [u32; REGIONS] = [8, 1, 4, 64, 64, 4, 4, 1, 4, 4, 8, 4, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 1, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 8];
 const HEADER: usize = 16 + 24 * REGIONS;
 
 /// `Meta`'s words.
@@ -304,6 +313,16 @@ impl Image {
     /// The rules this image holds.
     pub fn rules(&self) -> usize {
         self.u32s(R::RuleNode).len()
+    }
+    /// The source of local rule `k` (`R::From`).
+    pub(crate) fn source(&self, k: u32) -> Option<RuleId> {
+        self.u32s(R::From).get(k as usize).copied().filter(|&f| f != NO_RULE).map(RuleId)
+    }
+    /// The local rules whose source is `src`.
+    pub(crate) fn derived(&self, src: RuleId) -> impl Iterator<Item = u32> + '_ {
+        let index = self.u64s(R::FromIndex);
+        let s = index.partition_point(|&e| ((e >> 32) as u32) < src.0);
+        index[s..].iter().take_while(move |&&e| (e >> 32) as u32 == src.0).map(|&e| e as u32)
     }
     /// The atoms this image holds (its own; its parent's are below `atom_base`).
     pub fn atoms(&self) -> usize {
@@ -543,6 +562,15 @@ impl Image {
         }
         if self.u32s(R::ReadNode).len() != self.u32s(R::ReadRule).len() || !self.u32s(R::ReadNode).iter().all(|&n| (n as usize) < nodes) {
             return Err(bad("reads"));
+        }
+        let from = self.u32s(R::From);
+        let index = self.u64s(R::FromIndex);
+        if !(from.is_empty() || from.len() == rules)
+            || index.len() != from.iter().filter(|&&f| f != NO_RULE).count()
+            || !index.windows(2).all(|w| w[0] < w[1])
+            || !index.iter().all(|&e| ((e as u32) as usize) < rules && from[e as u32 as usize] == (e >> 32) as u32)
+        {
+            return Err(bad("rule sources"));
         }
         let removed = self.removed();
         if (!self.is_delta() && !removed.is_empty()) || removed.last().is_some_and(|&r| r >= self.rule_base()) {
@@ -796,5 +824,8 @@ pub(crate) fn assemble(rules: Vec<super::front::Rule>, decls: BTreeMap<Name, sup
 pub fn about_of(prog: &Program) -> Facts {
     let mut about = Facts::new();
     program_facts::write_about(&mut about, ABOUT, prog);
+    // The image holds each fact relation itself (`assemble` reads them from there), so `fact_rel` is not kept: a
+    // pass that adds a fact relation states it once, and its version's about rows are the result's own.
+    about.remove("fact_rel");
     about
 }

@@ -58,6 +58,10 @@ impl<'v> RuleRef<'v> {
     pub fn hash(self) -> u64 {
         self.im.rule_hash(self.k)
     }
+    /// The rule of a derivation's input this rule came from (§9), if it came from one.
+    pub fn source(self) -> Option<RuleId> {
+        self.im.source(self.k)
+    }
     pub(crate) fn image(self) -> &'v Image {
         self.im
     }
@@ -147,7 +151,7 @@ impl TermRef<'_> {
     }
 }
 
-fn term(im: &Image, at: u32) -> TermRef<'_> {
+pub(crate) fn term(im: &Image, at: u32) -> TermRef<'_> {
     let (k, size, val) = im.node(at);
     match k & kind::MASK {
         kind::VAR => TermRef::Var(Slot(val)),

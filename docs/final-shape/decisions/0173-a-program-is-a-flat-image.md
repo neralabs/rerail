@@ -695,6 +695,60 @@ Nothing calls the analyses yet, so what moved is the images' writing: cold 57.6 
 The tree forms of `projections`, `compose::accepts` and `answers::produced` are now `pub`, so the engine's tests
 can compare against them.
 
+### Stage 2, step 3: the derivations
+
+Built 2026-11-13. Image format 4.
+
+**What a pass is written with.** A pass states what it changes. It never walks a rule's nodes, and it never writes an
+about row.
+
+| Tool | What it does |
+|---|---|
+| `Builder::derive(input)` | Starts a derivation: a new base under the input's atom and relation ids, holding all the input's parts and none of its rules. |
+| `Builder::rewrite(from, rule, &mut rw)` | Copies a rule node by node, steered by a `Rewrite`. It returns a `RuleBuilder`, so more literals can follow. `finish` records the source rule. |
+| `Rewrite` | Three hooks, each defaulting to "keep": `prefix` (terms before an atom's own arguments), `term` (a replacement for a term, given its `Site`: the head, a body atom, or a comparison) and `keep` (drop a body literal). |
+| `set_fact_cells` | States a relation's facts as cells of the builder's ids, without decoding them to values. |
+| `set_lattice_keys`, `add_nullary` (`about.rs`) | Typed edits of the about rows. The row layout is known only in `about.rs`. |
+
+**Sources (`from`, §9).**
+
+- Each rule of a derivation records the input rule it came from. The image keeps them in `R::From`, with a sorted
+  source→rule index in `R::FromIndex`.
+- `RuleRef::source` and `Version::derived(src)` read them, through views and overlays.
+- A fold keeps every source.
+- The open check refuses an index that does not match the column.
+
+**The passes** (`passes.rs`):
+
+- `normalize` is a derivation.
+  - It gives every relation of no columns, and every lattice of no keys, a leading presence column. That covers
+    their declarations, facts, lattice keys and the atoms that name them.
+  - When any lattice is not flat, it gives each `top` its domain's value, from the atom it is in or the variables
+    of its comparison.
+  - Under the same condition, it makes each ground rule a fact.
+  - It returns the sentinels, by id.
+- `stated_apart` is an overlay of the normalized version. Each relation with both rules and stated facts gets
+  `rel__stated` and one rule reading it.
+
+**`fact_rel` is no longer in the about rows.** The image holds each fact relation itself, so those rows only
+restated it. With them gone, a derivation that adds a fact relation has the same about rows, and so the same digest,
+as its result encoded whole.
+
+**Tests.** All 20 image and text tests pass; two are new. The prepared-program and choice tests pass (10).
+
+- The passes over a version are the tree's passes:
+  - on every sampled pack program, and on a program they change everywhere;
+  - as programs, and by digest (each equal to its result encoded whole);
+  - by sentinels and by stated pairs;
+  - by sources (each derived rule from one input rule; each input rule gives one rule, or a fact);
+  - with the analyses over the result agreeing with the tree's.
+  - A `top` of two domains is refused by both.
+- A rewrite keeps what it does not change: prefixes, a replaced comparison term, a dropped literal, a literal added
+  after, and each source, also through a fold.
+
+**dl1** (images required, profiling build, a fresh store): the 48 findings are the same, cold and warm. The run
+does not call the passes yet. Cold took 54.9 G instructions (57.6 G at step 2) and warm 19.8 G (20.0 G).
+
 ## Stage 2, step by step
 
 ### Where a warm run's program work is
@@ -744,7 +798,7 @@ with nothing left that wants their trees.
    - `compose::accepts`.
 
    They are read-only, so this step is additive. Each is checked against its tree form.
-3. **The derivations** `sql_kernel::normalize` and `stated_apart`, as `Builder` edits of the input version, with
+3. **The derivations.** Built ("Stage 2, step 3"). `sql_kernel::normalize` and `stated_apart`, as `Builder` edits of the input version, with
    rules rewritten by `RuleBuilder`. Each output rule records the rule it came from (`from`). Checked against the
    tree passes.
 4. **The model on handles:** `make_plan`, `plan_views` and `keeps::choose` read `RuleRef`s.

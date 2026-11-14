@@ -117,6 +117,8 @@ pub(crate) struct Encoder<'p> {
     reads: Vec<(u32, u32)>,
     read_rules: Vec<u32>,
     read_nodes: Vec<u32>,
+    /// Each rule's source (`R::From`), `NO_RULE` for none.
+    from: Vec<u32>,
     /// The rule being written: its variables' atoms by slot, and the slot of each atom.
     slots: HashMap<u32, u32>,
     slot_names: Vec<u32>,
@@ -149,6 +151,7 @@ impl<'p> Encoder<'p> {
             reads: Vec::new(),
             read_rules: Vec::new(),
             read_nodes: Vec::new(),
+            from: Vec::new(),
             slots: HashMap::new(),
             slot_names: Vec::new(),
             parent_hashes: HashMap::new(),
@@ -323,7 +326,12 @@ impl<'p> Encoder<'p> {
             h.write_u64(self.text_hash(a));
         }
         self.rule_hash.push(h.finish());
+        self.from.push(super::NO_RULE);
         k
+    }
+    /// Records that local rule `k` came from rule `src` of the input (§9).
+    pub fn set_from(&mut self, k: u32, src: super::RuleId) {
+        self.from[k as usize] = src.0;
     }
 
     // -- a rule from the tree --
@@ -441,39 +449,39 @@ impl<'p> Encoder<'p> {
     /// when `src`'s ids are this image's (`same`), else by text, through `from`.
     pub fn copy_nodes(&mut self, from: &Version, src: &super::Image, range: std::ops::Range<u32>, src_vars: &[u32], same: bool) {
         for n in range {
-            let (kd, size, val) = src.node(n);
-            let v = match kd & kind::MASK {
-                kind::ATOM if same => val,
-                kind::ATOM => {
-                    let t = from.rel_name(RelId(val));
-                    self.rel(t)
-                }
-                kind::VAR => {
-                    let a = src_vars[val as usize];
-                    let a = if same { a } else { self.atom(from.text(AtomId(a))) };
-                    self.slot_of(a)
-                }
-                kind::AGG => {
-                    let a = src_vars[val as usize];
-                    let a = if same { a } else { self.atom(from.text(AtomId(a))) };
-                    self.slot_of(a)
-                }
-                kind::INT if kd & kind::BIG != 0 => {
-                    self.ints.push(src.big(val));
-                    self.ints.len() as u32 - 1
-                }
-                _ if kind::val_is_atom(kd) && !same => self.atom(from.text(AtomId(val))),
-                _ => val,
-            };
+            let (kd, size, _) = src.node(n);
+            let v = self.map_val(from, src, n, src_vars, same);
             self.kind.push(kd);
             self.size.push(size);
             self.val.push(v);
         }
     }
+    /// Node `n` of `src`'s value, mapped into this image's ids (`copy_nodes`).
+    pub fn map_val(&mut self, from: &Version, src: &super::Image, n: u32, src_vars: &[u32], same: bool) -> u32 {
+        let (kd, _, val) = src.node(n);
+        match kd & kind::MASK {
+            kind::ATOM if same => val,
+            kind::ATOM => {
+                let t = from.rel_name(RelId(val));
+                self.rel(t)
+            }
+            kind::VAR | kind::AGG => {
+                let a = src_vars[val as usize];
+                let a = if same { a } else { self.atom(from.text(AtomId(a))) };
+                self.slot_of(a)
+            }
+            kind::INT if kd & kind::BIG != 0 => {
+                self.ints.push(src.big(val));
+                self.ints.len() as u32 - 1
+            }
+            _ if kind::val_is_atom(kd) && !same => self.atom(from.text(AtomId(val))),
+            _ => val,
+        }
+    }
 
     /// The image: the rules written, and `parts`; a delta when it has a parent, removing `removed` of its rules.
     pub fn finish(self, parts: &Parts, removed: &[u32]) -> Vec<u8> {
-        let Encoder { parent, atom_base, rel_base, rule_base, strings, rels, mut promoted, kind, size, val, ints, rule_node, rule_vars, vars, rule_hash, heads, reads, read_rules, read_nodes, .. } = self;
+        let Encoder { parent, atom_base, rel_base, rule_base, strings, rels, mut promoted, kind, size, val, ints, rule_node, rule_vars, vars, rule_hash, heads, reads, read_rules, read_nodes, from, .. } = self;
         let delta = parent.is_some();
         let mut w = Writer::default();
         // Strings, and each of this image's atoms' relation.
@@ -612,6 +620,12 @@ impl<'p> Encoder<'p> {
         w.u32s(R::ReadRule, &rr);
         w.u32s(R::ReadNode, &rn);
         w.u32s(R::Removed, removed);
+        if from.iter().any(|&f| f != super::NO_RULE) {
+            w.u32s(R::From, &from);
+            let mut index: Vec<u64> = from.iter().enumerate().filter(|(_, f)| **f != super::NO_RULE).map(|(k, &f)| (f as u64) << 32 | k as u64).collect();
+            index.sort_unstable();
+            w.u64s(R::FromIndex, &index);
+        }
         let mut m = [0u64; meta::WORDS];
         m[meta::KIND] = delta as u64;
         m[meta::RULE_BASE] = rule_base as u64;

@@ -290,6 +290,21 @@ impl Version {
             }
         }
     }
+    /// The rules that came from rule `src` of the derivation's input (§9), in the order `rules` gives them.
+    pub fn derived(&self, src: RuleId) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match self {
+            Version::Base { image, .. } => Box::new(image.derived(src).map(move |k| RuleRef::new(image, k, RuleId(k)))),
+            Version::View { base, ranges, .. } => Box::new(base.derived(src).filter(move |&k| {
+                let at = ranges.partition_point(|&(s, _)| s <= k);
+                at > 0 && k < ranges[at - 1].1
+            }).map(move |k| RuleRef::new(base, k, RuleId(k)))),
+            Version::Overlay { parent, delta, .. } => {
+                let removed = delta.removed();
+                let base = delta.rule_base();
+                Box::new(parent.derived(src).filter(move |r| removed.binary_search(&r.id().0).is_err()).chain(delta.derived(src).map(move |k| RuleRef::new(delta, k, RuleId(base + k)))))
+            }
+        }
+    }
     /// The atoms in rules' bodies that read relation `rel` (an aggregate's included), each with its rule.
     pub fn readers(&self, rel: RelId) -> Box<dyn Iterator<Item = (RuleRef<'_>, AtomRef<'_>)> + '_> {
         match self {

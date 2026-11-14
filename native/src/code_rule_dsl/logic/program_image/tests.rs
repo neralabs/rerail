@@ -596,3 +596,150 @@ fn the_analyses_over_a_version_say_what_the_tree_says() {
     analyses_agree(&base(&plain), &plain);
     assert_eq!(super::analyses::accepts(&base(&plain), &super::About::of(&base(&plain))).ok(), Some(true));
 }
+
+/// The passes over a version make what the tree passes make of `p`: `normalize` (as a program, by digest, and its
+/// sentinels), each derived rule's source, then `stated_apart` over the normalized version. The analyses agree on
+/// what they make.
+fn passes_agree(p: &Program) {
+    use super::passes;
+    use crate::code_rule_dsl::logic::plan;
+    let lists = Lists::default();
+    let v = base(p);
+    let (tree, sentinels) = match (plan::sql_kernel::normalize(p), passes::normalize(&v)) {
+        (Ok(t), Ok(g)) => (t, g),
+        (Err(_), Err(_)) => return,
+        (a, b) => panic!("normalize: tree {:?}, version {:?}", a.map(|_| ()).map_err(|e| e.to_string()), b.map(|_| ())),
+    };
+    let ((tp, ts), (nv, ns)) = (tree, sentinels);
+    same(&nv.program(&lists).unwrap(), &tp);
+    assert_eq!(nv.digest(), base(&tp).digest(), "normalized digest");
+    let names: std::collections::BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
+    assert_eq!(names, ts, "sentinels");
+    // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule).
+    for r in nv.rules() {
+        let s = r.source().expect("a derived rule's source");
+        assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
+    }
+    for r in v.rules() {
+        let made = nv.derived(r.id()).count();
+        assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+    }
+    let mut tp2 = tp.clone();
+    let pairs = plan::stated_apart(&mut tp2);
+    let (sv, got) = passes::stated_apart(&nv).unwrap();
+    same(&sv.program(&lists).unwrap(), &tp2);
+    assert_eq!(sv.digest(), base(&tp2).digest(), "stated apart digest");
+    let got: Vec<(String, String)> = got.iter().map(|&(a, b)| (sv.rel_name(a).to_owned(), sv.rel_name(b).to_owned())).collect();
+    assert_eq!(got, pairs, "stated apart");
+    analyses_agree(&sv, &tp2);
+}
+
+/// A program the passes change everywhere: relations of no columns (declared, ruled, with facts), a lattice of no
+/// keys and one of keys, `top` in heads, bodies, calls and comparisons, ground rules, and stated facts beside rules.
+fn normalizable() -> Program {
+    use crate::code_rule_dsl::logic::front::LatticeDecl;
+    let mut p = analysed();
+    p.decls.insert("flag".into(), [].into());
+    p.decls.insert("in".into(), [("a".into(), "int".into()), ("b".into(), "int".into()), ("c".into(), "int".into())].into());
+    p.decls.insert("best".into(), [("x".into(), "int".into()), ("n".into(), "int".into())].into());
+    p.decls.insert("lo".into(), [("n".into(), "int".into())].into());
+    p.decls.insert("e".into(), [("x".into(), "int".into()), ("y".into(), "int".into())].into());
+    p.lattice.insert("lo".into(), LatticeDecl { keys: 0, ty: "min".into(), merge: None, widen: None });
+    p.facts.insert("flag".into(), vec![[].into()]);
+    p.facts.insert("e".into(), vec![[Value::Int(1), Value::Int(2)].into()]);
+    p.facts.insert("lo".into(), vec![[Value::Int(7)].into()]);
+    p.rules.extend([
+        Rule { head: atom("flag", vec![]), body: vec![Literal::Atom(atom("p", vec![Term::Wild]))].into() },
+        Rule { head: atom("lo", vec![v("n")]), body: vec![Literal::Atom(atom("best", vec![Term::Wild, v("n")])), Literal::Atom(atom("flag", vec![]))].into() },
+        Rule { head: atom("lo", vec![Term::Top]), body: vec![].into() },
+        Rule { head: atom("best", vec![Term::Int(0), Term::Top]), body: vec![].into() },
+        Rule { head: atom("seen", vec![v("x"), v("m")]), body: vec![
+            Literal::Atom(atom("lo", vec![v("n")])),
+            Literal::Cmp { l: v("m"), op: "=", r: v("n") },
+            Literal::Cmp { l: v("m"), op: "!=", r: Term::Top },
+            Literal::Atom(atom("in", vec![v("x"), Term::Call("max".into(), [v("m"), Term::Top].into()), Term::Wild])),
+        ].into() },
+    ]);
+    p
+}
+
+/// The passes over a version are the tree's passes, on every sampled pack program and on a program they change
+/// everywhere; and a `top` of two domains is refused by both.
+#[test]
+fn the_passes_over_a_version_are_the_tree_passes() {
+    let mut n = 0;
+    for (_, prog) in pack_programs() {
+        if encode(&prog).is_err() {
+            continue;
+        }
+        passes_agree(&prog);
+        n += 1;
+    }
+    assert!(n > 50, "{n}");
+    let p = normalizable();
+    crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&p).expect("the tree normalizes it");
+    passes_agree(&p);
+    let (nv, _) = super::passes::normalize(&base(&p)).unwrap();
+    assert!(nv.rules().count() < p.rules.len(), "ground rules became facts");
+    // `top` beside variables of two lattices.
+    let mut two = p.clone();
+    two.rules.push(Rule { head: atom("out", vec![v("x")]), body: vec![
+        Literal::Atom(atom("lo", vec![v("a")])),
+        Literal::Atom(atom("best", vec![v("x"), v("b")])),
+        Literal::Cmp { l: Term::Call("max".into(), [v("a"), v("b")].into()), op: "<", r: Term::Top },
+    ].into() });
+    assert!(crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&two).is_err());
+    assert!(super::passes::normalize(&base(&two)).is_err());
+}
+
+/// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
+/// literals after; a fold keeps every source.
+#[test]
+fn a_rewrite_copies_what_it_does_not_change() {
+    use super::{Rewrite, Site};
+    struct Mark;
+    impl Rewrite for Mark {
+        fn prefix(&mut self, a: super::AtomRef<'_>, out: &mut Vec<T<'static>>) {
+            if a.arity() == 1 {
+                out.push(T::Int(9));
+            }
+        }
+        fn term(&mut self, site: Site<'_>, t: TermRef<'_>) -> Option<T<'static>> {
+            matches!((site, t), (Site::Cmp(_), TermRef::Int(_))).then_some(T::Int(0))
+        }
+        fn keep(&mut self, l: super::LitRef<'_>) -> bool {
+            !matches!(l.view(), Lit::Nearest { .. })
+        }
+    }
+    let p = every_part();
+    let v = base(&p);
+    let mut b = Builder::derive(&v);
+    let mut ids = Vec::new();
+    for r in v.rules() {
+        let id = b.rewrite(&v, r, &mut Mark).atom("extra", &[T::Wild]).finish().unwrap();
+        ids.push((id, r.id()));
+    }
+    let (d, _) = b.finish().unwrap();
+    for (id, src) in ids {
+        let (got, from) = (d.rule(id).unwrap(), v.rule(src).unwrap());
+        assert_eq!(got.source(), Some(src));
+        assert_eq!(d.derived(src).map(|r| r.id()).collect::<Vec<_>>(), vec![id]);
+        assert_eq!(got.head().arity(), from.head().arity() + usize::from(from.head().arity() == 1));
+        let kept = from.body().filter(|l| !matches!(l.view(), Lit::Nearest { .. })).count();
+        assert_eq!(got.body().count(), kept + 1);
+        // Every variable keeps its name (a dropped literal's own are gone).
+        let names = |r: super::RuleRef<'_>, v: &Version| r.vars().map(|a| v.text(a).to_owned()).collect::<std::collections::BTreeSet<_>>();
+        assert!(names(got, &d).is_subset(&names(from, &v)));
+        for l in got.body() {
+            if let Lit::Cmp { l, r, .. } = l.view() {
+                assert!(!matches!(l, TermRef::Int(x) if x != 0) && !matches!(r, TermRef::Int(x) if x != 0));
+            }
+        }
+    }
+    let f = d.fold().unwrap();
+    for r in d.rules() {
+        assert_eq!(f.rule(r.id()).unwrap().source(), r.source());
+    }
+    // Encoded again, the image opens and reads back.
+    same(&Version::open(&encode(&d.program(&Lists::default()).unwrap()).unwrap()).unwrap().program(&Lists::default()).unwrap(), &d.program(&Lists::default()).unwrap());
+}

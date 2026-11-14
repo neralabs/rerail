@@ -8235,7 +8235,7 @@ impl Drop for TempLeft {
 
 /// Each relation of `prog` with rules and stated facts gets its facts apart, in `rel__stated`, and the rule
 /// `rel(x…) :- rel__stated(x…)` (a lattice relation keeps them): the pairs `(rel, rel__stated)`.
-fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
+pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
     let ruled: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let moved: Vec<String> = prog.facts.iter().filter(|(r, f)| !f.is_empty() && ruled.contains(*r) && !prog.lattice.contains_key(*r)).map(|(r, _)| r.clone()).collect();
     let mut out = Vec::new();
