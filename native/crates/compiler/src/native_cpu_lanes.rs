@@ -279,6 +279,14 @@ impl Plan {
         (mask, regions)
     }
 
+    /// The plan of a window (`Lanes::window`): every byte-local value on the vectors, deep, none
+    /// demoted; no regions, no ASCII folding.
+    pub fn window(native: &BlockNative) -> Plan {
+        let n = native.insts.len();
+        let (lanes, _, at_zero, _) = lane_plan(native, true);
+        Plan { mask: lanes.clone(), lanes, at_zero, ascii: vec![None; n], before: false, ascii_branch: false, full: vec![None; n], regions: Vec::new(), region_of: vec![None; n] }
+    }
+
     /// Whether `prev` instruction `at` reads a carried word (it is not on the vectors).
     pub fn carries(&self, at: usize) -> bool {
         !self.lanes[at]
@@ -611,8 +619,8 @@ pub struct Lanes<'a> {
     plan: &'a Plan,
     /// The ASCII body: values known on ASCII windows are folded.
     ascii: bool,
-    /// The block's index and the stream's length outside a full block's body (`None` there):
-    /// for `within`, and for a `prev`'s cut before the stream.
+    /// The first stream position of chunk 1 and the stream's length outside a full block's
+    /// body (`None` there): for `within`, and for a `prev`'s cut before the stream.
     position: Option<(Value, Value)>,
     /// Each (chunk, lag)'s bytes, loaded once.
     bytes: HashMap<(usize, u8), Value>,
@@ -645,8 +653,31 @@ impl<'a> Lanes<'a> {
             native,
             plan,
             ascii,
-            position: general.then_some((i, len)),
+            position: general.then(|| (f.ins().ishl_imm(i, 6), len)),
             bytes: loaded,
+            base,
+            nibble,
+            zero16,
+            nibbles: HashMap::new(),
+            lookups: HashMap::new(),
+            tables: vec![None; native.tables.len()],
+            splats: [None; 256],
+            index: None,
+            memo: HashMap::new(),
+        }
+    }
+
+    /// A window's values (`native_cpu_bytes`): its 64 bytes from `base`, the stream's position
+    /// `start`, anywhere in the file; `within` and a `prev`'s cut from `start`.
+    pub fn window(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, start: Value, len: Value, nibble: Value) -> Self {
+        let c = f.ins().iconst(types::I8, 0);
+        let zero16 = f.ins().splat(types::I8X16, c);
+        Lanes {
+            native,
+            plan,
+            ascii: false,
+            position: Some((start, len)),
+            bytes: HashMap::new(),
             base,
             nibble,
             zero16,
@@ -859,8 +890,7 @@ impl<'a> Lanes<'a> {
 
     /// Chunk `c`'s first stream position, and `x` less it clamped to `0..=16` as a splat: a lane
     /// index bound.
-    fn bound(f: &mut FunctionBuilder<'_>, i: Value, c: usize, lag: u8, x: Value) -> Value {
-        let start = f.ins().ishl_imm(i, 6);
+    fn bound(f: &mut FunctionBuilder<'_>, start: Value, c: usize, lag: u8, x: Value) -> Value {
         let b = f.ins().iadd_imm(start, 16 * c as i64 - 16 - i64::from(lag));
         let x = f.ins().isub(x, b);
         let (zero, sixteen) = (f.ins().iconst(types::I64, 0), f.ins().iconst(types::I64, 16));

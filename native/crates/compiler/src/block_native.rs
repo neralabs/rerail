@@ -327,26 +327,25 @@ impl BlockNative {
         self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
     }
 
-    /// The outputs of the run tests the CPU's token loop reads at a token's bytes
-    /// (`Records::locals`), where nothing else of the records reads them: the CPU makes none.
+    /// The outputs the CPU's token loop makes from the file's bytes where it reads them
+    /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
+    /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
     pub fn read_at_tokens(&self) -> Vec<usize> {
         use crate::records::EndRule;
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
             return Vec::new();
         };
-        let local = |o: u16| r.locals.iter().any(|l| l.mask == o);
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
         let mut read: Vec<u16> = Vec::new();
-        read.extend(r.marks.iter().map(|m| m.0));
         read.extend(r.skip);
-        read.extend(r.untaken.iter().copied());
-        read.extend(r.retags.iter().map(|t| t.o));
         read.extend(r.rules.iter().filter_map(|x| match *x {
             EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
         read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
-        read.extend(r.checks.iter().filter(|c| c.count || !local(c.o)).map(|c| c.o));
-        let mut v: Vec<usize> = r.locals.iter().map(|l| l.mask).filter(|o| !read.contains(o)).map(usize::from).collect();
+        read.extend(r.checks.iter().map(|c| c.o));
+        let marks: Vec<u16> = r.marks.iter().map(|m| m.0).collect();
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !marks.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v

@@ -53,8 +53,8 @@ by its own reader, its checks made at it. The CPU's tier 1 is generated to that 
 | The token loop | in the block loop | in the block loop, after each block, over the blocks whose outputs are final; its state the loop's values | yes |
 | A token's start | the first non-space after the one before | the block's starts in a register, the first left (`records::walk`) | yes (2a, then registers) |
 | A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
-| A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
-| The checks | at the token | the fallback and the marks, masks at every byte | no |
+| A rare token | its reader, which moves the cursor | its reader, its closer found in the bytes from its opener | yes |
+| The checks | at the token | at the token, from its bytes | yes |
 | What tier 2 reads | the tokens | the records; the marks as bits at a token's start | marks as masks |
 
 What is left is the last three rows: the marks and checks made at the token (a byte no token
@@ -373,4 +373,35 @@ from 57; tier 1's Rust 247 KB, from 254.
 
 Left as masks: a test that counts over the token (a float's `.`, a string's bad bytes), and
 the readers' openers (a string's `"` is `quote & ~escaped`, a carried value).
+
+## Masks from the bytes, where the loop reads them
+
+The lean lexer makes four masks a window, in registers, and stores none; it reads a string
+from its opener to its closer, and a test from the token's bytes. The CPU's block body made
+every mask the token loop reads (31 outputs, 51 operations) and stored them all, a row a
+block, for the loop to load again.
+
+Now the compiler finds, from the program alone, which outputs are made from the bytes near
+each byte (`native_cpu_bytes`): a byte-local value (`native_cpu_lanes`: tests, classes,
+`prev`, `within`), their logic and `prev`s, and `escaped(a)` of one. The token loop makes each
+where it reads it:
+
+```text
+the block's starts and runs   a window at the block, on the byte vectors, in the loop
+a reader's closer, a count    the window's function (`bytes_fn`), a call a word read
+a test at the token           its bytes, scalar loads
+escaped(a)                    simdjson's formula; its carry in, the byte before tested,
+                              and only in a run of `a` a cold loop back to its start
+```
+
+The windows are the block body's own lowering (`Lanes::window`), at any position. The CPU's
+form makes none of these outputs (`read_at_tokens`) and stores no row of what it does not make
+(`Loop::stored`). A read from the bytes waits on no block, so the loop's bounds are only those
+of the rows it still reads. Metal and the interpreter make the masks, which mean the same.
+No grammar hint: the `.rr` grammar is unchanged.
+
+The CPU's form: 8 operations, from 51; what is left is the marks' (the newlines' and the
+directives'), next. The guard `the_cpu_reads_local_tests_at_the_token`; the edges (runs of
+backslashes across windows, strings and comments over blocks) in
+`the_cpus_records_are_the_interpreters`.
 

@@ -1472,15 +1472,18 @@ pub mod tests {
         assert!(c.native.extracts.iter().all(|e| made.contains(e)), "every extract the record pass's");
     }
 
-    /// Decision 0177's guard for the token tests: a run test of byte tests alone is read at the
-    /// token's bytes on the CPU (`Records::locals`), as the lean lexer reads a `-` or a `0`; the
-    /// CPU makes no mask of it.
+    /// Decision 0177's guard for the token loop's reads: the masks it reads that are made from
+    /// the bytes near each byte (`native_cpu_bytes`) it makes where it reads them, as the lean
+    /// lexer makes its window's masks and reads a string from its opener; the CPU's body makes
+    /// none of them. The skip, the runs, the readers' openers and closers, the tests.
     #[test]
     fn the_cpu_reads_local_tests_at_the_token() {
         use rerail_compiler::block_native::BlockInst;
         let c = crate::compiled().expect("compiles");
         let at = c.native.read_at_tokens();
-        assert!(at.len() >= 2, "the punctuation's and the number's tests read at the token: {at:?}");
+        let r = c.native.records.as_ref().expect("records");
+        assert!(at.contains(&usize::from(r.skip.expect("a skip"))), "the skip from the bytes: {at:?}");
+        assert!(at.len() >= 8, "the runs', readers' and tests' masks from the bytes: {at:?}");
         let cpu = c.native.cpu_form();
         for &o in &at {
             assert!(matches!(cpu.insts[usize::from(cpu.outputs[o])], BlockInst::Const(0)), "the CPU makes test {o}'s mask");
@@ -1506,6 +1509,17 @@ pub mod tests {
         for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {
             inputs.push(t.as_bytes().to_vec());
             inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
+        }
+        // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
+        // across the windows' edges, the run before a window found back to its start; a
+        // string or comment over many blocks; the escape at the opener's byte.
+        for n in [1usize, 2, 3, 63, 64, 65, 66, 127, 128, 129, 130] {
+            for pad in [0usize, 1, 30, 62, 63] {
+                let run = "\\".repeat(n);
+                inputs.push(format!("{}r(\"{run}\") :- a(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(\"a{run}\\\"b\") :- a(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(\"{}\") :- a(x). // {run}\n/* {run} */ b(y).\n", " ".repeat(pad), "x".repeat(n)).into_bytes());
+            }
         }
         assert!(!r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Pair(_))), "a pair rule reads a mask: the pairs are read from the bytes");
         assert!(r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Next(_))), "no pair read from the bytes");
