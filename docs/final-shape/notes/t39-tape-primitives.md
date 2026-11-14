@@ -280,7 +280,7 @@ The rightmost path ends with the file, so its few ends are read singly. Every an
   range min-max tree (step 4), or a sweep over the parentheses closing nodes as it goes, is needed
   before BE can serve `text` in bulk.
 
-## 5. What using the bulk primitives takes in the engine
+## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
 
@@ -330,7 +330,7 @@ Surveyed in `native/src/code_rule_dsl` (2026-11-14).
 - (1) and (2) carry over to (3) unchanged if they are written against a `Reader`-like interface
   over `Facts` from the start. So (1) should be written that way.
 
-## 4. The plan
+## 5. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
 
