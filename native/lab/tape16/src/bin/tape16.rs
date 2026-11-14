@@ -1338,11 +1338,11 @@ fn cmd_prim(path: &str) {
             "has, every node, backwards", "has, one node, skipping (exact summary)", "has, one node, by preorder steps",
             "has, one node, position lists", "every node of the set, a code sweep (a node)", "every node of the set, position lists (a node)",
             "every node of the set, a sweep skipping by the exact summary (a node)", "every node of the set, 64 codes at a time (a node)",
-            "nearest, every node, from the S-nodes (64 codes at a time)", "outermost, every node, from the S-nodes", "has, every node, from the S-nodes (climbing)"] {
+            "nearest, every node, from the S-nodes (64 codes at a time)", "outermost, every node, from the S-nodes", "has, every node, from the S-nodes (climbing)", "span of every node of the set (a node of the set)"] {
             rows.push(format!("{q} ({s})"));
         }
     }
-    rows.extend(["field `name`, one node".into(), "field `body`, one node".into(), "unparen, one node".into(), "line, every node".into(), "line, one node".into()]);
+    rows.extend(["field `name`, one node".into(), "field `body`, one node".into(), "unparen, one node".into(), "line, every node".into(), "line, one node".into(), "span, every node in order".into(), "span, every node, ends closed by the sweep".into(), "span, every node, a block at a time".into()]);
     let nr = rows.len();
     let mut cost = vec![vec![Cost::default(); C.len()]; nr];
     let mut count = vec![vec![0u64; C.len()]; nr];
@@ -1368,7 +1368,7 @@ fn cmd_prim(path: &str) {
         let post = prim::Postings::new(r, &l.kind_of);
         sum_bytes[c][2] += post.bytes();
         for (k, set) in l.sets.iter().enumerate() {
-            let row = k * 16;
+            let row = k * 17;
             let (tn, to, th) = &truths[k];
             let (_, x) = best3(|| prim::nearest_all(r, set, &mut near));
             wrong[c] += near.iter().zip(tn).filter(|(a, b)| a != b).count();
@@ -1439,8 +1439,13 @@ fn cmd_prim(path: &str) {
             wrong[c] += flag.iter().zip(th).filter(|(a, b)| a != b).count();
             cost[row + 15][c] += x;
             count[row + 15][c] += n as u64;
+            let mut sp = Vec::new();
+            let (_, x) = best3(|| prim::spans_groups(r, set, &mut sp));
+            wrong[c] += usize::from(sp.len() != want.len()) + sp.iter().zip(&want).filter(|&(g, &p)| *g != (tree.nodes[p as usize].start, tree.nodes[p as usize].end)).count();
+            cost[row + 16][c] += x;
+            count[row + 16][c] += want.len().max(1) as u64;
         }
-        let base = l.sets.len() * 16;
+        let base = l.sets.len() * 17;
         for (j, &f) in l.fields.iter().enumerate() {
             let (got, x) = best3(|| sample.iter().map(|&p| prim::field_one(r, &l.field_of, f, ids[p])).collect::<Vec<_>>());
             for (g, &p) in got.iter().zip(sample) {
@@ -1462,6 +1467,19 @@ fn cmd_prim(path: &str) {
         wrong[c] += got_l.iter().zip(sample).filter(|&(g, &p)| *g != line_truth[p]).count();
         cost[base + 4][c] += x;
         count[base + 4][c] += sample.len() as u64;
+        let mut sp = Vec::new();
+        let (_, x) = best3(|| prim::spans_all(r, &mut sp));
+        wrong[c] += sp.iter().zip(&tree.nodes).filter(|(g, t)| **g != (t.start, t.end)).count();
+        cost[base + 5][c] += x;
+        count[base + 5][c] += n as u64;
+        let (_, x) = best3(|| prim::spans_stream(r, &mut sp));
+        wrong[c] += sp.iter().zip(&tree.nodes).filter(|(g, t)| **g != (t.start, t.end)).count();
+        cost[base + 6][c] += x;
+        count[base + 6][c] += n as u64;
+        let (_, x) = best3(|| prim::spans_bulk(r, &mut sp));
+        wrong[c] += sp.iter().zip(&tree.nodes).filter(|(g, t)| **g != (t.start, t.end)).count();
+        cost[base + 7][c] += x;
+        count[base + 7][c] += n as u64;
         for (g, &p) in got.iter().zip(sample) {
             let mut q = p;
             while l.wrap[code[q] as usize] && tree.size[q] > 1 {

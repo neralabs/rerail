@@ -319,6 +319,83 @@ pub fn has_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
     }
 }
 
+/// The span (start, end) of every node of the set, in preorder: what `text` and `match` read for a set.
+pub fn spans_groups<R: Reader>(r: &R, set: &[bool], out: &mut Vec<(u64, u64)>) {
+    out.clear();
+    let mut on = |k: usize| {
+        let id = r.id_of(k);
+        out.push((r.start(id), r.end(id)));
+    };
+    match r.packed_codes() {
+        Some(p) => p.match_groups(r.len(), set, |base, mut m| {
+            while m != 0 {
+                on(base + m.trailing_zeros() as usize);
+                m &= m - 1;
+            }
+        }),
+        None => (0..r.len()).filter(|&k| set[r.code_by_rank(k) as usize]).for_each(&mut on),
+    }
+}
+
+/// The span of every node, in preorder.
+pub fn spans_all<R: Reader>(r: &R, out: &mut Vec<(u64, u64)>) {
+    out.clear();
+    let mut id = r.id_of(0);
+    loop {
+        out.push((r.start(id), r.end(id)));
+        match r.next(id) {
+            Some(n) => id = n,
+            None => break,
+        }
+    }
+}
+
+/// The span of every node, in preorder, for forms that keep the end as the gap to the start just past the
+/// subtree: the open nodes wait on a stack, and each is closed when the sweep reaches that start. No start
+/// is read twice, and none at random. Other forms read the end as `spans_all` does.
+pub fn spans_stream<R: Reader>(r: &R, out: &mut Vec<(u64, u64)>) {
+    let n = r.len();
+    let id0 = r.id_of(0);
+    if r.end_from_next_start(id0, 0).is_none() {
+        return spans_all(r, out);
+    }
+    out.clear();
+    out.resize(n, (0, 0));
+    let mut stack: Vec<(u32, u32, usize)> = Vec::with_capacity(64);
+    let mut id = id0;
+    let mut k = 0usize;
+    loop {
+        let s = r.start(id);
+        while let Some(&(q, nx, qid)) = stack.last() {
+            if nx as usize != k {
+                break;
+            }
+            out[q as usize].1 = r.end_from_next_start(qid, s).unwrap();
+            stack.pop();
+        }
+        out[k].0 = s;
+        let e = r.subtree_end(id);
+        stack.push((k as u32, if R::PREORDER_IDS { e } else { r.rank(e) } as u32, id));
+        k += 1;
+        match r.next(id) {
+            Some(nid) => id = nid,
+            None => break,
+        }
+    }
+    // The nodes that end with the file.
+    for &(q, _, qid) in &stack {
+        out[q as usize].1 = r.end(qid);
+    }
+}
+
+/// The span of every node, in preorder, a block at a time where the candidate can (each block's headers read
+/// once), else as `spans_stream`.
+pub fn spans_bulk<R: Reader>(r: &R, out: &mut Vec<(u64, u64)>) {
+    if !r.spans_bulk(out) {
+        spans_stream(r, out);
+    }
+}
+
 /// Which codes occur in each block of `SUM_BLOCK` nodes (by preorder rank): a bit a code, `words` words a
 /// block. Part of the tape when used: its bytes are counted. (A 64-bit filter, each code hashed to one bit,
 /// was measured and dropped: a block holds 40–60 distinct codes, so the filter is mostly ones.)

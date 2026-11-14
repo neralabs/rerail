@@ -285,8 +285,40 @@ impl PFor {
         }
         base + v
     }
+    /// Block b's header, read once, for reading the block's values in order.
+    #[inline(always)]
+    pub fn block(&self, b: usize) -> PBlock<'_> {
+        let h = self.head[b];
+        let (w, ew, e, off) = ((h & 63) as u32, ((h >> 6) & 63) as u32, (h >> 12) & 511, (h >> 21) as usize);
+        let len = (self.n - b * BLOCK).min(BLOCK);
+        PBlock { words: &self.words, off, w, lim: (1u64 << w) - e, ew, exc: off + len * w as usize, base: if self.with_base { self.base[b] } else { 0 } }
+    }
     pub fn bytes(&self) -> usize {
         self.head.len() * 8 + if self.with_base { self.base.len() * 8 } else { 0 } + self.words.len() * 8 + 8
+    }
+}
+
+/// One `PFor` block with its header decoded: value j is one extract, or two for an exception.
+#[derive(Clone, Copy)]
+pub struct PBlock<'a> {
+    words: &'a [u64],
+    off: usize,
+    w: u32,
+    lim: u64,
+    ew: u32,
+    exc: usize,
+    base: u64,
+}
+
+impl PBlock<'_> {
+    #[inline(always)]
+    pub fn get(&self, j: usize) -> u64 {
+        let v = extract(self.words, self.off + j * self.w as usize, self.w);
+        if v >= self.lim {
+            self.base + extract(self.words, self.exc + (v - self.lim) as usize * self.ew as usize, self.ew)
+        } else {
+            self.base + v
+        }
     }
 }
 
@@ -340,6 +372,14 @@ pub trait Reader {
     /// time).
     fn packed_codes(&self) -> Option<&Packed> {
         None
+    }
+    /// See `Pos::end_from_next_start`.
+    fn end_from_next_start(&self, _id: usize, _next_start: u64) -> Option<u64> {
+        None
+    }
+    /// Every node's span, in preorder, a block at a time; false if the candidate has no block reader.
+    fn spans_bulk(&self, _out: &mut Vec<(u64, u64)>) -> bool {
+        false
     }
     /// Ids are preorder numbers (rank is the identity), so a node is found from its rank.
     const PREORDER_IDS: bool;
@@ -629,6 +669,19 @@ pub trait Pos: Sized + Image {
     fn bytes(&self) -> [usize; 2];
     fn start(&self, r: usize) -> u64;
     fn end(&self, r: usize, next: impl FnOnce() -> usize, post: impl FnOnce() -> usize) -> u64;
+    /// The end of node r, given the start of the node just past its subtree, when the form keeps the end as
+    /// the gap to that start (a sweep in preorder reaches that start itself).
+    #[inline(always)]
+    fn end_from_next_start(&self, _r: usize, _next_start: u64) -> Option<u64> {
+        None
+    }
+    /// The end is kept as a gap to the next start (`scan_block` then gives the gap, zigzagged).
+    const GAP_END: bool = false;
+    /// Block b's nodes in order, `f(j, start, x)` with x the end, or the zigzagged gap if `GAP_END`; false if
+    /// the form has no block reader.
+    fn scan_block(&self, _b: usize, _f: impl FnMut(usize, u64, u64)) -> bool {
+        false
+    }
 }
 
 /// Start by frame of reference a block at a time, end as a length.
@@ -661,6 +714,14 @@ impl Pos for ForLen {
     #[inline(always)]
     fn end(&self, r: usize, _: impl FnOnce() -> usize, _: impl FnOnce() -> usize) -> u64 {
         self.start.get(r) + self.len.get(r)
+    }    #[inline(always)]
+    fn scan_block(&self, b: usize, mut f: impl FnMut(usize, u64, u64)) -> bool {
+        let (st, ln) = (self.start.block(b), self.len.block(b));
+        for j in 0..(self.start.n - b * BLOCK).min(BLOCK) {
+            let s = st.get(j);
+            f(j, s, s + ln.get(j));
+        }
+        true
     }
 }
 
@@ -706,6 +767,21 @@ impl Pos for PredGap {
         let z = self.gap.get(r);
         let d = ((z >> 1) as i64) ^ -((z & 1) as i64);
         (s as i64 - d) as u64
+    }
+    #[inline(always)]
+    fn end_from_next_start(&self, r: usize, next_start: u64) -> Option<u64> {
+        let z = self.gap.get(r);
+        Some((next_start as i64 - (((z >> 1) as i64) ^ -((z & 1) as i64))) as u64)
+    }
+    const GAP_END: bool = true;
+    #[inline(always)]
+    fn scan_block(&self, b: usize, mut f: impl FnMut(usize, u64, u64)) -> bool {
+        let (sl, base) = (u64::from(self.start.slope[b]), self.start.base[b]);
+        let (res, gap) = (self.start.res.block(b), self.gap.block(b));
+        for j in 0..(self.start.n - b * BLOCK).min(BLOCK) {
+            f(j, base.wrapping_add((j as u64 * sl) >> 16).wrapping_add(res.get(j)), gap.get(j));
+        }
+        true
     }
 }
 
@@ -776,6 +852,11 @@ impl Pos for EfGap {
         let s = if nx < self.n { self.start.get(nx) } else { self.source_len };
         let z = self.gap.get(r);
         (s as i64 - (((z >> 1) as i64) ^ -((z & 1) as i64))) as u64
+    }
+    #[inline(always)]
+    fn end_from_next_start(&self, r: usize, next_start: u64) -> Option<u64> {
+        let z = self.gap.get(r);
+        Some((next_start as i64 - (((z >> 1) as i64) ^ -((z & 1) as i64))) as u64)
     }
 }
 
@@ -1215,6 +1296,43 @@ impl<P: Pos> Reader for XF<P> {
     #[inline(always)]
     fn code_by_rank(&self, r: usize) -> u32 {
         self.code(r)
+    }
+    #[inline(always)]
+    fn end_from_next_start(&self, id: usize, next_start: u64) -> Option<u64> {
+        self.pos.end_from_next_start(id, next_start)
+    }
+    fn spans_bulk(&self, out: &mut Vec<(u64, u64)>) -> bool {
+        let n = self.n;
+        out.clear();
+        out.resize(n, (0, 0));
+        for b in 0..n.div_ceil(BLOCK) {
+            let o = &mut out[b * BLOCK..];
+            if !self.pos.scan_block(b, |j, s, x| o[j] = (s, x)) {
+                return false;
+            }
+        }
+        if !P::GAP_END {
+            return true;
+        }
+        // The ends: the start just past each subtree is in the answer already (the gap waits in the end).
+        let o = out.as_mut_ptr();
+        for b in 0..n.div_ceil(BLOCK) {
+            let sb = self.slot.block(b);
+            for j in 0..(n - b * BLOCK).min(BLOCK) {
+                let k = b * BLOCK + j;
+                let v = sb.get(j);
+                let t = v & 1;
+                let nx = k + (((v >> 1) & t.wrapping_sub(1)) | t) as usize;
+                // SAFETY: k < n, and nx is read only below n.
+                unsafe {
+                    let z = (*o.add(k)).1;
+                    let d = ((z >> 1) as i64) ^ -((z & 1) as i64);
+                    // The rightmost path ends with the file: its few ends are read as single ones.
+                    (*o.add(k)).1 = if nx < n { ((*o.add(nx)).0 as i64 - d) as u64 } else { self.end(k) };
+                }
+            }
+        }
+        true
     }
     fn packed_codes(&self) -> Option<&Packed> {
         Some(&self.code)
@@ -1717,6 +1835,10 @@ impl<P: Pos> Reader for B<P> {
     #[inline(always)]
     fn code_by_rank(&self, r: usize) -> u32 {
         self.code.get(r) as u32
+    }
+    #[inline(always)]
+    fn end_from_next_start(&self, id: usize, next_start: u64) -> Option<u64> {
+        self.pos.end_from_next_start(self.rank1(id), next_start)
     }
     fn packed_codes(&self) -> Option<&Packed> {
         Some(&self.code)

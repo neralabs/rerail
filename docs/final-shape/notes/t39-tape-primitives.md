@@ -249,6 +249,87 @@ the table, at the block's own width. Bytes a node for the codes:
 - **It costs the sweep its one width.** The 64-codes-at-a-time sweep would need the set translated
   into each block's table first. So it is dropped, and the codes stay one width a file.
 
+### Step 3, fourth item: spans, and MF's gap end read a block at a time
+
+`text` and `match` read a node's span (start, end). MF keeps the end as the gap to the start just
+past the subtree, so one end is three dependent reads (the structure, the predicted start there,
+the gap): 11.4 ns at random against XF's 5.4.
+
+Read in bulk, a block at a time, each block's headers are decoded once and its values read in place:
+
+- **XF:** start and length from their two blocks.
+- **MF:** the predicted starts first, written into the answer. Then each end is the answer's start at
+  the node past the subtree, minus the gap. That is a read of the answer, not of the tape.
+
+The rightmost path ends with the file, so its few ends are read singly. Every answer is right.
+
+| ns a node, instructions | XF | MF | BE |
+|---|---|---|---|
+| span, every node in order, a read a node (M3 Max, quiet) | 3.6, 95 | 7.5, 204 | 32–35, 500 |
+| the same, open nodes closed by the sweep (M5) | 5.6, 97 | 12.6, 181 | 47.6, 499 |
+| **the same, a block at a time** (M5, under load) | **3.3, 52** | **6.1, 97** | 47.6, 499 |
+| span of every call (M3 Max), less the sweep | about 8 | about 12 | about 33 |
+
+- **Read a block at a time, MF's ends cost half as much (12.7 → 6.1 ns).** The cost was each read
+  decoding its block header again, not the random start: closing open nodes by the sweep alone saved
+  nothing.
+- **MF still costs about 2× XF on spans.** It does three reads a node where XF does two, and a
+  multiply for the prediction. It is 13–19% smaller. So this is a real choice between size and
+  speed, now about 3 ns a node.
+- **BE's spans are its weak point:** 32–48 ns a node, because each end searches for the close. A
+  range min-max tree (step 4), or a sweep over the parentheses closing nodes as it goes, is needed
+  before BE can serve `text` in bulk.
+
+## 5. What using the bulk primitives takes in the engine
+
+Surveyed in `native/src/code_rule_dsl` (2026-11-14).
+
+**What the engine does today:**
+
+- **The rules never read the tape.** At load, `facts/core.rs` (`from_image`, `from_tape`) decodes
+  each document into `Facts`: per-node vectors (kind, parent, start, end, field, children) and a
+  per-kind node index (`facts/core/postings.rs`). Every base view (`node`, `child`, `field`, `tape`,
+  `line`) reads `Facts` through `Projected` (`facts/vtab/syntax.rs`). Node ids are granule ids, not
+  preorder numbers.
+- **The kind-set axes are one source,** `Within` (`facts/vtab/syntax/within.rs`, 535 lines). The
+  set is a table of bools a code. The default is a point lookup a key: a climb or a subtree walk,
+  memoised. `solved()` is a bulk pass for `nearest` and `inside`, asked from n only. `has`, the
+  other direction, and `within` have no bulk form.
+- **The planner picks bulk or point per axis** (`Within::expect`). It goes bulk once expected keys ×
+  150 ns exceed nodes × 12 ns.
+- **`inside` and `has` are relations of pairs,** not yes or no: `inside(n, a, S)` gives every
+  S-ancestor, and `has(a, n, S)` every S-descendant. Only `!has(b, _, S)` asks "any".
+- **Sets of nodes and derived kind sets** are lowered to recursive rules over `child` or `tape`
+  (`logic/rr/lower.rs`, `node_axis`, `derived_axes`), run by the general fixpoint.
+- **The ast matcher and the Metal kernels** read format-15 tape documents directly (about 590
+  `TapeDoc` calls in 74 files), and build their own per-kind anchor indexes.
+
+**The rework, by size:**
+
+1. **The axes on `Facts` (small: `within.rs`, about 500–1,000 lines).** Bulk `nearest`, outermost
+   and `has`, from either side, from the S-nodes. Bulk `inside` and `has` as pairs: for each S-node
+   its preorder interval, so every pair comes from one interval. The planner's constants become
+   about 0.3–1 ns a node for bulk, so bulk wins once a rule asks for more than about 1 node in 300.
+   The sweep runs on `Facts`' kind array. Answers keep `Projected`'s numbering, or are mapped to it.
+2. **Sets of nodes and derived kind sets on the same code (moderate, `lower.rs`).** The S-node
+   methods need only the S-nodes in preorder, not a code mask. A derived relation of nodes, sorted,
+   drives the same sweep, in place of the recursive climbs.
+3. **The rules reading the tape in place (large: `facts/core.rs`, `Projected`, the base views).**
+   This is what the tape's design asks for. `Facts` is a decoding of the tape: a per-node copy and a
+   per-kind index, the stored answers that 0156 and the decision above rule out. The views would
+   read a `Reader` over the format-16 tape (code, structure, span, field in the code), with ids as
+   preorder numbers. Granule ids and narrowed documents would map onto preorder ranges. Most base
+   views go through `Projected`, so that is where the work is.
+4. **The ast matcher and Metal (largest, and separate).** About 590 call sites and the kernels'
+   node packing. The rule axes do not need it.
+
+**Where the work goes:**
+
+- (1) alone gets the bulk speed on today's `Facts`, but keeps the decoding.
+- (3) is the one that removes the copy.
+- (1) and (2) carry over to (3) unchanged if they are written against a `Reader`-like interface
+  over `Facts` from the start. So (1) should be written that way.
+
 ## 4. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
@@ -274,7 +355,7 @@ In order. Each step is measured on all three corpora, every answer checked.
      the S-nodes (0.3–0.8 ns a node for sparse sets).
    - ~~Narrower codes a block~~: saves 0.08–0.13 B a node (2–3%) and breaks the one-width sweep;
      dropped.
-   - MF's gap end with the gap stored beside the next start.
+   - Done: spans a block at a time (MF's end 12.7 → 6.1 ns a node, XF 5.8 → 3.3).
 4. **BE.** A two-level range min-max tree for `findclose` and `enclose` (Navarro–Sadakane), and
    Elias–Fano select by sampling.
 5. **Metal.** The bulk primitives as kernels: the stack sweep as a scan over each block's depths,
