@@ -116,7 +116,6 @@ interface OwnedOpenSession {
   readonly sessionId: string;
   readonly processId: number;
   readonly token: string;
-  readonly updatedAt: number;
   readonly heardAt: number;
 }
 
@@ -130,16 +129,24 @@ function askedOnce<K, V>(answer: (key: K) => V): (key: K) => V {
 }
 
 /**
+ * The tokens of the claims this process made under no lock (`registerOwner`) and has not let go (`releaseOwner`): a
+ * row that names this process and none of them is a process's that the system gave the same pid before. The row's
+ * time cannot tell: the wall clock can step back after this process started (NTP, a virtual machine resumed), and a
+ * claim made since then reads as made before the start. Holds one token per session this process holds under no lock.
+ */
+const claimsHereWithoutLock = new Set<string>();
+
+/**
  * Whether the runtime that wrote `owner` has ended, so the session it holds is no one's: the process the row names is
  * gone; or the row was written under an engine service's lock that is free now (`ownerLockFreed`), however that service
- * ended and whatever process holds its pid; or, written under none, it names this process but was written before this
- * process started, by a process the system gave the same pid.
+ * ended and whatever process holds its pid; or, written under none, it names this process but this process did not
+ * make the claim (`claimsHereWithoutLock`), a process the system gave the same pid did.
  */
 function writerEnded(owner: OwnedOpenSession, live: (processId: number) => boolean, freed: (lockId: string) => boolean): boolean {
   if (!live(owner.processId)) return true;
   const lockId = ownerLockOf(owner.token);
   if (lockId !== undefined) return freed(lockId);
-  return owner.processId === process.pid && owner.updatedAt < performance.timeOrigin;
+  return owner.processId === process.pid && !claimsHereWithoutLock.has(owner.token);
 }
 
 /** Durable controls keyed by canonical workspace, with requests kept session-local. */
@@ -327,6 +334,7 @@ export class SqliteAuditControlStore {
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
       this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
     });
+    if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }
   /**
@@ -340,6 +348,7 @@ export class SqliteAuditControlStore {
   releaseOwner(sessionId: string, claim: PolicyOwnerClaim): void {
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() })
       .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    claimsHereWithoutLock.delete(claim.token);
   }
   /**
    * Ends each open session whose owner row's writer has ended (`writerEnded`), as a daemon stopped by a machine
@@ -353,7 +362,7 @@ export class SqliteAuditControlStore {
     return this.#database.transaction(() => {
       const open = this.#database.all<OwnedOpenSession>(sql`
         SELECT ${sessions.sessionId} AS sessionId, ${policySessionOwners.processId} AS processId,
-          ${policySessionOwners.token} AS token, ${policySessionOwners.updatedAt} AS updatedAt,
+          ${policySessionOwners.token} AS token,
           coalesce((SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = ${sessions.sessionId}
             ORDER BY ${events.sequence} DESC LIMIT 1), ${sessions.startedAt}) AS heardAt
         FROM ${sessions} JOIN ${policySessionOwners} ON ${policySessionOwners.sessionId} = ${sessions.sessionId}
