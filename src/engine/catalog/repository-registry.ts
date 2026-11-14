@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse, resolve } from "node:path";
+import { dirname, parse, resolve, sep } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -217,18 +217,74 @@ function repositoryWithoutRemote(db: Reader, checkoutPath: string, cloneId: stri
 }
 
 /**
- * {@link checkoutStatus} of the checkout at `location` as {@link lookupCheckout} finds it there, read from the database
- * and the clone id file alone, without Git. Undefined where only the checkout's remote, which Git reads, could still name
- * its repository, and where the checkout's path does not resolve as it is read (`physicalPathNow`); a folder outside Git
- * has no remote, so there it is undefined only for that.
+ * Whether the database alone, without Git or any checkout's remote, shows that the daemon reads stopped at every place
+ * Git's search for a folder can end (`ends`, as `gitSearchEnds` gives them: the checkout the walk found, where it found
+ * one, then the folder itself outside Git), on positive evidence only. The end the walk settled on, the first, must be
+ * held by a record ({@link stoppedReading}), and no checkout may be recorded at a folder the walk passed without finding
+ * a `.git` ({@link recordedOnTheWay}). So a folder outside Git that no record names, and a checkout only its clone id
+ * names, are not shown: what makes them stopped is that something was not found.
  */
-export function statusWithoutRemote(db: Reader, location: RepositoryIdentityLocation): RepositoryStatus | undefined {
+export function recordedStopped(db: Reader, ends: readonly RepositoryIdentityLocation[]): boolean {
+  const readings = ends.map(end => stoppedReading(db, end));
+  return readings[0] === "recorded" && readings.every(reading => reading !== undefined) && !recordedOnTheWay(db, ends);
+}
+
+/**
+ * How the checkout at `location`, one place Git's search can end, reads stopped as {@link lookupCheckout} finds it
+ * there from the database and the clone id file alone: `recorded` where a checkout is recorded at its folder, or one of
+ * its repository around it ({@link parentCheckouts}); `unrecorded` for a folder outside Git no record names, which the
+ * daemon reads stopped only for that. Undefined where it reads started, where only the checkout's remote, which Git
+ * reads, could name its repository, and where its path does not resolve as it is read (`physicalPathNow`).
+ */
+function stoppedReading(db: Reader, location: RepositoryIdentityLocation): "recorded" | "unrecorded" | undefined {
   const checkoutPath = physicalPathNow(location.workspaceRoot);
   if (checkoutPath === undefined) return undefined;
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId);
-  if (repositoryKey === undefined && location.git) return undefined;
-  return checkoutStatus(db, repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId));
+  if (repositoryKey === undefined) return location.git ? undefined : "unrecorded";
+  return stoppedContext(db, contextOf(location, checkoutPath, repositoryKey, cloneId));
+}
+
+/** {@link stoppedReading} of a checkout whose repository the database names. */
+function stoppedContext(db: Reader, context: CheckoutContext): "recorded" | "unrecorded" | undefined {
+  if (checkoutStatus(db, context).started) return undefined;
+  return recordedRepositoryAt(db, context.checkoutPath, context.cloneId) !== undefined || parentCheckouts(db, context).length > 0
+    ? "recorded"
+    : "unrecorded";
+}
+
+/**
+ * Whether a checkout is recorded at a folder Git's search from `ends`' folder passed with no `.git` before it reached
+ * the first end: the folder itself or one above it, short of the checkout the walk found there, or, where it found none,
+ * above the folder, whose own record is the evidence then. Git can find there a `.git` the walk did not see: one moved
+ * away, removed, or turning from a folder into a `gitdir:` file as `git init --separate-git-dir` and `git submodule
+ * absorbgitdirs` leave it for a moment. Letter case counts as the same everywhere but Linux, so a doubt reads as found.
+ */
+function recordedOnTheWay(db: Reader, ends: readonly RepositoryIdentityLocation[]): boolean {
+  const settled = ends[0];
+  const folder = ends.at(-1);
+  if (settled === undefined || folder === undefined) return false;
+  const passed = onTheWay(caseFoldedKey(folder.workspaceRoot), caseFoldedKey(settled.workspaceRoot), settled.git);
+  return db.select({ path: checkouts.checkoutPath }).from(checkouts).all().some(({ path }) => passed(caseFoldedKey(path)));
+}
+
+/**
+ * Whether a folder, by its key, is one {@link recordedOnTheWay} counts: the folder keyed `start` or one above it, other
+ * than the end keyed `end`, and below `end` where that is a checkout's top (`git`).
+ */
+function onTheWay(start: string, end: string, git: boolean): (folder: string) => boolean {
+  return folder => folder !== end && holdsFolder(folder, start) && (!git || holdsFolder(end, folder));
+}
+
+/** `path` resolved, its letter case folded on every system but Linux, where a folder's name can differ by case alone. */
+function caseFoldedKey(path: string): string {
+  const resolved = resolve(path);
+  return process.platform === "linux" ? resolved : resolved.toLowerCase();
+}
+
+/** Whether the folder keyed `outer` is the one keyed `inner` or holds it. */
+function holdsFolder(outer: string, inner: string): boolean {
+  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : `${outer}${sep}`);
 }
 
 /**

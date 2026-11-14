@@ -17,7 +17,7 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
-  statusWithoutRemote,
+  recordedStopped,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -95,19 +95,20 @@ export function readOnlyStartState(workspace: string, databasePath = defaultRera
 }
 
 /**
- * Whether the daemon would read `workspace` as stopped (`startStateReader`), told without running Git: true only where
- * the database reads stopped, without the checkout's remote, at each place Git's search can end there
- * (`gitSearchEnds`). False wherever that is not certain, so the caller asks the daemon: a search the filesystem leaves
- * open, a checkout only its remote could place, one that reads started, or a database this process cannot open as it
- * is. The database is opened as it is, without waiting (`openAsIsAtOnce`), so this never writes it and never waits on
- * another process: a file that needs this build's schema steps first, or one another process holds, is left to the
- * daemon. SQLite's error for a database it opened and cannot read, one without the start tables or one another process
- * locked once it was open among them, is thrown.
+ * Whether the daemon would read `workspace` as stopped (`startStateReader`), told without running Git and only on
+ * positive evidence: a checkout recorded where Git's search there settles (`gitSearchEnds`), whose repository the
+ * database reads stopped, and no end of that search reading otherwise (`recordedStopped`). False wherever that is not
+ * shown, so the caller asks the daemon: a search the filesystem leaves open, a checkout only its remote could place,
+ * one no record holds, one that reads started, a recorded checkout the walk passed without its `.git`, or a database
+ * this process cannot open as it is. The database is opened as it is, without waiting (`openAsIsAtOnce`), so this
+ * never writes it and never waits on another process: a file that needs this build's schema steps first, or one
+ * another process holds, is left to the daemon. SQLite's error for a database it opened and cannot read, one without
+ * the start tables or one another process locked once it was open among them, is thrown.
  */
 export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   const ends = gitSearchEnds(workspace);
   return ends !== undefined && !ends.some(placedByRemote)
-    && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false), openAsIsAtOnce) === true;
+    && readOnly(databasePath, database => recordedStopped(database, ends), openAsIsAtOnce) === true;
 }
 
 /** The database as it is, given up at once where another process holds it (`wait: false`): the daemon answers there. */
