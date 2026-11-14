@@ -307,10 +307,10 @@ describe("Rerail daemon control", () => {
     // A hook's event the daemon has not answered yet: its request is open on the engine socket.
     const hook = connect(state.kernelSocketPath);
     hook.on("error", () => undefined);
-    await once(hook, "connect");
-    hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
     const kill = vi.spyOn(process, "kill");
     try {
+      await once(hook, "connect");
+      hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
       expect(await stopDaemon(home)).toBe("stopped");
       // The daemon ended itself; before, it waited on the hook and stop killed it once its 10 s were up.
       expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL")).toEqual([]);
