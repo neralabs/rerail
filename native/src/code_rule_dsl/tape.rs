@@ -633,6 +633,29 @@ pub struct StoredDerived<'a> {
 
 impl FileImage {
     /// The documents of a file that derives none.
+    /// The documents of the host tape `primary` of `source`: itself, and the programs its
+    /// embedders build from it, one per `via` its dialect embeds. The tape is read in place
+    /// (`embed::host`), so a lean parser's host embeds what tree-sitter's does.
+    pub fn embedding(primary: TapeImage, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+        let mut image = FileImage::single(primary);
+        let embeds = grammar.lang.embeds();
+        let mut programs = Vec::new();
+        if let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar).root() {
+            for (index, &(via, _)) in embeds.iter().enumerate() {
+                if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
+                    continue;
+                }
+                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
+                    programs.push((via, program));
+                }
+            }
+        }
+        for (via, program) in programs {
+            image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
+        }
+        Ok(image)
+    }
+
     pub fn single(primary: TapeImage) -> Self {
         Self {
             primary,
@@ -1264,29 +1287,15 @@ impl TapeImage {
     }
 
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
-    /// build from the tree, each one per `via`. (Blade's compiled view is built from its Forte
-    /// tree: `encode_blade`.)
+    /// build from the tape (`FileImage::embedding`). (Blade's compiled view is built from its
+    /// Forte tree: `encode_blade`.)
     pub fn encode(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Result<FileImage, String> {
-        let mut image = FileImage::single(Self::encode_tree_image(
-            root, grammar, source, None, budget,
-        )?);
-        let embeds = grammar.lang.embeds();
-        for (index, &(via, _)) in embeds.iter().enumerate() {
-            if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
-                continue;
-            }
-            if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
-                image
-                    .derived
-                    .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
-            }
-        }
-        Ok(image)
+        FileImage::embedding(Self::encode_tree_image(root, grammar, source, None, budget)?, grammar, source, budget)
     }
 
     /// The tape of a tree-sitter tree of `source` alone, leaving out the placeholders `omitted`

@@ -2571,7 +2571,7 @@ fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`, `php`),
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`, `php`, `vue`, ...),
     // another dialect's tapes, for that lean parser's oracle (`rerail-ecma-lean`, ...). PHP's are of
     // each file's view (`parse_input`, the bytes tree-sitter-php parses), written to `views/` beside
     // the tapes and named in them. `blade-views` writes, instead of tapes, each Blade template's
@@ -2606,6 +2606,7 @@ fn python_tape_expect() {
         Ok("markdown") => GrammarDialect::Markdown,
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("sql") => GrammarDialect::Sql,
+        Ok("vue") => GrammarDialect::Vue,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();

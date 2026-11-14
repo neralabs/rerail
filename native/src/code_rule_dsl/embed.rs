@@ -9,7 +9,7 @@
 //!
 //! A file that embeds code is several documents: the **host**, the file's own tree, and one
 //! **guest** per `via` its dialect embeds that the file holds a program for. Every document holds
-//! one grammar and passes the same tape checks. An embedder builds, from a file's tree and source,
+//! one grammar and passes the same tape checks. An embedder builds, from a file's tape and source,
 //! at most one program, which is
 //! - its text, written as the host's language reads the file (a Blade view's PHP, a Vue
 //!   component's scripts and template expressions), and its tree, parsed from that text with the
@@ -31,6 +31,7 @@
 
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
+pub mod host;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_script;
@@ -41,9 +42,9 @@ pub use test_script::TestScript;
 
 use crate::code_rule_dsl::language::GrammarDialect;
 
+use host::HostNode;
 use segments::SegmentMap;
 use std::ops::Range;
-use tree_sitter::Node as TsNode;
 
 /// How a program's text was read: tree-sitter's tree, or a lean parser's tape of it, which is the
 /// tape that tree encodes to (decision 0198). Either spans the program's text.
@@ -74,9 +75,9 @@ pub struct Program {
 /// program's statements a meaning of its own, which its crate registers too (`scope::install_program_scopes`: a
 /// Blade view's markers define the variables its directives do).
 pub trait Embedder: Send + Sync {
-    /// The program the host tree rooted at `root`, over `source`, embeds; `None` where it embeds
-    /// none.
-    fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program>;
+    /// The program the host whose tape's root is `root`, over `source`, embeds; `None` where it
+    /// embeds none. The tape is read in place (`host`), whichever parser wrote it.
+    fn build(&self, root: HostNode<'_>, source: &str) -> Option<Program>;
 }
 
 static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =
