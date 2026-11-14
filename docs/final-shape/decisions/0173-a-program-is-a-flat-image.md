@@ -801,7 +801,7 @@ with nothing left that wants their trees.
 3. **The derivations.** Built ("Stage 2, step 3"). `sql_kernel::normalize` and `stated_apart`, as `Builder` edits of the input version, with
    rules rewritten by `RuleBuilder`. Each output rule records the rule it came from (`from`). Checked against the
    tree passes.
-4. **The model on handles:** `make_plan`, `plan_views` and `keeps::choose` read `RuleRef`s.
+4. **The model on handles** (decided 2026-11-13: handles end to end, not trees at the backends): `make_plan`, `plan_views` and `keeps::choose` read `RuleRef`s.
    - `Run` is keyed by `RuleId`, and `Run.numbers` goes.
    - The `Forms` arena's per-stratum programs become views of the run's version.
 5. **`plan::run` takes a version.** Its callers pass one:
@@ -815,6 +815,12 @@ with nothing left that wants their trees.
    - The digest is a sum, so it does not see rule order.
    - Each site is checked first for whether what it keys depends on order. `choices` keeps per-rule choices by
      rule index today.
+
+- **Where the tree stops (decided 2026-11-13).** Nowhere on the run path. A planned step names its literal by id:
+  its rule's `RuleId` and the literal's offset in that rule. The SQL generator, the native set engine, emit and the
+  Metal steps read the literal through the version's handles. Decoding each rule to a tree once per run, for the
+  backends alone, was the other choice; it was not taken, because it keeps a second form of every rule alive in
+  every run.
 
 - **Measured at each step:** the warm batch's program work (this table), and a one-rule edit's (decision 0130's
   edit profile, `notes/t34`).
