@@ -408,7 +408,10 @@ export const audits = sqliteTable(
      * `audit_rule_provenances` and writes `[]` here; the audit store reads whichever the row has.
      */
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
-    /** The run's rule provenance in `audit_rule_provenances`; null when `rule_provenance_json` holds it, or it is empty. */
+    /**
+     * The run's rule provenance in `audit_rule_provenances`, `[]` included; null only in a row a Rerail older than
+     * `audit-rule-provenance-once` wrote, whose `rule_provenance_json` holds the provenance.
+     */
     ruleProvenanceId: integer("rule_provenance_id"),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),

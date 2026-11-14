@@ -1,1 +1,1 @@
-Rerail's database no longer grows by a copy of which rules ran, and where, with each audited edit: about 220 KB with 767 rules on. New audits share one copy per rule set; audits recorded before the update keep their own.
+Rerail's database no longer grows by a copy of which rules ran, and where, with each audited edit: about 220 KB with 767 rules on. New audits share one copy per rule set. Recorded ones move to it a week after the last audit an older Rerail recorded; new history reuses the freed space, and `rerail scrub` gives it back.

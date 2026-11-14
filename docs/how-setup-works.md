@@ -569,16 +569,44 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
+Moving each audit's rule provenance to one shared copy is not part of a step: the step adds a table and a column, and
+the daemon moves the provenance once it starts, on a thread of its own, so it keeps answering hooks during the move.
+Each transaction moves as many audits as fit in about 100 ms, at most 100, with a pause between two, so the open that
+upgrades the file returns at once and other processes keep writing during the move. While another process holds the
+database, the move tries again for up to 5 s. A daemon stopped partway goes on at its next start, and a later start
+finds nothing left to move with one read and takes no write lock.
+
+The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
+them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
+on a large file, and another process's write fails once it has waited 5 s. `rerail scrub` gives the space back to the
+disk when you run it.
+
+A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
+one may still be using the database: it starts only once no audit an older Rerail recorded, with rules on or none, has
+begun for 7 days. The new version marks every audit it records with its shared copy, an empty one included, so an
+audit without that mark is an older Rerail's. The audits recorded before the update count too, so with only the new
+version running the move starts 7 days after the last audit recorded before the update, and an older Rerail reads
+the audits recorded before the update in full that week, as before. While it waits, the daemon writes why and until
+when to `daemon.log` when the wait begins, and again when it finds another audit to wait for, as when an older Rerail
+has recorded one since. It looks again an hour later, or when the wait ends if that comes first, so an older Rerail
+that keeps recording adds at most one line an hour, and after the computer sleeps the move starts at most an hour
+late. A move that finds such an audit before its next batch stops there and waits the same way; the audits it has not
+reached keep their provenance in their row.
+
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
 Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
-sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in its
 `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
-provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
-their own row, where both versions read it.
+provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
+it, and the move leaves them there. Since the move waits while an older Rerail records audits (above), one that keeps
+running beside the new version, and records an audit at least once every 7 days, reads the audits recorded before the
+update, and its own, in full, as before. One started again after the move reads those recorded before the update
+empty, while `rerail.sqlite.pre-update`, the copy `rerail update` took before the update, holds each in full until a
+later update replaces it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
