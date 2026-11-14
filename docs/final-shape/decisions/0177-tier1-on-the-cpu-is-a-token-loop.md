@@ -405,3 +405,23 @@ directives'), next. The guard `the_cpu_reads_local_tests_at_the_token`; the edge
 backslashes across windows, strings and comments over blocks) in
 `the_cpus_records_are_the_interpreters`.
 
+## The marks in the token loop
+
+The lean lexer sets a newline mark where it passes the newline, between two tokens. The CPU's
+end pass found each mark bit after the loop, a binary search over the tokens a bit.
+
+Now the token loop sets the marks whose masks are made from the bytes (`loop_marks`). Its
+state carries two more words: the byte from which the gap is not yet counted, and the word of
+the grammar token before (for `unless after ","`):
+
+```text
+a gap mark (newline, line)   its bits between the grammar token before and this one,
+                             from the block's words in registers; a cold loop of
+                             windows when the gap crosses blocks
+a mark at the token          the bit at its first byte, from the register word
+a mark never placed          refused at the file's end, as the interpreter
+```
+
+The end pass sets only the others (a reader's, a word's, of tests alone). The CPU's form makes
+none of the loop's marks: 6 operations, from 8. Same tests as above, and the AOT tapes.
+

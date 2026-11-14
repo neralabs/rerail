@@ -344,8 +344,13 @@ impl BlockNative {
         }));
         read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
         read.extend(r.checks.iter().map(|c| c.o));
-        let marks: Vec<u16> = r.marks.iter().map(|m| m.0).collect();
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !marks.contains(&o)).map(usize::from).collect();
+        // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
+        // still reads from its row stays stored.
+        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
