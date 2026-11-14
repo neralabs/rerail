@@ -61,6 +61,11 @@ const MAX_SESSION_TEXT_BYTES = 64 * 1024 * 1024;
 const FIRST_SIGHT_TEXT_BYTES = 8 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
+/**
+ * How long a listing asked again (`#startListingAgain`) runs before the next one starts beside it. Git lists a checkout
+ * in milliseconds, so they run one at a time; one that takes longer holds the rest back no more than this.
+ */
+const LISTING_AGAIN_WAIT_MS = 1_000;
 
 /**
  * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
@@ -448,11 +453,13 @@ interface SourceDiscovery {
    * with the sources it may keep the first-sight text of, by path.
    */
   readonly askingAgain: Map<string, Map<string, Source>>;
+  /** Each listing asked again that has not finished, with its reads and keeps of first-sight texts (`settleListingsAgain`). */
+  readonly listingsAgain: Set<Promise<void>>;
   /**
-   * The listings asked again, one after another: each starts once the one before it has settled, so a session runs at
-   * most one at a time beside its walks (`settleListingsAgain`).
+   * When the next listing asked again may ask Git: once the one before has answered or has run `LISTING_AGAIN_WAIT_MS`,
+   * whichever comes first.
    */
-  listingsAgain: Promise<void>;
+  nextListingAgain: Promise<void>;
   readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
@@ -660,6 +667,17 @@ const LATE_AGAIN = `${LATE_LISTING} again: ${KEPT_NO_FIRST_SIGHT}`;
 const FAILED_AGAIN = `Git could not list the checkout's changed files when asked again: ${KEPT_NO_FIRST_SIGHT}`;
 function lateListing(discovery: SourceDiscovery, checkout: string, message: string): string {
   return `${sessionPath(discovery.root, checkout) || "."}: ${message}`;
+}
+/** Resolves once `answered` has settled or `ms` have passed, whichever comes first. */
+function settledOrAfter(answered: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    const settle = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    answered.then(settle, settle);
+  });
 }
 /** The sources `scan` found at `paths`, by path. */
 function sourcesAt(scan: SourceScan, paths: readonly string[]): Map<string, Source> {
@@ -962,7 +980,7 @@ export class CodeRuleBridge {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
-        late: new Map(), askingAgain: new Map(), listingsAgain: Promise.resolve(),
+        late: new Map(), askingAgain: new Map(), listingsAgain: new Set(), nextListingAgain: Promise.resolve(),
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1707,10 +1725,11 @@ export class CodeRuleBridge {
   /**
    * Asks Git once more which files changed in each of `late`'s checkouts, whose listing ran past its time limit for the
    * walk just applied, off every walk's path: no walk or boundary waits for it, so what that walk and the next find is
-   * checked at the boundary each reaches. The checkouts are listed one after another, behind any asked for before, as a
-   * walk lists its own: the load that made them late meets one more Git, not one per checkout. The next boundary
-   * reports each checkout (`newlyLate`). `late` holds the sources the walk saw first in each, whose first-sight text it
-   * could not keep; a listing asked again that has not answered yet, running or queued, takes them on.
+   * checked at the boundary each reaches. Each checkout's listing asks Git once the one asked for before it has answered
+   * or has run `LISTING_AGAIN_WAIT_MS`: the load that made them late meets one more Git at a time while each answers in
+   * time, and a slow one holds the rest back no longer than that. The next boundary reports each checkout (`newlyLate`).
+   * `late` holds the sources the walk saw first in each, whose first-sight text it could not keep; a listing asked again
+   * that has not answered yet, running or waiting its turn, takes them on.
    */
   #listLateAgain(discovery: SourceDiscovery, late: SourceScan["lateListings"]): void {
     for (const [checkout, seen] of late) {
@@ -1723,25 +1742,34 @@ export class CodeRuleBridge {
 
   #startListingAgain(discovery: SourceDiscovery, checkout: string, seen: Map<string, Source>): void {
     discovery.askingAgain.set(checkout, seen);
-    // Each link settles, so the next one always runs.
-    discovery.listingsAgain = discovery.listingsAgain.then(() => this.#listAgain(discovery, checkout, seen)).catch((error: unknown) => {
-      process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
-    });
+    const turn = discovery.nextListingAgain;
+    const listing = turn.then(() => this.#gitListingAgain(discovery, checkout));
+    // Only Git waits its turn: reading and keeping the files it lists runs beside the next listing.
+    discovery.nextListingAgain = turn.then(() => settledOrAfter(listing, LISTING_AGAIN_WAIT_MS));
+    const done = listing.then(answer => this.#takeListedAgain(discovery, checkout, seen, answer))
+      .catch((error: unknown) => {
+        process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
+      })
+      .finally(() => discovery.listingsAgain.delete(done));
+    discovery.listingsAgain.add(done);
   }
 
-  /**
-   * Lists `checkout`'s changed files once more, through the session's Git reads, which its close stops, and keeps the
-   * first-sight text of each of `seen` Git lists that is still as the late walk saw it and as the session last observed
-   * it (`#keepFirstSeenTexts`). A second late listing is the last, as is one that fails or throws: it is reported once,
-   * and the checkout's files changed before the session keep no first-sight text. Either way the checkout is no longer
-   * waited for, so its next late listing is asked again.
-   */
-  async #listAgain(discovery: SourceDiscovery, checkout: string, seen: ReadonlyMap<string, Source>): Promise<void> {
-    const listing = await discovery.git.run(signal => gitModifiedOrUntrackedListing(checkout, { signal }))
+  /** Lists `checkout`'s changed files once more, through the session's Git reads, which its close stops; a throw is a failed listing. */
+  async #gitListingAgain(discovery: SourceDiscovery, checkout: string): Promise<ChangedPathsListing> {
+    return await discovery.git.run(signal => gitModifiedOrUntrackedListing(checkout, { signal }))
       .catch((error: unknown): ChangedPathsListing => {
         process.stderr.write(`rerail: cannot list the changed files of ${checkout} again: ${errorMessage(error)}\n`);
         return { ended: "failed" };
       });
+  }
+
+  /**
+   * Keeps the first-sight text of each of `seen` that `listing`, of `checkout` asked again, lists and that is still as
+   * the late walk saw it and as the session last observed it (`#keepFirstSeenTexts`). A second late listing is the last,
+   * as is one that fails or throws: it is reported once, and the checkout's files changed before the session keep no
+   * first-sight text. Either way the checkout is no longer waited for, so its next late listing is asked again.
+   */
+  async #takeListedAgain(discovery: SourceDiscovery, checkout: string, seen: ReadonlyMap<string, Source>, listing: ChangedPathsListing): Promise<void> {
     discovery.askingAgain.delete(checkout);
     if (this.#abandoned(discovery)) return;
     if (listing.ended !== "printed") {
@@ -1759,11 +1787,7 @@ export class CodeRuleBridge {
   /** Waits for each listing asked again off the walks' path (`#listLateAgain`), and any asked for meanwhile. */
   async settleListingsAgain(): Promise<void> {
     const discovery = this.#discovery;
-    let settled: Promise<void> | undefined;
-    while (discovery !== undefined && discovery.listingsAgain !== settled) {
-      settled = discovery.listingsAgain;
-      await settled;
-    }
+    while (discovery !== undefined && discovery.listingsAgain.size > 0) await Promise.all(discovery.listingsAgain);
   }
 
   /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */

@@ -46,12 +46,15 @@ const runningListings = vi.hoisted(() => ({ now: 0, most: 0 }));
  * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`) of
  * each checkout in `late`, and the next listing asked again (`gitModifiedOrUntrackedListing`) of each in `lateAgain`,
  * once per entry, answer as a Git still at work at its time limit does, and start no Git. While `held` is set, each
- * listing asked again waits for it first. `calls` names each listing asked for, in order: `walk <checkout>` or
- * `again <checkout>`.
+ * listing asked again waits for it first; the next one asked again while `next` is set names its checkout to it and
+ * waits for its release. `calls` names each listing asked for, in order: `walk <checkout>` or `again <checkout>`.
  */
 const listings = vi.hoisted(() => ({
   late: [] as string[], lateAgain: [] as string[], held: undefined as Promise<void> | undefined, calls: [] as string[],
+  next: undefined as { asked(checkout: string): void; released: Promise<void> } | undefined,
 }));
+/** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
+const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
 const heldGit = vi.hoisted(() => ({ reads: 0 }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
@@ -104,6 +107,14 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
+      const closed = closedReads.get(String(args[0]))?.shift();
+      if (closed !== undefined) {
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          await close();
+          closed();
+        };
+      }
       if (!readBuffers.watching) return handle;
       // Every form of `read` passes through unchanged; only the buffer it fills is noted.
       const read = handle.read.bind(handle) as (...call: unknown[]) => ReturnType<typeof handle.read>;
@@ -154,6 +165,10 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
     },
     gitModifiedOrUntrackedListing: async (checkout: string, options?: Git.GitReadOptions): Promise<Git.ChangedPathsListing> => {
       listings.calls.push(`again ${checkout}`);
+      const next = listings.next;
+      listings.next = undefined;
+      next?.asked(checkout);
+      await next?.released;
       await listings.held;
       return taken(listings.lateAgain, checkout) ? { ended: "timed-out" } : await actual.gitModifiedOrUntrackedListing(checkout, options);
     },
@@ -190,6 +205,32 @@ function holdListingsAgain(): { release(): void } {
   return { release: held.resolve };
 }
 
+/**
+ * Holds the next listing asked again before it asks Git (`listings.next`) until `release`, which the clean-up calls too;
+ * `asked` resolves with its checkout.
+ */
+function holdNextListingAgain(): { asked: Promise<string>; release(): void } {
+  const asked = Promise.withResolvers<string>();
+  const released = Promise.withResolvers<void>();
+  listings.next = { asked: asked.resolve, released: released.promise };
+  releases.push(released.resolve);
+  return { asked: asked.promise, release: released.resolve };
+}
+
+/** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
+function readEnded(path: string): Promise<void> {
+  const ended = Promise.withResolvers<void>();
+  closedReads.set(path, [...(closedReads.get(path) ?? []), ended.resolve]);
+  return ended.promise;
+}
+
+/** Resolves once `promise` has, or after `ms` whatever it does. */
+async function atMost(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms); })]);
+  clearTimeout(timer);
+}
+
 function createBridge(...args: ConstructorParameters<typeof CodeRuleBridge>): CodeRuleBridge {
   const bridge = new CodeRuleBridge(...args);
   bridges.push(bridge);
@@ -221,7 +262,9 @@ afterEach(async () => {
   listings.late.length = 0;
   listings.lateAgain.length = 0;
   listings.held = undefined;
+  listings.next = undefined;
   listings.calls.length = 0;
+  closedReads.clear();
   runningListings.most = 0;
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
@@ -729,7 +772,7 @@ describe("CodeRuleBridge", () => {
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
     await bridge.settleListingsAgain();
-    // One Git listing ran at a time: the four asked again went one after another.
+    // One Git listing ran at a time: each of the four asked again answered within its wait, so the next went after it.
     expect(listings.calls.filter(call => call.startsWith("again"))).toHaveLength(4);
     expect(runningListings.most).toBe(1);
     await shell(bridge, async () => { await Promise.all(changed.map(path => writeFile(path, "uncommitted\nmine\n"))); });
@@ -738,6 +781,43 @@ describe("CodeRuleBridge", () => {
         .sort((left, right) => left.path.localeCompare(right.path)),
     ]);
   });
+
+  it("asks Git again for the checkouts behind a slow listing asked again once it has run a second, and keeps what it first saw in them", async () => {
+    const root = await workspace();
+    const nested = ["a", "b"].map(name => join(root, name));
+    for (const checkout of [root, ...nested]) {
+      await mkdir(join(checkout, "src"), { recursive: true });
+      await writeFile(join(checkout, "src", "x.py"), "committed\n");
+      commitAll(checkout);
+      await writeFile(join(checkout, "src", "x.py"), "uncommitted\n");
+    }
+    const changed = [root, ...nested].map(checkout => join(checkout, "src", "x.py"));
+    await awaitClockAfter(...changed);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const sourceRoot = (path: string) => nested.find(checkout => resolve(root, path).startsWith(`${checkout}${sep}`)) ?? root;
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The first listing asked again waits until
+    // the end of the test, as a Git that takes long does; the two behind it answer.
+    listings.late.push(root, ...nested);
+    const slow = holdNextListingAgain();
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const held = await slow.asked;
+    const behind = changed.filter(path => sourceRoot(path) !== held);
+    // Each listing behind it reads the file the walk saw first there, a second after the first was asked for: without
+    // that wait, not before the first answered.
+    await atMost(Promise.all(behind.map(path => readEnded(path))), 5_000);
+    await shell(bridge, async () => { await Promise.all(behind.map(path => writeFile(path, "uncommitted\nmine\n"))); });
+    const asked = listings.calls.filter(call => call.startsWith("again"));
+    // Released before any check, so a failing run leaves no listing for the tests after it.
+    slow.release();
+    await bridge.settleListingsAgain();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      behind.map(path => ({ path: repositoryPath(root, path), language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmine\n" }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    ]);
+    expect(asked).toHaveLength(3);
+  }, 30_000);
 
   it("keeps the first sight of a file a later walk saw first, whose listing ran late while the one asked again waited", async () => {
     const root = await workspace();
