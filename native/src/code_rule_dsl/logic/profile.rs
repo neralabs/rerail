@@ -269,6 +269,12 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
+/// runs and threads read on one axis.
+pub fn timeline_clock() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
 pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
@@ -664,7 +670,7 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {}", name());
+            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
         }
         return Span(false);
     }

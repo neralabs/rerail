@@ -25,6 +25,7 @@ static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::At
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
+    super::costs::ready();
     let all = Executor::new();
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -37,6 +38,7 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
+    super::costs::ready();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
         dev.install_launch_guard();

@@ -263,31 +263,32 @@ fn split_constants(
         .map(|r| (*r).to_owned())
         .collect();
     // A greatest fixpoint: a relation stays while every rule of it reads only constants. Each relation is checked
-    // again only when one it reads leaves (a pack's program has tens of thousands of rules).
-    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().filter(|r| constant.contains(*r)).collect();
-    let mut queued: std::collections::BTreeSet<&str> = queue.iter().copied().collect();
-    while let Some(rel) = queue.pop_front() {
-        queued.remove(rel);
-        if !constant.contains(rel) {
-            continue;
-        }
-        let still = index.rules_of(rel).all(|r| {
-            r.body.iter().all(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !inputs.contains(a.rel.as_str()))
-                }
-                Literal::Cmp { .. } => true,
-                _ => false,
+    // again only when one it reads leaves (a pack's program has tens of thousands of rules). In rounds, each round's
+    // relations checked on the pool's threads against the constants as the round began: relations only leave, so any
+    // order reaches the same fixpoint.
+    use rayon::prelude::*;
+    let mut round: Vec<&str> = scope.iter().copied().filter(|r| constant.contains(*r)).collect();
+    while !round.is_empty() {
+        let leaving: Vec<&str> = round
+            .par_iter()
+            .copied()
+            .filter(|rel| {
+                !index.rules_of(rel).all(|r| {
+                    r.body.iter().all(|l| match l {
+                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                            constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !inputs.contains(a.rel.as_str()))
+                        }
+                        Literal::Cmp { .. } => true,
+                        _ => false,
+                    })
+                })
             })
-        });
-        if !still {
-            constant.remove(rel);
-            for reader in index.heads_reading(rel) {
-                if constant.contains(reader) && queued.insert(reader) {
-                    queue.push_back(reader);
-                }
-            }
+            .collect();
+        for rel in &leaving {
+            constant.remove(*rel);
         }
+        let next: std::collections::BTreeSet<&str> = leaving.iter().flat_map(|rel| index.heads_reading(rel)).filter(|reader| constant.contains(*reader)).collect();
+        round = next.into_iter().collect();
     }
     constant
 }
@@ -548,26 +549,29 @@ fn split_in(
         locations.insert((*rel).to_owned(), kept.unwrap_or_else(|| (0..width).collect()));
     }
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
-    // when the locations of one its rules read changed (a pack's program has tens of thousands of rules).
-    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().collect();
-    let mut queued: BTreeSet<&str> = scope.clone();
-    while let Some(rel) = queue.pop_front() {
-        queued.remove(rel);
-        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = index.rules_of(rel).collect();
-        let vars: Vec<BTreeSet<String>> = rules.iter().map(|r| location_vars(r, &locations)).collect();
-        let kept: Vec<usize> = locations[rel]
-            .iter()
-            .copied()
-            .filter(|&c| rules.iter().zip(&vars).all(|(r, vs)| matches!(r.head.args.get(c), Some(Term::Var(v)) if vs.contains(v))))
+    // when the locations of one its rules read changed (a pack's program has tens of thousands of rules). In rounds,
+    // each round's relations checked on the pool's threads against the locations as the round began.
+    use rayon::prelude::*;
+    let mut round: Vec<&str> = scope.iter().copied().collect();
+    while !round.is_empty() {
+        let changed: Vec<(&str, Vec<usize>)> = round
+            .par_iter()
+            .filter_map(|&rel| {
+                let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = index.rules_of(rel).collect();
+                let vars: Vec<BTreeSet<String>> = rules.iter().map(|r| location_vars(r, &locations)).collect();
+                let kept: Vec<usize> = locations[rel]
+                    .iter()
+                    .copied()
+                    .filter(|&c| rules.iter().zip(&vars).all(|(r, vs)| matches!(r.head.args.get(c), Some(Term::Var(v)) if vs.contains(v))))
+                    .collect();
+                (kept != locations[rel]).then_some((rel, kept))
+            })
             .collect();
-        if kept != locations[rel] {
+        let next: BTreeSet<&str> = changed.iter().flat_map(|(rel, _)| index.heads_reading(rel)).collect();
+        for (rel, kept) in changed {
             locations.insert(rel.to_owned(), kept);
-            for reader in index.heads_reading(rel) {
-                if queued.insert(reader) {
-                    queue.push_back(reader);
-                }
-            }
         }
+        round = next.into_iter().collect();
     }
     // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
     // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
@@ -576,16 +580,12 @@ fn split_in(
     let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
     // To a fixpoint: a filter may read other filters.
     let mut filters: BTreeSet<String> = derived.iter().filter(|r| was(r).is_none_or(|p| p.filters.contains(**r))).map(|r| (*r).to_owned()).collect();
-    // A greatest fixpoint: a relation is checked again only when one its rules read leaves.
-    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().collect();
-    let mut queued: BTreeSet<&str> = scope.clone();
-    while let Some(rel) = queue.pop_front() {
-        queued.remove(rel);
-        if !filters.contains(rel) {
-            continue;
-        }
-        let still = {
-            {
+    // A greatest fixpoint: a relation is checked again only when one its rules read leaves. In rounds, as the
+    // locations are.
+    let mut round: Vec<&str> = scope.iter().copied().filter(|r| filters.contains(*r)).collect();
+    while !round.is_empty() {
+        let leaving: Vec<&str> = round.par_iter().copied().filter(|rel| {
+            !{
                 index.rules_of(rel).all(|r| {
                     let mut strings = BTreeSet::new();
                     let reads_only_text = r.body.iter().all(|l| match l {
@@ -600,15 +600,12 @@ fn split_in(
                     reads_only_text && r.head.args.iter().all(|t| matches!(t, Term::Var(v) if strings.contains(v)))
                 })
             }
-        };
-        if !still {
-            filters.remove(rel);
-            for reader in index.heads_reading(rel) {
-                if filters.contains(reader) && queued.insert(reader) {
-                    queue.push_back(reader);
-                }
-            }
+        }).collect();
+        for rel in &leaving {
+            filters.remove(*rel);
         }
+        let next: BTreeSet<&str> = leaving.iter().flat_map(|rel| index.heads_reading(rel)).filter(|reader| filters.contains(*reader)).collect();
+        round = next.into_iter().collect();
     }
     // Python fact operators preserve each demanded node's document. Their proof rules must still
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
@@ -709,9 +706,10 @@ fn split_in(
         let before = local.len();
         // In rounds, as before, so the causes are the same: a rule can newly fail only by reading a relation that left
         // in the round before; the first round checks every rule in scope.
+        // Each round's rules checked on the pool's threads, their failures kept in program order.
         let failing: Vec<(String, String)> = match &dirty {
-            None => prog.rules.iter().filter(|r| scope.contains(r.head.rel.as_str()) && local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
-            Some(rules) => rules.iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
+            None => prog.rules.par_iter().filter(|r| scope.contains(r.head.rel.as_str()) && local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
+            Some(rules) => rules.iter().copied().collect::<Vec<usize>>().par_iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
         };
         let mut next: BTreeSet<usize> = BTreeSet::new();
         for (rel, why) in failing {

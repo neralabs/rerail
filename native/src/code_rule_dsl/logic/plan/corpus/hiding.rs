@@ -22,6 +22,7 @@
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Name, Program, Term};
+use rayon::prelude::*;
 use rustc_hash::FxHashMap as HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -137,11 +138,22 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         let mut by_head: Option<HashMap<&str, Vec<usize>>> = None;
-        for (i, rule) in prog.rules.iter().enumerate() {
+        // Each rule's analysis reads the round's start alone: made on the pool's threads, used in order below.
+        let analysed: Vec<BTreeMap<String, Fact>> = prog
+            .rules
+            .par_iter()
+            .enumerate()
+            .map(|(i, rule)| {
+                if view(&rule.head.rel) || !reaches[i] {
+                    return BTreeMap::new();
+                }
+                analyse(rule, &base_locations, &carried, &seeds[i]).into_iter().map(|(v, f)| (v.to_owned(), f)).collect()
+            })
+            .collect();
+        for ((i, rule), facts) in prog.rules.iter().enumerate().zip(analysed) {
             if view(&rule.head.rel) {
                 continue;
             }
-            let facts: BTreeMap<String, Fact> = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
             // A variable that may be a guest's node of a known grammar, and may be a host's: the rule stays as it is
             // for the host's, and a clone with the variable seeded as the guest's reads the guest's copies. Copying
             // in place of the atom would drop the host's rows (`tv`'s nodes are both, and `tbv`'s `live_asg` read
@@ -242,7 +254,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
     let reaches = reaching(prog, &seeds);
-    for ((rule, seed), reaches) in prog.rules.iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str())) {
+    // Each rule bounded on its own, on the pool's threads.
+    prog.rules.par_iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str())).for_each(|((rule, seed), reaches)| {
         let facts: BTreeMap<String, Fact> = if reaches { analyse(rule, &base_locations, &carried, seed).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
@@ -284,7 +297,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         for (v, doc_column) in bounded {
             rule.body.push(Literal::Cmp { l: Term::Var(v), op: "<", r: Term::Int(bound_of(doc_column)) });
         }
-    }
+    });
     // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
     // `rr_shown_agg<k>(vars) :- atom, bounds`.
     let mut helpers: Vec<(Atom, Vec<(String, String)>, Vec<Literal>)> = Vec::new();
@@ -478,7 +491,7 @@ enum Edit {
 }
 
 /// What each derived relation's columns carry, to a fixpoint over the rules.
-fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool, reaches: &[bool]) -> HashMap<Name, Vec<Fact>> {
+fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &(dyn Fn(&str) -> bool + Sync), reaches: &[bool]) -> HashMap<Name, Vec<Fact>> {
     // Keyed by the heads' own names (a count each, no string made), each relation once.
     let mut carried: HashMap<Name, Vec<Fact>> = HashMap::default();
     for r in &prog.rules {
@@ -502,28 +515,32 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
             }
         }
     }
-    let fixpoint = |carried: &mut HashMap<Name, Vec<Fact>>, step: &dyn Fn(&BTreeMap<&str, Fact>, &Term, &mut Fact) -> bool| {
-        let mut queued = vec![true; prog.rules.len()];
-        let mut work: std::collections::VecDeque<usize> = (0..prog.rules.len()).collect();
-        while let Some(i) = work.pop_front() {
-            queued[i] = false;
-            let (rule, seed) = (&prog.rules[i], &seeds[i]);
-            let facts = if reaches[i] { analyse(rule, base, carried, seed) } else { BTreeMap::new() };
-            let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
-            let mut changed = false;
-            for (c, t) in rule.head.args.iter().enumerate() {
-                if let Some(slot) = cols.get_mut(c) {
-                    changed |= step(&facts, t, slot);
-                }
-            }
-            if changed {
-                for &j in readers.get(rule.head.rel.as_str()).into_iter().flatten() {
-                    if !queued[j] {
-                        queued[j] = true;
-                        work.push_back(j);
+    // In rounds: each round's rules analysed on the pool's threads against what the columns carried as it began, and
+    // applied in order. Both fixpoints are monotone (columns only gain, then only lose being definite), so the rounds
+    // reach what a rule at a time does.
+    let fixpoint = |carried: &mut HashMap<Name, Vec<Fact>>, step: &(dyn Fn(&BTreeMap<&str, Fact>, &Term, &mut Fact) -> bool + Sync)| {
+        let mut round: Vec<usize> = (0..prog.rules.len()).collect();
+        while !round.is_empty() {
+            let now: &HashMap<Name, Vec<Fact>> = carried;
+            let analysed: Vec<BTreeMap<&str, Fact>> = round
+                .par_iter()
+                .map(|&i| if reaches[i] && now.contains_key(prog.rules[i].head.rel.as_str()) { analyse(&prog.rules[i], base, now, &seeds[i]) } else { BTreeMap::new() })
+                .collect();
+            let mut next: BTreeSet<usize> = BTreeSet::new();
+            for (&i, facts) in round.iter().zip(analysed) {
+                let rule = &prog.rules[i];
+                let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
+                let mut changed = false;
+                for (c, t) in rule.head.args.iter().enumerate() {
+                    if let Some(slot) = cols.get_mut(c) {
+                        changed |= step(&facts, t, slot);
                     }
                 }
+                if changed {
+                    next.extend(readers.get(rule.head.rel.as_str()).into_iter().flatten().copied());
+                }
             }
+            round = next.into_iter().collect();
         }
     };
     fixpoint(&mut carried, &|facts, t, slot| match t {

@@ -1389,19 +1389,53 @@ struct Inserted {
 fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
     let mut out = BTreeMap::new();
     let mut inserted = Inserted { card: Vec::new(), ndv: Vec::new(), fan: Vec::new() };
-    for scc in sccs {
-        for rel in scc {
-            let Some(rules) = rules_of.get(rel.as_str()).filter(|_| need.contains(rel.as_str())) else { continue };
+    // The relations estimated, in evaluation order. Each is planned with the estimates of those before it, so its
+    // rules are planned on the pool's threads beside every other relation of its level: one more than the levels of
+    // the relations before it that its rules read. A relation a rule reads before it is estimated (a recursive
+    // component's) takes a level after that rule's, so every plan reads the estimates the order gave it.
+    use rayon::prelude::*;
+    let order: Vec<(&String, &Vec<&Rule>)> = sccs.iter().flatten().filter_map(|rel| rules_of.get(rel.as_str()).filter(|_| need.contains(rel.as_str())).map(|rules| (rel, rules))).collect();
+    let at: std::collections::HashMap<&str, usize> = order.iter().enumerate().map(|(i, (rel, _))| (rel.as_str(), i)).collect();
+    let (mut level, mut floor) = (vec![0usize; order.len()], vec![0usize; order.len()]);
+    for (i, (_, rules)) in order.iter().enumerate() {
+        let reads: Vec<usize> = rules.iter().flat_map(|r| r.body.iter()).filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => at.get(a.rel.as_str()).copied(),
+            _ => None,
+        }).collect();
+        level[i] = reads.iter().filter(|&&j| j < i).map(|&j| level[j] + 1).fold(floor[i], usize::max);
+        for &j in reads.iter().filter(|&&j| j > i) {
+            floor[j] = floor[j].max(level[i] + 1);
+        }
+    }
+    let mut levels: Vec<Vec<usize>> = vec![Vec::new(); level.iter().max().map_or(0, |m| m + 1)];
+    for (i, &l) in level.iter().enumerate() {
+        levels[l].push(i);
+    }
+    let mut planned: Vec<(f64, f64)> = vec![(0.0, 0.0); order.len()];
+    let nodes = model.stats.nodes;
+    for each in &levels {
+        // A relation measured, whose build is not priced, takes its measured rows and columns without planning.
+        let measured_only: Vec<bool> = each.iter().map(|&i| {
+            let rel = order[i].0;
+            !built.contains(rel.as_str()) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some())
+        }).collect();
+        let model_now: &Model = model;
+        let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
             let (mut rows, mut work) = (0.0, 0.0);
-            // A relation measured, whose build is not priced, takes its measured rows and columns without planning.
-            let nodes = model.stats.nodes;
-            let measured_only = !built.contains(rel.as_str()) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some());
-            for r in rules.iter().filter(|_| !measured_only) {
-                if let Some((w, n)) = calibrated_rows(prog, model, r) {
+            for r in order[i].1.iter().filter(|_| !measured_only) {
+                if let Some((w, n)) = calibrated_rows(prog, model_now, r) {
                     rows += n;
                     work += w;
                 }
             }
+            (rows, work)
+        }).collect();
+        for (&i, sum) in each.iter().zip(sums) {
+            planned[i] = sum;
+        }
+        for &i in each {
+            let (rel, rules) = order[i];
+            let (rows, work) = planned[i];
             // Observed on an earlier chunk or part of this run (`Observed`), per node of the corpus: its rows when
             // it was stored, and its build's work when every rule of it ran.
             let measured = model.stats.card.get(rel).copied().or_else(|| observed_rows(rel, nodes));

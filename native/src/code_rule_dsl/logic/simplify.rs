@@ -1674,26 +1674,35 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .filter(|r| !fixed(prog, r))
         .collect();
     let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
+    // Each relation's signatures are its own, made on the pool's threads; the numbering that follows them is in
+    // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
+    use rayon::prelude::*;
     let mut class: HashMap<&str, usize> = HashMap::new();
     {
+        // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
+        // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
+        // apart from its twin.
+        let firsts: Vec<(Vec<String>, usize, Vec<String>)> = cands
+            .par_iter()
+            .map(|&r| {
+                let rules = rules_of.get(r).map_or(0, |rs| {
+                    rs.iter()
+                        .map(|x| {
+                            use std::hash::{Hash, Hasher};
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            x.hash(&mut h);
+                            h.finish()
+                        })
+                        .collect::<std::collections::HashSet<u64>>()
+                        .len()
+                });
+                (types(r), rules, facts(r))
+            })
+            .collect();
         let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
-        for &r in &cands {
+        for (&r, first) in cands.iter().zip(firsts) {
             let n = ids.len();
-            // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
-            // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
-            // apart from its twin.
-            let rules = rules_of.get(r).map_or(0, |rs| {
-                rs.iter()
-                    .map(|x| {
-                        use std::hash::{Hash, Hasher};
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        x.hash(&mut h);
-                        h.finish()
-                    })
-                    .collect::<std::collections::HashSet<u64>>()
-                    .len()
-            });
-            class.insert(r, *ids.entry((types(r), rules, facts(r))).or_insert(n));
+            class.insert(r, *ids.entry(first).or_insert(n));
         }
     }
     let abstracted = |rule: &Rule| -> Rule {
@@ -1722,17 +1731,17 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 .collect(),
         }
     };
-    let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
+    let bodies: BTreeMap<&str, Vec<Rule>> = cands.par_iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
     let mut classes = class.values().collect::<BTreeSet<_>>().len();
     // Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
     // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
     // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
     // gives under the round's labels are (a relation's name has no character of the text around it).
-    let mut templates: HashMap<String, usize> = HashMap::new();
-    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
-        .iter()
+    // The texts made on the pool's threads, numbered in `cands`' order.
+    let texts: Vec<Vec<(String, Vec<String>)>> = cands
+        .par_iter()
         .map(|&r| {
-            let shaped = bodies[r]
+            bodies[r]
                 .iter()
                 .map(|rule| {
                     let read = std::cell::RefCell::new(Vec::new());
@@ -1740,10 +1749,23 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                         read.borrow_mut().push(rel.to_owned());
                         "\u{1}".to_owned()
                     });
-                    let n = templates.len();
                     let mut read = read.into_inner();
                     // The head's label is replaced by `@`.
                     read.remove(0);
+                    (text, read)
+                })
+                .collect()
+        })
+        .collect();
+    let mut templates: HashMap<String, usize> = HashMap::new();
+    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
+        .iter()
+        .zip(texts)
+        .map(|(&r, texts)| {
+            let shaped = texts
+                .into_iter()
+                .map(|(text, read)| {
+                    let n = templates.len();
                     (*templates.entry(text).or_insert(n), read)
                 })
                 .collect();
@@ -1757,15 +1779,21 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     }
     loop {
         let label = |rel: &'_ str| -> Option<usize> { class.get(rel).copied() };
+        let sigs: Vec<Vec<(usize, Vec<Label>)>> = cands
+            .par_iter()
+            .map(|&r| {
+                let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
+                    .iter()
+                    .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
+                    .collect();
+                sig.sort();
+                sig.dedup();
+                sig
+            })
+            .collect();
         let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
         let mut next: HashMap<&str, usize> = HashMap::new();
-        for &r in &cands {
-            let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
-                .iter()
-                .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
-                .collect();
-            sig.sort();
-            sig.dedup();
+        for (&r, sig) in cands.iter().zip(sigs) {
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
         }

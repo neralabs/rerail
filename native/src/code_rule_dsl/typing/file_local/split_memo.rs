@@ -49,8 +49,13 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys
         rel.hash(&mut g);
         cols.hash(&mut g);
     }
+    // Each relation's digest on the pool's threads (a pack's program has thousands).
+    use rayon::prelude::*;
     let heads = derived
         .iter()
+        .copied()
+        .collect::<Vec<&str>>()
+        .par_iter()
         .map(|rel| {
             let mut h = hasher();
             prog.decls.get(*rel).hash(&mut h);

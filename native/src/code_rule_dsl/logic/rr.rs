@@ -836,6 +836,24 @@ pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<L
     (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
 }
 
+/// `f` run on another thread for a caller inside `recording`: its result, and the library files it read, which
+/// `replay` notes on the caller's thread, in the order the caller's own reading would have noted them.
+pub(in crate::code_rule_dsl) fn recorded_on_worker<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    (out, read)
+}
+
+/// The files a worker read (`recorded_on_worker`), noted on this thread as if it had read them.
+pub(in crate::code_rule_dsl) fn replay(files: Vec<LibraryFile>) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.extend(files);
+        }
+    });
+}
+
 fn noted(file: &LibraryFile) {
     READS.with(|r| {
         if let Some(read) = r.borrow_mut().as_mut() {

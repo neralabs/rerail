@@ -876,8 +876,17 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
+    // Each program read and lowered on the pool's threads: what each read from the library is noted here after, in
+    // the programs' order (`rr::recording`, decision 0094 §6), and the first program's error in that order is the one
+    // returned, as one thread gives them.
+    use rayon::prelude::*;
+    use crate::code_rule_dsl::logic::rr::{recorded_on_worker, replay};
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
+        let each: Vec<_> = programs.par_iter().map(|text| recorded_on_worker(|| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e)))).collect();
+        each.into_iter().map(|(got, read)| {
+            replay(read);
+            got
+        }).collect::<std::result::Result<_, _>>()?
     } else {
         programs.iter().map(|_| None).collect()
     };
@@ -904,11 +913,11 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
     drop(reading);
     let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
-    let mut parsed = programs
-        .iter()
+    let each: Vec<_> = programs
+        .par_iter()
         .zip(&own_only)
-        .zip(texts.iter_mut())
-        .map(|((text, &own_only), slot)| {
+        .zip(texts.par_iter_mut())
+        .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
             if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
                 front::declared(read)?;
                 return Ok(read.clone());
@@ -924,6 +933,13 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
             front::declared(&prog)?;
             Ok(prog)
+        }))
+        .collect();
+    let mut parsed = each
+        .into_iter()
+        .map(|(got, read)| {
+            replay(read);
+            got
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
     drop(lowering);
@@ -2120,7 +2136,7 @@ fn run_observed(
         let process_now = process_cpu();
         // A timeline (dev, `RERAIL_TIMELINE`): each section's end, as it ends, with the process's CPU it took.
         if timeline {
-            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last);
+            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock());
         }
         process_phases.push((name, process_now - process_last));
         process_last = process_now;
