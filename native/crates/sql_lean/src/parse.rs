@@ -112,6 +112,7 @@ mod prec {
     pub const EXP: u8 = 13;
     pub const NOT: u8 = 14;
     pub const IS: u8 = 15;
+    pub const COLLATE: u8 = 17;
     pub const MINUS: u8 = 19;
     pub const SUBSCRIPT: u8 = 20;
     pub const TYPECAST: u8 = 21;
@@ -319,6 +320,18 @@ impl Arena {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Saved {
+    at: usize,
+    last_end: usize,
+    look: Option<Tok>,
+    nodes: usize,
+    kids: usize,
+    stack: usize,
+    extras: usize,
+    depth: u32,
+}
+
 /// Where the grammar takes an identifier, the keywords the parse state takes too: `Sure`, the
 /// parser knows them all (any other keyword word is an identifier); `Unsure`, it does not (a
 /// keyword word not among them is refused).
@@ -353,6 +366,20 @@ impl<'s> P<'s> {
 
     fn refuse<X>(&self) -> R<X> {
         Err(Refusal::Parse(self.look.map_or(self.at, |t| t.s) as u32))
+    }
+
+    /// The parser's state, to go back to (`restore`): where a reading tree-sitter's GLR prefers
+    /// (a transaction over its first statement) may not hold.
+    fn save(&self) -> Saved {
+        Saved { at: self.at, last_end: self.last_end, look: self.look, nodes: self.a.nodes.len(), kids: self.a.kids.len(), stack: self.a.stack.len(), extras: self.extras.len(), depth: self.depth }
+    }
+
+    fn restore(&mut self, s: Saved) {
+        (self.at, self.last_end, self.look, self.depth) = (s.at, s.last_end, s.look, s.depth);
+        self.a.nodes.truncate(s.nodes);
+        self.a.kids.truncate(s.kids);
+        self.a.stack.truncate(s.stack);
+        self.extras.truncate(s.extras);
     }
 
     fn deeper(&mut self) -> R<()> {

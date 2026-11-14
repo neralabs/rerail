@@ -176,7 +176,19 @@ impl P<'_> {
                     } else if has(K::KeywordNot) {
                         // `not in`, `not like`, `not between`, `not similar to`: by the word after.
                         (0, 5)
-                    } else if has(K::KeywordCollate) || has(K::KeywordAt) || has(K::KeywordIsnull) || has(K::KeywordNotnull) || has(K::KeywordSimilar) || has(K::KeywordOver) && false {
+                    } else if has(K::KeywordCollate) {
+                        if prec::COLLATE < min {
+                            break;
+                        }
+                        // `collate_expression`: `x collate "C"`.
+                        self.a.set_field(self.a.stack[m], f::EXPRESSION);
+                        self.expect(K::KeywordCollate)?;
+                        if self.object_reference(NONE, f::COLLATION)?.is_none() {
+                            return self.refuse();
+                        }
+                        self.a.node(K::CollateExpression, m);
+                        continue;
+                    } else if has(K::KeywordAt) || has(K::KeywordIsnull) || has(K::KeywordNotnull) || has(K::KeywordSimilar) {
                         return self.refuse();
                     } else {
                         break;
@@ -721,14 +733,10 @@ impl P<'_> {
             if self.is(K::KeywordOrder)? {
                 return self.refuse();
             }
+            // A string after a comma is a term too: tree-sitter takes the general form over the last
+            // one's `_expression_string` (`f(a, 'b')`; the oracle's corpus has no other reading).
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
-            }
-            // A string after a comma may be the last form's `_expression_string` (`string_agg(x, ',')`):
-            // tree-sitter's choice between the two readings is its GLR's.
-            let n = self.peek()?;
-            if matches!(n.t, T::Str | T::EStr | T::Dollar) {
-                return self.refuse();
             }
         }
         self.expect_punct(b")", K::TRParen)?;
@@ -769,6 +777,13 @@ impl P<'_> {
         let t = self.peek()?;
         let ws = self.words()?;
         let k = ws.iter().map(|&(_, k)| k).find(|k| kinds::FIRST_TYPE.contains(k));
+        if k.is_none() && t.t == T::Word && self.src[t.s..t.e].eq_ignore_ascii_case(b"float8") {
+            // `double`'s own pattern (`/[fF][lL][oO][aA][tT][88]/`): a `double` with no keyword in it.
+            self.take(t);
+            self.a.leaf(K::Double, 0, t.s, t.e);
+            self.a.field_since(m, field);
+            return Ok(());
+        }
         match k {
             None => {
                 // A custom type: an object reference.

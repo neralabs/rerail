@@ -107,6 +107,43 @@ impl P<'_> {
             K::KeywordSet => self.set_statement()?,
             K::KeywordReset => self.reset_statement()?,
             K::KeywordComment => self.comment_statement()?,
+            K::KeywordGrant | K::KeywordRevoke => self.grant_or_revoke(k)?,
+            K::KeywordBegin => {
+                // A transaction (`begin; …; commit`), which tree-sitter prefers where it holds
+                // (`prec_dynamic(1)`), else `begin` alone.
+                let saved = self.save();
+                match self.transaction() {
+                    Ok(()) => return Ok(()),
+                    Err(_) => {
+                        self.restore(saved);
+                        self.transaction_statement()?;
+                    }
+                }
+            }
+            K::KeywordCommit | K::KeywordRollback | K::KeywordEnd | K::KeywordAbort | K::KeywordSavepoint | K::KeywordRelease | K::KeywordStart => self.transaction_statement()?,
+            K::KeywordCall => {
+                let c = self.a.mark();
+                self.expect(K::KeywordCall)?;
+                self.expr(0, 0)?;
+                if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
+                    return self.refuse();
+                }
+                self.a.node(K::CallStatement, c);
+            }
+            K::KeywordDo => {
+                let c = self.a.mark();
+                self.expect(K::KeywordDo)?;
+                if self.is(K::KeywordLanguage)? {
+                    self.function_option()?;
+                    self.function_string()?;
+                } else {
+                    self.function_string()?;
+                    if self.is(K::KeywordLanguage)? {
+                        self.function_option()?;
+                    }
+                }
+                self.a.node(K::DoStatement, c);
+            }
             _ => return self.refuse(),
         }
         self.a.node(K::Statement, m);
@@ -450,10 +487,47 @@ impl P<'_> {
             if self.is(K::KeywordOnly)? || self.is(K::KeywordLateral)? || self.is(K::KeywordRows)? {
                 return self.refuse();
             }
-            let Some(r) = self.object_reference(Ctx::Sure(&[&[K::KeywordOnly, K::KeywordLateral, K::KeywordRows]]), 0)? else { return self.refuse() };
-            if self.at_punct(b"(")? {
-                // A function in `from` (`_func_table`): an invocation of the reference.
-                let _ = r;
+            // A function in `from` (`_func_table`: an invocation), or a table.
+            let save = (self.at, self.last_end, self.look);
+            let first = self.peek()?;
+            self.take(first);
+            let mut call = self.at_punct(b"(")?;
+            while !call && self.at_punct(b".")? {
+                let d = self.peek()?;
+                self.take(Tok { e: d.s + 1, ..d });
+                let n = self.peek()?;
+                if n.t != T::Word && n.t != T::Quoted {
+                    break;
+                }
+                self.take(n);
+                call = self.at_punct(b"(")?;
+            }
+            (self.at, self.last_end, self.look) = save;
+            if call {
+                self.expr(prec::TYPECAST + 1, 0)?;
+                if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
+                    return self.refuse();
+                }
+                if self.is(K::KeywordWith)? {
+                    return self.refuse();
+                }
+                // `_func_alias`: an alias and its columns (names, or definitions).
+                let before = self.a.mark();
+                if self.kw(K::KeywordAs)?.is_some() {
+                    if self.at_punct(b"(")? {
+                        return self.refuse();
+                    }
+                    self.expect_ident(NONE, f::ALIAS)?;
+                } else {
+                    self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?;
+                }
+                if self.a.mark() > before && self.at_punct(b"(")? {
+                    self.column_list()?;
+                }
+                self.a.node(K::Relation, m);
+                return Ok(());
+            }
+            if self.object_reference(Ctx::Sure(&[&[K::KeywordOnly, K::KeywordLateral, K::KeywordRows]]), 0)?.is_none() {
                 return self.refuse();
             }
             if self.at_punct(b"*")? || self.is(K::KeywordTablesample)? {
@@ -757,6 +831,10 @@ impl P<'_> {
             self.create_extension()
         } else if kinds.contains(&K::KeywordSchema) {
             self.create_schema()
+        } else if kinds.contains(&K::KeywordType) {
+            self.create_type()
+        } else if kinds.contains(&K::KeywordRole) || kinds.contains(&K::KeywordUser) || kinds.contains(&K::KeywordGroup) {
+            self.create_role()
         } else {
             self.refuse()
         }
@@ -776,6 +854,9 @@ impl P<'_> {
         }
         if self.at_punct(b"(")? {
             self.table_elements()?;
+            if self.is(K::KeywordWith)? {
+                self.storage_parameters()?;
+            }
             if self.is(K::KeywordAs)? {
                 return self.refuse();
             }
@@ -798,6 +879,46 @@ impl P<'_> {
             return self.refuse();
         }
         self.a.node(K::CreateTable, m);
+        Ok(())
+    }
+
+    /// `storage_parameters`: `with (name [= value], …)`.
+    fn storage_parameters(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordWith)?;
+        self.expect_punct(b"(", K::TLParen)?;
+        loop {
+            self.expect_ident(NONE, 0)?;
+            if self.punct(b".", K::TDot)?.is_some() {
+                self.expect_ident(NONE, 0)?;
+            }
+            if self.punct(b"=", K::TEq)?.is_some() {
+                let t = self.peek()?;
+                match t.t {
+                    T::Str | T::EStr | T::Num | T::Dollar => {
+                        self.atom(false)?;
+                    }
+                    T::Word | T::Quoted => {
+                        let ws = self.words()?;
+                        if let Some(&(_, k)) = ws.iter().find(|&&(_, k)| matches!(k, K::KeywordOn | K::KeywordOff)) {
+                            self.expect(k)?;
+                        } else if ws.iter().any(|&(_, k)| matches!(k, K::KeywordTrue | K::KeywordFalse | K::KeywordNull)) {
+                            self.atom(false)?;
+                        } else if ws.iter().any(|&(_, k)| k == K::KeywordArray) {
+                            return self.refuse();
+                        } else {
+                            self.expect_ident(NONE, 0)?;
+                        }
+                    }
+                    _ => return self.refuse(),
+                }
+            }
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        self.expect_punct(b")", K::TRParen)?;
+        self.a.node(K::StorageParameters, m);
         Ok(())
     }
 
@@ -1434,8 +1555,369 @@ impl P<'_> {
         Ok(())
     }
 
+    /// `transaction`: `begin [work|transaction] [;] statement; … commit|rollback [work|transaction]`,
+    /// pushed in the statement's place.
+    fn transaction(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordBegin)?;
+        if self.kw(K::KeywordWork)?.is_none() {
+            self.kw(K::KeywordTransaction)?;
+        }
+        if self.is(K::KeywordIsolation)? || self.is(K::KeywordRead)? || self.is(K::KeywordDeferrable)? || self.is(K::KeywordNot)? {
+            return self.refuse();
+        }
+        self.punct(b";", K::TSemi)?;
+        loop {
+            let ws = self.words()?;
+            let end = ws.iter().any(|&(_, k)| matches!(k, K::KeywordCommit | K::KeywordRollback));
+            if end {
+                // `rollback to savepoint` is a statement inside the transaction.
+                let save = (self.at, self.last_end, self.look);
+                let t = self.peek()?;
+                self.take(t);
+                let to = self.is(K::KeywordTo)? || {
+                    let (w, tr) = (self.is(K::KeywordWork)?, self.is(K::KeywordTransaction)?);
+                    if w || tr {
+                        let t = self.peek()?;
+                        self.take(t);
+                        self.is(K::KeywordTo)?
+                    } else {
+                        false
+                    }
+                };
+                (self.at, self.last_end, self.look) = save;
+                if !to {
+                    let k = if self.is(K::KeywordCommit)? { K::KeywordCommit } else { K::KeywordRollback };
+                    self.expect(k)?;
+                    if self.kw(K::KeywordWork)?.is_none() {
+                        self.kw(K::KeywordTransaction)?;
+                    }
+                    if self.is(K::KeywordAnd)? {
+                        return self.refuse();
+                    }
+                    break;
+                }
+            }
+            if self.is(K::KeywordBegin)? || self.peek()?.t == T::Eof {
+                return self.refuse();
+            }
+            self.statement()?;
+            self.expect_punct(b";", K::TSemi)?;
+        }
+        self.a.node(K::Transaction, m);
+        Ok(())
+    }
+
+    /// `transaction_statement`: `begin`, `commit`, `rollback [to savepoint] x`, `savepoint x`,
+    /// `release [savepoint] x`, `start transaction`.
+    fn transaction_statement(&mut self) -> R<()> {
+        let m = self.a.mark();
+        let ws = self.words()?;
+        let Some(&(_, k)) = ws.first() else { return self.refuse() };
+        self.expect(k)?;
+        let opt = |p: &mut Self| -> R<()> {
+            if p.kw(K::KeywordWork)?.is_none() {
+                p.kw(K::KeywordTransaction)?;
+            }
+            Ok(())
+        };
+        match k {
+            K::KeywordBegin => {
+                opt(self)?;
+                if self.is(K::KeywordIsolation)? || self.is(K::KeywordRead)? || self.is(K::KeywordDeferrable)? || self.is(K::KeywordNot)? {
+                    return self.refuse();
+                }
+            }
+            K::KeywordStart => {
+                self.expect(K::KeywordTransaction)?;
+                if self.peek()?.t == T::Word {
+                    return self.refuse();
+                }
+            }
+            K::KeywordCommit | K::KeywordEnd | K::KeywordAbort => {
+                if self.is(K::KeywordPrepared)? {
+                    return self.refuse();
+                }
+                opt(self)?;
+                if self.is(K::KeywordAnd)? {
+                    return self.refuse();
+                }
+            }
+            K::KeywordRollback => {
+                if self.is(K::KeywordPrepared)? {
+                    return self.refuse();
+                }
+                opt(self)?;
+                if self.kw(K::KeywordTo)?.is_some() {
+                    self.kw(K::KeywordSavepoint)?;
+                    self.expect_ident(Ctx::Sure(&[&[K::KeywordSavepoint]]), 0)?;
+                } else if self.is(K::KeywordAnd)? {
+                    return self.refuse();
+                }
+            }
+            K::KeywordSavepoint => {
+                self.expect_ident(NONE, 0)?;
+            }
+            K::KeywordRelease => {
+                self.kw(K::KeywordSavepoint)?;
+                self.expect_ident(Ctx::Sure(&[&[K::KeywordSavepoint]]), 0)?;
+            }
+            _ => return self.refuse(),
+        }
+        self.a.node(K::TransactionStatement, m);
+        Ok(())
+    }
+
+    /// `create type t [as (columns) | as enum (…)]`.
+    fn create_type(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordCreate)?;
+        self.expect(K::KeywordType)?;
+        if self.object_reference(NONE, 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.kw(K::KeywordAs)?.is_some() {
+            if self.kw(K::KeywordEnum)?.is_some() {
+                let e = self.a.mark();
+                self.expect_punct(b"(", K::TLParen)?;
+                if !self.at_punct(b")")? {
+                    loop {
+                        let t = self.peek()?;
+                        if t.t != T::Str {
+                            return self.refuse();
+                        }
+                        self.string_literal(f::ENUM_ELEMENT)?;
+                        if self.punct(b",", K::TComma)?.is_none() {
+                            break;
+                        }
+                    }
+                }
+                self.expect_punct(b")", K::TRParen)?;
+                self.a.node(K::EnumElements, e);
+            } else if self.at_punct(b"(")? {
+                self.table_elements()?;
+                if self.is(K::KeywordCollate)? {
+                    return self.refuse();
+                }
+            } else {
+                return self.refuse();
+            }
+        } else if self.at_punct(b"(")? {
+            return self.refuse();
+        }
+        self.a.node(K::CreateType, m);
+        Ok(())
+    }
+
+    /// `create role | user | group name [with] options`: options that are identifiers.
+    fn create_role(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordCreate)?;
+        if self.kw(K::KeywordRole)?.is_none() && self.kw(K::KeywordUser)?.is_none() {
+            self.expect(K::KeywordGroup)?;
+        }
+        self.expect_ident(NONE, 0)?;
+        self.kw(K::KeywordWith)?;
+        let others: &[K] = &[K::KeywordValid, K::KeywordConnection, K::KeywordEncrypted, K::KeywordPassword, K::KeywordIn, K::KeywordRole, K::KeywordAdmin, K::KeywordUser, K::KeywordGroup, K::KeywordWith];
+        loop {
+            let t = self.peek()?;
+            if t.t != T::Word && t.t != T::Quoted {
+                break;
+            }
+            if self.words()?.iter().any(|&(_, k)| others.contains(&k)) {
+                return self.refuse();
+            }
+            self.expect_ident(Ctx::Sure(&[others]), f::OPTION)?;
+        }
+        self.a.node(K::CreateRole, m);
+        Ok(())
+    }
+
+    /// `grant | revoke privileges on target to | from grantees`.
+    fn grant_or_revoke(&mut self, k: K) -> R<()> {
+        let m = self.a.mark();
+        self.expect(k)?;
+        if self.is(K::KeywordGrant)? || self.is(K::KeywordAdmin)? || self.is(K::KeywordInherit)? {
+            return self.refuse();
+        }
+        // `_privileges`.
+        if self.kw(K::KeywordAll)?.is_some() {
+            self.kw(K::KeywordPrivileges)?;
+            if self.at_punct(b"(")? {
+                return self.refuse();
+            }
+        } else {
+            loop {
+                let p = self.a.mark();
+                let ws = self.words()?;
+                let named = [K::KeywordSelect, K::KeywordInsert, K::KeywordUpdate, K::KeywordDelete, K::KeywordTruncate, K::KeywordReferences, K::KeywordTrigger, K::KeywordCreate, K::KeywordTemporary, K::KeywordTemp, K::KeywordExecute, K::KeywordSet];
+                if let Some(&(_, x)) = ws.iter().find(|&&(_, x)| named.contains(&x)) {
+                    self.expect(x)?;
+                } else if self.is(K::KeywordAlter)? || self.is(K::KeywordOn)? {
+                    return self.refuse();
+                } else {
+                    self.expect_ident(Ctx::Sure(&[&[K::KeywordOn, K::KeywordAll, K::KeywordAlter]]), 0)?;
+                }
+                if self.at_punct(b"(")? {
+                    return self.refuse();
+                }
+                self.a.node(K::Privilege, p);
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect(K::KeywordOn)?;
+        // `_privilege_target`.
+        let ws = self.words()?;
+        if ws.iter().any(|&(_, x)| matches!(x, K::KeywordFunction | K::KeywordProcedure | K::KeywordRoutine)) {
+            let x = ws.iter().find(|&&(_, x)| matches!(x, K::KeywordFunction | K::KeywordProcedure | K::KeywordRoutine)).expect("one").1;
+            self.expect(x)?;
+            loop {
+                if self.object_reference(NONE, 0)?.is_none() {
+                    return self.refuse();
+                }
+                if self.at_punct(b"(")? {
+                    self.function_arguments()?;
+                }
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+        } else if ws.iter().any(|&(_, x)| matches!(x, K::KeywordDatabase | K::KeywordLanguage | K::KeywordSchema | K::KeywordTablespace)) {
+            let x = ws.iter().find(|&&(_, x)| matches!(x, K::KeywordDatabase | K::KeywordLanguage | K::KeywordSchema | K::KeywordTablespace)).expect("one").1;
+            self.expect(x)?;
+            loop {
+                self.expect_ident(NONE, 0)?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+        } else {
+            if ws.iter().any(|&(_, x)| matches!(x, K::KeywordForeign | K::KeywordDomain | K::KeywordType | K::KeywordLarge | K::KeywordParameter | K::KeywordAll)) {
+                return self.refuse();
+            }
+            if self.kw(K::KeywordTable)?.is_none() {
+                self.kw(K::KeywordSequence)?;
+            }
+            loop {
+                if self.object_reference(NONE, 0)?.is_none() {
+                    return self.refuse();
+                }
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect(if k == K::KeywordGrant { K::KeywordTo } else { K::KeywordFrom })?;
+        loop {
+            self.kw(K::KeywordGroup)?;
+            self.expect_ident(Ctx::Sure(&[&[K::KeywordGroup]]), 0)?;
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        if k == K::KeywordGrant && self.kw(K::KeywordWith)?.is_some() {
+            self.expect(K::KeywordGrant)?;
+            self.expect(K::KeywordOption)?;
+        }
+        if self.is(K::KeywordGranted)? {
+            return self.refuse();
+        }
+        if k == K::KeywordRevoke && self.kw(K::KeywordCascade)?.is_none() {
+            self.kw(K::KeywordRestrict)?;
+        }
+        self.a.node(if k == K::KeywordGrant { K::GrantStatement } else { K::RevokeStatement }, m);
+        Ok(())
+    }
+
+    /// `alter function f(arguments) options`.
+    fn alter_function(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordAlter)?;
+        self.expect(K::KeywordFunction)?;
+        if self.object_reference(NONE, 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.at_punct(b"(")? {
+            self.function_arguments()?;
+        }
+        let mut any = false;
+        loop {
+            if self.is(K::KeywordLanguage)? || self.is(K::KeywordAs)? {
+                return self.refuse();
+            }
+            if !self.function_option()? {
+                break;
+            }
+            any = true;
+        }
+        if !any {
+            return self.refuse();
+        }
+        self.kw(K::KeywordRestrict)?;
+        self.a.node(K::AlterFunction, m);
+        Ok(())
+    }
+
+    /// `alter extension e update [to v] | add|drop function f(arguments) | table t …`.
+    fn alter_extension(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordAlter)?;
+        self.expect(K::KeywordExtension)?;
+        self.expect_ident(NONE, 0)?;
+        if self.kw(K::KeywordUpdate)?.is_some() {
+            if self.kw(K::KeywordTo)?.is_some() {
+                let t = self.peek()?;
+                if t.t == T::Str {
+                    self.take(t);
+                    self.a.leaf(K::Literal, 0, t.s, t.e);
+                } else {
+                    self.expect_ident(NONE, 0)?;
+                }
+            }
+        } else if self.kw(K::KeywordAdd)?.is_some() || self.kw(K::KeywordDrop)?.is_some() {
+            let ws = self.words()?;
+            let Some(&(_, x)) = ws.first() else { return self.refuse() };
+            match x {
+                K::KeywordFunction => {
+                    self.expect(x)?;
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                    if self.at_punct(b"(")? {
+                        self.function_arguments()?;
+                    }
+                }
+                K::KeywordTable | K::KeywordSequence | K::KeywordView | K::KeywordIndex => {
+                    self.expect(x)?;
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                }
+                _ => return self.refuse(),
+            }
+        } else {
+            return self.refuse();
+        }
+        self.a.node(K::AlterExtension, m);
+        Ok(())
+    }
+
     /// `alter table [if exists] t add [column] …, drop column …`: the common forms; others refused.
     fn alter(&mut self) -> R<()> {
+        let save = (self.at, self.last_end, self.look);
+        let t = self.peek()?;
+        self.take(t);
+        let function = self.is(K::KeywordFunction)?;
+        let extension = self.is(K::KeywordExtension)?;
+        (self.at, self.last_end, self.look) = save;
+        if function {
+            return self.alter_function();
+        }
+        if extension {
+            return self.alter_extension();
+        }
         let m = self.a.mark();
         self.expect(K::KeywordAlter)?;
         if !self.is(K::KeywordTable)? {
