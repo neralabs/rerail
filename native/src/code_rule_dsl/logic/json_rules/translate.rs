@@ -342,10 +342,43 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
             cons.extend(lower(px, &mut prog, crule, &mv(var), &mut vs, &[])?);
         }
         let hd = format!("{rel}(n{})", cols.iter().map(|c| format!(", {c}")).collect::<String>());
+        // A plain transform's targets, in order, each with its root source (the metavariable its chain reads).
+        let targets: Vec<(String, String)> = match (tr_v, prog.transform_defs.as_ref()) {
+            (Some(tr), Some(defs)) if !tr.as_obj().is_some_and(|o| o.has("$option")) => transform_targets(tr)
+                .into_iter()
+                .filter(|t| defs.contains_key(t))
+                .map(|t| {
+                    let mut root = defs[&t].0.clone();
+                    let mut depth = 0;
+                    while let Some((src, _)) = defs.get(&root).filter(|_| depth < 20) {
+                        root = src.clone();
+                        depth += 1;
+                    }
+                    (t, root)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         for b in bodies {
             let mut lits = b;
             lits.extend(cons.iter().cloned());
-            lits.extend(tlits.iter().cloned());
+            if targets.is_empty() {
+                lits.extend(tlits.iter().cloned());
+            } else {
+                // A target whose source the rule binds only inside a negation or an aggregate (a util that binds it
+                // there, in its own frame) is not computed here: grounding its source would range it over every
+                // node. The helper that reads it computes it itself (transform_defs_for), so it stays local there.
+                // ast-grep leaves such a target unset where the rule's own match does not bind it.
+                let bound = binders(px, &lits.join(", "), false);
+                let defs = prog.transform_defs.as_ref().expect("transform defs");
+                for (t, root) in &targets {
+                    if root.is_empty() || bound.contains(root) {
+                        lits.extend(defs[t].1.iter().cloned());
+                    } else if cols.contains(t) {
+                        lits.push(format!("unset({t})"));
+                    }
+                }
+            }
             let id = prog.entry(Entry { head: hd.clone(), lits, edits: edits.clone(), ..Default::default() });
             body.push(Item::Rule(id));
         }

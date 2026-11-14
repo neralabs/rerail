@@ -152,7 +152,7 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     }
     let o = arg.as_obj().expect("an object");
     if !(truthy(o.get("cases")) || o.has("default")) {
-        return render_option(o.get("$option").expect("$option"), render);
+        return render_option(o, render);
     }
     let name = q_val(o.get("$option").expect("$option"));
     let cases = cases_of(arg);
@@ -166,9 +166,30 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     if parts.len() > 1 { format!("({})", parts.join(" ; ")) } else { parts.remove(0) }
 }
 
-fn render_option(name: &Value, render: &dyn Fn(&Lit) -> String) -> String {
+/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rr), so
+/// `{"$option": L, "join": "|", "template": T}` (the regex T around the items joined by `|`) is read per item: the
+/// joined regex matches where the regex T around some one item does. A `template` with no `join` puts a scalar
+/// option's value where the template's first `{}` is (`"^.{0,{}}$"`), as main does.
+fn render_option(opt: &Obj, render: &dyn Fn(&Lit) -> String) -> String {
+    let name = opt.get("$option").expect("$option");
     let o = format!("o_{}", snake(&py_str(name)));
-    format!("option({}, {o}), {}", q_val(name), render(&Lit::Opt(o.clone())))
+    let template = opt.get("template").and_then(Value::as_str);
+    let around = |v: &str| -> Option<(String, String)> {
+        let (pre, post) = template?.split_once("{}")?;
+        let r = format!("{v}_t");
+        Some((format!("{r} = cat({}, cat({v}, {}))", q(pre), q(post)), r))
+    };
+    if opt.get("join").and_then(Value::as_str) == Some("|") {
+        let item = format!("option_item({}, _, {o})", q_val(name));
+        return match around(&o) {
+            Some((lit, r)) => format!("{item}, {lit}, {}", render(&Lit::Opt(r))),
+            None => format!("{item}, {}", render(&Lit::Opt(o.clone()))),
+        };
+    }
+    match around(&o) {
+        Some((lit, r)) if !opt.has("join") => format!("option({}, {o}), {lit}, {}", q_val(name), render(&Lit::Opt(r))),
+        _ => format!("option({}, {o}), {}", q_val(name), render(&Lit::Opt(o.clone()))),
+    }
 }
 
 /// `match(pattern, subject)`: a glob-family test where it is exactly the regex, `match` otherwise.
@@ -421,8 +442,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             prog.use_("names");
             lits.push(format!("(bind_only({v}) ; aug_target({v}))"));
         } else if k == "binds" && vo.is_some() {
+            // Main's `binds` holds at the binding's name node, and its filters are about the binding's site.
             prog.use_("names");
-            lits.extend(site_filters(px, prog, vo.expect("an object"), v, vs)?);
+            let s = vs.fresh("b");
+            lits.push(format!("bind_name({v}, {s})"));
+            lits.extend(site_filters(px, prog, vo.expect("an object"), &s, vs)?);
         } else if k == "parse" && vo.is_some_and(|o| o.has("grammar")) {
             let o = vo.expect("an object");
             let r = vs.fresh("r");
@@ -701,9 +725,9 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
     for (bk, bv) in filters.iter() {
         let bo = bv.as_obj();
         if bk == "form" && bv.is_str() {
-            lits.push(format!("site_form({s}, {})", q_val(bv)));
+            lits.push(format!("main_form({s}, {})", q_val(bv)));
         } else if bk == "form" && bv.is_list() {
-            lits.push(one_of(prog, vs, &format!("site_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
+            lits.push(one_of(prog, vs, &format!("main_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
         } else if bk == "site" && bo.is_some_and(|o| o.key_set_is(&["kind"])) && bv.get("kind").is_some_and(Value::is_str) {
             let st = vs.fresh("st");
             let kq = q_val(bv.get("kind").expect("kind"));
@@ -748,10 +772,10 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
             let form = bv.get("form");
             lits.push(format!("binding({sc}, {x}, {s}, _)"));
             match form {
-                Some(f @ Value::Str(_)) => lits.push(format!("binding({sc}, {x}, {s2}, {})", q_val(f))),
+                Some(f @ Value::Str(_)) => lits.push(format!("binding({sc}, {x}, {s2}, _), main_form({s2}, {})", q_val(f))),
                 Some(Value::List(fs)) => {
                     let f = vs.fresh("f");
-                    lits.push(format!("binding({sc}, {x}, {s2}, {f})"));
+                    lits.push(format!("binding({sc}, {x}, {s2}, _), main_form({s2}, {f})"));
                     lits.push(format!("({})", fs.iter().map(|x_| format!("{f} = {}", q_val(x_))).collect::<Vec<_>>().join(" ; ")));
                 }
                 _ => lits.push(format!("binding({sc}, {x}, {s2}, _)")),

@@ -15,11 +15,12 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation RUF059(at: node, n: loc) "Unpacked variable `{n}` is never used; rename it to `_{n}` or `_` to mark it unused, or use it."
     suppress noqa "RUF059"
-RUF059(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, f1), ruf059_set_7(f1),
-    (site_scope(n, "function") ; site_scope(n, "lambda")), site_latest(n),
-    !site_outer(n), !site_used(n),
+RUF059(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, f2), ruf059_set_7(f2),
+    (site_scope(b1, "function") ; site_scope(b1, "lambda")), site_latest(b1),
+    !site_outer(b1), !site_used(b1),
     !glob("{__tracebackhide__,__traceback_info__,__traceback_supplement__,__debuggerskip__}", n),
-    ruf059_unpacked(n), count : { option("dummy-variable-rgx", o2), match(o2, n) } = 0.
+    ruf059_unpacked(n), count : { option("dummy-variable-rgx", o3), match(o3, n) } = 0.
 
 // display(n): the JSON util `display`, used where the JSON says `matches: "display"`
 .decl ruf059_display(n: node)
@@ -52,10 +53,10 @@ ruf059_unpacked(n) :- within_stop(n, p1, "assignment"),
     ),
     within(n, p10), ruf059_chain_top(p10),
     (!ruf059_chain_display_value(p10) ; !ruf059_chain_all_tuple(p10)).
-ruf059_unpacked(n) :- site_form(n, "named"), within(n, p11), ruf059_chain_top(p11),
-    ruf059_chain_all_tuple(p11), !ruf059_chain_display_value(p11).
-ruf059_unpacked(n) :- (site_form(n, "with") ; site_form(n, "named")), inside(n, p12, "tuple"),
-    ruf059_with_target_top(p12).
+ruf059_unpacked(n) :- bind_name(n, b11), main_form(b11, "named"), within(n, p12),
+    ruf059_chain_top(p12), ruf059_chain_all_tuple(p12), !ruf059_chain_display_value(p12).
+ruf059_unpacked(n) :- bind_name(n, b13), (main_form(b13, "with") ; main_form(b13, "named")),
+    inside(n, p14, "tuple"), ruf059_with_target_top(p14).
 
 // with_target_top(n): the JSON util `with-target-top`, used where the JSON says `matches: "with-target-top"`
 .decl ruf059_with_target_top(n: node)

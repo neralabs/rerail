@@ -20,20 +20,22 @@ pyi018_typevar_call(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation PYI018(at: node, name: loc) "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
     suppress noqa "PYI018"
-PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n),
-    site_form(n, "assignment"), (site_scope(n, "module") ; site_scope(n, "function")),
-    site_latest(n), !site_used(n), !site_exported(n), (st1 = n ; within(n, st1)),
-    kind(st1, "assignment"), count : { field(st1, "type", c2), kind(c2, "type") } = 0,
-    child(p3, st1, _), kind(p3, "expression_statement"), field(st1, "right", c4),
-    pyi018_typevar_call(c4).
-PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n),
-    site_form(n, "assignment"), site_scope(n, "function"), site_latest(n),
-    !site_exported(n), (st1 = n ; within(n, st1)), kind(st1, "assignment"),
-    count : { field(st1, "type", c2), kind(c2, "type") } = 0, child(p3, st1, _),
-    kind(p3, "expression_statement"), field(st1, "right", c4), pyi018_typevar_call(c4),
-    node(_, n, _, _, _), V = n, pyi018_up_1(n, p5), within_stop(c6, p5, pyi018_stop_2), kind(c6, "call"),
-    c6 ~ `locals()`,
-    count : { has(p5, c7, "identifier"), node(_, c7, _, _, _), V = c7, count : { field(p8, "left", c7), kind(p8, "assignment") } = 0 } = 0.
+PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n), bind_name(n, b1),
+    main_form(b1, "assignment"),
+    (site_scope(b1, "module") ; site_scope(b1, "function")), site_latest(b1),
+    !site_used(b1), !site_exported(b1), (st2 = b1 ; within(b1, st2)),
+    kind(st2, "assignment"), count : { field(st2, "type", c3), kind(c3, "type") } = 0,
+    child(p4, st2, _), kind(p4, "expression_statement"), field(st2, "right", c5),
+    pyi018_typevar_call(c5).
+PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n), bind_name(n, b1),
+    main_form(b1, "assignment"), site_scope(b1, "function"), site_latest(b1),
+    !site_exported(b1), (st2 = b1 ; within(b1, st2)), kind(st2, "assignment"),
+    count : { field(st2, "type", c3), kind(c3, "type") } = 0, child(p4, st2, _),
+    kind(p4, "expression_statement"), field(st2, "right", c5), pyi018_typevar_call(c5),
+    node(_, n, _, _, _), V = n, within_stop(n, p6, "function_definition"),
+    kind(p6, "function_definition"), within_stop(c7, p6, pyi018_stop_2), kind(c7, "call"),
+    c7 ~ `locals()`,
+    count : { has(p6, c8, "identifier"), node(_, c8, _, _, _), V = c8, count : { field(p9, "left", c8), kind(p9, "assignment") } = 0 } = 0.
 
 // PYI018_unused_private_type_var_in_stub_class(n): a finding at node n, from clause `unused-private-type-var-in-stub-class`.
 // Each rule below is one way the JSON `rule` can match.
@@ -42,16 +44,11 @@ PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n),
 .violation PYI018_unused_private_type_var_in_stub_class(at: node, name: loc) code "PYI018" "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
     suppress noqa "PYI018"
 PYI018_unused_private_type_var_in_stub_class_raw(n, NAME) :- kind(n, "identifier"),
-    match("(?P<NAME>_.*)", n), site_form(n, "assignment"), site_scope(n, "class"),
-    site_latest(n), !site_used(n), !site_exported(n), (st1 = n ; within(n, st1)),
-    kind(st1, "assignment"), count : { field(st1, "type", c2), kind(c2, "type") } = 0,
-    child(p3, st1, _), kind(p3, "expression_statement"), field(st1, "right", c4),
-    pyi018_typevar_call(c4).
-
-// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
-.decl pyi018_up_1(n: node, p: node)
-pyi018_up_1(n, p) :- site_latest(n), within_stop(n, p, "function_definition"),
-    kind(p, "function_definition").
+    match("(?P<NAME>_.*)", n), bind_name(n, b1), main_form(b1, "assignment"),
+    site_scope(b1, "class"), site_latest(b1), !site_used(b1), !site_exported(b1),
+    (st2 = b1 ; within(b1, st2)), kind(st2, "assignment"),
+    count : { field(st2, "type", c3), kind(c3, "type") } = 0, child(p4, st2, _),
+    kind(p4, "expression_statement"), field(st2, "right", c5), pyi018_typevar_call(c5).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl pyi018_set_1(v: symbol)

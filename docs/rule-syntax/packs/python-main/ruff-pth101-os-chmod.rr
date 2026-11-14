@@ -137,12 +137,7 @@ pth101_nested_class_body(n) :- kind(n, "block"), child(p1, n, _),
 
 // int_member(n): the JSON util `int-member`, used where the JSON says `matches: "int-member"`
 .decl pth101_int_member(n: node)
-pth101_int_member(n) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
-    ( site_latest(n), site_scope(n, "class"), (site_form(n, "assignment") ; site_form(n, "named")), binding_value(n, x1), pth101_int_initializer(x1)
-    ; site_latest(n), site_scope(n, "class"), (site_form(n, "annotated") ; site_form(n, "annotation")), site_annotation(n, o1), pth101_int_annotation(o1)
-    ; site_latest(n), site_scope(n, "class"), site_form(n, "definition"), (st1 = n ; within(n, st1)), pth101_int_def(st1)
-    ).
-
+pth101_int_member(n) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, pth101_alt_7(n).
 
 // class_int_member(n): the JSON util `class-int-member`, used where the JSON says `matches: "class-int-member"`
 .decl pth101_class_int_member(n: node)
@@ -158,9 +153,9 @@ pth101_class_ref(n) :- pth101_demand_class_ref(n), kind(n, "parenthesized_expres
 
 // inner_class_name(n): the JSON util `inner-class-name`, used where the JSON says `matches: "inner-class-name"`
 .decl pth101_inner_class_name(n: node)
-pth101_inner_class_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), MID = n, site_latest(n),
-    site_scope(n, "class"), site_form(n, "definition"), (st1 = n ; within(n, st1)),
-    pth101_alt_10(st1).
+pth101_inner_class_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), MID = n, bind_name(n, b1),
+    site_latest(b1), site_scope(b1, "class"), main_form(b1, "definition"),
+    (st2 = b1 ; within(b1, st2)), pth101_alt_10(st2).
 
 // outer_ref(n): the JSON util `outer-ref`, used where the JSON says `matches: "outer-ref"`
 .decl pth101_outer_ref(n: node)
@@ -272,9 +267,9 @@ pth101_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth101_ar
 // demand_int_with: the rows of int_with its callers ask for (the metavariable columns they pass in)
 .decl pth101_demand_int_with(n: node, wn: loc)
 pth101_demand_int_with(st12, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
-    site_form(b11, "with"), (st12 = b11 ; within(b11, st12)).
+    main_form(b11, "with"), (st12 = b11 ; within(b11, st12)).
 pth101_demand_int_with(c1, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
-    site_form(b11, "with"), (st12 = b11 ; within(b11, st12)), within(c1, st12).
+    main_form(b11, "with"), (st12 = b11 ; within(b11, st12)), within(c1, st12).
 
 // demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
 .decl pth101_demand_alt_3(n: node, wn: loc)
@@ -316,9 +311,20 @@ pth101_alt_5(n) :- ref_site(n, b5), site_only(b5), (st6 = b5 ; within(b5, st6)),
     site_annotation(b5, o8), pth101_int_annotation(o8).
 pth101_alt_5(n) :- ref_site(n, b9), site_only(b9), (st10 = b9 ; within(b9, st10)),
     pth101_int_def(st10).
-pth101_alt_5(n) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11), site_form(b11, "with"),
+pth101_alt_5(n) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11), main_form(b11, "with"),
     (st12 = b11 ; within(b11, st12)),
     (pth101_int_with(st12, WN) ; within(c1, st12), pth101_int_with(c1, WN)).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pth101_alt_7(n: node)
+pth101_alt_7(n) :- bind_name(n, b1), site_latest(b1), site_scope(b1, "class"),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
+    pth101_int_initializer(x2).
+pth101_alt_7(n) :- bind_name(n, b3), site_latest(b3), site_scope(b3, "class"),
+    (main_form(b3, "annotated") ; main_form(b3, "annotation")),
+    site_annotation(b3, o4), pth101_int_annotation(o4).
+pth101_alt_7(n) :- bind_name(n, b5), site_latest(b5), site_scope(b5, "class"),
+    main_form(b5, "definition"), (st6 = b5 ; within(b5, st6)), pth101_int_def(st6).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl pth101_alt_10(n: node)

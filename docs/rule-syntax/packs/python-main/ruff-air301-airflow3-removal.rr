@@ -1452,8 +1452,7 @@ air301_quoted_renamed_providers_trino_datasets_trino_sanitize_uri(n, N) :- (kind
     suppress noqa "AIR301"
 AIR301_moved_to_conf(N, n, L) :- air301_old_name_moved_to_conf(n), node(_, n, _, _, _), N = n, !air301_deleted_name(n),
     text(N, t1), L = @replace_all(t1, "(?s)^.*\\.", "").
-AIR301_moved_to_conf(N, n, L) :- air301_quoted_moved_to_conf(n, N), text(N, t1),
-    L = @replace_all(t1, "(?s)^.*\\.", "").
+AIR301_moved_to_conf(N, n, L) :- air301_quoted_moved_to_conf(n, N), unset(L).
 
 // old_name_moved_to_conf(n): the JSON util `old-name`, used where the JSON says `matches: "old-name"`
 .decl air301_old_name_moved_to_conf(n: node)
@@ -1821,10 +1820,9 @@ AIR301_context_key_conf(n, "`apply_defaults` is applied automatically in Airflow
 .violation AIR301_removed_method_dataset_to_asset(at: loc, a: node, b: symbol, detail: symbol) code "AIR301" "`{a}` was removed in Airflow 3; {detail} `{b}` instead."
     suppress noqa "AIR301"
 AIR301_removed_method_dataset_to_asset(A, n, B, "call") :- kind(n, "attribute"),
-    air301_alt_248(n, A), field(p22, "function", n), kind(p22, "call"), text(A, t1),
-    B = @replace_all(t1, "dataset", "asset").
+    air301_alt_248(n, A), field(p22, "function", n), kind(p22, "call"), unset(B).
 AIR301_removed_method_dataset_to_asset(A, n, B, "use") :- kind(n, "attribute"),
-    air301_alt_257(n, A), text(A, t1), B = @replace_all(t1, "dataset", "asset").
+    air301_alt_257(n, A), unset(B).
 
 // AIR301_removed_method_get_conn_uri(n, detail): findings from clauses `removed-method-get-connections`, `removed-method-get-conn-uri`, `removed-method-create-dagrun`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -1870,11 +1868,11 @@ AIR301_context_parameter_removed(n, K) :- kind(n, "identifier"),
 .violation AIR301_plugin_removed_extension(at: node, x: loc) code "AIR301" "`{x}` was removed from plugins in Airflow 3; import the extension as a regular Python module instead."
     suppress noqa "AIR301"
 AIR301_plugin_removed_extension(n, X) :- kind(n, "identifier"),
-    glob("{executors,operators,sensors,hooks}", n), node(_, n, _, _, _), X = n,
-    site_form(n, f1), air301_set_272(f1), site_scope(n, "class"),
-    within_stop(n, p2, air301_stop_273), kind(p2, "class_definition"),
-    field(p2, "superclasses", c3), kind(c3, "argument_list"), child(c3, c4, _),
-    air301_cls_dataset_manager_family(c4, "plugin_base").
+    glob("{executors,operators,sensors,hooks}", n), node(_, n, _, _, _), X = n, bind_name(n, b1),
+    main_form(b1, f2), air301_set_272(f2), site_scope(b1, "class"),
+    within_stop(n, p3, air301_stop_273), kind(p3, "class_definition"),
+    field(p3, "superclasses", c4), kind(c4, "argument_list"), child(c4, c5, _),
+    air301_cls_dataset_manager_family(c5, "plugin_base").
 
 // AIR301_apply_defaults_decorator_commented(n): a finding at node n, from clause `apply-defaults-decorator-commented`.
 // Each rule below is one way the JSON `rule` can match.

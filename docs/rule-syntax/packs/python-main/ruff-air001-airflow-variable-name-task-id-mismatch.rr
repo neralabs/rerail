@@ -18,7 +18,7 @@ AIR001(NAME, n, TV) :- kind(n, "assignment"), child(p2, n, _),
     kind(p2, "expression_statement"),
     count : { field(n, "type", c3), kind(c3, "type") } = 0, field(n, "left", c4),
     air001_target_name(c4, NAME), field(n, "right", c5), air001_operator_call(c5, TID),
-    text(NAME, t6), t6 != TV, value(TID, t1), TV = t1.
+    text(NAME, t6), t6 != TV, unset(TV).
 
 // str_lit(n): the JSON util `str-lit`, used where the JSON says `matches: "str-lit"`
 .decl air001_str_lit(n: node)

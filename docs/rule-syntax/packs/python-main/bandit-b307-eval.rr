@@ -17,9 +17,9 @@ B307(n) :- kind(n, "call"), field(n, "function", c1), b307_eval_callee(c1).
 // eval_callee(n): the JSON util `eval-callee`, used where the JSON says `matches: "eval-callee"`
 .decl b307_eval_callee(n: node)
 b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "identifier"), glob("eval", n),
-    count : { ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b307_alias_to_other(st2) } = 0.
+    count : { ref_site(n, b1), main_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b307_alias_to_other(st2) } = 0.
 b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "identifier"), ref_site(n, b3),
-    site_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b307_alias_to_eval(st4).
+    main_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b307_alias_to_eval(st4).
 b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "parenthesized_expression"),
     child(n, c5, _), b307_eval_callee(c5).
 

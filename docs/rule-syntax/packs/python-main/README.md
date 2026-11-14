@@ -80,15 +80,18 @@ The pinned source is `source/` (main's Python pack 0.1.8: `pack.json` and `rules
 rule's reader verdict, and `run-check.txt` (from `../../site/run_main_pack.sh`) each rule's verdict when run alone
 on one file, under the caps (2 minutes, 2 GB).
 
-### Binding sites: main's and the library's differ (open)
+### Binding sites, forms and options: fixed (decision 0191)
 
-Found on an N806 probe. Main's `binds: {form: …}` holds at the bound name, with forms `assignment`, `annotated`,
-`augmented`, `named` (walrus), `definition`, `parameter` and so on. The library's `site_form` (`lib/python/names.rr`)
-puts a simple assignment's site on the assignment statement, a definition's on the `def`, and names its forms
-`assign`, `augassign`, `walrus`, `def`, `param`. So `x = 1` inside a function gives no `site_form(x,
-"assignment")`, and N806 misses `Bad = 1` (it finds the `for` and `with` targets, whose site is the name). About
-46 generated rules use `site_form`. The fix is a relation in main's terms, keyed by the name, that the translator
-writes.
+Found on an N806 probe. Main's `binds` holds at the bound name, with its own form names (`assignment`, `named`,
+`definition` and so on). The library keys a binding by its site (the assignment statement, the `def`) and names
+forms its own way, so `Bad = 1` had no binding. The translator now writes `binds` as `bind_name(name, site)`, with
+forms as `main_form(site, form)`. Both libraries define these relations (python and tsx `names.rr`), and Python
+gains bare annotations and type parameters as sites.
+
+The same probe showed two option bugs and one transform bug. A list option's regex (`join` and `template`) is now
+read per item through `option_item`. A rule's `.options` defaults reach the run. A transform whose source is bound
+only inside a negated util is no longer computed in the main rule, where it grounded the source over every node.
+N806 now reports exactly the expected names on the probe. Main's `global` and `deletion` sites are still missing.
 
 ### 14 refused by the reader: all fixed
 

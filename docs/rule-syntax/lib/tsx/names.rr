@@ -191,6 +191,27 @@ ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
 site_form(d, f) :- decl_site(_, _, d, f, _).
+// Main's binding terms (rerail.policy/v1 `binds`): the interface lib/python/names.rr defines, here. bind_name(n, site):
+// n is the name node of the declaration at site (where ESLint reports a definition): the declared identifier, an
+// import's local name.
+.decl bind_name(n: node, site: node)
+bind_name(d, d) :- decl_site(_, _, d, _, _),
+    (kind(d, "identifier") ; kind(d, "shorthand_property_identifier_pattern") ; kind(d, "undefined")).
+bind_name(n, d) :- decl_site(_, _, d, _, _), kind(d, "import_specifier"), field(d, "alias", n).
+bind_name(n, d) :- decl_site(_, _, d, _, _), kind(d, "import_specifier"), !field(d, "alias", _), field(d, "name", n).
+bind_name(n, d) :- decl_site(_, _, d, _, _), (kind(d, "import_clause") ; kind(d, "namespace_import")), child(d, n, 0),
+    kind(n, "identifier").
+bind_name(n, d) :- decl_site(_, _, d, _, _), !kind(d, "import_specifier"), field(d, "name", n).
+// main_form(site, form): main's name for the declaration's form: `assignment` (a declarator or its pattern), `for`
+// (a loop's declared name), `definition` (a function, class or type), `parameter`, `except` (a catch parameter),
+// `import`.
+.decl main_form(site: node, form: symbol)
+main_form(d, "assignment") :- decl_site(_, _, d, f, _), (f = "var" ; f = "let" ; f = "pattern"), !for_binding(_, d, _).
+main_form(d, "for") :- decl_site(_, _, d, _, _), for_binding(_, d, _).
+main_form(d, "definition") :- decl_site(_, _, d, f, _), (f = "function" ; f = "class" ; f = "type").
+main_form(d, "parameter") :- decl_site(_, _, d, "param", _).
+main_form(d, "except") :- decl_site(_, _, d, "catch", _).
+main_form(d, "import") :- decl_site(_, _, d, "import", _).
 // binding_value(site, v): the initialiser of a variable. `const R = BrowserRouter` gives v = the BrowserRouter
 // identifier, so rules can see through simple aliases.
 .decl binding_value(site: node, v: node)

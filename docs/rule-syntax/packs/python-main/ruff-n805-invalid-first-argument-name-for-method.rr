@@ -141,7 +141,7 @@ n805_named_ok(n) :- node(_, n, _, _, _),
     match("[s\\x{17F}\\x{2E2}\\x{209B}\\x{FF53}\\x{1D42C}\\x{1D460}\\x{1D494}\\x{1D4C8}\\x{1D4FC}\\x{1D530}\\x{1D564}\\x{1D598}\\x{1D5CC}\\x{1D600}\\x{1D634}\\x{1D668}\\x{1D69C}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][l\\x{2E1}\\x{2097}\\x{2113}\\x{217C}\\x{FF4C}\\x{1D425}\\x{1D459}\\x{1D48D}\\x{1D4C1}\\x{1D4F5}\\x{1D529}\\x{1D55D}\\x{1D591}\\x{1D5C5}\\x{1D5F9}\\x{1D62D}\\x{1D661}\\x{1D695}][f\\x{1DA0}\\x{FF46}\\x{1D41F}\\x{1D453}\\x{1D487}\\x{1D4BB}\\x{1D4EF}\\x{1D523}\\x{1D557}\\x{1D58B}\\x{1D5BF}\\x{1D5F3}\\x{1D627}\\x{1D65B}\\x{1D68F}]", n).
 n805_named_ok(n) :- node(_, n, _, _, _),
     ( option("pep8-naming.ignore-names", "[]"), match(".*[^\\s\\S].*", n)
-    ; !option("pep8-naming.ignore-names", "[]"), option("pep8-naming.ignore-names", o_pep8_naming_ignore_names), match(o_pep8_naming_ignore_names, n)
+    ; !option("pep8-naming.ignore-names", "[]"), option_item("pep8-naming.ignore-names", _, o_pep8_naming_ignore_names), o_pep8_naming_ignore_names_t = cat("^(?:", cat(o_pep8_naming_ignore_names, ")$")), match(o_pep8_naming_ignore_names_t, n)
     ).
 
 

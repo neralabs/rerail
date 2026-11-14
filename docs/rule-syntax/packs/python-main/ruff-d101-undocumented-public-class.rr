@@ -19,8 +19,8 @@ D101_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, match("[^_]
     count : { within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
     count : { field(p1, "body", c3), child(c3, c4, _), d101_docstring(c4) } = 0,
     ( count : { inside(n, p1_1, "module"), d101_stop_3_within(c2_1, p1_1), d101_all_stmt(c2_1) } = 0
-    ; site_exported(n)
-    ; inside(n, p3_3, "module"), within_stop(c4_3, p3_3, d101_stop_3), kind(c4_3, "string"), node(_, c4_3, _, _, _), S = c4_3, value(S, t5_3), value(N, t5_3), d101_all_entry(c4_3)
+    ; bind_name(n, b3_2), site_exported(b3_2)
+    ; inside(n, p4_3, "module"), within_stop(c5_3, p4_3, d101_stop_3), kind(c5_3, "string"), node(_, c5_3, _, _, _), S = c5_3, value(S, t6_3), value(N, t6_3), d101_all_entry(c5_3)
     ).
 
 

@@ -51,10 +51,10 @@ slot002_nt_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), slot
 slot002_object_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     global_ref(n, "object"), sym_of(n, "builtins.object").
 slot002_object_base(n) :- kind(n, "identifier"), glob("object", n), ref_site(n, b1),
-    site_form(b1, "typeParameter"),
+    main_form(b1, "typeParameter"),
     count : { inside(n, p2, "module"), within(c3, p2), slot002_alt_2(c3) } = 0.
-slot002_object_base(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    slot002_object_base(c4).
+slot002_object_base(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    slot002_object_base(c5).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl slot002_tok_has_1(n: node)
@@ -76,7 +76,7 @@ slot002_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot002_slots
 .decl slot002_alt_2(n: node)
 slot002_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
 slot002_alt_2(n) :- kind(n, "identifier"), glob("object", n), (bind_only(n) ; aug_target(n)),
-    !site_form(n, "typeParameter").
+    count : { bind_name(n, b1), main_form(b1, "typeParameter") } = 0.
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl slot002_alt_3(n: node)

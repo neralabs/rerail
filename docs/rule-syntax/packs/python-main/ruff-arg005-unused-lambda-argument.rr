@@ -16,10 +16,11 @@
 // `options` carries JSON settings that have no .rr form yet.
 .violation ARG005(at: node, n: loc) "Remove `{n}` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword."
     suppress noqa "ARG005"
-ARG005_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "lambda"), site_latest(n), !site_used(n),
-    inside(n, p1, "lambda_parameters"), child(p2, p1, _), kind(p2, "lambda"),
-    arg005_up_1(n, p3), !arg005_alt_7(n).
+ARG005_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "parameter"), site_scope(b1, "lambda"), site_latest(b1),
+    !site_used(b1), inside(n, p2, "lambda_parameters"), child(p3, p2, _),
+    kind(p3, "lambda"), within_stop(n, p4, "lambda"), kind(p4, "lambda"), arg005_lambda(p4),
+    !arg005_alt_7(n).
 
 // locals_call(n): the JSON util `locals-call`, used where the JSON says `matches: "locals-call"`
 .decl arg005_locals_call(n: node)
@@ -50,11 +51,6 @@ arg005_own_locals(n) :- arg005_locals_call(n), !arg005_other_scope(n).
 .decl arg005_lambda(n: node)
 arg005_lambda(n) :- node(_, n, _, _, _), count : { field(n, "body", c1), arg005_alt_4(c1) } = 0.
 arg005_lambda(n) :- inside(n, p3, "block"), child(p4, p3, _), kind(p4, "class_definition").
-
-// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
-.decl arg005_up_1(n: node, p: node)
-arg005_up_1(n, p) :- site_latest(n), within_stop(n, p, "lambda"), kind(p, "lambda"),
-    arg005_lambda(p).
 
 // stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl arg005_stop_1(n: node)
