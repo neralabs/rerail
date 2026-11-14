@@ -37,6 +37,19 @@ pub enum Due {
     Urgent,
 }
 
+/// A job's shape: the priority its steps run at, and whether they wait for an idle machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Qos {
+    /// Work that can wait: [`Due::Idle`] waits for an idle machine (or its `starve`), and every step runs at the
+    /// background quality of service (the efficiency cores, I/O throttled).
+    #[default]
+    Background,
+    /// Work behind a run, small and wanted soon (the frames a keep decision left unreachable): any due work runs at
+    /// once, idle machine or not, on battery or not, at the utility quality of service, and the process finishes it
+    /// before it exits ([`finish_soon`]). Still within the CPU share on the scheduler's thread.
+    Utility,
+}
+
 /// What a step left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
@@ -76,6 +89,10 @@ pub trait Job: Send {
         1
     }
     fn step(&mut self, slice: &Slice) -> Result<Step, String>;
+    /// Its shape ([`Qos`]): background work by default.
+    fn qos(&self) -> Qos {
+        Qos::Background
+    }
 }
 
 /// The settings (decision 0190 §3).
@@ -342,6 +359,23 @@ pub fn lower_this_thread() {
     }
 }
 
+/// The calling thread at `qos`'s priority, for one step: [`lower_this_thread`] for background work; the utility
+/// quality of service (out of Darwin's background state, if the thread was put there) for utility work.
+fn set_thread_qos(qos: Qos) {
+    match qos {
+        Qos::Background => lower_this_thread(),
+        Qos::Utility => {
+            #[cfg(target_os = "macos")]
+            unsafe {
+                if libc::getpriority(PRIO_DARWIN_THREAD, 0) == 1 {
+                    libc::setpriority(PRIO_DARWIN_THREAD, 0, 0);
+                }
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 const PRIO_DARWIN_THREAD: libc::c_int = 3;
 #[cfg(target_os = "macos")]
@@ -393,6 +427,8 @@ struct Entry {
 static JOBS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static STOP: AtomicBool = AtomicBool::new(false);
+/// Held while a step runs: [`finish_soon`] waits for a step the scheduler's thread has taken out.
+static STEPPING: Mutex<()> = Mutex::new(());
 static SCHEDULER: OnceLock<Option<std::thread::Thread>> = OnceLock::new();
 
 /// A registered job; dropping it takes the job out (a store closed).
@@ -463,16 +499,26 @@ fn scheduler() {
         let c = read_conditions(&mut ticks);
         idle_polls = if c.busy < s.idle_busy { idle_polls + 1 } else { 0 };
         let (_, idle) = allowed(&c, idle_polls >= 2, &s);
-        let ran = run_due(&s, idle, &mut ticks, false);
+        let ran = run_due(&s, idle, &mut ticks, Pass::Scheduler);
         if !ran {
             std::thread::park_timeout(if c.on_battery { s.poll * 4 } else { s.poll });
         }
     }
 }
 
+/// Which pass: the scheduler's; every due job to the end ([`run_now`]); the utility jobs to the end, with no pause
+/// ([`finish_soon`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    Scheduler,
+    All,
+    Utility,
+}
+
 /// One pass over the jobs: each one due and allowed runs its steps until done, until the machine is busy again
-/// (idle work), or for at most a poll's time. Whether any step ran. With `all`, every due job runs to the end.
-fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), all: bool) -> bool {
+/// (idle work), or for at most a poll's time. Whether any step ran.
+fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool {
+    let all = pass != Pass::Scheduler;
     let now = Instant::now();
     // Which jobs to run, oldest run first; the lock is not held while a job steps.
     let mut order: Vec<(Option<Instant>, u64, bool)> = Vec::new();
@@ -480,6 +526,10 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), all: bool) -> bool 
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
         for e in jobs.iter_mut() {
             if !s.runs(&e.report.name) || e.held_until.is_some_and(|h| h > now) {
+                continue;
+            }
+            let utility = e.job.qos() == Qos::Utility;
+            if pass == Pass::Utility && !utility {
                 continue;
             }
             let due = e.job.due();
@@ -490,7 +540,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), all: bool) -> bool 
                 }
                 _ => *e.due_since.get_or_insert(now),
             };
-            let urgent = match due {
+            let urgent = utility || match due {
                 Due::Urgent => true,
                 Due::Idle { starve } => now.duration_since(since) >= starve,
                 Due::No => false,
@@ -508,7 +558,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), all: bool) -> bool 
             if STOP.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            let Some(step) = step_job(id, s) else { break };
+            let Some(step) = step_job(id, s, pass != Pass::Utility) else { break };
             ran = true;
             if step != Step::More {
                 break;
@@ -522,19 +572,30 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), all: bool) -> bool 
     ran
 }
 
-/// One step of job `id` (taken out of the list while it runs), then the CPU share's pause. `None`: the job is
-/// gone, or failed.
-fn step_job(id: u64, s: &Settings) -> Option<Step> {
+/// One step of job `id` (taken out of the list while it runs), at its priority, then the CPU share's pause (with
+/// `pause`). `None`: the job is gone, or failed.
+fn step_job(id: u64, s: &Settings, pause: bool) -> Option<Step> {
+    let stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
     let mut e = {
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
         let i = jobs.iter().position(|e| e.id == id)?;
         jobs.swap_remove(i)
     };
     let threads = e.job.threads().max(1) as f64;
+    // The scheduler's thread is background between steps; the caller's ([`run_now`], [`finish_soon`]) is the
+    // caller's own.
+    let scheduler = SCHEDULER.get().and_then(Option::as_ref).is_some_and(|t| t.id() == std::thread::current().id());
+    let qos = e.job.qos();
+    if scheduler && qos != Qos::Background {
+        set_thread_qos(qos);
+    }
     let (c0, t0) = (crate::score::thread_cpu(), Instant::now());
     let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP };
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
+    if scheduler && qos != Qos::Background {
+        set_thread_qos(Qos::Background);
+    }
     e.report.steps += 1;
     e.report.wall += wall;
     e.report.cpu += cpu;
@@ -560,8 +621,9 @@ fn step_job(id: u64, s: &Settings) -> Option<Step> {
         eprintln!("rerail upkeep: {} step {:.1} ms wall {:.1} ms CPU: {:?}", e.report.name, wall * 1e3, cpu * 1e3, out.map_or_else(|| e.report.last_error.clone().unwrap_or_default(), |o| format!("{o:?}")));
     }
     JOBS.lock().unwrap_or_else(|p| p.into_inner()).push(e);
+    drop(stepping);
     // The pause that keeps `threads` busy for `wall` within `cpu` of a core on average.
-    let pause = wall * (threads / s.cpu - 1.0);
+    let pause = if pause { wall * (threads / s.cpu - 1.0) } else { 0.0 };
     if pause > 0.0 && !STOP.load(Ordering::Acquire) {
         std::thread::park_timeout(Duration::from_secs_f64(pause.min(60.0)));
     }
@@ -575,11 +637,27 @@ pub fn run_now() -> Vec<JobReport> {
     let mut ticks = cpu_ticks();
     // Until a pass finds nothing due, at most a hundred passes.
     for _ in 0..100 {
-        if !run_due(&s, true, &mut ticks, true) {
+        if !run_due(&s, true, &mut ticks, Pass::All) {
             break;
         }
     }
     report()
+}
+
+/// Runs the utility jobs' due work to the end on the caller's thread, with no pause: what a run leaves behind it
+/// (a keep decision's unreachable frames) is done before the process exits, whether or not the scheduler's thread
+/// got to it. A step the scheduler's thread is in is waited for. Nothing when upkeep is off.
+pub fn finish_soon() {
+    let s = settings();
+    if !s.on {
+        return;
+    }
+    let mut ticks = cpu_ticks();
+    for _ in 0..100 {
+        if !run_due(&s, true, &mut ticks, Pass::Utility) {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -590,6 +668,7 @@ mod tests {
         name: &'static str,
         left: u32,
         due: Due,
+        qos: Qos,
     }
 
     impl Job for Counter {
@@ -602,6 +681,9 @@ mod tests {
         fn step(&mut self, _: &Slice) -> Result<Step, String> {
             self.left -= 1;
             Ok(if self.left == 0 { Step::Done } else { Step::More })
+        }
+        fn qos(&self) -> Qos {
+            self.qos
         }
     }
 
@@ -677,15 +759,23 @@ mod tests {
 
     #[test]
     fn jobs_step_to_the_end_within_the_cpu_share() {
-        let _a = register(Box::new(Counter { name: "test-a one", left: 3, due: Due::Idle { starve: Duration::from_secs(3600) } }));
-        let _b = register(Box::new(Counter { name: "test-b one", left: 2, due: Due::Urgent }));
-        configure(Settings { only: Some(vec!["test-a".into(), "test-b".into()]), ..Settings::default() });
+        let idle = Due::Idle { starve: Duration::from_secs(3600) };
+        let _a = register(Box::new(Counter { name: "test-a one", left: 3, due: idle, qos: Qos::Background }));
+        let _b = register(Box::new(Counter { name: "test-b one", left: 2, due: Due::Urgent, qos: Qos::Background }));
+        // Utility work runs at once though it says it can wait; `finish_soon` finishes it, and only it.
+        let _c = register(Box::new(Counter { name: "test-c one", left: 2, due: idle, qos: Qos::Utility }));
+        let _e = register(Box::new(Counter { name: "test-e one", left: 2, due: idle, qos: Qos::Background }));
+        configure(Settings { only: Some(["test-a", "test-b", "test-c", "test-d", "test-e"].map(String::from).to_vec()), ..Settings::default() });
         let mut ticks = cpu_ticks();
         // Not idle: only the urgent job runs.
-        run_due(&settings(), false, &mut ticks, false);
-        run_due(&settings(), false, &mut ticks, false);
+        run_due(&settings(), false, &mut ticks, Pass::Scheduler);
+        run_due(&settings(), false, &mut ticks, Pass::Scheduler);
         let steps = |n: &str| report().into_iter().find(|r| r.name == n).map(|r| r.steps);
-        assert_eq!((steps("test-a one"), steps("test-b one")), (Some(0), Some(2)));
+        assert_eq!((steps("test-a one"), steps("test-b one"), steps("test-c one")), (Some(0), Some(2), Some(2)));
+        // Utility work left to the process's end is finished there, with no scheduler; not the background work.
+        let _d = register(Box::new(Counter { name: "test-d one", left: 2, due: idle, qos: Qos::Utility }));
+        finish_soon();
+        assert_eq!((steps("test-d one"), steps("test-e one")), (Some(2), Some(0)));
         let r = run_now();
         assert_eq!(r.iter().find(|r| r.name == "test-a one").map(|r| r.steps), Some(3));
         configure(Settings::default());

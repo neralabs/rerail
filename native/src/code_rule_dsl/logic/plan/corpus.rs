@@ -756,7 +756,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
         // One positive atom with its documents projected away: a union of each document's rows.
         let union = matches!(rule.body.as_slice(), [Literal::Atom(a)] if !a.neg && !carriers(&a.rel).is_empty() && carriers(&a.rel).iter().all(|&c| matches!(a.args.get(c), Some(Term::Wild))));
         let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
-        let mut bump = |c: &'static str, worst: &mut &'static str| {
+        let bump = |c: &'static str, worst: &mut &'static str| {
             if rank(c) > rank(*worst) {
                 *worst = c;
             }
@@ -1616,6 +1616,11 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
+    // The frames a keep decision leaves unreachable are a utility upkeep job's (decision 0227): one a process for the
+    // store, finished at the outermost run's end (`upkeep::finish_soon`) if the scheduler has not run it.
+    if collect {
+        crate::content_store::upkeep::Frames::register_once(store.database_path());
+    }
     // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
     let mut policy = crate::content_store::CorpusPolicy::default();
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
@@ -1663,17 +1668,13 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
             let store = ContentStore::open(&path)?;
             let (mut idle, mut kept, mut plan_rows, mut tapes, mut sources) = (0, None, 0, 0, 0);
-            let (mut frames, mut frames_seconds) = (crate::content_store::UnreachableFrames::default(), 0.0);
             while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
                 let pass = store.collect_corpus_pass(&policy, now)?;
                 passes += 1;
                 idle = if pass.did_work() { 0 } else { idle + 1 };
                 kept = pass.kept.or(kept);
                 (plan_rows, tapes, sources) = (plan_rows + pass.plan_rows, tapes + pass.collection.tapes, sources + pass.collection.sources);
-                frames = crate::content_store::UnreachableFrames { memo: frames.memo + pass.frames.memo, maintained: frames.maintained + pass.frames.maintained, programs: frames.programs + pass.frames.programs, unnamed: frames.unnamed + pass.frames.unnamed };
-                frames_seconds += pass.frames_seconds;
             }
-            let frames = format!("; unreachable frames: {} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names) ({:.3} s)", frames.memo, frames.maintained, frames.programs, frames.unnamed, frames_seconds);
             // The observer's store, with what the passes left live (`observe::collect`).
             let live = store.live_plans()?;
             let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
@@ -1687,7 +1688,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
                     policy.high_water >> 20,
                     k.protected_bytes as f64 / 1048576.0,
                     if idle < 2 { "; more left for later passes" } else { "" }
-                ) + &frames + &swept,
+                ) + &swept,
                 None => format!("no decision due; {tapes} tapes, {sources} sources and {plan_rows} memo rows deleted{swept}"),
             })
         })()
@@ -3239,7 +3240,7 @@ fn run_observed(
     // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
     let mut guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
     // The stored tree counts this run read or wrote, for its manifest.
-    let mut own_sources: Vec<crate::content_store::SourceId> = Vec::new();
+    let own_sources: Vec<crate::content_store::SourceId> = Vec::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
@@ -5424,7 +5425,6 @@ fn run_observed(
                 for ask in r.asks() {
                     asks.insert(ask.clone(), held_rows(&db2, &got, ask, decls[ask.as_str()].len())?);
                 }
-                drop(recording);
                 let mut refuse = |rel: &str, _: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
                 match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
                     Ok(done) => {
@@ -7569,6 +7569,12 @@ fn run_observed(
                 Err(e) => format!("{passes} passes, then stopped: {e}"),
             });
         }
+    }
+    // The utility upkeep jobs the run left due (the frames its keep decision left unreachable, decision 0227), done
+    // before the outermost run returns: the scheduler's thread may not have run them yet.
+    if durable.is_some() && !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none() {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's utility upkeep (decision 0227)".into());
+        crate::code_rule_dsl::logic::profile::behind(rerail_accel::upkeep::finish_soon);
     }
     // The run ends with its writes in the store: what the writer did beside the run, and the first write that failed
     // (decision 0102).

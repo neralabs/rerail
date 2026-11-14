@@ -25,7 +25,9 @@ kept manifest ─ names ─▶ live plan / program ─ owns ─▶ its space's f
       └─ its sources ─▶ their contents' sha256 ─ key ─▶ memo entries in a live plan's space
 ```
 
-Collection (`frames::collect_unreachable_frames`, in the corpus pass after the keep decision) deletes:
+Collection deletes the following. It runs as the `frames <store>` upkeep job (`frames::collect_unreachable_frames`,
+by `ContentStore::sweep_frames`): a utility job (decision 0190 §7), due once a keep decision is past the last sweep,
+run soon after it behind the run, and finished before the run's process exits.
 
 | What | Unreachable when |
 |---|---|
@@ -69,7 +71,8 @@ On `tmp/warm` (dl10, `layer-violations.rr`, and the 44-policy batch over dl1g), 
 | dl10 edit, then revert | — | 5.5 G, then 4.9 G instructions (unchanged: 4.3 G): the reverted content hits the memo |
 
 The memo sweep reads every memo entry's `reads` in each live plan's space. On the largest local store (120,169
-frames, 390 MB of data) that full scan takes 0.42 s. It runs only in a collection pass, which is rare (decision 0053).
+frames, 390 MB of data) that full scan takes 0.42 s. It runs only after a keep decision, which is rare (decision 0053).
+That is not worth optimising yet.
 
 ## What this gives up
 
@@ -82,8 +85,8 @@ frames, 390 MB of data) that full scan takes 0.42 s. It runs only in a collectio
 
 ## Open
 
-- The sweep could run as an upkeep job (decision 0190), not in the run's collection pass.
 - If the memo grows past what a full scan of its reads allows, `frame_part_used` can carry each entry's content
   digest, so the sweep reads that table alone.
 
-Tests: `frames_are_kept_while_a_kept_manifest_reaches_them` (store). The recency tests went with the rule they tested.
+Tests: `frames_are_kept_while_a_kept_manifest_reaches_them` and `a_keep_decision_leaves_its_sweep_to_the_frames_job`
+(store). The recency tests went with the rule they tested.

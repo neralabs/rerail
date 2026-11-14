@@ -401,6 +401,13 @@ CREATE TABLE IF NOT EXISTS corpus_decided (
     time INTEGER NOT NULL
 ) STRICT;
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
+-- The keep decision whose unreachable frames were last collected (decision 0227): the `frames` upkeep job is due
+-- while `corpus_decided.run` is past it.
+CREATE TABLE IF NOT EXISTS frames_swept (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO frames_swept(singleton, run) VALUES (1, 0);
 -- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
 -- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
 -- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.

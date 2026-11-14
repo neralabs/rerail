@@ -1,6 +1,6 @@
 # 0190: Upkeep jobs run when the machine is idle, at the lowest priority, within a CPU and memory share
 
-Status: draft (2026-11-13); the scheduler and four jobs built (§4: collection, SQLite files, search indexes,
+Status: draft (2026-11-13); a job's shape (§7, `Qos`) added 2026-11-14; the scheduler and five jobs built (§4: collection, SQLite files, search indexes,
 the cost model); re-sorting stored rows (§5, O160) and trying join orders (§6, O161) designed, not built.
 
 ## Intro
@@ -174,6 +174,39 @@ The job:
 
 It needs the planner to expose its alternative orders, and a bounded way to run one off the run's path. Both are
 planner work.
+
+### 7. A job's shape: its quality of service (amendment, 2026-11-14)
+
+The user asked for a priority on each job (2026-11-14), so that one scheduler serves jobs of different shapes. A job
+says its shape with `Job::qos()`:
+
+```rust
+pub enum Qos {
+    Background,   // the default: §2 and §3 as written
+    Utility,      // behind a run: soon, and finished before the process exits
+}
+```
+
+| | `Background` | `Utility` |
+|---|---|---|
+| Its steps' priority | the background quality of service | the utility quality of service, set for each step on the scheduler's thread, then back |
+| `Due::Idle` work | waits for an idle machine, or its `starve` | runs at once, as urgent work does |
+| Battery, low power, heat | hold back all but urgent work | do not hold it back |
+| The CPU share's pause | after each step | after each step on the scheduler's thread |
+| At the process's end | left for the next process | finished by `upkeep::finish_soon()`, on the caller's thread, with no pause; a step the scheduler's thread is in is waited for (`STEPPING`) |
+
+Utility work is small and wanted soon after the work that made it: a run's own leftovers. The first utility job
+is `frames <store>` (decision 0227), the frames a keep decision left unreachable:
+
+- A corpus run that collects registers it for its store, once a process (`Frames::register_once`); so do the daemon
+  and the `upkeep` command.
+- It is due while `corpus_decided.run` is past `frames_swept.run`: a point read at each poll.
+- A collection pass that makes a keep decision kicks the scheduler.
+- The outermost run calls `finish_soon` after its collection is joined, so a run leaves no sweep behind it.
+- A process stopped before its sweep leaves it due, and the next process to register the job sweeps it.
+
+Test: `jobs_step_to_the_end_within_the_cpu_share` (utility work runs on a busy machine, `finish_soon` finishes it
+and leaves background work alone); the store's `a_keep_decision_leaves_its_sweep_to_the_frames_job`.
 
 ## Measured (2026-11-13, debug build, load 45–50 on 18 cores)
 

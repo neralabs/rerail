@@ -1067,6 +1067,7 @@ fn upkeep_command(args: &[String]) -> Result<String, String> {
         }
         let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
         jobs.push(register(Box::new(Collect::new(&store))));
+        jobs.push(register(Box::new(crate::content_store::upkeep::Frames::new(Path::new(path)))));
         jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
         jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
         held.push(store);

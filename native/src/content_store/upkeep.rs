@@ -1,8 +1,9 @@
 //! The store's upkeep jobs (decision 0190 §4): a SQLite file kept small and its statistics fresh ([`SqliteFile`]),
-//! and the store's collection ([`Collect`]), each a `rerail_accel::upkeep::Job`.
+//! the store's collection ([`Collect`]), and the frames a keep decision left unreachable ([`Frames`]), each a
+//! `rerail_accel::upkeep::Job`.
 
 use super::{CapacityState, ContentStore, CorpusPolicy};
-use rerail_accel::upkeep::{Due, Job, Slice, Step};
+use rerail_accel::upkeep::{Due, Job, Qos, Registered, Slice, Step};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -247,6 +248,62 @@ impl Job for Collect {
             }
         }
         Ok(Step::More)
+    }
+}
+
+/// The frames the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
+/// due once a decision is past the last sweep (`frames_swept`), so the sweep runs soon after the decision, behind the
+/// run, and before the process exits (`upkeep::finish_soon`). A decision left unswept (a process stopped) is the
+/// next process's to sweep.
+pub struct Frames {
+    path: PathBuf,
+    name: String,
+    /// A read connection for `due`: a point read at each poll.
+    reader: Option<Connection>,
+}
+
+impl Frames {
+    pub fn new(path: &Path) -> Self {
+        let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        Frames { path: path.to_path_buf(), name: format!("frames {name}"), reader: None }
+    }
+
+    /// The job for the store at `path`, registered once a process: the runs over that store share it.
+    pub fn register_once(path: &Path) {
+        static JOBS: std::sync::Mutex<Vec<(PathBuf, Registered)>> = std::sync::Mutex::new(Vec::new());
+        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        if !jobs.iter().any(|(p, _)| p == path) {
+            jobs.push((path.to_path_buf(), rerail_accel::upkeep::register(Box::new(Frames::new(path)))));
+        }
+    }
+}
+
+impl Job for Frames {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn due(&mut self) -> Due {
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
+        if self.reader.is_none() {
+            self.reader = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok();
+        }
+        let wanted = self.reader.as_ref().is_some_and(|c| super::corpus_runs::frames_sweep_wanted(c).unwrap_or(false));
+        if wanted { Due::Urgent } else { Due::No }
+    }
+
+    fn qos(&self) -> Qos {
+        Qos::Utility
+    }
+
+    fn step(&mut self, _: &Slice) -> Result<Step, String> {
+        rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
+        let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
+        let (u, seconds) = store.sweep_frames().map_err(|e| e.to_string())?;
+        rerail_prof::code_rule_dsl::logic::profile::decision("unreachable frames collected (decision 0227)", || {
+            format!("{} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names), {:.3} s", u.memo, u.maintained, u.programs, u.unnamed, seconds)
+        });
+        Ok(Step::Done)
     }
 }
 

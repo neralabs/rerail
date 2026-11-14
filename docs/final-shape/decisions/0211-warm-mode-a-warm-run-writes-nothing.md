@@ -223,3 +223,11 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   cutoff off has no settled root, no answer recorded and no canonical form resolved (outputs as before), and the
   2 s wait is gone. A real loss (a fresh Watchman, a dropped stream) is still checked by each answer's `stat`.
 
+- **The cost samples were mostly of jobs with no units.** Of the newest 500,000 samples in `costs.sqlite`, 489,380
+  were the `strata` stream's: a job wrapping the whole strata loop, with no units, so it prices nothing. The fit
+  read its wall as the lane's cost of a submission. The pricing already skipped them (`price.rs`); the training did
+  not. Now (2026-11-14, with the user's approval):
+  - a job with no units keeps no sample (`score`);
+  - the stored ones are deleted once a file (`costs.sqlite`'s `user_version` 1);
+  - the read for fitting and training leaves them out (`read_samples`), since binaries from before this change
+    still write them to the shared file.

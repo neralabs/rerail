@@ -85,9 +85,6 @@ pub struct CorpusKept {
 pub struct CorpusPass {
     pub kept: Option<CorpusKept>,
     pub plan_rows: usize,
-    /// The frames nothing live reaches, collected after a keep decision (decision 0227), and the seconds it took.
-    pub frames: super::frames::Unreachable,
-    pub frames_seconds: f64,
     pub collection: CollectionReport,
 }
 
@@ -95,7 +92,7 @@ impl CorpusPass {
     /// Whether the pass deleted anything (another may find more).
     pub fn did_work(&self) -> bool {
         let c = &self.collection;
-        self.kept.as_ref().is_some_and(|k| k.evicted > 0 || k.unlived > 0) || self.plan_rows > 0 || self.frames.any() || c.tapes > 0 || c.sources > 0 || c.snapshots > 0 || c.snapshot_files > 0
+        self.kept.as_ref().is_some_and(|k| k.evicted > 0 || k.unlived > 0) || self.plan_rows > 0 || c.tapes > 0 || c.sources > 0 || c.snapshots > 0 || c.snapshot_files > 0
     }
 }
 
@@ -676,6 +673,27 @@ impl ContentStore {
         })
     }
 
+    /// Whether a keep decision was made since the frames it left unreachable were collected (`sweep_frames`).
+    pub fn frames_sweep_wanted(&self) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store connection unavailable");
+        Ok(frames_sweep_wanted(&connection)?)
+    }
+
+    /// Collects the frames the last keep decision left unreachable (decision 0227), and records that decision as
+    /// swept: one write transaction. What it collected, and the seconds it took.
+    pub fn sweep_frames(&self) -> StoreResult<(super::frames::Unreachable, f64)> {
+        // Its writes delete rows and set a mark, naming no atom: a forked process sweeps too (decision 0170).
+        super::atoms::mapped(|| {
+            let started = std::time::Instant::now();
+            let out = self.immediate_transaction(|tx| {
+                let out = super::frames::collect_unreachable_frames(tx)?;
+                tx.execute("UPDATE frames_swept SET run=(SELECT run FROM corpus_decided WHERE singleton=1) WHERE singleton=1", [])?;
+                Ok(out)
+            })?;
+            Ok((out, started.elapsed().as_secs_f64()))
+        })
+    }
+
     /// One bounded pass: the keep decision when one is due, up to `PLAN_ROWS_PER_PASS` memo rows of dead plans, and
     /// the store's collection (`collect`).
     /// Active readers defer the pass without clearing the pending collection flag.
@@ -732,10 +750,9 @@ impl ContentStore {
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
-            // What the decision left live reaches the frames it keeps; the rest go (decision 0227).
-            let started = std::time::Instant::now();
-            pass.frames = self.immediate_transaction(|tx| Ok(super::frames::collect_unreachable_frames(tx)?))?;
-            pass.frames_seconds = started.elapsed().as_secs_f64();
+            // What the decision left live reaches the frames it keeps; the rest go, by the `frames` upkeep job (a
+            // utility job: soon, behind the run, and finished before the process exits; decision 0227).
+            rerail_accel::upkeep::kick();
         }
         // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
         // frames (one statement), and one plan a pass left a store's dead builds for as many runs.
@@ -906,4 +923,15 @@ fn hex(bytes: &[u8]) -> String {
 /// What a write of plan `plan`'s statistics is queued under (`write_back`).
 fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
+}
+
+/// Whether `corpus_decided` is past `frames_swept` on connection `c` (a read: the `frames` job's `due`).
+pub fn frames_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT d.run > coalesce((SELECT run FROM frames_swept WHERE singleton=1), 0) FROM corpus_decided d WHERE d.singleton=1",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .map(|v| v.unwrap_or(false))
 }
