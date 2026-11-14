@@ -672,3 +672,27 @@ Measured (`jit_against_aot`, load average 59): the JIT's tier 1, 86 cycles a nod
 (394 instructions from 362, the mispredicted dispatch gone); its tier 1 + 2, 144 cycles from
 204. Ahead of time, flat: 77 cycles, 274 instructions from 263 (rustc had made the dispatch
 a chain of compares, as cheap as the straight-line work it replaces).
+
+## The generated loop against the lean lexer, side by side
+
+Read side by side, the generated Rust and the lean lexer differed most in four places:
+
+- **The refill classified the block four times.** Each output the loop keeps in a register
+  (the starts, each run, a mark) made its own window: 16 vector loads, the class lookups
+  again, four bitmask reductions. The lean lexer's `Window::at` loads once and makes its
+  masks from that. Now the refill makes them all from one window (`Reads::words_inline`,
+  `Bytewise::words`): four loads a block.
+- **A rare token's run was in every refill.** A number's run (`num_run`, which reads ahead
+  a byte, so a window of its own) was made for every block, for 0.5% of the tokens. The lean
+  lexer reads a number at its start. Now one run word is in a register, the run rule's that
+  the most first bytes take (a word's); a rarer run reads its word at its token, by a call.
+- **The gap marks ran at every token.** A form feed's mark (`json_bad`) is a gap mark with
+  token tests, so not lazy; its range and `unless after` ran at every token. Now a block
+  whose mark words are zero (nearly all) takes one branch past them, and `unless after` is
+  only of the marks the loop sets.
+- **Every token checked its order.** With the loop's starts no rule's last is before its
+  start, and no start is inside the token before (the starts below it are cleared): only a
+  rule's own refusal is left.
+
+Measured (`jit_against_aot`, load average 141): tier 1 ahead of time 232 instructions and 67
+cycles a node, from 274 and 77; the JIT 331 and 80; tier 1 + 2 ahead of time 474 and 116.

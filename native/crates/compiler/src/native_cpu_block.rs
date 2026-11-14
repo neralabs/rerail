@@ -2135,6 +2135,19 @@ impl Reads<'_> {
         self.word_inline(f, c, q, o, heads)
     }
 
+    /// Outputs `os`' words `q`, inline: from the bytes, one window for all of them (its loads
+    /// and classes shared, `Bytewise::words`), as the lean lexer's `Window::at` makes a
+    /// block's masks from one load; else each from its row.
+    fn words_inline(&self, f: &mut FunctionBuilder<'_>, c: &FileCols, q: Value, os: &[u16], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        match self.bytes.filter(|(b, _)| os.iter().all(|&o| b.can(o))) {
+            Some((b, file)) => {
+                let p = f.ins().ishl_imm(q, 6);
+                b.words(f, &file, os, p, heads)
+            }
+            None => os.iter().map(|&o| self.word_inline(f, c, q, o, heads)).collect(),
+        }
+    }
+
     /// Output `o`'s word `q`, from the bytes inline (the refill's).
     fn word_inline(&self, f: &mut FunctionBuilder<'_>, c: &FileCols, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         match self.bytes.filter(|(b, _)| b.can(o)) {
@@ -2788,6 +2801,14 @@ fn marks_in(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, marks: &[
         let inside = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, a, base);
         f.ins().brif(inside, fast, &[], slow, &[]);
         f.switch_to_block(fast);
+        // The marks are sparse: a block whose mark words are all zero has none of their bits,
+        // one branch on the registers (a form feed's mark: almost never set).
+        let words: Vec<Value> = marks.iter().map(|&(_, o)| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v).expect("a mark's word in the registers")).collect();
+        let some = words[1..].iter().fold(words[0], |x, &w| f.ins().bor(x, w));
+        let set = f.create_block();
+        f.ins().brif(some, set, &[], join, &[zero.into()]);
+        f.switch_to_block(set);
+        f.set_cold_block(set);
         let lo = f.ins().isub(a, base);
         let hi = f.ins().isub(b, base);
         let hi = f.ins().irsub_imm(hi, 63);
@@ -2859,16 +2880,6 @@ struct BlockRegs {
     runs: Vec<(u16, Value)>,
 }
 
-/// The outputs the run rules read (`EndRule::Run`), each once.
-fn run_outputs(r: &crate::records::Records) -> Vec<u16> {
-    let mut v: Vec<u16> = r.rules.iter().filter_map(|x| match *x {
-        crate::records::EndRule::Run(o) => Some(o),
-        _ => None,
-    }).collect();
-    v.sort_unstable();
-    v.dedup();
-    v
-}
 
 /// A part of a file's token loop (decision 0177): the tokens whose words are in the `ready`
 /// blocks, from the state `init`; it goes on to `then` with the state it stops at.
@@ -2913,7 +2924,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         lift.retain(|m| !lazy.contains(m));
     }
     let runs: Vec<u16> = if walked.is_some() {
-        let mut v = run_outputs(r);
+        // One run word in a register a block: the run rule most first bytes take (a word's),
+        // as the lean lexer's window has its `word` mask alone. A rarer run (a number's) reads
+        // its word at its token, by a call: no window a block for a token in hundreds.
+        let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
+        let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k));
+        let mut v: Vec<u16> = main.into_iter().filter_map(|k| match r.rules[k] {
+            crate::records::EndRule::Run(o) => Some(o),
+            _ => None,
+        }).collect();
         v.extend(lift.iter().chain(&at_marks).map(|&(_, o)| o));
         v.sort_unstable();
         v.dedup();
@@ -3007,10 +3026,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let (look, next) = (f.create_block(), f.create_block());
             inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), h[3].into(), h[4].into()]);
             f.switch_to_block(look);
-            let x = rd.word_inline(f, c, q, o, heads);
+            // The skip and the run words from one window of the block's bytes.
+            let all: Vec<u16> = std::iter::once(o).chain(runs.iter().copied()).collect();
+            let got = rd.words_inline(f, c, q, &all, heads);
+            let (x, words) = (got[0], got[1..].to_vec());
             let x = f.ins().bnot(x);
             let x = f.ins().band(x, m);
-            let words: Vec<Value> = runs.iter().map(|&k| rd.word_inline(f, c, q, k, heads)).collect();
             let q64 = f.ins().ishl_imm(q, 6);
             let tz = f.ins().ctz(x);
             let s1 = f.ins().iadd(q64, tz);
@@ -3069,12 +3090,19 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     };
     // Out of order (a last before its start, a start inside the token before): a difference
     // below zero. The columns are 32 bits wide, so a difference's sign is its 64th bit.
-    let before = f.ins().isub(l, s);
-    let inside = f.ins().isub(s, after);
-    let wrong = f.ins().bor(before, inside);
-    let wrong = match refused {
-        Some(x) => f.ins().bor(wrong, x),
-        None => wrong,
+    // With the loop's starts (`records::walk`) neither can be: a start is past the token
+    // before (the starts below it cleared), and every rule's last is at its start at least.
+    // Then only a rule's own refusal is left.
+    let wrong = if walked.is_some() {
+        refused.unwrap_or(zero)
+    } else {
+        let before = f.ins().isub(l, s);
+        let inside = f.ins().isub(s, after);
+        let wrong = f.ins().bor(before, inside);
+        match refused {
+            Some(x) => f.ins().bor(wrong, x),
+            None => wrong,
+        }
     };
     // A refusal is rare: a branch to a cold block that sets the file's flag (the count after
     // the extracts', as `record_end`), not a value the loop carries, as the lean lexer
@@ -3234,9 +3262,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let bits = marks_in(f, &rd, c, &lift, from, s, in_regs, heads);
             mine = f.ins().bor(mine, bits);
         }
-        let held = if !lift.is_empty() && !r.unless.is_empty() {
+        // `unless after`: of the gap marks the loop sets alone.
+        let unless: Vec<(u8, u16)> = r.unless.iter().copied().filter(|&(k, _)| lift.iter().any(|&(m, _)| m == k)).collect();
+        let held = if !lift.is_empty() && !unless.is_empty() {
             let mut none = zero;
-            for &(k, w) in &r.unless {
+            for &(k, w) in &unless {
                 let same = f.ins().icmp_imm(IntCC::Equal, word_before, i64::from(w));
                 let same = f.ins().uextend(types::I64, same);
                 let bit = f.ins().ishl_imm(same, i64::from(k));
