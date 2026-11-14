@@ -1303,6 +1303,143 @@ fn cmd_inplace_gpu(path: &str) {
     }
 }
 
+/// E12 (t39): the tree primitives rules ask for, bulk (every node, one pass) and point (one node at random),
+/// on each credible candidate, every answer checked against the tree.
+fn cmd_prim(path: &str) {
+    use rerail_tape_lab::inplace::{B, Codes, EfEf, F15, ForLen, PredGap, Reader, XF};
+    use rerail_tape_lab::measure::Cost;
+    use rerail_tape_lab::prim::{self, Names, SETS, WRAP};
+    use rerail_tape_lab::tree::NONE;
+    let cap = std::path::Path::new(path);
+    let names = Names::load();
+    let mut codes: BTreeMap<u8, Codes> = BTreeMap::new();
+    capture::stream(cap, |f| {
+        codes.entry(f.tag).or_default().learn(&rerail_tape_lab::v15::read(&f.image)?);
+        Ok(())
+    }).unwrap_or_else(|e| die(&e));
+    // Per language: each set's code mask, the wrapper mask, each code's field, the name and body fields.
+    struct Lang { sets: Vec<Vec<bool>>, wrap: Vec<bool>, field_of: Vec<u8>, fields: [u8; 2] }
+    let langs: BTreeMap<u8, Lang> = codes.iter().map(|(&tag, c)| (tag, Lang {
+        sets: SETS.iter().map(|(_, k)| names.set(tag, c, k)).collect(),
+        wrap: names.set(tag, c, WRAP),
+        field_of: c.table.iter().map(|t| t.1).collect(),
+        fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
+    })).collect();
+    const C: [&str; 4] = ["F15", "XF", "MF", "BE"];
+    // Rows: (primitive, set) → per candidate cost and count.
+    let mut rows: Vec<String> = Vec::new();
+    for (s, _) in SETS {
+        for q in ["nearest, every node", "outermost, every node", "has, every node", "nearest, one node", "has, one node"] {
+            rows.push(format!("{q} ({s})"));
+        }
+    }
+    rows.extend(["field `name`, one node".into(), "field `body`, one node".into(), "unparen, one node".into()]);
+    let nr = rows.len();
+    let mut cost = vec![vec![Cost::default(); C.len()]; nr];
+    let mut count = vec![vec![0u64; C.len()]; nr];
+    let mut wrong = vec![0usize; C.len()];
+    let (mut nodes, mut files) = (0usize, 0usize);
+    // Sets' share of nodes, for the table.
+    let mut share = vec![0usize; SETS.len()];
+    let mut rng = 0x2545_f491_4f6c_dd1du64;
+    #[allow(clippy::too_many_arguments)]
+    fn one<R: Reader>(r: &R, c: usize, tree: &rerail_tape_lab::tree::Tree, code: &[u32], l: &Lang, sample: &[usize], truths: &[(Vec<u32>, Vec<u32>, Vec<bool>)],
+        cost: &mut [Vec<Cost>], count: &mut [Vec<u64>], wrong: &mut [usize]) {
+        let n = tree.len();
+        let ids: Vec<usize> = (0..n).map(|p| r.id_of(p)).collect();
+        let pre: HashMap<usize, usize> = ids.iter().enumerate().map(|(p, &id)| (id, p)).collect();
+        let to_pre = |x: Option<usize>| x.map_or(NONE, |id| pre[&id] as u32);
+        let (mut near, mut flag) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for (k, set) in l.sets.iter().enumerate() {
+            let row = k * 5;
+            let (tn, to, th) = &truths[k];
+            let (_, x) = best3(|| prim::nearest_all(r, set, &mut near));
+            wrong[c] += near.iter().zip(tn).filter(|(a, b)| a != b).count();
+            cost[row][c] += x;
+            count[row][c] += n as u64;
+            let (_, x) = best3(|| prim::outermost_all(r, set, &mut near));
+            wrong[c] += near.iter().zip(to).filter(|(a, b)| a != b).count();
+            cost[row + 1][c] += x;
+            count[row + 1][c] += n as u64;
+            let (_, x) = best3(|| prim::has_all(r, set, &mut flag));
+            wrong[c] += flag.iter().zip(th).filter(|(a, b)| a != b).count();
+            cost[row + 2][c] += x;
+            count[row + 2][c] += n as u64;
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::nearest_one(r, set, ids[p])).collect::<Vec<_>>());
+            wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| to_pre(*g) != tn[p]).count();
+            cost[row + 3][c] += x;
+            count[row + 3][c] += sample.len() as u64;
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::has_one(r, set, ids[p])).collect::<Vec<_>>());
+            wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| *g != th[p]).count();
+            cost[row + 4][c] += x;
+            count[row + 4][c] += sample.len() as u64;
+        }
+        let base = l.sets.len() * 5;
+        for (j, &f) in l.fields.iter().enumerate() {
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::field_one(r, &l.field_of, f, ids[p])).collect::<Vec<_>>());
+            for (g, &p) in got.iter().zip(sample) {
+                let want = (p + 1..p + tree.size[p] as usize).find(|&q| tree.parent[q] as usize == p && tree.nodes[q].field == f);
+                wrong[c] += usize::from(to_pre(*g) != want.map_or(NONE, |q| q as u32));
+            }
+            cost[base + j][c] += x;
+            count[base + j][c] += sample.len() as u64;
+        }
+        let (got, x) = best3(|| sample.iter().map(|&p| prim::unparen_one(r, &l.wrap, ids[p])).collect::<Vec<_>>());
+        cost[base + 2][c] += x;
+        count[base + 2][c] += sample.len() as u64;
+        for (g, &p) in got.iter().zip(sample) {
+            let mut q = p;
+            while l.wrap[code[q] as usize] && tree.size[q] > 1 {
+                q += 1;
+            }
+            wrong[c] += usize::from(pre[g] != q);
+        }
+    }
+    capture::stream(cap, |f| {
+        let tree = rerail_tape_lab::v15::read(&f.image)?;
+        let n = tree.len();
+        if n == 0 {
+            return Ok(());
+        }
+        let lang = &codes[&f.tag];
+        let l = &langs[&f.tag];
+        let code: Vec<u32> = tree.nodes.iter().map(|x| lang.ids[&(x.kind, x.field, x.flags, x.classes.clone())]).collect();
+        let truths: Vec<_> = l.sets.iter().map(|set| {
+            let inset: Vec<bool> = code.iter().map(|&c| set[c as usize]).collect();
+            (prim::truth::nearest(&tree, &inset), prim::truth::outermost(&tree, &inset), prim::truth::has(&tree, &inset))
+        }).collect();
+        for (k, set) in l.sets.iter().enumerate() {
+            share[k] += code.iter().filter(|&&c| set[c as usize]).count();
+        }
+        // One node in 16, at random.
+        let sample: Vec<usize> = (0..n.div_ceil(16)).map(|_| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng % n as u64) as usize
+        }).collect();
+        // Format 15 has no parent (each step is a search): its point questions on 1 node in 1,024.
+        one(&F15::new(&f.image, lang), 0, &tree, &code, l, &sample[..sample.len().div_ceil(64)], &truths, &mut cost, &mut count, &mut wrong);
+        one(&XF::<ForLen>::new(&tree, lang), 1, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong);
+        one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong);
+        one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong);
+        nodes += n;
+        files += 1;
+        Ok(())
+    }).unwrap_or_else(|e| die(&e));
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    println!("{path}: {files} files, {nodes} nodes; sets' share of nodes: {}\n", SETS.iter().zip(&share).map(|((s, _), &k)| format!("{s} {:.2}%", 100.0 * k as f64 / nodes as f64)).collect::<Vec<_>>().join(", "));
+    println!("| ns a node (every node) or a call (one node, 1 in 16 at random; F15 1 in 1,024); instructions | {} |", C.join(" | "));
+    println!("|---|{}", "---|".repeat(C.len()));
+    println!("| answers wrong | {} |", wrong.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | "));
+    for (i, row) in rows.iter().enumerate() {
+        println!("| {row} | {} |", (0..C.len()).map(|c| {
+            let d = count[i][c].max(1) as f64;
+            format!("{:.1}, {:.0}", cost[i][c].nanos as f64 / d, cost[i][c].instructions as f64 / d)
+        }).collect::<Vec<_>>().join(" | "));
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -1330,6 +1467,7 @@ fn main() {
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
         "inplace" => cmd_inplace(path, flag("--f11")),
+        "prim" => cmd_prim(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),

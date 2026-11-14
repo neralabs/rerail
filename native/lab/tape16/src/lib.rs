@@ -21,6 +21,7 @@ pub mod codec;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
+pub mod prim;
 pub mod events;
 pub mod layout;
 pub mod lp;

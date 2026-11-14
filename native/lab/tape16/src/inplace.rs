@@ -262,6 +262,10 @@ pub trait Reader {
     fn first_child(&self, id: usize) -> Option<usize>;
     /// The next sibling of `id`, a child of a node whose subtree ends at `parent_end`.
     fn next_sibling(&self, id: usize, parent_end: usize) -> Option<usize>;
+    /// The node after `id` in preorder (a sweep's step), if any; the first node is `id_of(0)`.
+    fn next(&self, id: usize) -> Option<usize>;
+    /// The number of nodes.
+    fn len(&self) -> usize;
 }
 
 // ---- F15: format 15 in place ----------------------------------------------------------------------
@@ -369,6 +373,13 @@ impl Reader for F15<'_> {
     fn next_sibling(&self, i: usize, pe: usize) -> Option<usize> {
         let j = self.subtree_end(i);
         (j < pe && j < self.n).then_some(j)
+    }
+    #[inline(always)]
+    fn next(&self, id: usize) -> Option<usize> {
+        (id + 1 < Reader::len(self)).then_some(id + 1)
+    }
+    fn len(&self) -> usize {
+        self.n
     }
 }
 
@@ -978,6 +989,13 @@ impl<P: Pos> Reader for X<P> {
         let j = self.subtree_end(i);
         (j < pe && j < self.n).then_some(j)
     }
+    #[inline(always)]
+    fn next(&self, id: usize) -> Option<usize> {
+        (id + 1 < Reader::len(self)).then_some(id + 1)
+    }
+    fn len(&self) -> usize {
+        self.n
+    }
 }
 
 // ---- XF: explicit, folded ------------------------------------------------------------------------
@@ -1075,6 +1093,13 @@ impl<P: Pos> Reader for XF<P> {
     fn next_sibling(&self, i: usize, pe: usize) -> Option<usize> {
         let j = self.subtree_end(i);
         (j < pe && j < self.n).then_some(j)
+    }
+    #[inline(always)]
+    fn next(&self, id: usize) -> Option<usize> {
+        (id + 1 < Reader::len(self)).then_some(id + 1)
+    }
+    fn len(&self) -> usize {
+        self.n
     }
 }
 
@@ -1524,6 +1549,28 @@ impl<P: Pos> Reader for B<P> {
     fn next_sibling(&self, id: usize, _pe: usize) -> Option<usize> {
         let j = self.close(id) + 1;
         self.is_open(j).then_some(j)
+    }
+    #[inline(always)]
+    fn next(&self, id: usize) -> Option<usize> {
+        // The next open after `id`: the first set bit past it.
+        let mut p = id + 1;
+        let mut w = p >> 6;
+        let mut word = if w < self.bits.len() { self.bits[w] >> (p & 63) } else { 0 };
+        loop {
+            if word != 0 {
+                p += word.trailing_zeros() as usize;
+                return (p < self.nbits).then_some(p);
+            }
+            w += 1;
+            if w * 64 >= self.nbits {
+                return None;
+            }
+            p = w * 64;
+            word = self.bits[w];
+        }
+    }
+    fn len(&self) -> usize {
+        self.opens.len()
     }
 }
 

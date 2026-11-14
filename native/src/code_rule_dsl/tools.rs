@@ -684,6 +684,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         },
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
+        Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
@@ -1080,6 +1081,37 @@ fn read(file: &str) -> Result<String, String> {
 ///
 /// The file: `T16CAP01`, then per file: path (u16 length, bytes), tape tag (u8), source (u32 length, bytes),
 /// image (u32 length, bytes), all little-endian. A file the parser refuses or stops on is left out.
+/// `kind-names <out>`: every tape language's kinds as `tag<TAB>id<TAB>name<TAB>named`, then its fields as
+/// `tag<TAB>field id<TAB>name`, for the tape lab
+/// (`native/lab/tape16`), whose captures carry kind ids only.
+fn kind_names_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    let mut text = String::new();
+    let mut tags = 0;
+    for &lang in GrammarDialect::all() {
+        let Some(tag) = tape_tag(lang) else { continue };
+        if from_tape_tag(tag) != Some(lang) {
+            continue;
+        }
+        tags += 1;
+        for id in 0..lang.kind_count() {
+            let id = id as u16;
+            if let Some(name) = lang.kind_name(id) {
+                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+            }
+        }
+        for id in 1..=lang.kinds().field_count() {
+            if let Some(name) = lang.kinds().field_name(id as u16) {
+                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+            }
+        }
+    }
+    std::fs::write(out, text).map_err(|e| e.to_string())?;
+    Ok(format!("{tags} languages to {out}"))
+}
+
 fn capture_tapes_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
     use crate::code_rule_dsl::tape::{Grammar, TapeImage};
