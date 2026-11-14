@@ -113,21 +113,15 @@ regions hidden {
   t3    = tick3 .. ttt bytes 3
 }
 
-# Each region's last byte.
-mask closing    = prev(f_str) & ~f_str
-mask line_last  = f_line & ~next(f_line)
-mask block_last = prev(f_block) & ~f_block
-mask t1_last    = prev(f_t1) & ~f_t1
-mask t2_last    = prev(f_t2, 2) & ~prev(f_t2)
-mask t3_last    = prev(f_t3, 3) & ~prev(f_t3, 2)
-mask e2_last    = prev(e_t2)
 mask o_tick     = o_t1 | o_t2 | o_t3 | e_t2
 mask region     = hidden | o_str | o_line | o_block | o_tick
 
-error "a string open at the end of the file" when f_str & last_byte
-error "a block comment open at the end of the file" when f_block & last_byte
-error "a backtick literal open at the end of the file" when (f_t1 | f_t3) & last_byte
-escape "a run of four backticks or more" when ttt & next(tick, 3) & ~hidden
+# A region open at the file's end, and four backticks: the token loop's, whose reader finds no
+# closer, or no opener at a backtick (decision 0177).
+error "a string open at the end of the file" by tokens when f_str & last_byte
+error "a block comment open at the end of the file" by tokens when f_block & last_byte
+error "a backtick literal open at the end of the file" by tokens when (f_t1 | f_t3) & last_byte
+escape "a run of four backticks or more" by tokens when ttt & next(tick, 3) & ~hidden
 # A `\u` in a string: the forms that are code points by their bytes; any other goes to the
 # engine, which checks it. `h4`: four hex digits after the `u`.
 mask uesc       = f_str & ~o_str & escaped & u
@@ -202,9 +196,11 @@ error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~
 mask num_run    = digit | (dot & prev(digit) & next(digit))
 # --- Tokens ------------------------------------------------------------------------------------
 
-token string     = start quote & o_str last closing
-token comment    = start slash & (o_line | o_block) last line_last | block_last
-token code_literal = start tick & o_tick last t1_last | t2_last | t3_last | e2_last
+# A region's token is read, as a lexer reads a string or a comment: from its opener to its
+# closer (`read`), each region's last byte its meaning.
+token string     = start quote & o_str read str
+token comment    = start slash & (o_line | o_block) read line | block
+token code_literal = start tick & o_tick read t1 | t2 | t3
 token hash_word  = start hash & directive run word
 keywords hash_word { "#include" } required
 token identifier = start alpha & ident & ~prev(ident) run word

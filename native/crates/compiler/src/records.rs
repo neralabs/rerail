@@ -64,6 +64,8 @@ pub struct Records {
     /// The token tests (`escape … at KIND when …`), each at the tokens its end rule ends: a
     /// token that passes one refuses the file, as a lexer checks the token it reads.
     pub checks: Vec<TokenCheck>,
+    /// The readers (`EndRule::Read`).
+    pub readers: Vec<Reader>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
@@ -103,6 +105,75 @@ pub enum EndRule {
     Pair(u16),
     /// The output's first bit at or after the first byte (its last-byte mask).
     Last(u16),
+    /// A region's token, by a reader (`Records::readers`, an index): `read K | …`.
+    Read(u16),
+}
+
+/// A reader (`EndRule::Read`, decision 0177): a lexer's reader of a string or a comment. The
+/// region whose opener's bit holds at the token's first byte, in order, then the first bit of
+/// its closer after it; none holds, the byte's other rule (`other`, an index into `rules`, or
+/// `NO_RULE`: the file is refused).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Reader {
+    pub arms: Vec<ReadArm>,
+    pub other: u8,
+}
+
+/// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at
+/// `off` from the closer's first (its bytes less one; `-1`, a closer outside it); and with no
+/// closer after the opener, what the token is (`ReadNone`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadArm {
+    pub opener: u16,
+    pub closer: u16,
+    pub off: i8,
+    pub none: ReadNone,
+}
+
+/// A reader's region with no closer after its opener (`ReadArm::none`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReadNone {
+    /// Open at the file's end: the file is refused (the grammar's error says so).
+    Refuse,
+    /// To the file's end (a line comment): the file's last byte.
+    End,
+    /// `else E bytes M`: the opener's first `M` bytes.
+    Bytes(u8),
+}
+
+/// A reader's token's last byte from its first, `s` (`Reader`), a word of the closer's bits at
+/// a time; `Err` where the file is refused. `n`: the file's length.
+pub fn read_last(records: &Records, reader: &Reader, s: usize, n: usize, outputs: &[Vec<u64>]) -> Result<usize, ()> {
+    let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
+    for a in &reader.arms {
+        if !bit(a.opener, s) {
+            continue;
+        }
+        let w = words(a.closer);
+        let mut q = (s + 1) / 64;
+        let mut x = w.get(q).copied().unwrap_or(0) & (!0u64 << ((s + 1) % 64));
+        loop {
+            if x != 0 {
+                let c = 64 * q + x.trailing_zeros() as usize;
+                return Ok(c.wrapping_add_signed(isize::from(a.off)));
+            }
+            q += 1;
+            match w.get(q) {
+                Some(&y) => x = y,
+                None => break,
+            }
+        }
+        return match a.none {
+            ReadNone::Refuse => Err(()),
+            ReadNone::End => Ok(n.saturating_sub(1)),
+            ReadNone::Bytes(m) => Ok(s + usize::from(m) - 1),
+        };
+    }
+    match records.rules.get(usize::from(reader.other)) {
+        Some(&EndRule::Read(_)) | None => Err(()),
+        Some(&rule) => Ok(last_by_rule(rule, s, outputs).unwrap_or(s)),
+    }
 }
 
 /// A token's last byte from its first, `s`, by its rule, over the file's output words; `None`
@@ -126,6 +197,8 @@ pub fn last_by_rule(rule: EndRule, s: usize, outputs: &[Vec<u64>]) -> Option<usi
                 i += left;
             }
         }
+        // A reader's (`read_last`): not by a rule's words alone.
+        EndRule::Read(_) => None,
         EndRule::Last(o) => {
             let w = words(o);
             let mut q = s / 64;
@@ -161,8 +234,9 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
 /// The starts, the lasts, and whether a token starts at a byte with no rule (`NO_RULE`), which
 /// the errors by tokens (`Records::untaken`) refuse.
 ///
-/// And whether a token passes a token test (`Records::checks`) of its rule.
-pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>, bool, bool) {
+/// And whether a reader refuses the file (`read_last`), and whether a token passes a token test
+/// (`Records::checks`) of its rule.
+pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>, bool, bool, bool) {
     let n = bytes.len();
     let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
     let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
@@ -170,6 +244,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
     let mut at = 0usize;
     let mut untaken = false;
     let mut checked = false;
+    let mut read = false;
     'tokens: while at < n {
         let mut q = at / 64;
         let mut x = held(q) & (!0u64 << (at % 64));
@@ -186,6 +261,17 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         }
         let k = records.ends[usize::from(bytes[s])];
         let l = match records.rules.get(usize::from(k)) {
+            Some(&EndRule::Read(i)) => {
+                let l = match read_last(records, &records.readers[usize::from(i)], s, n, outputs) {
+                    Ok(l) => l.max(s),
+                    Err(()) => {
+                        read = true;
+                        s
+                    }
+                };
+                checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
+                l
+            }
             Some(&rule) => {
                 let l = last_by_rule(rule, s, outputs).unwrap_or(s).max(s);
                 checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
@@ -200,7 +286,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         lasts.push(l as u32);
         at = l + 1;
     }
-    (starts, lasts, untaken, checked)
+    (starts, lasts, untaken, read, checked)
 }
 
 /// The most marks a code holds.

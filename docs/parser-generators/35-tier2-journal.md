@@ -180,3 +180,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177: `error … by tokens`: a byte no token takes refused by the loop on the CPU (a first byte with no rule), the mask Metal's; 276 operations | | | |
 | 0177: the marks' own checks in the gap pass: `newline` `unless after ","`, `float_after` `else escape` at the file's end; `starts_g`, `after_comma` gone; 259 operations | | | |
 | 0177: a number's checks at its token (`escape … at number when count(dot)`, `run(digit)`): the token loop's, not an escape mask and a tier 2 `CHECK`; 249 operations | | | |
+| 0177: readers: a string, comment or backtick literal read from its opener to its closer's first bit after it (`read K`), not by its region's last-byte mask; open-at-end and four backticks the loop's; 204 operations | | | |

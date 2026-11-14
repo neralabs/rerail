@@ -2023,6 +2023,88 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let w1 = f.ins().iadd_imm(w, 1);
                 f.ins().brif(full, more, &[w1.into()], ended, &[l.into()]);
             }
+            EndRule::Read(i) => {
+                // A reader (`records::read_last`): the first region whose opener holds at `s`,
+                // then its closer's first bit after `s`, in that word, then the words after; a
+                // lexer's reader of a string or a comment, from its start.
+                use crate::records::ReadNone;
+                let rd = &r.readers[usize::from(i)];
+                for a in &rd.arms {
+                    let (arm, not) = (f.create_block(), f.create_block());
+                    let x = word_at(f, q0, a.opener);
+                    let bit = f.ins().ushr(x, sh);
+                    let bit = f.ins().band_imm(bit, 1);
+                    f.ins().brif(bit, arm, &[], not, &[]);
+                    f.switch_to_block(arm);
+                    // No closer after the opener: what its region says.
+                    let none = f.create_block();
+                    f.set_cold_block(none);
+                    let (first_word, more, look, found) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+                    f.append_block_param(more, types::I64);
+                    f.append_block_param(found, types::I64);
+                    let from = f.ins().iadd_imm(s, 1);
+                    let q = f.ins().ushr_imm(from, 6);
+                    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
+                    inside_or_past(f, inside, first_word, limit, none, &[]);
+                    f.switch_to_block(first_word);
+                    let x = word_at(f, q, a.closer);
+                    let fb = f.ins().band_imm(from, 63);
+                    let ones = f.ins().iconst(types::I64, -1);
+                    let m = f.ins().ishl(ones, fb);
+                    let x = f.ins().band(x, m);
+                    let base = f.ins().ishl_imm(q, 6);
+                    let tz = f.ins().ctz(x);
+                    let at = f.ins().iadd(base, tz);
+                    let q1 = f.ins().iadd_imm(q, 1);
+                    f.ins().brif(x, found, &[at.into()], more, &[q1.into()]);
+                    // A word at a time past the first: a string or a comment over blocks.
+                    f.switch_to_block(more);
+                    f.set_cold_block(more);
+                    heads.push((more, Step::Word));
+                    let w = f.block_params(more)[0];
+                    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                    inside_or_past(f, inside, look, limit, none, &[]);
+                    f.switch_to_block(look);
+                    f.set_cold_block(look);
+                    let x = word_at(f, w, a.closer);
+                    let w64 = f.ins().ishl_imm(w, 6);
+                    let tz = f.ins().ctz(x);
+                    let at = f.ins().iadd(w64, tz);
+                    let w1 = f.ins().iadd_imm(w, 1);
+                    f.ins().brif(x, found, &[at.into()], more, &[w1.into()]);
+                    // The closer's first byte: the last at its offset.
+                    f.switch_to_block(found);
+                    let at = f.block_params(found)[0];
+                    let l = f.ins().iadd_imm(at, i64::from(a.off));
+                    f.ins().jump(ended, &[l.into()]);
+                    f.switch_to_block(none);
+                    match a.none {
+                        ReadNone::Refuse => {
+                            let refuse = f.ins().iconst(types::I64, -1);
+                            f.ins().jump(done, &[s.into(), refuse.into()]);
+                        }
+                        ReadNone::End => {
+                            let l = f.ins().iadd_imm(c.len, -1);
+                            f.ins().jump(ended, &[l.into()]);
+                        }
+                        ReadNone::Bytes(m) => {
+                            let l = f.ins().iadd_imm(s, i64::from(m) - 1);
+                            f.ins().jump(ended, &[l.into()]);
+                        }
+                    }
+                    f.switch_to_block(not);
+                }
+                // No opener: the byte's other rule, or the file refused.
+                match blocks.get(usize::from(rd.other)) {
+                    Some(&b) => {
+                        f.ins().jump(b, &[]);
+                    }
+                    None => {
+                        let refuse = f.ins().iconst(types::I64, -1);
+                        f.ins().jump(done, &[s.into(), refuse.into()]);
+                    }
+                }
+            }
             EndRule::Last(o) => {
                 // The mask's first bit at or after `s`: in its word, then the words after.
                 let (more, look) = (f.create_block(), f.create_block());

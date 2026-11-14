@@ -196,6 +196,9 @@ pub struct Lowering {
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
     /// Each token kind's end rule (`run R`, `pair P`, decision 0177): whether a pair, its mask.
     pub token_rules: HashMap<String, (bool, Val)>,
+    /// The tokens read by a reader (`read K | …`, `records::Reader`): each region's opener,
+    /// closer, last byte's offset from the closer, and what no closer means.
+    pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -299,6 +302,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         numbers: HashMap::new(),
         tokens: Vec::new(),
         token_rules: HashMap::new(),
+        token_reads: HashMap::new(),
         keywords: Vec::new(),
         skip: None,
         tree: Vec::new(),
@@ -431,9 +435,15 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 *k = low.program.outputs.iter().position(|&o| o == v).ok_or("the skip's mask not an output")? as u16;
             }
             for rule in r.rules.iter_mut() {
-                let (crate::records::EndRule::Run(k) | crate::records::EndRule::Pair(k) | crate::records::EndRule::Last(k)) = rule;
+                let (crate::records::EndRule::Run(k) | crate::records::EndRule::Pair(k) | crate::records::EndRule::Last(k)) = rule else { continue };
                 let v = low.program.masks[usize::from(*k)];
                 *k = low.program.outputs.iter().position(|&o| o == v).ok_or("an end rule's mask not an output")? as u16;
+            }
+            for a in r.readers.iter_mut().flat_map(|rd| rd.arms.iter_mut()) {
+                for k in [&mut a.opener, &mut a.closer] {
+                    let v = low.program.masks[usize::from(*k)];
+                    *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
+                }
             }
             for c in r.checks.iter_mut() {
                 let v = low.program.masks[usize::from(c.o)];
@@ -569,13 +579,31 @@ impl Lowering {
                     self.pending_counts.push((name.clone(), up, down, *max));
                 }
                 Stmt::Token { kind, start, through, last, rule } => {
-                    if let Some(r) = rule {
-                        let (pair, e) = match r {
-                            ::bitlex::syntax::TokenRule::Run(e) => (false, e),
-                            ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
-                        };
-                        let v = self.expr(e)?;
-                        self.token_rules.insert(kind.clone(), (pair, v));
+                    match rule {
+                        Some(::bitlex::syntax::TokenRule::Read(regions)) => {
+                            let mut arms = Vec::new();
+                            for r in regions {
+                                let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
+                                let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
+                                let none = match (&r.empty, r.outside) {
+                                    (Some((_, m)), _) => crate::records::ReadNone::Bytes(*m),
+                                    (None, true) => crate::records::ReadNone::End,
+                                    (None, false) => crate::records::ReadNone::Refuse,
+                                };
+                                arms.push((opener, closer, off, none));
+                            }
+                            self.token_reads.insert(kind.clone(), arms);
+                        }
+                        Some(r) => {
+                            let (pair, e) = match r {
+                                ::bitlex::syntax::TokenRule::Run(e) => (false, e),
+                                ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
+                                ::bitlex::syntax::TokenRule::Read(_) => unreachable!(),
+                            };
+                            let v = self.expr(e)?;
+                            self.token_rules.insert(kind.clone(), (pair, v));
+                        }
+                        None => {}
                     }
                     let start = self.expr(start)?;
                     let through = match through {
@@ -2067,7 +2095,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // one word is its other terms at the token's first byte (none: the word alone), a token mark
     // the word alone, any other its own mask, which the records lift to the next grammar token
     // (`Records::gaps`).
-    let looped = !low.token_rules.is_empty() && low.skip.is_some();
+    let looped = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
     let mut gaps = 0u32;
     let mut alone = vec![false; low.marks.len()];
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
@@ -2488,11 +2516,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // Each rule's token tests (`Records::checks`), by their index in `low.token_escapes`: a rule
     // with tests is its kind's alone.
     let mut rule_tests: Vec<Vec<usize>> = Vec::new();
+    let mut readers: Vec<crate::records::Reader> = Vec::new();
     let mut ends = vec![crate::records::NO_RULE; 256];
-    if !low.token_escapes.is_empty() && !(looped && !low.token_rules.is_empty()) {
+    if !low.token_escapes.is_empty() && !(looped && (!low.token_rules.is_empty() || !low.token_reads.is_empty())) {
         return Err("token tests (`escape … at KIND`) need the token loop".into());
     }
-    if !low.token_rules.is_empty() {
+    if !low.token_rules.is_empty() || !low.token_reads.is_empty() {
         let mask_of = |low: &mut Lowering, v: Val, mark_masks: &mut Vec<Val>| -> u16 {
             match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
                 Some(k) => k as u16,
@@ -2506,6 +2535,56 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         for b in 0..256usize {
             let these: Vec<usize> = (0..rows.len()).filter(|&r| rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
             if these.is_empty() {
+                continue;
+            }
+            // A region's token: its reader, the other kinds that start here its other rule.
+            let reads: Vec<usize> = these.iter().copied().filter(|&r| low.token_reads.contains_key(&token_rows[r].0)).collect();
+            if let Some(&r0) = reads.first() {
+                let kind = token_rows[r0].0.clone();
+                if reads.iter().any(|&r| token_rows[r].0 != kind) {
+                    return Err(format!("two kinds read by readers start at byte {b:#x}"));
+                }
+                let rest: Vec<usize> = these.iter().copied().filter(|r| !reads.contains(r)).collect();
+                let other = match rest.first() {
+                    None => crate::records::NO_RULE,
+                    Some(&x) => {
+                        let ruled: Vec<Option<(bool, Val)>> = rest.iter().map(|&r| low.token_rules.get(&token_rows[r].0).copied()).collect();
+                        let Some((pair, v)) = ruled[0].filter(|&(p, v)| ruled.iter().all(|y| y.is_some_and(|(q, w)| q == p && w.v == v.v && w.d == v.d))) else {
+                            return Err(format!("`{}` starts at a reader's byte {b:#x} with no rule (`run`, `pair`)", token_rows[x].0));
+                        };
+                        let k = mask_of(low, v, &mut mark_masks);
+                        let rule = if pair { crate::records::EndRule::Pair(k) } else { crate::records::EndRule::Run(k) };
+                        let at = match rules.iter().zip(&rule_tests).position(|(&y, t)| y == rule && t.is_empty()) {
+                            Some(at) => at,
+                            None => {
+                                rules.push(rule);
+                                rule_tests.push(vec![]);
+                                rules.len() - 1
+                            }
+                        };
+                        u8::try_from(at).map_err(|_| "more than 256 end rules")?
+                    }
+                };
+                let arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, none }).collect();
+                let reader = crate::records::Reader { arms, other };
+                let at = match readers.iter().position(|x| *x == reader) {
+                    Some(at) => at,
+                    None => {
+                        readers.push(reader);
+                        readers.len() - 1
+                    }
+                };
+                let rule = crate::records::EndRule::Read(at as u16);
+                let tests: Vec<usize> = (0..low.token_escapes.len()).filter(|&i| low.token_escapes[i].0 == kind).collect();
+                let at = match rules.iter().zip(&rule_tests).position(|(&x, t)| x == rule && *t == tests) {
+                    Some(at) => at,
+                    None => {
+                        rules.push(rule);
+                        rule_tests.push(tests);
+                        rules.len() - 1
+                    }
+                };
+                ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
                 continue;
             }
             let ruled: Vec<Option<(bool, Val)>> = these.iter().map(|&r| low.token_rules.get(&token_rows[r].0).copied()).collect();
@@ -2576,7 +2655,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             checks.push(crate::records::TokenCheck { rule: k as u8, count, o, least });
         }
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }

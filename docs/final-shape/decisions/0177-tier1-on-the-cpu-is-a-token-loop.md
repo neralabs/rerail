@@ -197,3 +197,34 @@ interpreter test each token the same way.
 They replace the escape over `f_dot & prev(frac)` and the 19 digits' tier 2 `CHECK` (one
 local check fewer). CPU form: 249 operations, from 259; the fallback reads 85, from 130
 (`a_numbers_checks_are_at_its_token`).
+
+## Readers
+
+The lean lexer reads a string, a comment or a backtick literal from its start: to the next
+`"` past escapes, to the `\n`, to the `*/`, to the fence. A region's token is now read so:
+
+```text
+# the region whose opener holds at the token's first byte,
+# then its closer's first byte after it
+token string       = start quote & o_str read str
+token comment      = start slash & (o_line | o_block) read line | block
+token code_literal = start tick & o_tick read t1 | t2 | t3
+```
+
+`read K | …` (`TokenRule::Read`) names regions of the `regions` statement. Its meaning, which
+Metal and the interpreter's masks keep, is each region's last byte from its fill. On the CPU
+it is a reader (`EndRule::Read`, `Records::readers`): the first region whose opener's bit holds
+at the token's first byte, then the first bit of its closer after it, a word at a time. The
+last byte is the closer's last (`off`), or the byte before an `outside` closer. With no closer
+after the opener, what the region says: the file is refused (open at the end), the file's last
+byte (a line comment), or the `else` bytes (` `` `, the empty literal). No opener holds: the
+byte's other rule (`/` as punctuation), or the file is refused (four backticks).
+
+The token loop never starts inside a region, so the opener's bit at the start is the region's
+opening, as the walk's. The errors the readers make are the grammar's: the regions open at the
+end and the four backticks are `error … by tokens` and `escape … by tokens`, masks Metal makes
+and the CPU does not (`the_loops_errors_are_the_masks`: 1,717 files and edge cases, 152
+refused by both). The regions' last-byte masks go from the CPU: 204 operations, from 249.
+
+What still reads the region walk and `code` on the CPU: the `json_bad` mark, the `ROW` mask
+(a comment or a `/`), `float_after`, JSON's checks, and the comments' extra mark.

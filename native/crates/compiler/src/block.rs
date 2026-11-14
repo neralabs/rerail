@@ -948,8 +948,8 @@ impl BlockProgram {
                 let mut positions = positions;
                 // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
                 if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
-                    let (s, l, untaken, checked) = crate::records::walk(r, skip, bytes, &outputs);
-                    any |= untaken && !r.untaken.is_empty() || checked;
+                    let (s, l, untaken, read, checked) = crate::records::walk(r, skip, bytes, &outputs);
+                    any |= untaken && !r.untaken.is_empty() || read || checked;
                     positions[usize::from(r.starts)] = s;
                     positions[usize::from(r.lasts)] = l;
                 } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
@@ -1721,8 +1721,22 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     crate::records::EndRule::Run(o) => ("run", o),
                     crate::records::EndRule::Pair(o) => ("pair", o),
                     crate::records::EndRule::Last(o) => ("last", o),
+                    crate::records::EndRule::Read(o) => ("read", o),
                 };
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
+            }
+            // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
+            // refuse|end|bytesM` each of its regions (`Records::readers`).
+            for (k, rd) in r.readers.iter().enumerate() {
+                let _ = writeln!(out, "  block {at} recreader {}", rd.other);
+                for a in &rd.arms {
+                    let none = match a.none {
+                        crate::records::ReadNone::Refuse => "refuse".to_string(),
+                        crate::records::ReadNone::End => "end".to_string(),
+                        crate::records::ReadNone::Bytes(m) => format!("bytes{m}"),
+                    };
+                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}", a.opener, a.closer, a.off);
+                }
             }
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.

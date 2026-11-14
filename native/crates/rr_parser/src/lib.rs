@@ -1351,6 +1351,9 @@ pub mod tests {
             .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
             .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
+            .replace("read str", "last prev(f_str) & ~f_str")
+            .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")
+            .replace("read t1 | t2 | t3", "last (prev(f_t1) & ~f_t1) | (prev(f_t2, 2) & ~prev(f_t2)) | (prev(f_t3, 3) & ~prev(f_t3, 2)) | prev(e_t2)")
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
             .replace(", else escape \"a float the file ends with\"", "")
@@ -1358,7 +1361,7 @@ pub mod tests {
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .map(|l| format!("{l}\n"))
             .collect::<String>();
-        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
+        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ") && !l.contains(" read ")), "every rule written back as its mask");
         let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
         let files = corpus();
         let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
@@ -1555,9 +1558,10 @@ pub mod tests {
         }
     }
 
-    /// Decision 0177: an error by tokens (`a byte no token takes`) holds where the token loop
-    /// starts a token at a byte no token begins with, and nowhere else: its mask, which Metal
-    /// makes, and the loop, which the CPU runs, refuse the same files.
+    /// Decision 0177: an error by tokens holds where the token loop refuses, and nowhere else: a
+    /// byte no token begins with (`a byte no token takes`), a reader's region open at the file's
+    /// end, four backticks where a literal's reader finds no opener. Its mask, which Metal makes,
+    /// and the loop, which the CPU runs, refuse the same files.
     #[test]
     fn the_loops_errors_are_the_masks() {
         let c = crate::compiled().expect("compiles");
@@ -1572,6 +1576,13 @@ pub mod tests {
                 inputs.push(format!("{}r(x) :- a(x), \"{bad}\" = x.\n", " ".repeat(pad)).into_bytes());
             }
         }
+        // Open at the end, and the backticks' runs, across a block's edge.
+        for tail in ["\"abc", "/* abc", "`abc", "```abc", "``abc", "``", "````a````", "`a`````", "// abc", "\"a\\\"", "/*/", "`a``b`"] {
+            for pad in [0usize, 50, 58, 61, 62, 63, 64, 70] {
+                inputs.push(format!("r(x) :- a(x).\n{}{tail}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("r(x) :- a(x).\n{}{tail}\nr(y) :- a(y).\n", " ".repeat(pad)).into_bytes());
+            }
+        }
         let skip = r.skip.expect("the loop's skip");
         let (mut refused, mut both) = (0, 0);
         for f in &inputs {
@@ -1579,8 +1590,8 @@ pub mod tests {
             let fires = |o: usize| run.outputs[o].iter().any(|&w| w != 0);
             let others = block.total_outputs().into_iter().any(|o| !r.untaken.iter().any(|&u| usize::from(u) == o) && fires(o));
             let mask = others || r.untaken.iter().any(|&o| fires(usize::from(o)));
-            let (_, _, untaken, _) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
-            let loop_ = others || untaken;
+            let (_, _, untaken, read, _) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
+            let loop_ = others || untaken || read;
             assert_eq!(mask, loop_, "{:?}: refused by the masks {mask}, with the loop's error {loop_}", String::from_utf8_lossy(&f[..f.len().min(80)]));
             refused += usize::from(mask);
             both += 1;
