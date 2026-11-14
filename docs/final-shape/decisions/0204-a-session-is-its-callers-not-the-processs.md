@@ -65,3 +65,16 @@ traced runs, so the cause is another state phase 0's runs share. Candidates:
 - the observer's journal.
 
 Until now the global lock hid it: corpus runs never overlapped.
+
+**A deadlock the parallel runs opened, fixed.** The tests' store template (`test_store::template`) was made on first
+use, from inside a test's run. The runs of the thread that fills it took the switches (`switches::reading`) as
+outermost runs, so they queued behind any test waiting to `set`. That test waited for the runs that held the switches,
+and those waited on the template. Cargo's fast code made the window milliseconds wide; under Relax's cold JIT every
+session test hung in it. Now a test's thread makes the template before it takes the switches (`test_store::ready`),
+holding nothing, and the filling thread skips that step. The template is also always made under the default switches,
+never a test's set ones.
+
+That may be the phase 0 race above: a template made inside a test that held `set` was made in that test's mode. The
+corpus and typing group passed in one parallel run after the fix (110 pass, 82 s), but one run does not show a 1-in-3
+failure gone.
+
