@@ -175,3 +175,25 @@ now the gap pass's, as lean's parser asks them of its tokens:
 `starts_g` and `after_comma` go. The interpreter, the CPU's late marks and Metal's record
 kernel each do both (`a_line_break_after_a_comma_is_none`, `chained_floats_go_to_the_engine`).
 CPU form: 259 operations, from 276; the fallback reads 130, from 189.
+
+## A number's checks at its token
+
+The lean lexer checks a number where it reads it. So does the token loop now:
+
+```text
+# a second `.` (`1.2.3`): the engine reads it
+escape "a float's `.` after a fraction" at number when count(dot) at least 2
+# 19 digits from its first: the engine checks the i64
+escape "a number of 19 digits or more" at number when run(digit) at least 19
+```
+
+`escape "WHY" at KIND when count(E) at least N` tests each token of the kind over its own
+bytes: `E`'s bits in it (`count`), or `E` at each of its first `N` bytes (`run`). A token that
+passes it sends the file to the fallback. The tests are the end rule's (`Records::checks`): a
+rule with tests is its kind's alone, and the CPU's rule block ends at a block that tests the
+token, a popcount over its words or one window compare. Metal's record kernel and the
+interpreter test each token the same way.
+
+They replace the escape over `f_dot & prev(frac)` and the 19 digits' tier 2 `CHECK` (one
+local check fewer). CPU form: 249 operations, from 259; the fallback reads 85, from 130
+(`a_numbers_checks_are_at_its_token`).

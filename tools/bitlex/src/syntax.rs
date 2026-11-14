@@ -50,6 +50,15 @@ pub enum Arg {
     S(Vec<u8>),
 }
 
+/// A test of a token over its own bytes (`Stmt::TokenEscape`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TokenTest {
+    /// The mask's bits in the token.
+    Count,
+    /// The mask at each of the token's first bytes, from its first.
+    Run,
+}
+
 /// How a token ends, told at its start (`Stmt::Token`'s `run` and `pair`).
 #[derive(Clone, Debug)]
 pub enum TokenRule {
@@ -345,6 +354,11 @@ pub enum Stmt {
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
+    /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
+    /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
+    /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
+    /// that long at least). A token that passes it sends the file to the fallback.
+    TokenEscape { why: String, kind: String, test: TokenTest, expr: Expr, least: u32 },
     /// `tree NAME { … }`: the statements that say where each node starts and ends
     /// (docs/parser-generators/13-tape-on-the-gpu.md).
     Tree { name: String, body: Vec<Stmt> },
@@ -1223,8 +1237,30 @@ impl P {
             "skip" => Stmt::Skip(self.expr()?),
             "escape" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
-                self.want_kw("when")?;
-                Stmt::Escape(m, self.expr()?)
+                if self.eat_kw("at") {
+                    let kind = self.ident()?;
+                    self.want_kw("when")?;
+                    let test = if self.eat_kw("count") {
+                        TokenTest::Count
+                    } else if self.eat_kw("run") {
+                        TokenTest::Run
+                    } else {
+                        return self.err("`count` or `run`");
+                    };
+                    self.want_p("(")?;
+                    let expr = self.expr()?;
+                    self.want_p(")")?;
+                    self.want_kw("at")?;
+                    self.want_kw("least")?;
+                    let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
+                    if least == 0 || (test == TokenTest::Run && least > 64) {
+                        return self.err("a count from 1 (a run's at most 64)");
+                    }
+                    Stmt::TokenEscape { why: m, kind, test, expr, least }
+                } else {
+                    self.want_kw("when")?;
+                    Stmt::Escape(m, self.expr()?)
+                }
             }
             "tree" => {
                 let name = self.ident()?;

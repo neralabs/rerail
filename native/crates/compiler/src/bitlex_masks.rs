@@ -215,6 +215,9 @@ pub struct Lowering {
     pub unless: HashMap<usize, Vec<Vec<u8>>>,
     /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
     pub unplaced: Vec<usize>,
+    /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
+    /// (`Records::checks`).
+    pub token_escapes: Vec<(String, bool, Val, u32)>,
     pub hidden: Vec<String>,
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
@@ -305,6 +308,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_marks: HashMap::new(),
         unless: HashMap::new(),
         unplaced: Vec::new(),
+        token_escapes: Vec::new(),
         hidden: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
@@ -431,6 +435,10 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 let v = low.program.masks[usize::from(*k)];
                 *k = low.program.outputs.iter().position(|&o| o == v).ok_or("an end rule's mask not an output")? as u16;
             }
+            for c in r.checks.iter_mut() {
+                let v = low.program.masks[usize::from(c.o)];
+                c.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a token test's mask not an output")? as u16;
+            }
         }
         // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
         low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK || label == FALLBACK_TOKENS).map(|(_, &v)| v).collect();
@@ -524,6 +532,11 @@ impl Lowering {
                 Stmt::TokenError(_, expr) => {
                     let value = self.expr(expr)?;
                     self.untaken.push(value);
+                }
+                // A token test (decision 0177): the token loop's, at its kind's end rule.
+                Stmt::TokenEscape { kind, test, expr, least, .. } => {
+                    let value = self.expr(expr)?;
+                    self.token_escapes.push((kind.clone(), *test == ::bitlex::syntax::TokenTest::Count, value, *least));
                 }
                 // Both send the file to tree-sitter.
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
@@ -2472,7 +2485,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // other, by the first bit at or after its start of its kinds' last-byte masks. Each rule's
     // mask a mask output, as a mark's (its index among them, made an output's below).
     let mut rules: Vec<crate::records::EndRule> = Vec::new();
+    // Each rule's token tests (`Records::checks`), by their index in `low.token_escapes`: a rule
+    // with tests is its kind's alone.
+    let mut rule_tests: Vec<Vec<usize>> = Vec::new();
     let mut ends = vec![crate::records::NO_RULE; 256];
+    if !low.token_escapes.is_empty() && !(looped && !low.token_rules.is_empty()) {
+        return Err("token tests (`escape … at KIND`) need the token loop".into());
+    }
     if !low.token_rules.is_empty() {
         let mask_of = |low: &mut Lowering, v: Val, mark_masks: &mut Vec<Val>| -> u16 {
             match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
@@ -2507,10 +2526,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     crate::records::EndRule::Last(mask_of(low, l.expect("a row"), &mut mark_masks))
                 }
             };
-            let at = match rules.iter().position(|&x| x == rule) {
+            // The tests of the kinds starting here: only where no other kind does.
+            let tests: Vec<usize> = (0..low.token_escapes.len()).filter(|&i| these.iter().any(|&r| token_rows[r].0 == low.token_escapes[i].0)).collect();
+            if !tests.is_empty() && these.iter().any(|&r| tests.iter().any(|&i| token_rows[r].0 != low.token_escapes[i].0)) {
+                return Err(format!("a token test of `{}`: another kind's tokens start at byte {b:#x} too", low.token_escapes[tests[0]].0));
+            }
+            let at = match rules.iter().zip(&rule_tests).position(|(&x, t)| x == rule && *t == tests) {
                 Some(at) => at,
                 None => {
                     rules.push(rule);
+                    rule_tests.push(tests);
                     rules.len() - 1
                 }
             };
@@ -2536,7 +2561,22 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             unless.push((k as u8, at as u16 + 1));
         }
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k) };
+    // The token tests, each its mask a mask output (made an output's below), as a rule's.
+    let mut checks = Vec::new();
+    for (k, tests) in rule_tests.iter().enumerate() {
+        for &i in tests {
+            let (_, count, v, least) = low.token_escapes[i].clone();
+            let o = match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
+                Some(at) => at as u16,
+                None => {
+                    mark_masks.push(v);
+                    (mark_masks.len() - 1) as u16
+                }
+            };
+            checks.push(crate::records::TokenCheck { rule: k as u8, count, o, least });
+        }
+    }
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }

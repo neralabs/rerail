@@ -1353,7 +1353,11 @@ pub mod tests {
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
-            .replace(", else escape \"a float the file ends with\"", "");
+            .replace(", else escape \"a float the file ends with\"", "")
+            .lines()
+            .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>();
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
         let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
         let files = corpus();
@@ -1575,7 +1579,7 @@ pub mod tests {
             let fires = |o: usize| run.outputs[o].iter().any(|&w| w != 0);
             let others = block.total_outputs().into_iter().any(|o| !r.untaken.iter().any(|&u| usize::from(u) == o) && fires(o));
             let mask = others || r.untaken.iter().any(|&o| fires(usize::from(o)));
-            let (_, _, untaken) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
+            let (_, _, untaken, _) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
             let loop_ = others || untaken;
             assert_eq!(mask, loop_, "{:?}: refused by the masks {mask}, with the loop's error {loop_}", String::from_utf8_lossy(&f[..f.len().min(80)]));
             refused += usize::from(mask);
@@ -1598,6 +1602,45 @@ pub mod tests {
         assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
         assert!(!r.unless.is_empty(), "a line break after a `,` is the gap pass's, not a mask's");
         assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
+    }
+
+    /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
+    /// `.` and 19 digits from its first refuse the file, on the interpreter, the CPU and Metal
+    /// alike, with the token across a block's edge and longer than a block.
+    #[test]
+    fn a_numbers_checks_are_at_its_token() {
+        use rerail_compiler::block;
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        assert_eq!(r.checks.len(), 2, "a count and a run, the number rule's");
+        let mut cases: Vec<(String, bool)> = Vec::new();
+        for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a(123456789012345678).\n"), true));
+            cases.push((format!("{head}a(1234567890123456789).\n"), false));
+            cases.push((format!("{head}a(0000000000000000001).\n"), false));
+            cases.push((format!("{head}a(123456789012345678.5).\n"), true));
+            cases.push((format!("{head}a(1234567890123456789.5).\n"), false));
+            cases.push((format!("{head}a(1.{}).\n", "7".repeat(80)), true));
+            cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
+            cases.push((format!("{head}a(1.2.3).\n"), false));
+        }
+        let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src:?}: the interpreter");
+            assert_eq!(c.parser.image(src.as_bytes()).is_ok(), *taken, "{src:?}: the CPU");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let want = c.parser.tier1.run_files(&refs);
+            let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&c.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            for ((g, w), (src, _)) in got.run.files.iter().zip(&want).zip(&cases) {
+                assert_eq!(g.totals.iter().any(|&t| t != 0), w.totals.iter().any(|&t| t != 0), "{src:?}: Metal refuses as the CPU");
+            }
+        }
     }
 
     /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on

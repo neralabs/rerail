@@ -1966,8 +1966,12 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             f.ins().jump(done, &[s.into(), refuse.into()]);
         }
     }
-    for (&rule, &b) in r.rules.iter().zip(&blocks) {
+    for (k, (&rule, &b)) in r.rules.iter().zip(&blocks).enumerate() {
         f.switch_to_block(b);
+        // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
+        // the token, as a lexer checks the token it reads.
+        let tests: Vec<crate::records::TokenCheck> = r.checks.iter().filter(|c| usize::from(c.rule) == k).copied().collect();
+        let ended = if tests.is_empty() { ended } else { tested(f, &tests, outputs, c, s, done, heads) };
         match rule {
             EndRule::Pair(o) => {
                 let x = word_at(f, q0, o);
@@ -2062,6 +2066,103 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     f.ins().jump(done, &[l.into(), zero.into()]);
     f.switch_to_block(done);
     (f.block_params(done)[0], f.block_params(done)[1])
+}
+
+/// A rule's end block that tests its token `s..=l` (`l` its parameter) by its token tests
+/// (`records::check_holds`), then on to `done` with the last and the refusal (a sign bit). A
+/// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
+/// `least` bits from `s` compared at once, from one word or two.
+#[allow(clippy::too_many_arguments)]
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], outputs: usize, c: &FileCols, s: Value, done: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> cranelift_codegen::ir::Block {
+    let fl = MemFlags::trusted();
+    let here = f.current_block().expect("a rule's block");
+    let ended = f.create_block();
+    f.append_block_param(ended, types::I64);
+    f.switch_to_block(ended);
+    let l = f.block_params(ended)[0];
+    let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        f.ins().load(types::I64, fl, row, 8 * i32::from(o))
+    };
+    let q0 = f.ins().ushr_imm(s, 6);
+    let sh = f.ins().band_imm(s, 63);
+    let ql = f.ins().ushr_imm(l, 6);
+    let len = f.ins().isub(l, s);
+    let len = f.ins().iadd_imm(len, 1);
+    let ones = f.ins().iconst(types::I64, -1);
+    let mut refuse = f.ins().iconst(types::I64, 0);
+    for t in tests {
+        let next = f.create_block();
+        f.append_block_param(next, types::I64);
+        if t.count {
+            // The mask's bits over the token's words: the first from `s`, the last to `l`.
+            let (head, body) = (f.create_block(), f.create_block());
+            f.append_block_param(head, types::I64);
+            f.append_block_param(head, types::I64);
+            heads.push((head, Step::Word));
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().jump(head, &[q0.into(), zero.into()]);
+            f.switch_to_block(head);
+            let (q, acc) = (f.block_params(head)[0], f.block_params(head)[1]);
+            let x = word_at(f, q, t.o);
+            let first = f.ins().icmp(IntCC::Equal, q, q0);
+            let from = f.ins().ishl(ones, sh);
+            let from = f.ins().select(first, from, ones);
+            let x = f.ins().band(x, from);
+            let last = f.ins().icmp(IntCC::Equal, q, ql);
+            let lb = f.ins().band_imm(l, 63);
+            let lb = f.ins().irsub_imm(lb, 63);
+            let to = f.ins().ushr(ones, lb);
+            let to = f.ins().select(last, to, ones);
+            let x = f.ins().band(x, to);
+            let pc = f.ins().popcnt(x);
+            let acc = f.ins().iadd(acc, pc);
+            let q1 = f.ins().iadd_imm(q, 1);
+            f.ins().brif(last, body, &[], head, &[q1.into(), acc.into()]);
+            f.switch_to_block(body);
+            let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, acc, i64::from(t.least));
+            let hit = f.ins().sextend(types::I64, hit);
+            let hit = f.ins().ineg(hit);
+            let hit = f.ins().bor(refuse, hit);
+            f.ins().jump(next, &[hit.into()]);
+        } else {
+            // The token `least` long at least, and the mask at each of its first `least`.
+            let (test, two, one) = (f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(one, types::I64);
+            let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(t.least));
+            f.ins().brif(long, test, &[], next, &[refuse.into()]);
+            f.switch_to_block(test);
+            let x = word_at(f, q0, t.o);
+            let lo = f.ins().ushr(x, sh);
+            let end = f.ins().iadd_imm(sh, i64::from(t.least));
+            let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, end, 64);
+            f.ins().brif(past, two, &[], one, &[lo.into()]);
+            // Past the word: its next word's low bits after `lo`'s (in the token, so in the file).
+            f.switch_to_block(two);
+            f.set_cold_block(two);
+            let q1 = f.ins().iadd_imm(q0, 1);
+            let y = word_at(f, q1, t.o);
+            let back = f.ins().irsub_imm(sh, 64);
+            let hi = f.ins().ishl(y, back);
+            let win = f.ins().bor(lo, hi);
+            f.ins().jump(one, &[win.into()]);
+            f.switch_to_block(one);
+            let win = f.block_params(one)[0];
+            let need = (!0u64 >> (64 - t.least)) as i64;
+            let m = f.ins().band_imm(win, need);
+            let hit = f.ins().icmp_imm(IntCC::Equal, m, need);
+            let hit = f.ins().sextend(types::I64, hit);
+            let hit = f.ins().ineg(hit);
+            let hit = f.ins().bor(refuse, hit);
+            f.ins().jump(next, &[hit.into()]);
+        }
+        f.switch_to_block(next);
+        refuse = f.block_params(next)[0];
+    }
+    f.ins().jump(done, &[l.into(), refuse.into()]);
+    f.switch_to_block(here);
+    ended
 }
 
 /// The next token's first byte from `after` (`records::walk`, stage 2a): the first bit at or

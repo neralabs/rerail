@@ -163,24 +163,18 @@ mask num        = w & ~ident                    # the digits before it
 # A float, `1.5`: a `.` between digits (`f_dot`); the digits after it, its fraction. Read as
 # simdjson reads one, straight through: digits, a `.`, digits, and the float ends. A float's
 # `.` right after a fraction (`1.2.3`) is a chain no file has: the engine reads it, so no
-# float's `.` waits on the one before it.
+# float's `.` waits on the one before it. Checked at the number's token (below).
 mask f_dot      = code & dot & prev(num) & next(digit)
 mask frac       = fill(prev(f_dot), ~digit)
-escape "a float's `.` after a fraction" when f_dot & prev(frac)
 mask int        = num & ~frac                   # an integer's digits
 # A float is one token, as simdjson's number is one scalar. Its last digit marks the token
 # after it (`float_after`), and tier 2 makes the number it took a float there. A float the file
 # ends with, no token after it, goes to the engine.
 mask frac_last  = frac & ~next(frac)
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
-# checked by it. A float's digits are its text: no limit. Checked at the number's token
-# (decision 0133's local check): tier 1 marks a number's first digit with a digit 18 bytes on,
-# which few have; tier 2 checks the 17 between at those. A number of 19 digits or more goes to
+# checked by it. A float's digits are its text: no limit. A number of 19 digits or more goes to
 # the engine, with its leading zeros, or a fraction after it (the engine's tape either way).
-mask int_first  = digit & int & ~prev(int)
-mask int_long   = int_first & next(digit, 18)
-mask digits17   = next(digit) & next(digit, 2) & next(digit, 3) & next(digit, 4) & next(digit, 5) & next(digit, 6) & next(digit, 7) & next(digit, 8) & next(digit, 9) & next(digit, 10) & next(digit, 11) & next(digit, 12) & next(digit, 13) & next(digit, 14) & next(digit, 15) & next(digit, 16) & next(digit, 17)
-escape "a number of 19 digits or more" when int_long & digits17
+# Checked at the number's token (below).
 
 # Directives the engine refuses by the token after them: token marks, after the other marks.
 
@@ -217,6 +211,10 @@ token identifier = start alpha & ident & ~prev(ident) run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
 token number     = start digit & int & ~prev(int) run num_run
+# A number's checks, at its token as a lexer reads it: a second `.` (`1.2.3`), and 19 digits
+# from its first.
+escape "a float's `.` after a fraction" at number when count(dot) at least 2
+escape "a number of 19 digits or more" at number when run(digit) at least 19
 token punct      = start punct & p_start pair two_start
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the

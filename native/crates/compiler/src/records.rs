@@ -61,6 +61,32 @@ pub struct Records {
     /// The gap marks (bits of `marks`) with an `else escape`: a bit of one with no grammar token
     /// at or after it (past the last one's start) refuses the file.
     pub unplaced: u32,
+    /// The token tests (`escape … at KIND when …`), each at the tokens its end rule ends: a
+    /// token that passes one refuses the file, as a lexer checks the token it reads.
+    pub checks: Vec<TokenCheck>,
+}
+
+/// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
+/// output `o`'s bits in the token at least `least` (`count`), or `o` at each of the token's
+/// first `least` bytes (not `count`: a run, the token that long; `least` at most 64).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TokenCheck {
+    pub rule: u8,
+    pub count: bool,
+    pub o: u16,
+    pub least: u32,
+}
+
+/// Whether a token `s..=l` passes a test (`TokenCheck`), over the file's output words.
+pub fn check_holds(c: &TokenCheck, s: usize, l: usize, outputs: &[Vec<u64>]) -> bool {
+    let w = outputs.get(usize::from(c.o)).map_or(&[][..], |v| v.as_slice());
+    let bit = |i: usize| w.get(i / 64).is_some_and(|x| x >> (i % 64) & 1 == 1);
+    let n = c.least as usize;
+    if c.count {
+        (s..=l).filter(|&i| bit(i)).count() >= n
+    } else {
+        l + 1 - s >= n && (s..s + n).all(bit)
+    }
 }
 
 /// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
@@ -134,13 +160,16 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
 /// A region's token ends at its region's last byte, so the loop never starts one inside it.
 /// The starts, the lasts, and whether a token starts at a byte with no rule (`NO_RULE`), which
 /// the errors by tokens (`Records::untaken`) refuse.
-pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>, bool) {
+///
+/// And whether a token passes a token test (`Records::checks`) of its rule.
+pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>, bool, bool) {
     let n = bytes.len();
     let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
     let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
     let (mut starts, mut lasts) = (Vec::new(), Vec::new());
     let mut at = 0usize;
     let mut untaken = false;
+    let mut checked = false;
     'tokens: while at < n {
         let mut q = at / 64;
         let mut x = held(q) & (!0u64 << (at % 64));
@@ -155,8 +184,13 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         if s >= n {
             break;
         }
-        let l = match records.rules.get(usize::from(records.ends[usize::from(bytes[s])])) {
-            Some(&rule) => last_by_rule(rule, s, outputs).unwrap_or(s).max(s),
+        let k = records.ends[usize::from(bytes[s])];
+        let l = match records.rules.get(usize::from(k)) {
+            Some(&rule) => {
+                let l = last_by_rule(rule, s, outputs).unwrap_or(s).max(s);
+                checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
+                l
+            }
             None => {
                 untaken = true;
                 s
@@ -166,7 +200,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         lasts.push(l as u32);
         at = l + 1;
     }
-    (starts, lasts, untaken)
+    (starts, lasts, untaken, checked)
 }
 
 /// The most marks a code holds.

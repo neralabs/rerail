@@ -11,9 +11,9 @@ fn rr_checks_its_unicode_escapes_at_the_string() {
     for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
         assert!(!c.values.iter().any(|v| v.name == name), "`{name}` is still tier 1's");
     }
-    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone. The
-    // third, a number's 19 digits (`long_numbers_go_to_the_engine`).
-    assert_eq!(c.program.local_checks.len(), 3, "three local checks");
+    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone. A
+    // number's 19 digits are the token loop's (`a_numbers_checks_are_at_its_token`).
+    assert_eq!(c.program.local_checks.len(), 2, "two local checks");
     let json = |v: &str| format!(".policy {{\"a\": [1, \"{v}\"]}}");
     for (src, ok) in [(json("\\u0041"), true), (json("\\u{41}"), false), (json("\\u12"), false), ("r(x) :- x = \"\\u{41}\".".to_owned(), true)] {
         assert_eq!(super::compiled_tape(&src).is_some(), ok, "{src}");

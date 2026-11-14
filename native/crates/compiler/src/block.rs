@@ -948,8 +948,8 @@ impl BlockProgram {
                 let mut positions = positions;
                 // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
                 if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
-                    let (s, l, untaken) = crate::records::walk(r, skip, bytes, &outputs);
-                    any |= untaken && !r.untaken.is_empty();
+                    let (s, l, untaken, checked) = crate::records::walk(r, skip, bytes, &outputs);
+                    any |= untaken && !r.untaken.is_empty() || checked;
                     positions[usize::from(r.starts)] = s;
                     positions[usize::from(r.lasts)] = l;
                 } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
@@ -1735,6 +1735,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
+        }
+        // `block N reccheck R count|run O N`: a token test of rule `R`'s tokens.
+        for c in &r.checks {
+            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
         }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {

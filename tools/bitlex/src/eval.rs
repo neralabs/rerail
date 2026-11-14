@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, Gram, MachineDef, NExpr, Stmt, TokenElem, UClass};
+use crate::syntax::{Arg, Expr, Gram, MachineDef, NExpr, Stmt, TokenElem, TokenTest, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -129,6 +129,8 @@ pub struct Ev<'a> {
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
     byte_classes: HashMap<String, Vec<(u32, u32)>>,
     checks: Vec<(String, Gram)>,
+    /// Each `escape … at KIND when …` (`Stmt::TokenEscape`): its reason, kind, test, mask, count.
+    token_escapes: Vec<(String, String, TokenTest, Mask, u32)>,
 }
 
 type R<T> = Result<T, String>;
@@ -195,6 +197,7 @@ impl<'a> Ev<'a> {
             tree: None,
             byte_classes: HashMap::new(),
             checks: vec![],
+            token_escapes: vec![],
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
@@ -406,6 +409,10 @@ impl<'a> Ev<'a> {
                 }
             }
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
+            Stmt::TokenEscape { why, kind, test, expr, least } => {
+                let m = self.mask(expr)?;
+                self.token_escapes.push((why.clone(), kind.clone(), *test, m, *least));
+            }
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
@@ -1150,6 +1157,21 @@ impl<'a> Ev<'a> {
         if let Some(i) = gap.first() {
             self.errors.push(format!("byte {i} is in no token"));
         }
+        // Each token test over its kind's tokens' bytes, before the keywords rename them.
+        let mut failed = Vec::new();
+        for (why, kind, test, m, least) in &self.token_escapes {
+            for t in toks.iter().filter(|t| &t.kind == kind) {
+                let n = *least as usize;
+                let hit = match test {
+                    TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
+                    TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
+                };
+                if hit {
+                    failed.push(format!("escape: {why} (byte {})", t.start));
+                }
+            }
+        }
+        self.errors.extend(failed);
         for (kind, words, soft, required) in &self.keywords {
             for t in toks.iter_mut().filter(|t| &t.kind == kind) {
                 let text = &self.src[t.start..t.end];
