@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
 import {
@@ -420,11 +420,20 @@ async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<Sum
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: startStateFolder(cwd, daemon.workspace), host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch (error) {
     return error instanceof NotAnswering ? "not-answering" : null;
   }
+}
+
+/**
+ * The folder a daemon reads `cwd`'s start state for. On Windows it is `cwd` as spelt: Rerail 0.1.4 saved a stop for a
+ * folder outside Git under the folder as spelt, a mapped drive letter included, and the daemon's start check reads that
+ * key beside the stored spelling's only when it gets the spelling. Elsewhere it is `stored`, the realpath, as before.
+ */
+function startStateFolder(cwd: string, stored: string): string {
+  return process.platform === "win32" ? resolve(cwd) : stored;
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
