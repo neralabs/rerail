@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 647 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #647</div>
+  <h1>Claude Code: every batch of a streamed reply is recorded</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does any payload Rerail accepted before now fail, and does a reply with a blank or empty batch end?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A blank or empty <code>delta</code> is recorded; a non-text one gets a new refusal message.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> it is approved and ready to merge: a code owner approved 2bbd811b1 and asked for a reply-ends test, 8d531e566 adds it with no source change, and CI passed there.</p>
+  <div class="big">
+    <div><b class="w">206 lines</b><span>in 4 files. 125 ship, 81 are tests and text.</span></div><div><b class="w">Standard lane</b><span>A code owner approved it at 2bbd811b1.</span></div><div><b class="w">Waits on Nothing</b><span>Approved, and CI passed at this head.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/647">GitHub</a> on 14 November 2026, at head 8d531e566.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>Blank reply batches</b></td><td class="in" data-l="Intended">A reply ends on its <code>final</code> batch, and the runtime takes any text as a batch: <code>delta: z.string()</code>. <span class="tagx">the runtime&#x27;s schema</span></td><td class="fo" data-l="Found">The adapter refused a blank or empty <code>delta</code>: 20 of the 30 batches, the last one of every reply among them. <span class="tagx">replay through the hook</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> Any text is a <code>delta</code>: each batch is recorded under the event id <code>main</code> gives it, and the reply ends. A non-text <code>delta</code> gets a new refusal message.</td></tr><tr><td class="k"><b>Function over the ceiling</b></td><td class="in" data-l="Intended">&quot;A function fails when that exceeds 6&quot;, and a <code>switch</code> &quot;counts once however many cases it has&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found"><code>claudeHookEvents</code> counts 13. A fix edited into its <code>if</code> chain drew 1 new finding in the reviewer&#x27;s scan. <span class="tagx">rules scan</span></td><td class="now" data-l="Now"><b>Closes the gap</b> by writing the chain as one <code>switch</code>, which counts 5. Each case keeps <code>main</code>&#x27;s text: 37 changed lines with whitespace hidden.</td></tr></tbody></table>
+<figcaption>Found on 11 November 2026 with Claude Code 2.1.322 on Windows. Measured on 13 November on Linux.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">Blank reply batches</td><td data-l="Where main states the intent"><code>src/runtime/event-protocol.ts</code> line 31: <code>delta: z.string()</code>, where every id is <code>z.string().min(1)</code>. <code>src/engine/adapter-contract.ts</code> line 297: the engine&#x27;s own last batch of a streamed message is <code>&quot;&quot;</code>, with <code>final</code> true. <code>src/runtime/host-runtime.ts</code> lines 143 to 149: only a <code>final</code> batch finishes the message and stores it whole. Line 191 of <code>adapter-contract.ts</code>, &quot;nonblank text is the accepted value of a text field&quot;, is the shared reader&#x27;s rule, which <code>delta</code> was read under.</td><td data-l="The cause, and what was measured"><code>src/hosts/claude/claude-event-adapter.ts</code> line 61 at <code>main</code> reads <code>delta</code> with <code>requiredText</code>, the shared text reader. It throws <code>Claude hook omitted delta</code> for a <code>delta</code> that is missing, blank or not text (<code>adapter-contract.ts</code> line 198). Claude Code sends whole lines per batch: a batch can be one blank line, and the last batch of a reply that ends on a newline is empty. Measured by a test file, not committed: 10 replies of three batches through the hook to a running daemon.</td></tr><tr><td class="k">Function over the ceiling</td><td data-l="Where main states the intent"><code>packs/complexity/README.md</code> line 23: &quot;A function fails when that exceeds 6&quot;. Lines 4 to 6: &quot;A <code>switch</code> or <code>match</code> counts once however many cases it has&quot;, &quot;so a flat dispatch table is not a reason to split a function&quot;. Line 24: under the <code>ai-output</code> scope only functions an edit touched are reported. <code>.github/workflows/reviewer.yml</code> lines 108 to 112 run that pack on each pull request and mark each violation new or existing.</td><td data-l="The cause, and what was measured"><code>src/hosts/claude/claude-event-adapter.ts</code> lines 35 to 96 at <code>main</code>: one function picks the hook through seven <code>if</code> statements and builds each event inline. The scan counts it 13: 1, seven <code>if</code>, three <code>||</code> and two <code>?:</code>. Run on an earlier version of this fix that edited the chain in place (78b916332, the function then at 12), the scan reported it as 1 new finding. At this head the scan counts <code>claudeHookEvents</code> 5 and <code>batchDelta</code> 4.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>claude-event-adapter.ts</code>: <code>batchDelta</code>, then <code>claudeHookEvents</code>: its <code>MessageDisplay</code> case and its <code>case</code> labels</b><span class="min">5 min</span><span class="x">Hide whitespace: 37 lines change. Does <code>batchDelta</code> let only text through, and does each <code>case</code> keep <code>main</code>&#x27;s body?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">3 min</span><span class="x">8d531e566, new since the approval, adds one test in <code>claude-hook.test.ts</code>: check it asserts the reply&#x27;s end. Earlier commits hold a replaced shape: read the squashed diff. <code>main</code>&#x27;s assertions stay.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Reply batches, medium risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><text x="12" y="56" class="t b">Reply batches</text><g><title>Reply batches, fails without the fix: At 2bbd811b1 with the fix line put back to `main`&#x27;s, the adapter&#x27;s delta test and the rows test fail with `Claude hook omitted delta`; the 25 other tests of the two files pass. Over `main`&#x27;s source at c438bc813 the reply-ends test fails the same way. With the runtime&#x27;s end skipped for an empty final batch, only it fails.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Reply batches, independent review: A second run from a separate checkout. At 2bbd811b1, whose source is this head&#x27;s: `main`&#x27;s adapter and this one differ on 587,738 payloads only for a blank, empty or non-text `delta`, and four one-line edits each fail a test. The automated reviewer approved 2bbd811b1: 0 blockers, 0 follow-ups, 0 nits. A code owner approved it and asked for one test.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Reply batches, users lose nothing: On 587,738 payloads, every one `main` accepts gives the same event here, with the same event id. `main`&#x27;s own test files pass at this head. The limit: a blank or empty batch now waits for the daemon, 33 to 36 ms more per hook process, and that was timed at 468039e93, before the source took its present shape.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Reply batches, rules scan: nothing new: The scan the automated reviewer runs, with rules from `main` at c438bc813, against this head: 40 checks, 0 findings, 0 new. `claudeHookEvents` counts 5, against 13 at `main` and a ceiling of 6. `batchDelta` counts 4. They are the only functions this adds or edits under `src/`.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Reply batches, Windows 11: no new failure: The 9 test files that use the Claude adapter or the adapter contract passed on Windows 11 at this head: 187 passed, 1 skipped (a symlink case that skips on Windows), 0 failed. The reply-ends test passed 20 of 20 separate runs there. The limit: the integration tests did not run on Windows.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Reply batches, CI at this head: The run at 8d531e566, read on 14 November 2026 at 01:41 UTC: 19 checks pass, 3 are skipped (`Rust engine`, `Conformance` and `Conformance comment`), none fails. `CI result`, both Linux unit test jobs, both Windows unit test jobs, `Integration tests` and `Real Claude Code, Codex, and Cursor sessions` are among the 19.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>Two half marks: the wait a blank batch now pays, timed at an earlier commit, and the integration tests, not run on Windows.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Reply batches</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">On 587,738 payloads, every one <code>main</code> accepts gives the same event here, with the same event id. <code>main</code>&#x27;s own test files pass at this head. The limit: a blank or empty batch now waits for the daemon, 33 to 36 ms more per hook process, and that was timed at 468039e93, before the source took its present shape.</td></tr><tr><td class="k">Reply batches</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">The 9 test files that use the Claude adapter or the adapter contract passed on Windows 11 at this head: 187 passed, 1 skipped (a symlink case that skips on Windows), 0 failed. The reply-ends test passed 20 of 20 separate runs there. The limit: the integration tests did not run on Windows.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip medium"><i></i>Medium risk</span> <b>Reply batches of any text</b>: Of 30 batches in 10 replies, <code>main</code> records 10 and ends no reply; this change records 30 and ends 10.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Why does a one-line fix rewrite <code>claudeHookEvents</code> as a <code>switch</code>?</h3>
+<p><b>We chose</b> one <code>switch</code> in place: it counts 5 against <code>main</code>&#x27;s 13, with no new finding.</p>
+<p><b>Would change our mind:</b> a maintainer who wants each hook&#x27;s event in a function of its own: 6bf5eb213 holds that shape.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">One <code>switch</code> on the hook&#x27;s name, each case&#x27;s body inline <span class='tag new'>chosen</span></td><td data-l="What a user gets">One function, as at <code>main</code>, and one new one, <code>batchDelta</code>. The reviewer&#x27;s scan: 0 findings, <code>claudeHookEvents</code> 5, <code>batchDelta</code> 4.</td><td data-l="Cost">125 changed source lines in 1 file. 88 of them are <code>main</code>&#x27;s text one indent deeper: with whitespace hidden, 37.</td><td data-l="What it breaks">Nothing measured: on 587,738 payloads the two adapters differ only for a blank, empty or non-text <code>delta</code>.</td></tr><tr><td class="k">Edit the <code>if</code> chain in place</td><td data-l="What a user gets">The smallest diff: <code>batchDelta</code> and one line.</td><td data-l="Cost">Nothing more to write.</td><td data-l="What it breaks">The function stays over the ceiling, and the edit makes its finding new: the scan of an earlier version of this fix, at 78b916332, reported 1 new finding. <code>.github/workflows/reviewer.yml</code> line 111: a new violation &quot;can be a blocker&quot;.</td></tr><tr><td class="k">One function per hook, looked up by the hook&#x27;s name</td><td data-l="What a user gets"><code>claudeHookEvents</code> counts 2, and the scan reports 0 new findings. Commits 9a78d72f1 and 6bf5eb213 hold this shape.</td><td data-l="Cost">158 changed source lines in 2 files, 96 with whitespace hidden: five new functions and a map.</td><td data-l="What it breaks">Nothing measured. The automated reviewer noted at 468039e93 that the supported hooks are then listed twice by hand.</td></tr><tr><td class="k">The <code>switch</code> first as its own pull request, the fix after it</td><td data-l="What a user gets">Each pull request holds one kind of change, as <code>CONTRIBUTING.md</code> asks of large changes.</td><td data-l="Cost">Two reviews, and the fix waits for the first merge.</td><td data-l="What it breaks">Nothing in the code. Replies with a blank line stay unfinished on <code>main</code> until both merge.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: an if chain builds every hook&#x27;s event</div><svg viewBox="0 0 340 122" role="img" aria-label="At main, claudeHookEvents reads the hook&#x27;s name, picks among nine hooks through seven if statements, and the branch builds its event inline. The function counts 13." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">claudeHookEvents reads the hook&#x27;s name</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">seven if statements pick among nine hooks</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the branch builds its event inline</text></svg></div><div class="pn after"><div class="pt">this change: one switch on the hook&#x27;s name</div><svg viewBox="0 0 340 171" role="img" aria-label="With this change, claudeHookEvents reads the hook&#x27;s name, one switch picks the hook&#x27;s case, and the case builds its event inline in main&#x27;s text. The MessageDisplay case reads delta through batchDelta. The function counts 5 and batchDelta counts 4." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">claudeHookEvents reads the hook&#x27;s name</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">one switch picks the hook&#x27;s case</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the case builds its event inline, in main&#x27;s text</text><line x1="170" y1="115" x2="170" y2="124" class="ar " marker-end="url(#ah)"/><rect x="20" y="125" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="141.5" text-anchor="middle" class="t s">the MessageDisplay case reads delta through</text><text x="170" y="154.5" text-anchor="middle" class="t s">batchDelta</text></svg></div></div><p><b>Evidence.</b> The scan the automated reviewer runs, on Linux: <code>claudeHookEvents</code> 13 at <code>main</code>, 2 at 468039e93 and 5 at this head, with 0 new findings at both. Line counts: <code>git diff</code> of <code>src/</code> against <code>main</code>, plain and with <code>-w</code>. The branch&#x27;s history holds both shapes, since pushed commits are never rewritten. <code>CONTRIBUTING.md</code> line 538 asks for refactoring apart from behaviour changes under &quot;Large changes&quot;; this edits one function of one component.</p></details></div>
+<div class="dblock"><h3>What does the adapter take as <code>delta</code>?</h3>
+<p><b>We chose</b> any text, in a reader for <code>delta</code> alone, so no id can pass blank.</p>
+<p><b>Would change our mind:</b> a second hook field that can be blank: the shared reader then takes blank text.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A reader for <code>delta</code> alone that takes any text <span class='tag new'>chosen</span></td><td data-l="What a user gets">Blank lines and the empty last batch are recorded, and the reply ends on <code>final</code>.</td><td data-l="Cost">One function, <code>batchDelta</code>: 10 lines with its comment.</td><td data-l="What it breaks">Nothing accepted before. A <code>delta</code> that is not text is refused with a new message that names its type.</td></tr><tr><td class="k">Let the shared reader take blank text</td><td data-l="What a user gets">The same.</td><td data-l="Cost">Fewer lines.</td><td data-l="What it breaks">The shared reader also reads <code>session_id</code>, <code>prompt_id</code>, <code>tool_use_id</code> and <code>message_id</code> here, and the ids of the Codex and Cursor adapters. A blank id would pass in all three.</td></tr><tr><td class="k">Take the empty last batch, keep refusing a blank line</td><td data-l="What a user gets">The reply ends.</td><td data-l="Cost">No daemon call for a blank line.</td><td data-l="What it breaks">By a read of the code, not run: the whole message loses its blank lines, as at <code>main</code> today. <code>Here is the plan:\n\nFix the test.</code> would be stored as <code>Here is the plan:\nFix the test.</code></td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a reply of three batches</div><svg viewBox="0 0 340 132" role="img" aria-label="At main, of a reply&#x27;s three batches, the line of text is recorded, the blank line is refused with Claude hook omitted delta, and the empty last batch is refused, so the reply never ends." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">batch 0, a line of text: recorded</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">batch 1, a blank line: refused</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="38" rx="8" class="bx "/><text x="170" y="102.5" text-anchor="middle" class="t s">batch 2, empty and final: refused, so the reply</text><text x="170" y="115.5" text-anchor="middle" class="t s">never ends</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 132" role="img" aria-label="With this change all three batches are recorded: the line of text, the blank line and the empty last batch. The reply ends and is stored as one whole message." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">batch 0, a line of text: recorded</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">batch 1, a blank line: recorded</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="102.5" text-anchor="middle" class="t s">batch 2, empty and final: recorded, and the reply</text><text x="170" y="115.5" text-anchor="middle" class="t s">ends</text></svg></div></div><p><b>Evidence.</b> The adapter&#x27;s delta test and the rows test fail at <code>main</code> with <code>Claude hook omitted delta</code>. In a second run from a separate checkout at 2bbd811b1: the fix line put back to <code>main</code>&#x27;s fails both; the not-text check removed fails the delta test for <code>7</code>; the missing check removed fails it on the message; the null wording put back fails it on <code>not object</code>.</p></details></div>
+<div class="dblock"><h3>Where does the test that a reply ends run, and what does it assert?</h3>
+<p><b>We chose</b> through the hook to a running daemon, asserting the one whole-message sample the empty last batch stores.</p>
+<p><b>Would change our mind:</b> a maintainer who wants a conversation rule&#x27;s match asserted too.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Through the hook to a running daemon, reading the session&#x27;s ledger <span class='tag new'>chosen</span></td><td data-l="What a user gets">The end as a person gets it. After four batches the ledger holds exactly one whole-message sample, made by the empty last batch&#x27;s event: <code>Here is the plan:\n\nFix the test.</code></td><td data-l="Cost">One test daemon. The test takes 0.30 s on Linux and 1.6 s on Windows 11.</td><td data-l="What it breaks">Nothing.</td></tr><tr><td class="k">Add the end to the rows test, which runs in process</td><td data-l="What a user gets">No daemon to start.</td><td data-l="Cost">None.</td><td data-l="What it breaks">It cannot show the end. By a read of <code>src/harness/hook-host.ts</code> lines 157 to 167, not run: each in-process hook call builds a new runtime, so a reply spread over hook calls never ends there.</td></tr><tr><td class="k">Also assert a conversation rule&#x27;s match on the reply</td><td data-l="What a user gets">The rule check itself, beside the sample it reads.</td><td data-l="Cost">A set-up repository, a library rule and the real model&#x27;s match. No test in the file gives a rule.</td><td data-l="What it breaks">Not built.</td></tr></tbody></table></div><p><b>Evidence.</b> <code>src/runtime/host-runtime.ts</code> lines 143 to 149: only a <code>final</code> batch finishes the stream and stores the <code>message</code> sample. The test sends no <code>Stop</code> and no <code>SessionEnd</code>, so the sample can only come from the empty last batch. With line 143 edited to skip an empty final <code>delta</code>, not committed, the test fails on <code>expected [] to deeply equal</code> and the rows test passes. At 8d531e566 it passed 20 of 20 separate runs on Linux and 20 of 20 on Windows 11.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>Nothing has to merge first: it is based on <code>main</code>, and no open pull request needs it.</p>
+<p><code>main</code> took #526, which edits one of its test files: GitHub reports no conflict.</p>
+<details class="ev"><summary>Related pull requests</summary><p>#503, merged, fixed #536, the numeric <code>index</code> that #549&#x27;s reproduction needs; this branch is cut after it. #571, closed on 12 November, held this fix with the <code>index</code> fix and stays closed. Two open pull requests also edit <code>test/hosts/claude/claude-hook.test.ts</code>, in other lines: #667, the team&#x27;s, and #673, ours. A trial merge with each has no conflict. Neither edits the adapter. No other open pull request touches the four files, read on GitHub on 14 November 2026.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>A Claude Code session of our own</b> did not run against this head: the wait per batch in one is not timed.</li>
+<li><b>A conversation rule&#x27;s match</b> on the stored reply is not asserted: the test checks the whole-message sample such a rule reads.</li>
+<li><b>How many real replies</b> hold a blank line or end on a newline was not counted.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Five smaller gaps, six limits that stay</summary><ul class="facts">
+<li><b>The wait&#x27;s figures.</b> The 33 to 36 ms come from medians of 10 runs per case, hook process start included, on a 32-thread Linux machine at 468039e93. The spread was not recorded, and the timing was not run again at this head.</li>
+<li><b>The integration tests on Windows.</b> They did not run on Windows. On Linux at 2bbd811b1 the adapter parity test passed 1 of 1 and the Claude hook rules test 3, with 1 skipped. CI&#x27;s <code>Integration tests</code> job passed at this head.</li>
+<li><b>The whole suite outside CI.</b> Not run: CI ran it at this head. The other runs cover the 9 test files that use the Claude adapter or the adapter contract.</li>
+<li><b>#667 and #673.</b> Both edit <code>claude-hook.test.ts</code> in other lines. A trial merge of 8d531e566 with each head, 34dae62e9 and e5656482d, has no conflict. No test ran on a merged tree.</li>
+<li><b>A <code>delta</code> of another type.</b> The tests send a number and a <code>null</code>. By a read of <code>batchDelta</code>, an array or an object is refused as <code>Claude hook delta must be text, not object</code>. Nothing under <code>src/</code> parses the old message.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>Replies recorded before the upgrade stay as they were recorded.</li>
+<li>A blank or empty batch now waits for the daemon, as a text batch does: 33 to 36 ms more per hook process, at the median of 10 runs on a 32-thread Linux machine at 468039e93.</li>
+<li>The stored whole message is trimmed, at <code>main</code> and here (<code>src/runtime/chunker.ts</code> line 76): a reply that ends on a newline is stored without it.</li>
+<li>A <code>delta</code> of spaces only is recorded too. It adds no message sample: the chunker trims it.</li>
+<li>A refused batch still answers <code>{}</code> and exits 0. The comment at <code>src/harness/hook-host.ts</code> line 139 says where it shows: the hook failure log that <code>rerail status</code> reads.</li>
+<li>The fix stops at the adapter. How <code>index</code> is read, how the hook waits for the daemon, and the Codex and Cursor adapters stay as they are.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+<p><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Answer 1 asks no ruling. A code owner approved it; #549 states it.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record. &quot;How you tested it&quot; holds the failing tests, the runs and the measurements.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">The run at 8d531e566, read on 14 November 2026 at 01:41 UTC</td><td data-l="Result">19 checks passed, <code>CI result</code>, <code>Unit tests (1/2)</code> and <code>(2/2)</code>, <code>Unit tests (Windows, 1/2)</code> and <code>(Windows, 2/2)</code>, <code>Integration tests</code> and <code>Real Claude Code, Codex, and Cursor sessions</code> among them. 3 were skipped: <code>Rust engine</code>, <code>Conformance</code> and <code>Conformance comment</code>. None failed.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">2bbd811b1 with the fix line put back to <code>main</code>&#x27;s, from a separate checkout; then <code>main</code>&#x27;s source at c438bc813 with this head&#x27;s <code>claude-hook.test.ts</code></td><td data-l="Result">At 2bbd811b1 the delta test and the rows test failed and the 25 other tests of the two files passed. At c438bc813 the reply-ends test and the rows test failed. Every failure says <code>Claude hook omitted delta</code>.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The reply-ends test and the rows test at this head with one edit each time, not committed: <code>batchDelta</code> refusing <code>&quot;&quot;</code>; the fix line put back to <code>main</code>&#x27;s; the runtime skipping the end when the final <code>delta</code> is empty</td><td data-l="Result"><code>batchDelta</code> refusing <code>&quot;&quot;</code>: both failed. The fix line put back: the reply-ends test failed. The end skipped: the reply-ends test failed on <code>expected [] to deeply equal</code>, and the rows test passed, so only the new test catches a stored final batch that does not end the reply.</td></tr><tr><td class="k">Linux and Windows 11</td><td data-l="What ran">The reply-ends test alone at 8d531e566, 20 separate runs on each</td><td data-l="Result">20 of 20 passed on Linux, 391 to 427 ms each. 20 of 20 passed on Windows 11.</td></tr><tr><td class="k">Linux and Windows 11</td><td data-l="What ran">9 test files at 8d531e566: the 5 that import the Claude adapter and the 4 that import <code>adapter-contract.ts</code> directly</td><td data-l="Result">On each: 187 passed, 1 skipped, 0 failed. The skip on Linux is a Git Bash case that runs on Windows only. The skip on Windows is a symlink case.</td></tr><tr><td class="k">Linux, a separate checkout</td><td data-l="What ran">At 2bbd811b1, whose source is this head&#x27;s: <code>main</code>&#x27;s adapter against this one on 587,738 payloads; 10 replies of four batches through the hook to a running daemon; four one-line edits</td><td data-l="Result">575,911 payloads gave the same events or the same error. 3,288 held a blank <code>delta</code>: <code>main</code> refused it, this records it. 8,539 held a <code>delta</code> that is not text: both refuse it, and this names the type. None was unexplained. <code>main</code> stored 0 whole messages for the 10 replies, this stored 10. Each edit failed a test.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">A test file, not committed: 10 replies of three batches through the hook to a running daemon, at <code>main</code> (383fc99aa) and at 2bbd811b1</td><td data-l="Result"><code>main</code>: 10 of 30 batches recorded, the last batch of 0 of 10 replies. 2bbd811b1: 30 of 30, and the last batch of 10 of 10. In the test process a text, a blank and an empty batch took 26.9, 29.3 and 28.0 ms at the median there.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The rules scan as the automated reviewer runs it, rules from <code>main</code> at c438bc813, against 8d531e566</td><td data-l="Result">40 checks, 0 findings, 0 new. <code>claudeHookEvents</code> counts 5, against 13 at <code>main</code>, and <code>batchDelta</code> 4.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>GitHub at 01:41 UTC on 14 November 2026.</b> #647 is open and ready for review at 8d531e566: six commits, 150 lines added and 56 removed in 4 files. A code owner approved 2bbd811b1 on 13 November and asked for a test that the reply ends; the reply under that review names 8d531e566. GitHub reports no conflict with <code>main</code> at 4cea86aaa, which took #526 on 13 November.</li>
+<li><b>#667 and #673 share one test file.</b> Both are open and edit <code>test/hosts/claude/claude-hook.test.ts</code>: #667 near lines 8 and 425, #673 near line 143, this pull request near lines 1, 213 and 266, each counted in its own base. A trial merge of 8d531e566 with each head, 34dae62e9 and e5656482d, and with <code>main</code> at 4cea86aaa has no conflict.</li>
+<li><b>An in-process hook test cannot show a reply&#x27;s end.</b> By a read of <code>src/harness/hook-host.ts</code> lines 157 to 167, not run: with a test embedder each hook call builds a new runtime, and the runtime holds a reply&#x27;s text in memory. A reply spread over hook calls ends only when a daemon holds it between batches, so the reply-ends test starts one.</li>
+<li><b>The wait was timed at an earlier commit.</b> The 33 to 36 ms were measured at 468039e93. Since then <code>batchDelta</code> changed in one place, the word it gives a <code>null</code>, and the code around it became a <code>switch</code>. At 2bbd811b1 the three kinds of batch took 26.9, 29.3 and 28.0 ms at the median in the test process, without the hook process&#x27;s start.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #647, its diff, its reviews and its CI on GitHub, read on 14 November 2026 at 01:41 UTC. Rerail at <code>main</code> (4cea86aaa) for each quoted intent. Issue #549 for how the gap was found. Each measurement names the commit it ran at. The open pull requests on GitHub for the related ones.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
