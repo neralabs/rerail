@@ -447,6 +447,19 @@ impl Placed {
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>) -> Placed {
         Placed { v, ids: Some(ids.into()) }
     }
+    /// `rules` added to `parent` (an overlay that removes nothing), in order.
+    pub fn over(parent: &Arc<Version>, rules: &[Rule]) -> Result<Placed> {
+        let mut b = Builder::on(parent);
+        let mut ids = Vec::with_capacity(rules.len());
+        for r in rules {
+            ids.push(b.add(r).map_err(Error::Plan)?);
+        }
+        let (v, made) = b.finish().map_err(Error::Plan)?;
+        if let Some(order) = super::keeps::inline::renumbered(parent, &[], &ids, made) {
+            ids.iter_mut().for_each(|id| *id = order[id]);
+        }
+        Ok(Placed::new(v, ids))
+    }
     /// The id of the program's rule `k`.
     pub fn id(&self, k: usize) -> RuleId {
         self.ids.as_ref().map_or(RuleId(k as u32), |ids| ids[k])
@@ -509,7 +522,12 @@ impl Versions {
         if rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
             return Ok(());
         }
-        let v = Placed::made(rules)?;
+        // A maintained form's rules are an overlay of the run's version (decision 0173 §7, t36 item 6 step 6): the
+        // rules it adds over the program's atoms and relations, not a program image of their own.
+        let v = match self.0.first() {
+            Some((_, _, run)) => Placed::over(&run.v, rules)?,
+            None => Placed::made(rules)?,
+        };
         self.0.push((start, start + std::mem::size_of_val(rules), v));
         Ok(())
     }

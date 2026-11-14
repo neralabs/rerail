@@ -233,3 +233,10 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     observation key) over the planner's, keeps, demand, choices, cone, phase0, corpus and session tests and dl1; the
     check is gone. The choices test reads a kept choice back from the store and checks its image's rules likewise.
     dl1: the 48 findings are equal; cold 46.2 G (twice; 49.6 G after the hub merge, load about 75), warm 1.7 G.
+  - Step 6 (2026-11-14): a maintained stratum's form, and its rules for deriving it again, are overlays of the run's
+    version (`Versions::add_rules`, `Placed::over`): the rules they add, written over the program's atoms and
+    relations, not a program image of their own. The form is still made by `maintain::rewrite_with` as a tree and
+    kept in the `Forms` arena for the run's tree readers (item 7); its rules are encoded into the overlay once.
+    Checked while porting: each form rule, read from the overlay, equalled the rules made alone (head, literals,
+    observation key) over the maintain, session, edit, again, retain, cone, phase and corpus tests; the check is
+    gone. dl1 (no maintained run): the 48 findings are equal; cold 46.5 G, warm 1.7 G.
