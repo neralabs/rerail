@@ -248,15 +248,18 @@ are not waited for further: that edit is checked by the first pass once they ope
 - Stopping the daemon ends the session, as it ends every open one. Its history shows it ended when its memory was
   freed, the last the daemon heard of it, not when the daemon stopped.
 - A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
-  daemon to start ends each session it left open, at 30 minutes after the session's last event, or at that start when
-  sooner. A second daemon already running on the same Rerail home does the same within a minute. The session's next
-  event opens it again. A session that a daemon still running holds is left as it is. A daemon tells that another has
-  stopped by a lock that daemon held, also when another process now has its process id. Where a session's record names
-  no such lock (a pi or OMP session, one of a daemon that could take no lock, or one an earlier version left), it goes
-  by that process id alone, and leaves the session open while a process other than the daemon now starting has that id.
+  daemon to start on the same Rerail home ends each session it left open there, at 30 minutes after the session's last
+  event, or at that start when sooner. A second daemon already running on the same Rerail home does the same within a
+  minute. The session's next event opens it again. A session that a daemon still running holds is left as it is. A
+  daemon tells that another has stopped by a lock that daemon held, also when another process now has its process id.
+  Where a session's record names no such lock (a pi or OMP session, one a daemon recorded in another home or while it
+  could take no lock, or one an earlier version left), it goes by that process id alone: it leaves the session open
+  while another process has that id, and ends it when the id is its own but the session is not one it opened.
 - A daemon that could not take its owner lock (a file in `locks/owners/` beside its database, by which a later daemon
-  tells whether it still runs; a file system can refuse it) ends a quiet session when it frees its memory, as earlier
-  versions did: the session shows as ended, a scan asked for it is refused, and its next event opens it again.
+  tells whether it still runs; a file system can refuse it) says why in its log and ends a quiet session when it frees
+  its memory, as earlier versions did: the session shows as ended, a scan asked for it is refused, and its next event
+  opens it again. Every daemon does the same for a session it records in another home's database, which its own start
+  never looks at.
 
 </details>
 
