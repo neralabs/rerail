@@ -81,6 +81,26 @@ and the split and magic self-checks pass.
 
     The split's results are unchanged. A dump of every split and every `constant_relations` answer on dl1 (48 and
     52) was the same, byte for byte, from the old code and the new.
+11. **`simplify`'s congruence on numbers.** A run calls `congruence` about 24 times (each `simplify`, each
+    `merge_identical` after the file-local joins, `corpus::scoping`), over 27,664 rules in all on dl1. Only 30% of
+    those are a body an earlier call saw (19,306 distinct), so keeping the templates for the run would save little
+    and be a store of its own. Instead each call does less:
+    - the candidates are numbered once, and every other relation a rule names after them;
+    - a rule's template keeps the relations it reads as numbers, not a `String` copy of each name;
+    - each refinement round labels a read by a vector index (its class, or its own number), not by a lookup in a
+      string-keyed map and a `&str` label compared by text;
+    - what keeps a relation its own (`fixed`: inputs, demand, gates) is a set made once, not a scan of each list
+      per candidate;
+    - a candidate's distinct rules are counted with foldhash, not SipHash, and its column types are `Name`s;
+    - a rule is copied only when its constants are abstracted.
+
+    Every `congruence` result on dl1 (26) was the same from the old code and the new.
+12. **The lowerer's span patterns on numbers.** `span_patterns` keyed each column's spans by `(String, column)`,
+    with a `to_string` for each lookup, and its rules, readers and reading sites by text. The relations are now
+    numbered by their names' addresses, and the spans, the demand, the readers and the sites are vectors by
+    number. The rounds are unchanged: each reads the columns as the round before left them. Every pass's result on
+    dl1 (99 lowerings: `rx_spans`, the AST patterns) was the same from the old code and the new. dl1 has no span
+    pattern, so the lowerer's span tests are what exercises the fixpoint.
 
 ## Measured
 
@@ -98,6 +118,7 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | domains, text-kind demand, keep factors | 22.64 → 21.96 G (load 63–78) |
 | column statistics by relation | 21.71–21.78 → 21.49–21.65 G (load 26–28) |
 | the split numbered for the run | 21.61 → 21.24 G (medians of five pairs, load 78–98) |
+| congruence and span patterns on numbers (together) | 21.37 → 20.80 G (medians of five pairs, load 57–69) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are
@@ -115,8 +136,8 @@ runs at its starter's depth (`switches::within`) and takes nothing.
 These are open items (O-split-in-strings and the others in open-items.md):
 - A split still starts each relation outside its cone from the kept split's string sets, and gives its results as
   string sets and maps (`Split`), which `split_explained` copies. `RuleIndex` is keyed by text.
-- Outside the split, the string work left is in `simplify` (congruence, canonical), the lowerer's span patterns and
-  `keeps::choose` (after 0173 stage 2).
+- `canonical` still builds a relabelled copy of each rule and prints it, once per rule per `congruence` call.
+- `keeps::choose` is on names until 0173 stage 2.
 - `Board::finish` is 15% of the main thread, mostly waiting on the pool (`LockLatch`).
 - `memcmp` is 14.6%, spread over the string-keyed BTree lookups of many passes.
 - `keeps::choose` still keys its refusals, bounds and estimates by name (`BTreeMap<&str, …>`, `BTreeSet<String>`),
