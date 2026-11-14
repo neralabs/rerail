@@ -28,3 +28,17 @@ pub(crate) fn span(what: &'static str) -> Option<Box<dyn std::any::Any>> {
 pub(crate) fn behind_the_run() {
     profile::behind_the_run();
 }
+
+/// A recomputation in a warm run (`RERAIL_WARM`, `profile::warm_fault`): nothing without it.
+pub(crate) fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    profile::warm_fault(kind, detail);
+}
+
+/// A commit on `db` in a warm run (`profile::warm_commit`), for a connection whose commit hook is the store's own.
+///
+/// # Safety
+/// As `profile::warm_commit`: `db` is open, and this runs inside its commit hook.
+pub(crate) unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    // SAFETY: the caller's guarantee.
+    unsafe { profile::warm_commit(db) };
+}

@@ -302,6 +302,8 @@ impl ContentStore {
     }
 
     fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run, droppable: bool) -> bool {
+        // A truly warm run computes nothing it would keep (`RERAIL_WARM`): its caller's stack is here, not on the writer.
+        super::hazards::warm_fault("a write queued for the store", || format!("{what}, {bytes} bytes, {} keys", keys.len()));
         let mut job = job;
         let Some(w) = self.writer() else {
             if let Err(e) = retried(self, what, &mut job) {

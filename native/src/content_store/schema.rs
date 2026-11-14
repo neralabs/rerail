@@ -810,22 +810,45 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     Ok(expected.iter().all(|object| present.contains(object)))
 }
 
-/// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
-/// database, so it cannot drift from SCHEMA.
-/// Made on a writer's thread (decision 0104: a run's own threads only read).
-static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    rerail_accel::exec::scoped(|scope| {
-        scope
-            .spawn(|| {
-                super::hazards::behind_the_run();
-                let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())?;
-                schema_object_names(&connection).map_err(|error| error.to_string())
-            })
-            .join()
-            .unwrap_or_else(|p| std::panic::resume_unwind(p))
-    })
-});
+/// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is
+/// the whole of it, so this cannot drift from SCHEMA (`schema_objects_are_what_schema_creates` applies SCHEMA and
+/// compares). It was SCHEMA applied to an in-memory database, once a process: 124 statements written on every
+/// open, which a warm run's check refuses (`RERAIL_WARM`). An object SQLite makes along with one of these (a
+/// table's `sqlite_autoindex_*`, a full-text table's shadow tables) comes and goes with it.
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| Ok(schema_objects(SCHEMA)));
+
+fn schema_objects(schema: &str) -> Vec<(String, String)> {
+    let text: String = schema.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+    let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == '(' || c == ';').filter(|w| !w.is_empty()).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i].eq_ignore_ascii_case("CREATE") {
+            let rest = &words[i + 1..];
+            let (kind, at) = match rest {
+                [t, ..] if t.eq_ignore_ascii_case("TABLE") => ("table", 1),
+                [v, t, ..] if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") => ("table", 2),
+                [u, t, ..] if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") => ("index", 2),
+                [t, ..] if t.eq_ignore_ascii_case("INDEX") => ("index", 1),
+                [t, ..] if t.eq_ignore_ascii_case("TRIGGER") => ("trigger", 1),
+                [t, ..] if t.eq_ignore_ascii_case("VIEW") => ("view", 1),
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let rest = &rest[at..];
+            let name = match rest {
+                [a, b, c, name, ..] if a.eq_ignore_ascii_case("IF") && b.eq_ignore_ascii_case("NOT") && c.eq_ignore_ascii_case("EXISTS") => name,
+                [name, ..] => name,
+                [] => break,
+            };
+            out.push((kind.to_owned(), name.to_string()));
+        }
+        i += 1;
+    }
+    out
+}
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {
     connection
@@ -833,4 +856,27 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(StoreError::from)
+}
+
+#[cfg(test)]
+mod schema_object_tests {
+    use super::*;
+
+    /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
+    #[test]
+    fn schema_objects_are_what_schema_creates() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        let fts: Vec<String> = schema_objects(SCHEMA).into_iter().filter(|(_, n)| n.ends_with("_fts")).map(|(_, n)| n).collect();
+        let mut applied: Vec<(String, String)> = schema_object_names(&connection)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, n)| !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_"))))
+            .collect();
+        let mut read = schema_objects(SCHEMA);
+        applied.sort();
+        read.sort();
+        assert_eq!(read, applied);
+        assert!(read.len() > 100, "{} objects", read.len());
+    }
 }

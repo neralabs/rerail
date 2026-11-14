@@ -60,6 +60,9 @@ pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 
     for (path, &was) in old.iter().filter(|(p, _)| !new.contains_key(*p)) {
         out.push((Some(entry(path, was)?), None));
     }
+    if !out.is_empty() {
+        crate::code_rule_dsl::logic::profile::warm_fault("a document changed since the last run", || format!("{} documents", out.len()));
+    }
     Some(out)
 }
 
@@ -94,6 +97,9 @@ pub(super) fn delta(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols:
         let (was, now) = (rows_of(was)?, rows_of(now)?);
         gone.extend(was.difference(&now).cloned());
         new.extend(now.difference(&was).cloned());
+    }
+    if !gone.is_empty() || !new.is_empty() {
+        crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("input {key}: {} rows gone, {} new", gone.len(), new.len()));
     }
     Some((gone, new))
 }

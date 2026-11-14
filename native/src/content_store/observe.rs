@@ -285,25 +285,15 @@ impl Observer {
     /// the run by the observer's writer, and never read back: the observer's memory is ahead of its file.
     fn open(path: Option<&Path>) -> Observer {
         let (mut entries, mut aliases, mut canon) = (HashMap::new(), HashMap::new(), HashMap::new());
-        let mut db = path.map(|p| {
+        let db = path.map(|p| {
             let (records, meta) = read_all(p, &mut entries, &mut aliases, &mut canon);
             Kept { records, meta, writer: Writer::open(p) }
         });
-        // Each process checks another slice of the trusted files.
-        let epoch = db
-            .as_mut()
-            .map(|k| {
-                let e = match k.meta.get("epoch") {
-                    Some(rusqlite::types::Value::Integer(i)) => *i,
-                    _ => 0,
-                } + 1;
-                k.meta.insert("epoch".to_owned(), rusqlite::types::Value::Integer(e));
-                k.writer.send(|db| {
-                    let _ = db.execute("INSERT INTO observer_meta VALUES ('epoch', 1) ON CONFLICT(key) DO UPDATE SET value = value + 1", []);
-                });
-                e
-            })
-            .unwrap_or(0) as u64;
+        // Each process checks another slice of the trusted files, by the second it opened in: consecutive processes
+        // take consecutive slices, as a stored counter's would, and no process writes to say which it took (a warm run
+        // writes nothing, `RERAIL_WARM`). What is lost is the counter's guarantee that 64 processes in a row cover every
+        // file once: two in the same second check the same slice, and coverage holds over seconds rather than runs.
+        let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let validate_every = std::env::var("RERAIL_VALIDATE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(VALIDATE_EVERY);
         let cookies = path.and_then(|p| p.parent()).map(Path::to_path_buf);
         let stored_roots: Vec<PathBuf> = db
@@ -661,6 +651,9 @@ impl Observer {
                 k.meta.insert(cursor_key(root, v), rusqlite::types::Value::Text(cursor.to_owned()));
             }
             let (gone, listings, at) = (gone.clone(), listings.clone(), volume.map(|v| (cursor_key(root, v), cursor.to_owned())));
+            super::hazards::warm_fault("the observer moved a root's journal cursor", || {
+                format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), paths.len(), paths.iter().take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
+            });
             k.writer.send(move |db| {
                 let Ok(tx) = db.transaction() else { return };
                 {
@@ -826,6 +819,9 @@ impl Observer {
         let aliases = std::mem::take(&mut self.new_aliases);
         let canon: Vec<(String, String)> = std::mem::take(&mut self.new_canon).into_iter().map(|(p, c)| (format!("{CANONICAL}{}", p.display()), c.to_string_lossy().into_owned())).collect();
         self.dirty.clear();
+        super::hazards::warm_fault("the observer recorded answers", || {
+            format!("{} paths (first {}), {} git aliases, {} canonical forms ({})", rows.len(), rows.first().map_or("-", |r| r.0.as_str()), aliases.len(), canon.len(), canon.iter().map(|(p, c)| format!("{p} -> {c}")).collect::<Vec<_>>().join(", "))
+        });
         k.writer.send(move |db| {
             let Ok(tx) = db.transaction() else { return };
             {
@@ -871,6 +867,9 @@ impl Observer {
             self.canon.retain(|k, _| !k.starts_with(&root) || resolved.contains(k));
             let Some(k) = self.db.as_mut() else { continue };
             let at = volume.map(|v| (cursor_key(&root, v), cursor));
+            super::hazards::warm_fault("the observer settled a root the journal could not speak for", || {
+                format!("{}: {} answers and {} canonical forms forgotten, cursor {}", root.display(), paths.len(), keys.len(), if at.is_some() { "stored" } else { "none (no volume)" })
+            });
             if let Some((key, cursor)) = &at {
                 k.meta.insert(key.clone(), rusqlite::types::Value::Text(cursor.clone()));
             }
