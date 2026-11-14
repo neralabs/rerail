@@ -548,7 +548,7 @@ longer than its launcher runs, 30 s at most. CLI commands such as `rerail settin
 testing) use its API.
 
 Any other process opening the machine-wide store gets an error and a failed policy run, not a second writer.
-Development builds never take the lock and never open that store.
+Development builds never take the main-instance lock and never open that store.
 
 </details>
 

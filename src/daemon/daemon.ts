@@ -912,7 +912,8 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   searchGitFrom(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
-  // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
+  // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every
+  // build, a checkout's included, takes the home's daemon lock before this, in `runHomeDaemon`.
   const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
   const mainInstance = build?.kind === "main" ? acquireMainInstance(build) : undefined;
   // `--dev` serves the committed page straight from `ui/`, so an edit needs only a reload.
