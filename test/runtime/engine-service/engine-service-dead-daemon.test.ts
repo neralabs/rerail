@@ -1,12 +1,13 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
-import { SqliteAuditControlStore, type AdapterEvent, type CodeRuleAuditor } from "../../../src/engine/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadNativeBinding, LOCKS_DIR, SqliteAuditControlStore, type AdapterEvent, type CodeRuleAuditor } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
@@ -16,6 +17,20 @@ import { startTestRepository } from "../../support/started-repository.js";
 // A daemon that died leaves its owner rows naming its pid, which the system can give the next daemon (a container, a
 // restart) or another process (Windows reuses pids soon). The next daemon's start must still end the sessions it left,
 // and never one of a daemon that still runs.
+
+/** What happens right after a sweep has judged a lock (`ownerLockFreed`), once each, in order: a test's stand-in for a death. */
+const afterJudged = vi.hoisted(() => [] as Array<() => void>);
+vi.mock("../../../src/engine/audit/owner-lock.js", async importOriginal => {
+  const actual = await importOriginal<{ ownerLockFreed: (databasePath: string, lockId: string) => boolean }>();
+  return {
+    ...actual,
+    ownerLockFreed: (databasePath: string, lockId: string) => {
+      const freed = actual.ownerLockFreed(databasePath, lockId);
+      afterJudged.shift()?.();
+      return freed;
+    },
+  };
+});
 
 const CHILD = fileURLToPath(new URL("../../support/processes/engine-service-process.ts", import.meta.url));
 const IDLE_MS = 60_000;
@@ -34,6 +49,7 @@ function ended(child: ChildProcess): Promise<void> {
 }
 
 afterEach(async () => {
+  afterJudged.splice(0);
   await Promise.all(children.splice(0).map(ended));
   await Promise.allSettled(services.splice(0).map(service => service.close()));
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
@@ -189,13 +205,16 @@ function setOwner(databasePath: string, sessionId: string, row: { processId: num
   }
 }
 
-/** Opens `session`'s record and claims it from this process under no lock, as a pi or OMP session's runtime does. */
-function claimUnlocked(databasePath: string, session: { host: "claude-code"; sessionId: string; cwd: string }): void {
+/**
+ * Opens `session`'s record and claims it from this process: under the lock `lockId` as an engine service's runtime
+ * does, or without one as a pi or OMP session's runtime does.
+ */
+function claimHere(databasePath: string, session: { host: "claude-code"; sessionId: string; cwd: string }, lockId?: string): void {
   const sessions = new SqliteSessionStore(databasePath);
   const controls = new SqliteAuditControlStore(databasePath);
   try {
     sessions.openSession(session);
-    controls.registerOwner(session.sessionId, "next-event");
+    controls.registerOwner(session.sessionId, "next-event", lockId);
   } finally {
     controls.close();
     sessions.close();
@@ -270,7 +289,7 @@ describe("the next daemon's start after a daemon that died", () => {
     setOwner(databasePath, "earlier", { processId: process.pid, token: randomUUID(), updatedAt: Math.floor(performance.timeOrigin) - 60_000 });
     setOwner(databasePath, "stepped", { processId: process.pid, token: randomUUID(), updatedAt: Date.now() });
     // A claim this process made under no lock after its clock stepped back: its time reads as before the start.
-    claimUnlocked(databasePath, { host: "claude-code", sessionId: "mine", cwd: checkout });
+    claimHere(databasePath, { host: "claude-code", sessionId: "mine", cwd: checkout });
     setOwner(databasePath, "mine", { processId: process.pid, updatedAt: Math.floor(performance.timeOrigin) - 60_000 });
     await service(root, databasePath, Date.now);
     for (const sessionId of ["earlier", "stepped"]) {
@@ -323,5 +342,29 @@ describe("a daemon that runs on after another on the same records died", () => {
       controls.close();
       sessions.close();
     }
+  });
+});
+
+describe("the lock file of a daemon that died", () => {
+  // A daemon that dies just after another's sweep judged its lock held leaves a lock the same sweep then finds free.
+  // Removed then, while that daemon's sessions' rows still named it, the lock could no longer be found, and a sweep
+  // takes a lock with no file for one that may still run: those sessions read as live and owned for good while a
+  // process had the dead daemon's pid.
+  it("stays while an open session's owner row names it, so the next sweep ends that session", { timeout: 60_000 }, async () => {
+    const { root, databasePath } = await records();
+    const lockId = randomUUID();
+    const owners = join(root, LOCKS_DIR, "owners");
+    const lockFile = join(owners, `${lockId}.lock`);
+    await mkdir(owners, { recursive: true });
+    // The other daemon's lock, held as its engine service holds it. Its session's row names this process: a live pid,
+    // as a reused one is.
+    const held = loadNativeBinding().tryLockExclusive(lockFile);
+    if (held === null) throw new Error("the other daemon's lock was not taken");
+    claimHere(databasePath, { host: "claude-code", sessionId: "d", cwd: root }, lockId);
+    afterJudged.push(() => held.release());
+    const next = await service(root, databasePath, Date.now);
+    expect(existsSync(lockFile), "the dead daemon's lock file").toBe(true);
+    await next.closeIdleSessions();
+    expect([recorded(databasePath, "d").endedAt === null, live(databasePath, "d")]).toEqual([false, false]);
   });
 });

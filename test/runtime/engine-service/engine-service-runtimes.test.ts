@@ -10,6 +10,7 @@ import {
   type RuleSteerDelivery,
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -1014,6 +1015,67 @@ describe("the engine service's idle close", () => {
     expect([typeof endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual(["number", false]);
     await service.ingest({ kind: "user-prompt", eventId: "o:back", sessionId: "o", session, text: "back" }, configuration);
     expect([endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual([null, true]);
+  });
+
+  // A close whose runtime fails to close leaves that runtime's sessions open and owned. The close removed its lock's file
+  // all the same, and a later start takes a lock with no file for one that may still run: those sessions read as live
+  // and owned for good while a process had the daemon's pid. This process stands in for that one.
+  it("ends at the next start the sessions a close that failed left open", async () => {
+    const { service, start, ended, live, nextService } = await idleService();
+    await start("a");
+    const left: RerailRuntime[] = [];
+    const dispose = vi.spyOn(RerailRuntime.prototype, "dispose").mockImplementationOnce(async function (this: RerailRuntime) {
+      left.push(this);
+      throw new Error("dispose failed");
+    });
+    services.splice(services.indexOf(service), 1);
+    try {
+      await expect(service.close()).rejects.toThrow("dispose failed");
+      expect([ended("a"), live("a")]).toEqual([null, true]);
+      await nextService(Date.now);
+      expect([typeof ended("a"), live("a")]).toEqual(["number", false]);
+    } finally {
+      dispose.mockRestore();
+      await Promise.all(left.map(runtime => runtime.dispose()));
+    }
+  });
+
+  // One runtime's failed close cut the others short: the service's close settled, and let its lock go, while they were
+  // still ending their sessions, which a daemon stopping then never finished.
+  it("waits for every runtime to close before its own close settles, when one of them fails", async () => {
+    const { service, second, start } = await idleService();
+    await start("a");
+    await start("b", second);
+    const failed = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const dispose = RerailRuntime.prototype.dispose;
+    let calls = 0;
+    const spy = vi.spyOn(RerailRuntime.prototype, "dispose").mockImplementation(async function (this: RerailRuntime) {
+      calls += 1;
+      if (calls === 1) {
+        await dispose.call(this);
+        failed.resolve();
+        throw new Error("dispose failed");
+      }
+      await gate.promise;
+      await dispose.call(this);
+    });
+    services.splice(services.indexOf(service), 1);
+    try {
+      let settled = false;
+      const closing = service.close().finally(() => { settled = true; });
+      void closing.catch(() => undefined);
+      await failed.promise;
+      // What the close does after a runtime's close fails runs within the turns that follow.
+      for (let turn = 0; turn < 3; turn += 1) await new Promise(resolve => setImmediate(resolve));
+      expect(settled, "the close settled while a runtime was still closing").toBe(false);
+      gate.resolve();
+      await expect(closing).rejects.toThrow("dispose failed");
+      expect(calls).toBe(2);
+    } finally {
+      gate.resolve();
+      spy.mockRestore();
+    }
   });
 
   // An end drops what the session owed. One from a repository stopped since dropped nothing: the ledger kept the steer,
