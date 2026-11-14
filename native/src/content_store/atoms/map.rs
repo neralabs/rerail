@@ -26,6 +26,39 @@ use std::sync::atomic::Ordering;
 
 const NONE: Sym = Sym::MAX;
 
+/// Symbol values as this process numbers them: what its rows, entries and arenas hold. Mapped to the store's by
+/// `Atoms::to_store` alone (decision 0170). The brand is the caller's claim, made where the values are: a value read
+/// from the store is a `StoreIds`, and passing it here instead is written as such, and reads as wrong.
+pub struct ProcessIds<'a>(pub(super) &'a mut [i64]);
+
+/// Symbol values as the store numbers them: what a frame, a row read or a write holds. Mapped to this process's by
+/// `Atoms::to_local` alone (decision 0170).
+pub struct StoreIds<'a>(pub(super) &'a mut [i64]);
+
+impl<'a> ProcessIds<'a> {
+    /// `values`, this process's ids: made by its own table, not read from the store.
+    pub fn of_process(values: &'a mut [i64]) -> Self {
+        Self(values)
+    }
+
+    /// The values, still this process's ids.
+    pub fn values(&self) -> &[i64] {
+        self.0
+    }
+}
+
+impl<'a> StoreIds<'a> {
+    /// `values`, the store's ids: read from it, not yet mapped.
+    pub fn as_stored(values: &'a mut [i64]) -> Self {
+        Self(values)
+    }
+
+    /// The values, still the store's ids.
+    pub fn values(&self) -> &[i64] {
+        self.0
+    }
+}
+
 pub(super) struct Map {
     /// Ids below are the same here and in the store, but those in `to_local` (`below`).
     pub(super) fork: Sym,
@@ -448,9 +481,10 @@ impl Atoms {
 
     /// The store's ids of `values` (symbols of this process's), in `connection`'s write transaction: unchanged unless
     /// forked; a pending atom gets its store id first.
-    pub fn to_store(&self, connection: &Connection, values: &mut [i64]) -> StoreResult<()> {
+    pub fn to_store<'v>(&self, connection: &Connection, ids: ProcessIds<'v>) -> StoreResult<StoreIds<'v>> {
+        let values = ids.0;
         if !self.forked() {
-            return Ok(());
+            return Ok(StoreIds(values));
         }
         if !writing(connection) {
             return Err(StoreError::Invalid("symbols are mapped to the store's in a write transaction".into()));
@@ -470,23 +504,24 @@ impl Atoms {
         for v in values.iter_mut().filter(|v| **v >= fork) {
             *v = i64::from(map.store_of(*v as Sym).ok_or_else(|| StoreError::Invalid(format!("atom {v} has no store id")))?);
         }
-        Ok(())
+        Ok(StoreIds(values))
     }
 
     /// This process's ids of `values` (symbols as the store holds them): unchanged unless forked; another process's
     /// atom is read and held here first.
-    pub fn to_local(&self, values: &mut [i64]) -> StoreResult<()> {
+    pub fn to_local<'v>(&self, ids: StoreIds<'v>) -> StoreResult<ProcessIds<'v>> {
+        let values = ids.0;
         if !self.forked() {
             // Not forked: an id past this process's end is another process's, stored since. Learning the store's end
             // first moves this one's there, or, with atoms pending here, forks (decision 0170): either way the id is
             // not read as one of this process's own.
             let base = self.state.read().atoms.base() as i64;
             if !values.iter().any(|&v| v >= base) {
-                return Ok(());
+                return Ok(ProcessIds(values));
             }
             self.read_end()?;
             if !self.forked() {
-                return Ok(());
+                return Ok(ProcessIds(values));
             }
         }
         let missing: Vec<Sym> = {
@@ -511,7 +546,7 @@ impl Atoms {
         for v in values.iter_mut().filter(|v| below || **v >= fork) {
             *v = i64::from(map.local_of(*v as Sym).ok_or_else(|| StoreError::Corrupt(format!("store atom {v} is past the store's end")))?);
         }
-        Ok(())
+        Ok(ProcessIds(values))
     }
 
     /// The store's ids of `values` (symbols of this process's) for a read, outside a write transaction: unchanged

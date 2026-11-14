@@ -453,7 +453,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     assert_eq!(frame.rows().unwrap().rows, [2, 2, 3, 3, 1, 1], "this process's ids");
     // The other process's `z` is held here under an id of this process's.
     let mut z = [2i64];
-    handle.to_local(&mut z).unwrap();
+    handle.to_local(StoreIds::as_stored(&mut z)).unwrap();
     assert_eq!(handle.with_str(z[0] as u32, str::to_owned).as_deref(), Some("z"));
     // A write that does not declare its symbols mapped is refused after the fork.
     store.intern_atoms(&["c"]).unwrap();
@@ -551,7 +551,7 @@ fn a_forks_segment_rolled_back_is_forgotten() {
     handle.begin_write(&connection).unwrap();
     assert!(handle.forked());
     let mut b = [2i64];
-    handle.to_store(&connection, &mut b).unwrap();
+    handle.to_store(&connection, ProcessIds::of_process(&mut b)).unwrap();
     assert_eq!(b, [3]);
     connection.execute_batch("ROLLBACK").unwrap();
     assert_eq!(segments(&path), [(0, 1), (1, 1), (2, 1)]);
@@ -645,7 +645,7 @@ fn a_run_mapped_from_its_end_keeps_one_id_a_string_and_stores_none_twice() {
     // A stored row naming 3 (`c`) is read: 3 reads as 4, and 1 as itself.
     handle.hold_named(&[3, 1]).unwrap();
     let mut ids = [3i64, 1];
-    handle.to_local(&mut ids).unwrap();
+    handle.to_local(StoreIds::as_stored(&mut ids)).unwrap();
     assert_eq!(ids, [4, 1], "the store's `c` is this process's");
     assert_eq!(handle.stored(&[4]).unwrap(), [Some(3)], "and this process's `c` the store's");
     store.flush_atoms().unwrap();

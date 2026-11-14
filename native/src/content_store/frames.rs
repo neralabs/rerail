@@ -184,7 +184,7 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
                 rows.extend(cols.iter().map(|c| c[r]));
             }
             if let Some(atoms) = store {
-                super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(v))?;
+                super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(super::StoreIds::as_stored(v)).map(drop))?;
             }
             Ok(Rows { types: types.clone(), rows, n: *n })
         }
@@ -225,7 +225,7 @@ impl Admitted {
                     rows.extend(cols.iter().map(|c| c[r]));
                 }
                 if let Some(atoms) = store {
-                    super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(v))?;
+                    super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(super::StoreIds::as_stored(v)).map(drop))?;
                 }
                 Ok(Rows { types: types.clone(), rows, n: *n })
             }
@@ -667,14 +667,22 @@ impl ContentStore {
     /// from the store), held with the snapshot. Once a process for each space.
     pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>) -> StoreResult<(usize, usize)> {
         let Some(snapshot) = self.snapshot() else { return Ok((0, 0)) };
+        let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         if !snapshot.lock().expect("the frames' snapshot").admitted.insert(*space) {
+            if trace {
+                eprintln!("rerail: memo entries of space {:02x}{:02x}: admitted already in this process", space[0], space[1]);
+            }
             return Ok((0, 0));
         }
         let keys = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             newest_by_path(&connection, space, MEMO_RELS[0])?
         };
+        let newest = keys.len();
         let keys: Vec<(Rel, i64)> = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, _, part)| (rel, part)).collect();
+        if trace {
+            eprintln!("rerail: memo entries of space {:02x}{:02x}: {newest} paths' newest, {} not looked up already ({} looked up)", space[0], space[1], keys.len(), looked_up.len());
+        }
         if keys.is_empty() {
             return Ok((0, 0));
         }
@@ -998,7 +1006,7 @@ impl ContentStore {
             let store_blocks = |puts: &[&Put]| -> StoreResult<Vec<Vec<u8>>> {
                 puts.iter().map(|p| {
                     let mut rows = p.rows.rows.clone();
-                    super::atoms::map_columns(&p.rows.types, &mut rows, |v| self.atoms.to_store(t, v))?;
+                    super::atoms::map_columns(&p.rows.types, &mut rows, |v| self.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop))?;
                     Ok(super::cross_rows::encode(p.rows.types.len(), &rows))
                 }).collect()
             };

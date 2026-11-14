@@ -13,6 +13,9 @@ use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreRes
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+mod numbering;
+use numbering::Stored;
+
 /// The memo's fact schema: bumped when an entry's meaning changes.
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
@@ -241,21 +244,27 @@ const MEMO_RUNS: i64 = 32;
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
 
-/// Each memo plan's symbol columns, by relation (decision 0170): its program's declarations, registered by the run
-/// that reads or writes its entries (`register_syms`).
+/// Each memo plan's symbol columns, by relation (decision 0170): its program's columns that hold atoms, registered by
+/// the run that reads or writes its entries (`register_syms`).
 static SYMS: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], std::sync::Arc<HashMap<String, Vec<bool>>>>>> = std::sync::LazyLock::new(Default::default);
 
-/// Registers memo program `program`'s symbol columns: each relation's, from its declaration (`sym`).
-pub(super) fn register_syms(program: &[u8; 32], decls: &BTreeMap<String, Vec<(String, String)>>) {
-    let map: HashMap<String, Vec<bool>> = decls.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|(_, t)| t == "sym").collect())).collect();
+/// Registers memo program `program`'s symbol columns: each relation's that hold atoms, by their domains (`Name`).
+///
+/// Not its declaration's `sym` columns: a kind's or a field's is a `sym` that holds the grammar's code
+/// (`core::kind_atom`, `syntax::field_atom`: `node`'s `kind` 1132, `field`'s `f` 65555), not an atom, and so is a
+/// derived relation's column the domains find holds one. Taken as atoms, a forked process would map those codes as
+/// this process's ids, and the check where an entry is made refused it (`symbol 65555 is no atom of this process's`).
+pub(super) fn register_syms(program: &[u8; 32], domains: &super::super::lower::Domains) {
+    let map: HashMap<String, Vec<bool>> = domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect();
     let plan = plan_digest(program);
     let map = std::sync::Arc::new(map);
     SYMS.lock().expect("the memo's symbol columns").insert(plan, std::sync::Arc::clone(&map));
     // Its entries' symbols, held as their frames are admitted before a run's waves (decision 0170): a wave decodes an
     // entry another process stored without reading the store.
     crate::content_store::register_frame_symbols(crate::content_store::local_space(&plan), std::sync::Arc::new(move |frame, out| {
-        let Ok(entry) = from_rows_projected(&frame.rows()?, &|_| true) else { return Ok(()) };
-        for (key, (w, rows)) in &entry.rows {
+        // The store's ids, as the frame holds them: those the table holds before the waves.
+        let Ok(entry) = Stored::decoded(&frame.rows()?, &|_| true) else { return Ok(()) };
+        for (key, (w, rows)) in entry.rows() {
             let Some(cols) = key_syms(&map, key, *w) else { continue };
             for row in rows.chunks_exact((*w).max(1)) {
                 out.extend(row.iter().zip(&cols).filter(|(_, s)| **s).map(|(v, _)| *v));
@@ -270,15 +279,16 @@ fn has_syms(plan: &[u8; 32]) -> bool {
 }
 
 /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own, a base
-/// relation's (`base_key`), a posting's value and count (`own:postings:rel:col`); the other `own:` rows are counts
-/// and kinds. None for a relation the plan does not declare.
+/// relation's (`base_key`); the `own:` rows hold none. None for a relation the plan does not declare.
+///
+/// A posting (`own:postings:rel:col`) is a count of a program's integer constant (`Own::constants`) in a column, as
+/// the column's source encodes it: a kind's or a field's is the grammar's code (`field`'s `f`, 65555), not an atom,
+/// whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for a
+/// constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one, the
+/// posting's column was looked up by number, found none, and a forked run refused every entry holding a posting.
 fn key_syms(syms: &HashMap<String, Vec<bool>>, key: &str, width: usize) -> Option<Vec<bool>> {
     if let Some(rel) = key.strip_prefix("base:") {
         return syms.get(rel).cloned();
-    }
-    if let Some(rest) = key.strip_prefix("own:postings:") {
-        let (rel, col) = rest.rsplit_once(':')?;
-        return Some(vec![*syms.get(rel)?.get(col.parse::<usize>().ok()?)?, false]);
     }
     if key.starts_with("own:") {
         return Some(vec![false; width]);
@@ -318,9 +328,11 @@ fn foreign_symbol(entries: &[&Entry], plan: &[u8; 32], atoms: usize) -> Option<(
 /// symbol of the batch gathered, mapped, and put back. `strict` (forked): an entry of a plan or relation with none
 /// registered is refused, its rows may name ids of the other numbering; else such rows are left as they are.
 fn map_entries(entries: &mut [Entry], plan: &[u8; 32], strict: bool, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
-    let refused = || StoreError::Invalid(crate::content_store::atoms::DIVERGED_TEXT.to_owned());
+    // The refusal names what was not mapped: a key whose columns the plan does not register is a miss of every
+    // entry holding it, for as long as the run is forked.
+    let refused = |what: &str| StoreError::Invalid(format!("{} ({what})", crate::content_store::atoms::DIVERGED_TEXT));
     let Some(syms) = SYMS.lock().expect("the memo's symbol columns").get(plan).cloned() else {
-        return if strict { Err(refused()) } else { Ok(()) };
+        return if strict { Err(refused("no symbol columns registered for the plan")) } else { Ok(()) };
     };
     // Each key's symbol columns, in the entries' order, gathered once and put back in the same order.
     let mut columns: Vec<Option<Vec<usize>>> = Vec::new();
@@ -329,13 +341,13 @@ fn map_entries(entries: &mut [Entry], plan: &[u8; 32], strict: bool, f: impl FnO
         for (key, (w, rows)) in entry.rows.iter() {
             let Some(cols) = key_syms(&syms, key, *w) else {
                 if strict {
-                    return Err(refused());
+                    return Err(refused(&format!("{key}, {w} wide: no registered columns")));
                 }
                 columns.push(None);
                 continue;
             };
             if cols.len() != *w {
-                return Err(refused());
+                return Err(refused(&format!("{key}: {w} wide, its columns {}", cols.len())));
             }
             let at: Vec<usize> = (0..*w).filter(|&c| cols[c]).collect();
             if *w > 0 {
@@ -430,16 +442,9 @@ impl Frame {
     }
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-        let mut entry = from_rows_projected(&self.frame.rows()?, keep)?;
-        entry.key = self.key;
-        // Read from the store (decision 0170): its symbols are the store's, this process's after `to_local` (another
+        // Read from the store (decision 0170): its symbols are the store's, this process's once mapped (another
         // process's past this one's end, or any once forked).
-        if let Some(atoms) = self.frame.store_atoms()
-            && (atoms.forked() || has_syms(&self.plan))
-        {
-            map_entries(std::slice::from_mut(&mut entry), &self.plan, atoms.forked(), |v| atoms.to_local(v))?;
-        }
-        Ok(entry)
+        Stored::decoded(&self.frame.rows()?, keep)?.to_process(&self.plan, self.key, self.frame.store_atoms().as_deref())
     }
 }
 
@@ -526,7 +531,13 @@ impl Found {
             // Forked (decision 0170), an entry whose symbols cannot be mapped (its relation's columns not
             // registered) is a miss: its rows may name the other numbering's ids.
             Found::Frame(f) => match f.projected(keep) {
-                Err(e) if e.to_string().contains(crate::content_store::atoms::DIVERGED_TEXT) => return Ok(None),
+                Err(e) if e.to_string().contains(crate::content_store::atoms::DIVERGED_TEXT) => {
+                    static SAID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
+                        eprintln!("rerail: memo entry of {} refused: {e}", f.path);
+                    }
+                    return Ok(None);
+                }
                 entry => entry?,
             },
         };
@@ -588,13 +599,21 @@ fn by_digest_from(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted:
         }
     }
     if !used.is_empty() {
+        // The use counts the run it is of, once however many windows mark it: without the run's token (`0`) each mark
+        // counts a run, and a run's later windows age out (`MEMO_RUNS`) the entries its first ones used. A wave runs on
+        // a job of the run (`threads::Jobs::spawn` carries its token): one without it is a thread the run did not
+        // start, and is refused here, where it would otherwise lose the store's entries one run later.
+        let token = super::run_token();
+        if token == 0 && crate::code_rule_dsl::logic::profile::inside_waves() {
+            return Err(StoreError::Invalid("the memo's frames were used in a wave on a thread that carries no run (threads::Jobs::spawn carries it)".into()));
+        }
         // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
         // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
         // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
         if rel.name == outputs_rel(plan).name {
-            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
+            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), token, MEMO_RUNS);
         }
-        store.queue_frame_parts_used(space, rel, used, super::run_token(), MEMO_RUNS);
+        store.queue_frame_parts_used(space, rel, used, token, MEMO_RUNS);
     }
     Ok(out)
 }
@@ -694,20 +713,13 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
                     made_under.len(), made_under.forked(), writes_with.len(), writes_with.forked()
                 )));
             }
-            // Forked (decision 0170): each entry's symbols as the store numbers them, in the writer's transaction.
-            let forked = writes_with.forked();
             let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
             let mut stored = store.source_digests(&ids)?.into_iter();
-            // Every entry's symbols mapped in one call.
-            let mapped: Option<Vec<Entry>> = if forked {
-                let mut all: Vec<Entry> = held.iter().map(|(_, _, e)| Entry::clone(e)).collect();
-                map_entries(&mut all, &plan, true, |v| store.symbols_to_store(v))?;
-                Some(all)
-            } else {
-                None
-            };
+            // Each entry's symbols as the store numbers them, in the writer's transaction (decision 0170): every
+            // entry's in one call, where this process forked from the store.
+            let mapped = numbering::to_store(&held.iter().map(|(_, _, e)| &**e).collect::<Vec<_>>(), &plan, store)?;
             let mut puts = Vec::with_capacity(held.len());
-            for (k, (content, path, e)) in held.iter().enumerate() {
+            for ((content, path, _), e) in held.iter().zip(&mapped) {
                 let digest = match content {
                     Content::Stored(_) => stored.next().flatten(),
                     Content::Unstored(d) => Some(*d),
@@ -716,12 +728,8 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
                 // A source collected since the run found it leaves the entry unwritten: the next run misses it.
                 let Some(digest) = digest else { continue };
                 let part = part_of(&digest, path);
-                let e: &Entry = match &mapped {
-                    Some(all) => &all[k],
-                    None => e,
-                };
-                puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(e) });
-                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(&outputs_of(e)) });
+                puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.encode() });
+                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.outputs().encode() });
             }
             let space = crate::content_store::local_space(&plan);
             store.keep_frames(&space, &puts, &[], None)?;
@@ -970,136 +978,6 @@ pub(super) fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
 }
 
-// An entry's frame (decision 0146): typed rows of integers, each row's first value its kind, its second the
-// relation or output it is of. A relation's rows are rows of it, a value to a column; text (names, lines) is packed
-// eight bytes to a value.
-const NODES: i64 = 0;
-const REL: i64 = 2;
-const REL_NAME: i64 = 3;
-const REL_ROW: i64 = 4;
-const OUT: i64 = 5;
-const OUT_NAME: i64 = 6;
-const OUT_COLUMN: i64 = 7;
-const LINE: i64 = 8;
-const LINE_TEXT: i64 = 9;
-
-/// The entry's rows; the frame's width: two, and the widest relation's, at least eight.
-fn to_rows(entry: &Entry) -> crate::content_store::FrameRows {
-    let width = 2 + entry.rows.values().map(|(w, _)| *w).max().unwrap_or(0).max(8);
-    let mut rows: Vec<i64> = Vec::new();
-    let mut n = 0;
-    let mut row = |rows: &mut Vec<i64>, values: &[i64]| {
-        rows.extend_from_slice(values);
-        rows.extend(std::iter::repeat_n(0, width - values.len()));
-        n += 1;
-    };
-    // Text after a row that gives its length: `width - 3` values a row, after the kind, the owner and a sequence.
-    let text = |rows: &mut Vec<i64>, row: &mut dyn FnMut(&mut Vec<i64>, &[i64]), kind: i64, owner: i64, at: i64, s: &str| {
-        for chunk in s.as_bytes().chunks((width - 3) * 8) {
-            let mut values = vec![kind, owner, at];
-            values.extend(chunk.chunks(8).map(|b| {
-                let mut word = [0u8; 8];
-                word[..b.len()].copy_from_slice(b);
-                i64::from_le_bytes(word)
-            }));
-            row(rows, &values);
-        }
-    };
-    row(&mut rows, &[NODES, 0, entry.nodes as i64]);
-    for (r, (name, (w, values))) in entry.rows.iter().enumerate() {
-        let r = r as i64;
-        let count = if *w == 0 { 0 } else { values.len() / w };
-        row(&mut rows, &[REL, r, *w as i64, count as i64, name.len() as i64]);
-        text(&mut rows, &mut row, REL_NAME, r, 0, name);
-        for v in values.chunks(*w.max(&1)) {
-            let mut values = vec![REL_ROW, r];
-            values.extend_from_slice(v);
-            row(&mut rows, &values);
-        }
-    }
-    for (o, (name, (columns, lines))) in entry.lines.iter().enumerate() {
-        let o = o as i64;
-        row(&mut rows, &[OUT, o, columns.len() as i64, lines.len() as i64, name.len() as i64]);
-        text(&mut rows, &mut row, OUT_NAME, o, 0, name);
-        for c in columns {
-            row(&mut rows, &[OUT_COLUMN, o, *c as i64]);
-        }
-        for (i, line) in lines.iter().enumerate() {
-            row(&mut rows, &[LINE, o, i as i64, line.len() as i64]);
-            text(&mut rows, &mut row, LINE_TEXT, o, i as i64, line);
-        }
-    }
-    crate::content_store::FrameRows { types: vec![b'i'; width], rows, n }
-}
-
-/// The entry `to_rows` made (its key is the frame's).
-fn from_rows(frame: &crate::content_store::FrameRows) -> StoreResult<Entry> {
-    from_rows_projected(frame, &|_| true)
-}
-
-/// `from_rows` keeping only the relations `keep` takes: the others' rows are checked, not kept.
-fn from_rows_projected(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-    let bad = |what: &str| StoreError::Invalid(format!("a corpus memo entry's frame {what}"));
-    let width = frame.types.len();
-    if width < 3 || frame.rows.len() != width * frame.n {
-        return Err(bad("has no rows of its width"));
-    }
-    let mut entry = Entry::default();
-    let mut rels: Vec<(String, usize, usize, Vec<u8>, Vec<i64>)> = Vec::new();
-    let mut outs: Vec<(Vec<u8>, usize, Vec<usize>, Vec<(usize, Vec<u8>)>)> = Vec::new();
-    let bytes = |values: &[i64]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
-    for row in frame.rows.chunks_exact(width) {
-        let owner = row[1] as usize;
-        match row[0] {
-            NODES => entry.nodes = row[2] as u64,
-            REL => {
-                if owner != rels.len() {
-                    return Err(bad("names a relation out of order"));
-                }
-                rels.push((String::new(), row[2] as usize, row[4] as usize, Vec::new(), Vec::new()));
-            }
-            REL_NAME => rels.get_mut(owner).ok_or_else(|| bad("names no relation"))?.3.extend(bytes(&row[3..])),
-            REL_ROW => {
-                let r = rels.get_mut(owner).ok_or_else(|| bad("has a row of no relation"))?;
-                let w = r.1;
-                r.4.extend_from_slice(row.get(2..2 + w).ok_or_else(|| bad("has a row wider than itself"))?);
-            }
-            OUT => {
-                if owner != outs.len() {
-                    return Err(bad("names an output out of order"));
-                }
-                outs.push((Vec::new(), row[4] as usize, Vec::new(), Vec::new()));
-            }
-            OUT_NAME => outs.get_mut(owner).ok_or_else(|| bad("names no output"))?.0.extend(bytes(&row[3..])),
-            OUT_COLUMN => outs.get_mut(owner).ok_or_else(|| bad("has a column of no output"))?.2.push(row[2] as usize),
-            LINE => outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?.3.push((row[3] as usize, Vec::new())),
-            LINE_TEXT => {
-                let o = outs.get_mut(owner).ok_or_else(|| bad("has a line of no output"))?;
-                o.3.last_mut().ok_or_else(|| bad("has text of no line"))?.1.extend(bytes(&row[3..]));
-            }
-            _ => return Err(bad("has a row of no kind")),
-        }
-    }
-    let text = |mut b: Vec<u8>, len: usize| -> StoreResult<String> {
-        if b.len() < len {
-            return Err(bad("has text shorter than its length"));
-        }
-        b.truncate(len);
-        String::from_utf8(b).map_err(|_| bad("has text that is not UTF-8"))
-    };
-    for (_, w, len, name, values) in rels {
-        let name = text(name, len)?;
-        if keep(&name) {
-            entry.rows.insert(name, (w, values));
-        }
-    }
-    for (name, len, columns, lines) in outs {
-        let lines = lines.into_iter().map(|(n, b)| text(b, n)).collect::<StoreResult<Vec<_>>>()?;
-        entry.lines.insert(text(name, len)?, (columns, lines));
-    }
-    Ok(entry)
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -1111,9 +989,9 @@ pub mod tests {
         entry.rows.insert("unused".into(), (2, vec![1;2000]));
         entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
         let keep = |r: &str| r == "wanted";
-        let rows = to_rows(&entry);
+        let rows = Stored::unmapped(entry.clone()).encode();
         let entry_copy = entry.clone();
-        let projected = Entry { key: 5, ..from_rows_projected(&rows, &keep).unwrap() };
+        let projected = Entry { key: 5, ..Stored::decoded(&rows, &keep).unwrap().into_unmapped() };
         assert_eq!(projected.rows.len(),1);
         assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
         assert_eq!(projected.lines,entry.lines);
@@ -1121,9 +999,9 @@ pub mod tests {
         let held = Found::Held(std::sync::Arc::new(entry));
         assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
         assert!(held.projected(6,&keep).unwrap().is_none());
-        let mut cut = to_rows(&entry_copy);
+        let mut cut = Stored::unmapped(entry_copy.clone()).encode();
         cut.rows.truncate(cut.rows.len() - 1);
-        assert!(from_rows_projected(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
+        assert!(Stored::decoded(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
         assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
     }
 
@@ -1133,8 +1011,9 @@ pub mod tests {
     #[test]
     fn an_entry_naming_no_atom_of_the_process_is_refused_where_it_is_made() {
         let program = [77u8; 32];
-        let decls: BTreeMap<String, Vec<(String, String)>> = [("named".to_owned(), vec![("n".to_owned(), "number".to_owned()), ("s".to_owned(), "sym".to_owned())])].into();
-        register_syms(&program, &decls);
+        use super::super::super::lower::Domain;
+        let domains: BTreeMap<String, Vec<Domain>> = [("named".to_owned(), vec![Domain::Int, Domain::Name])].into();
+        register_syms(&program, &domains);
         let plan = plan_digest(&program);
         let mut entry = Entry { key: 1, ..Entry::default() };
         entry.rows.insert("named".into(), (2, vec![9_999, 3, 10_000, 4]));
@@ -1146,6 +1025,30 @@ pub mod tests {
         assert_eq!(foreign_symbol(&[&entry], &plan, 5), Some(("base:named".to_owned(), -1)));
     }
 
+    /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
+    /// 65555, not an atom): its columns are known (a forked run refused every entry holding one when they were not),
+    /// and none is a symbol, so none is mapped, whatever the relation declares.
+    #[test]
+    fn a_posting_and_a_grammar_code_hold_no_symbol() {
+        let program = [78u8; 32];
+        use super::super::super::lower::Domain;
+        let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
+        register_syms(&program, &domains);
+        let plan = plan_digest(&program);
+        assert_eq!(symbol_columns(&plan, "own:postings:field:f", 2), Some(vec![false, false]));
+        assert_eq!(symbol_columns(&plan, "base:field", 3), Some(vec![false, false, false]), "a field's code is no atom");
+        assert_eq!(symbol_columns(&plan, "named", 2), Some(vec![false, true]), "a kind's neither; a name is");
+        let mut entry = Entry { key: 1, ..Entry::default() };
+        entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));
+        map_entries(std::slice::from_mut(&mut entry), &plan, true, |v| {
+            v.iter_mut().for_each(|x| *x += 100);
+            Ok(())
+        })
+        .expect("a posting's columns are known");
+        assert_eq!(entry.rows["own:postings:field:f"].1, vec![65_555, 10], "not mapped");
+        assert_eq!(foreign_symbol(&[&entry], &plan, 5), None, "nor taken for an atom");
+    }
+
     #[test]
     fn an_entry_round_trips_and_keys_are_stable() {
         let mut entry = Entry { key: 5, nodes: 7, ..Entry::default() };
@@ -1154,10 +1057,11 @@ pub mod tests {
         entry.rows.insert("wide".into(), (11, (0..22).collect()));
         entry.rows.insert("empty".into(), (2, Vec::new()));
         entry.lines.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], vec![String::new(), "ünïcode".into()]));
-        assert_eq!(from_rows(&to_rows(&entry)).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
-        let mut cut = to_rows(&entry);
+        let all = |_: &str| true;
+        assert_eq!(Stored::decoded(&Stored::unmapped(entry.clone()).encode(), &all).map(|e| Entry { key: 5, ..e.into_unmapped() }).unwrap(), entry);
+        let mut cut = Stored::unmapped(entry.clone()).encode();
         cut.rows.truncate(cut.rows.len() - 1);
-        assert!(from_rows(&cut).is_err());
+        assert!(Stored::decoded(&cut, &all).is_err());
         let paths = ["a.py".to_owned(), "b/c.py".to_owned()];
         let keys = doc_keys(&paths);
         assert_eq!(keys, doc_keys(&paths));

@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 mod map;
 mod vtab;
-pub use map::{map_columns, mapped};
+pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
 pub type Sym = u32;
 
@@ -1628,12 +1628,12 @@ impl super::ContentStore {
 
     /// `values` (this process's symbols) as the store numbers them, in this handle's open write transaction (the
     /// writer's batch): unchanged unless forked (decision 0170).
-    pub fn symbols_to_store(&self, values: &mut [i64]) -> StoreResult<()> {
+    pub fn symbols_to_store<'v>(&self, ids: ProcessIds<'v>) -> StoreResult<StoreIds<'v>> {
         if !self.atoms.forked() {
-            return Ok(());
+            return Ok(StoreIds(ids.0));
         }
         let connection = self.connection.lock().map_err(StoreError::Invalid)?;
-        self.atoms.to_store(&connection, values)
+        self.atoms.to_store(&connection, ids)
     }
 
     /// The atom of `value`, if the store holds it.

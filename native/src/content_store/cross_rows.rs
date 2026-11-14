@@ -113,7 +113,7 @@ impl ContentStore {
         drop(st);
         drop(connection);
         let mut out: BTreeMap<String, Vec<Vec<i64>>> = out.into_iter().collect();
-        map_symbols(&mut out, syms, |v| self.atoms.to_local(v))?;
+        map_symbols(&mut out, syms, |v| self.atoms.to_local(super::StoreIds::as_stored(v)).map(drop))?;
         Ok(out)
     }
 
@@ -126,7 +126,7 @@ impl ContentStore {
             let mapped;
             let rels = if self.atoms.forked() {
                 let mut cols: BTreeMap<String, Vec<Vec<i64>>> = rels.iter().map(|(r, (w, v))| (r.clone(), (0..*w).map(|c| v.iter().skip(c).step_by((*w).max(1)).copied().collect()).collect())).collect();
-                map_symbols(&mut cols, syms, |v| self.atoms.to_store(t, v))?;
+                map_symbols(&mut cols, syms, |v| self.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop))?;
                 mapped = cols.into_iter().map(|(r, cols)| {
                     let (w, n) = (cols.len(), cols.first().map_or(0, Vec::len));
                     (r, (w, (0..n).flat_map(|i| cols.iter().map(move |c| c[i])).collect::<Vec<i64>>()))

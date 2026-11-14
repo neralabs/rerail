@@ -244,7 +244,7 @@ impl ContentStore {
         let mut inputs = inputs;
         if self.atoms.forked() {
             let mut names: Vec<i64> = inputs.iter().filter_map(|(n, _)| n.map(i64::from)).collect();
-            self.atoms.to_local(&mut names)?;
+            self.atoms.to_local(super::StoreIds::as_stored(&mut names))?;
             let mut names = names.into_iter();
             for (name, _) in &mut inputs {
                 if name.is_some() {
@@ -269,7 +269,7 @@ impl ContentStore {
         drop(connection);
         if self.atoms.forked() {
             let mut local: Vec<i64> = readers.iter().map(|&r| i64::from(r)).collect();
-            self.atoms.to_local(&mut local)?;
+            self.atoms.to_local(super::StoreIds::as_stored(&mut local))?;
             readers = local.into_iter().map(|r| r as Sym).collect();
             readers.sort_unstable();
         }
@@ -309,7 +309,7 @@ impl ContentStore {
             return Ok(());
         }
         let mut values: Vec<i64> = atoms.iter().map(|&a| i64::from(a)).collect();
-        self.atoms.to_store(transaction, &mut values)?;
+        self.atoms.to_store(transaction, super::ProcessIds::of_process(&mut values))?;
         for (atom, value) in atoms.iter_mut().zip(values) {
             *atom = value as Sym;
         }
@@ -353,7 +353,7 @@ impl ContentStore {
     /// Rows keyed by an output atom (the store's id), with the output's string.
     fn named_outputs<T>(&self, rows: Vec<(Sym, T, i64, i64)>) -> StoreResult<Vec<(String, T, i64, i64)>> {
         let mut ids: Vec<i64> = rows.iter().map(|r| i64::from(r.0)).collect();
-        self.atoms.to_local(&mut ids)?;
+        self.atoms.to_local(super::StoreIds::as_stored(&mut ids))?;
         rows.into_iter()
             .zip(ids)
             .map(|((_, a, b, c), id)| {

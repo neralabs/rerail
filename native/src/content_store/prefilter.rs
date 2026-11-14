@@ -284,7 +284,7 @@ impl Counts {
         // hold the store's ids: a process whose atoms are mapped (decision 0170) maps them here, in one batch.
         let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<Vec<_>>();
         let mut ids: Vec<i64> = store.intern_all(&texts)?.into_iter().map(i64::from).collect();
-        store.to_store(transaction, &mut ids)?;
+        store.to_store(transaction, super::ProcessIds::of_process(&mut ids))?;
         let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids).collect();
         let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
         insert(

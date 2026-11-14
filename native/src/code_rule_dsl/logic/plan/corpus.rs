@@ -2038,6 +2038,28 @@ pub(in crate::code_rule_dsl) fn run_token() -> u64 {
     RUN_TOKEN.with(std::cell::Cell::get)
 }
 
+/// The run a job started on another thread is of (`threads::Jobs::spawn`): the spawner's token, set on the thread that
+/// runs the job until it ends. Read there unset (`0`), a wave's every lookup counted a run of its frames' space, so
+/// one run of 116 windows counted 120, and aged out (`MEMO_RUNS`) the entries its own first windows had used: the
+/// next run found none, parsed every file and wrote them all again.
+pub(crate) struct CarriedRun(u64);
+
+/// Sets `token` as this thread's run while the returned guard lives (a job's), then restores the one it replaced.
+pub(crate) fn carry_run(token: u64) -> CarriedRun {
+    CarriedRun(RUN_TOKEN.with(|t| t.replace(token)))
+}
+
+impl Drop for CarriedRun {
+    fn drop(&mut self) {
+        RUN_TOKEN.with(|t| t.set(self.0));
+    }
+}
+
+/// This thread's run, for a job it starts (`carry_run`).
+pub(crate) fn current_run() -> u64 {
+    run_token()
+}
+
 /// Counts a run under way on this thread until dropped.
 struct UnderWay;
 impl UnderWay {
@@ -2826,8 +2848,9 @@ fn run_observed(
         let by_rows: BTreeSet<&str> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
+    let memo_local = memo::program_digest(&split.local);
     let memo_program = {
-        let digest = memo::program_digest(&split.local);
+        let digest = memo_local;
         let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
         let digest = if reads_options { memo::with_options(digest, options) } else { digest };
         // Under the earlier phases' rows only those rules read that a memoised row depends on (an export's or an
@@ -3205,10 +3228,28 @@ fn run_observed(
     // This changes the local frame's identity, not the cross-file program's semantic identity.
     let memo_tree_stats = !stored.is_empty() || cross.program.rules.iter().flat_map(|r| &r.body)
         .any(|l| matches!(l, front::Literal::Nearest { .. }));
+    let memo_rules = memo_program;
     let memo_program = memo::with_tree_demand(memo_program, memo_tree_stats);
     let memo_program = memo::with_modules(memo_program, &renamed_modules);
+    // The memo plan's parts: a plan that differs between two runs of the same tree misses every entry.
+    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+        let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
+        eprintln!(
+            "rerail: memo plan {} of {}: rules {} (local {}, {} phased relations read), tree demand {memo_tree_stats}, {} modules renamed",
+            hex(&memo::plan_digest(&memo_program)), phases::current().as_deref().unwrap_or("the program"), hex(&memo_rules), hex(&memo_local), phased.len(), renamed_modules.len()
+        );
+    }
     // Its entries' symbol columns, for a store this process forks from (decision 0170).
-    memo::register_syms(&memo_program, &lowered.program.decls);
+    {
+        // The domains of the program as it is: `lowered.domains` are of the program as it was lowered, before its
+        // policies' relations were renamed and combined (`fl256_P` is in the one, not the other).
+        let at = std::time::Instant::now();
+        let domains = lower::domains(&lowered.program)?;
+        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+            eprintln!("rerail: the memo's symbol columns: the domains of {} relations, {:.3} s", domains.len(), at.elapsed().as_secs_f64());
+        }
+        memo::register_syms(&memo_program, &domains);
+    }
     // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
     // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
     let _held = match memo {
@@ -3381,7 +3422,7 @@ fn run_observed(
             let atoms = store.atoms_handle();
             if atoms.holds_by_reading() {
                 let plan = memo::plan_digest(&memo_program);
-                if k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), atoms.forked(), |v| atoms.to_local(v)).is_err() {
+                if k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
                     k = keptstats::Keeper::default();
                 }
             }
@@ -3820,7 +3861,13 @@ fn run_observed(
                 }
                 if let (true, false, Some(found)) = (memoised, b.outputs, b.found) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode".into());
-                    if let Some(entry) = found.projected(*d, &memo_row_needed).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
+                    let entry = found.projected(*d, &memo_row_needed).map_err(|e| Error::Plan(e.to_string()))?;
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && entry.as_ref().is_some_and(|e| !has_base(e)) {
+                        let e = entry.as_ref().expect("an entry");
+                        let missing: Vec<&str> = stored.iter().map(|(rel, _)| rel.as_str()).filter(|rel| !e.rows.contains_key(&memo::base_key(rel))).collect();
+                        eprintln!("rerail: memo entry of {path} unused: it holds no base rows of {missing:?}{}", if e.rows.contains_key(OWN_DOCS) { "" } else { ", nor its counts" });
+                    }
+                    if let Some(entry) = entry.filter(|e| has_base(e)) {
                         return Ok(Some((b.content, Ok(entry))));
                     }
                 }
@@ -5943,7 +5990,7 @@ fn run_observed(
                         return Ok(blob.to_vec());
                     }
                     let mut k = keptstats::Keeper::decode(blob).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
-                    k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), true, |v| store.symbols_to_store(v))?;
+                    k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
                     Ok(k.encode())
                 }));
             }
