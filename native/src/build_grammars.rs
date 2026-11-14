@@ -307,6 +307,15 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
     if reuse_allocator {
         build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
     }
+    // The library is the same in every checkout: its objects' names and debug info name no checkout.
+    // A compiler cache shared by the worktrees (scripts/build/farm) hashes each static library a
+    // crate bundles. Paths under the repository become relative to it, those under OUT_DIR (in the
+    // target directory, which may be elsewhere) relative to OUT_DIR.
+    let root = base.parent().expect("the repository holds native/");
+    build.source_root(root);
+    for (from, to) in [(root, "."), (out_dir.as_path(), "out")] {
+        build.flag_if_supported(format!("-ffile-prefix-map={}={to}", from.display()));
+    }
     build.include(base.join(grammar.headers)).file(parser_path).file(scanner).warnings(false).compile(&library);
     std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
