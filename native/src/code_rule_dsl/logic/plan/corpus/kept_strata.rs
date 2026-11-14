@@ -84,6 +84,10 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     pub(in crate::code_rule_dsl) written_rows: usize,
     /// The strata the run evaluated, of all (`KeptStrata::counted`).
     pub(in crate::code_rule_dsl) strata: Option<(usize, usize)>,
+    /// Each relation's column types as its frame keeps them (`typed`: `retain::types_of`, by the columns' domains),
+    /// as `load` reads them back. Without, the engine's declared types: a kind's or a field's `sym` column typed
+    /// `s`, which `load` refuses as kept under other types, and a forked process's writer maps as atoms.
+    types: HashMap<String, Vec<u8>>,
 }
 
 impl<'s> Kept<'s> {
@@ -103,7 +107,14 @@ impl<'s> Kept<'s> {
             gone: Vec::new(),
             written_rows: 0,
             strata: None,
+            types: HashMap::new(),
         }
+    }
+
+    /// Kept under `prog`'s frame types (`retain::types_of`), as `load` reads them: a kind or field column is no atom.
+    pub(in crate::code_rule_dsl) fn typed(mut self, prog: &crate::code_rule_dsl::logic::front::Program, domains: &super::lower::Domains) -> Self {
+        self.types = prog.decls.keys().map(|rel| (rel.to_string(), super::retain::types_of(prog, domains, rel))).collect();
+        self
     }
 
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
@@ -188,6 +199,7 @@ impl KeptStrata for Kept<'_> {
                 if self.was.get(rel).is_some_and(|w| w.digest == digest && w.reads == reads) {
                     return;
                 }
+                let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
                 self.values += rows.len();
                 self.written_rows += n;
                 self.puts.push(FramePut { rel: frame, part: 0, digest, reads, rows: FrameRows { types, rows, n } });

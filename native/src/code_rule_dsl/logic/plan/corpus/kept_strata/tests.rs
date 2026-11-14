@@ -134,3 +134,23 @@
         kept.admit(&["r".into()]);
         assert!(!kept.has_rows("r"), "old metadata must never certify replacement rows");
     }
+
+    /// A kept relation's frame keeps its kind and field columns as no atoms (`Kept::typed`), as `load` reads it back:
+    /// typed by its declaration (`sym`, `s`), `load` refused it as kept under other types, and a forked process's
+    /// writer mapped the grammar's codes as atoms.
+    #[test]
+    fn a_kept_relations_kind_column_is_no_atom() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let p = rr::parse(
+            ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+             .input node, text\n.decl kinded(n: node, k: symbol, s: symbol)\n.output kinded\n\
+             kinded(n, k, s) :- node(_, n, k, _, _), text(n, s).\n",
+        )
+        .unwrap();
+        let domains = lower::domains(&p).unwrap();
+        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]).typed(&p, &domains);
+        kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
+        kept.ran("kinded", Some((7, vec![b's', b's', b's'], vec![1, 1132, 5], 1, vec![])));
+        assert_eq!(kept.puts[0].rows.types, b"iis", "the node and the kind are no atoms, the text is");
+    }
