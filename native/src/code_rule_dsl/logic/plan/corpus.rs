@@ -3470,7 +3470,7 @@ fn run_observed(
             // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
             let atoms = store.atoms_handle();
             if atoms.holds_by_reading() {
-                if k.map_symbols(&|key, w| memo_plan.syms.columns(key, w), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
+                if k.map_symbols(&|key, names| memo_plan.syms.columns_named(key, names), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
                     k = keptstats::Keeper::default();
                 }
             }
@@ -3482,10 +3482,15 @@ fn run_observed(
     };
     if let Some(k) = keeper.as_mut() {
         // By the key their rows have in a memo entry: a base relation's (`base_key`), and an export's own name.
-        let rels: Vec<(String, Vec<String>)> = stored
+        // A base relation's statistics are read at the columns its rules read (`names`, held): counted at those only.
+        let rels: Vec<(String, Vec<String>, Option<Vec<usize>>)> = stored
             .iter()
-            .map(|(rel, _)| (memo::base_key(rel), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
-            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..lowered.program.decls[rel.as_str()].len()).map(|c| format!("c{c}")).collect())))
+            .map(|(rel, names)| {
+                let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
+                let (from, columns): (Vec<usize>, Vec<String>) = all.iter().enumerate().filter(|(_, c)| names.iter().any(|n| n == *c)).map(|(i, c)| (i, (*c).to_owned())).unzip();
+                (memo::base_key(rel), columns, Some(from))
+            })
+            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..lowered.program.decls[rel.as_str()].len()).map(|c| format!("c{c}")).collect(), None)))
             .collect();
         // An export's rows' document: its first node column's, as the chunks' totals read it (`Totals::add_rows`).
         let doc_at = split.exports.iter().map(|rel| (rel.clone(), lowered.program.decls[rel.as_str()].iter().position(|(_, t)| t == "node"))).collect();
@@ -6046,7 +6051,7 @@ fn run_observed(
                         return Ok(blob.to_vec());
                     }
                     let mut k = keptstats::Keeper::decode(blob).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
-                    k.map_symbols(&|key, w| syms.columns(key, w), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
+                    k.map_symbols(&|key, names| syms.columns_named(key, names), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
                     Ok(k.encode())
                 }));
             }
