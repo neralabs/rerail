@@ -855,6 +855,12 @@ thread_local! {
     static OWN_OBSERVED: RefCell<Option<Observed>> = const { RefCell::new(None) };
 }
 
+/// Carries the run's observations to a job on another thread (`run_state`): shared, what the job observes is added
+/// to them as it ends (`enter_observed`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.part(&["OBSERVED_AT", "OWN_OBSERVED"], crate::code_rule_dsl::logic::run_state::Shared(share_observed(), enter_observed));
+}
+
 /// Adds to this thread's job's observations where it has them (`enter_observed`), else to the run's: `f` is given
 /// them, and the run's (read: `copies`) where those are this job's too.
 fn observing_into(f: impl FnOnce(&mut Observed, Option<&Observed>)) {

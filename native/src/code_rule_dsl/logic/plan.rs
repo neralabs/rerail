@@ -952,8 +952,6 @@ fn plan_fresh() -> bool {
 thread_local! {
     /// Where a plan is being made, for the profile's account of the planning budget's misses.
     static PLAN_SITE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("elsewhere") };
-    /// The keys planned in this run (profiled), for the same account.
-    static PLANNED_NOW: std::cell::RefCell<rustc_hash::FxHashSet<PlanKey>> = std::cell::RefCell::new(Default::default());
 }
 fn plan_site(site: &'static str) {
     PLAN_SITE.with(|c| c.set(site));
@@ -1258,6 +1256,14 @@ type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
 struct RunPlans {
     kept: rustc_hash::FxHashMap<PlanKey, Kept>,
     stored: Arc<StoredPlans>,
+    /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
+    /// shared with its jobs as the plans are.
+    planned_now: rustc_hash::FxHashSet<PlanKey>,
+}
+
+/// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
+fn planned_now(key: &PlanKey) -> bool {
+    PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
 }
 
 impl std::ops::Deref for RunPlans {
@@ -1523,9 +1529,8 @@ thread_local! {
 impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
-        PLANNED_NOW.with(|p| p.borrow_mut().clear());
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default() }))));
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default(), planned_now: Default::default() }))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1570,6 +1575,17 @@ thread_local! {
 thread_local! {
     /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
     static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
+/// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
+pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
+    c.part(&["PLANS", "OWN_PLANS"], super::run_state::Shared(share_plans(), enter_plans));
+    c.copy(&["PLAN_SITE"], &PLAN_SITE);
+    c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
+    c.copy(&["NO_SHAPES"], &NO_SHAPES);
+    c.copy(&["SKEWING"], &SKEWING);
+    c.copy(&["STEP_ROWS"], &STEP_ROWS);
 }
 
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
@@ -1813,7 +1829,7 @@ impl Model {
         }
         Some(match (&kept.4, kept.5) {
             (None, _) => "no price",
-            (_, None) if PLANNED_NOW.with(|p| p.borrow().contains(&key)) => "never ran, planned before in this run",
+            (_, None) if planned_now(&key) => "never ran, planned before in this run",
             (_, None) => "never ran",
             (_, Some(r)) if r >= SEARCH_WORK => "ran over a search",
             _ => "inputs grew",
@@ -1933,7 +1949,11 @@ impl Model {
         };
         let sizes = self.live_sizes(b, first);
         if super::profile::on() {
-            PLANNED_NOW.with(|p| { p.borrow_mut().insert(key); });
+            PLANS.with(|p| {
+                if let Some(s) = p.borrow().as_ref() {
+                    s.write().planned_now.insert(key);
+                }
+            });
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
@@ -1959,7 +1979,7 @@ impl Model {
             };
             BUDGET_MISS[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if why == 1 && super::profile::on() {
-                let again = PLANNED_NOW.with(|p| p.borrow().contains(&key));
+                let again = planned_now(&key);
                 super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", PLAN_SITE.with(std::cell::Cell::get), if again { "planned before in this run" } else { "kept from an earlier run" }));
             }
             // What grew, by kind of size and how far (the profile's decisions).
@@ -5129,37 +5149,23 @@ struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u6
 // program, the views, the projections, the inputs, and the rules' numbers, whose addresses are keys only.
 unsafe impl Send for Strand<'_> {}
 
-/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's kept plans, derived values and
-/// observations, which it shares, and the thread's settings, which it copies.
-struct Ambient {
-    plans: Option<SharedPlans>,
-    memo: Option<super::derived::Shared>,
-    observed: keeps::SharedObserved,
-    device: placement::Binding,
-    explain: bool,
-    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it, and
-    /// each member it runs is a span under that (`stratum … (in a job)`).
-    under: Option<String>,
-}
+/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's context (`run_state::Carry`): its
+/// kept plans, derived values and observations, which it shares, and the thread's settings, which it copies.
+struct Ambient(super::run_state::Carry);
 
 impl Ambient {
     fn here() -> Self {
-        let explain = explaining(false);
-        explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, under: super::profile::here() }
+        Ambient(super::run_state::Carry::here())
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        struct Entered(super::run_state::Entered, super::profile::Span);
         impl Drop for Entered {
-            fn drop(&mut self) {
-                placement::set_binding(self.0);
-                explaining(self.1);
-            }
+            fn drop(&mut self) {}
         }
-        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
+        let span = super::profile::span_at(self.0.under(), || "issued components (stream job)".into());
+        Entered(self.0.enter(), span)
     }
 }
 

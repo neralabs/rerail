@@ -1771,7 +1771,7 @@ impl Drop for UsedStore {
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(any(test, feature = "test-hooks"))]
-    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
@@ -2052,6 +2052,12 @@ thread_local! {
     static RUN_TOKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Carries the run's nesting to a job on another thread (`run_state`): a run there is nested in this one.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
+    c.copy(&["RUN_TOKEN"], &RUN_TOKEN);
+}
+
 /// The outermost runs of the process, numbered from 1.
 static RUNS_STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -2197,6 +2203,9 @@ fn run_observed(
     // holds the profile and waits for it).
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
+    let _stage = crate::code_rule_dsl::logic::profile::run_begins();
+    // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
+    let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
     } else if phase0::active() || nested {
@@ -2212,7 +2221,9 @@ fn run_observed(
     let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, "", read, &lists)?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
-    let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
+    // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
+    // its own directory, and the job runs in this run's context (`run_state`), so its runs are nested in this one.
+    let bridged_slot = parking_lot::Mutex::new(None);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
@@ -2223,46 +2234,53 @@ fn run_observed(
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     let mut listing: Option<(Vec<String>, &'static str)> = None;
     let mut phase_one_run = None;
-    let _phase_one = if t_facts.is_none()
-        && options.get("inputFiles").is_none()
-        && phases::declared(&prog).is_none()
-        && !phases::in_phase()
-        && !phase0::active()
-        && options.get(constants::OWN).is_none()
-        && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
-    {
-        let found = scoped(corpus_files(root)?, &prog, options);
-        let label = corpus_language(language.as_deref(), typing, &found);
-        let files = found.of(label);
-        // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
-        // only where the observer cannot vouch for it).
-        // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
-        let renamed = package_root_modules(root, &files);
-        let stated: Vec<(String, String, String, String)> = files
-            .iter()
-            .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
-            .map(|p| {
-                let module = renamed.get(p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(p));
-                (p.clone(), module, label.to_owned(), world::bytes_digest(&root.join(p)))
-            })
-            .filter(|(_, _, _, c)| !c.is_empty())
-            .collect();
-        listing = Some((files, label));
-        if stated.is_empty() {
-            None
+    let phase_one = crate::threads::scope(|jobs| {
+        let prog = &prog;
+        let bridged_slot = &bridged_slot;
+        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, out, modes, binding, chunk_nodes, typing)));
+        Ok::<_, Error>(if t_facts.is_none()
+            && options.get("inputFiles").is_none()
+            && phases::declared(&prog).is_none()
+            && !phases::in_phase()
+            && !phase0::active()
+            && options.get(constants::OWN).is_none()
+            && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
+        {
+            let found = scoped(corpus_files(root)?, &prog, options);
+            let label = corpus_language(language.as_deref(), typing, &found);
+            let files = found.of(label);
+            // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
+            // only where the observer cannot vouch for it).
+            // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
+            let renamed = package_root_modules(root, &files);
+            let stated: Vec<(String, String, String, String)> = files
+                .iter()
+                .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
+                .map(|p| {
+                    let module = renamed.get(p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(p));
+                    (p.clone(), module, label.to_owned(), world::bytes_digest(&root.join(p)))
+                })
+                .filter(|(_, _, _, c)| !c.is_empty())
+                .collect();
+            listing = Some((files, label));
+            if stated.is_empty() {
+                None
+            } else {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
+                let (one, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+                let (made, libraries) = (one.documents.len(), one.libraries.len());
+                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
+                    format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
+                });
+                phase_one_run = Some(run);
+                Some(phases::PhaseOneHeld::enter(one))
+            }
         } else {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
-            let (one, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
-            let (made, libraries) = (one.documents.len(), one.libraries.len());
-            crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
-                format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
-            });
-            phase_one_run = Some(run);
-            Some(phases::PhaseOneHeld::enter(one))
-        }
-    } else {
-        None
-    };
+            None
+        })
+    });
+    let (bridged, typing_runs) = bridged_slot.into_inner().expect("the typing programs' job ran")?;
+    let _phase_one = phase_one?;
     let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
@@ -5210,6 +5228,11 @@ fn run_observed(
             }
             let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, prepared_key, &cone_inputs));
+            // Strata kept for the next run keep each relation's whole rows, as a session's cross-file part does: one
+            // computed only for the keys its readers reached (the negation split, a corpus run's choice) would miss a
+            // key a later run demands (an edited library's new import) whose derivation no delta touches (spike O125,
+            // O-cone-kept-plans).
+            let _whole = cone_kept.is_some().then(super::demand::whole_relations);
             // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
             let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None });
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
