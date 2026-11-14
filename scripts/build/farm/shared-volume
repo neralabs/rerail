@@ -58,6 +58,10 @@ client-off)
   sudo rm -f /etc/auto_rerail_farm
   sudo automount -vc
   for d in $exported; do mount | grep -q " on $d " && sudo umount -f "$d"; done
+  # The automounter leaves its mount point behind, empty and root's: the mirror writes there.
+  for d in $exported; do
+    if [ -d "$d" ] && [ ! -O "$d" ]; then sudo rmdir "$d" && mkdir "$d"; fi
+  done
   echo "unmounted: $exported"
   ;;
 client)

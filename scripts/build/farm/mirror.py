@@ -57,20 +57,24 @@ class Host:
         self.name = name
         farm.CHANNEL[0] = "mirror"
         self.proc = subprocess.Popen(farm.ssh(name, os.path.join(farm.SHARE, "farm-agent")),
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=open(farm.state("mirror", f"{name}.err"), "ab"))
         self.lock = threading.Lock()
         self.sent = {}
         self.waiting = {}
         self.next_id = 0
+        self.closed = False
         threading.Thread(target=self.read, daemon=True).start()
 
     def alive(self):
-        return self.proc.poll() is None
+        return not self.closed and self.proc.poll() is None
 
     def ask(self, header):
         """Sends `header` with an id and waits for the agent's reply to it."""
         done = threading.Event()
         with self.lock:
+            if self.closed:
+                return None
             self.next_id += 1
             job_id = self.next_id
             self.waiting[job_id] = {"event": done, "result": None}
@@ -94,6 +98,9 @@ class Host:
         except OSError:
             return
         with self.lock:
+            # Another compile's scan may have sent it meanwhile.
+            if self.sent.get(path) == list(st[:2]):
+                return
             send(self.proc.stdin, {"op": "put", "path": path, "mtime_ns": st[0], "mode": st[2]}, data)
             self.sent[path] = list(st[:2])
 
@@ -107,6 +114,8 @@ class Host:
             except (OSError, ValueError):
                 header = None
             if header is None:
+                with self.lock:
+                    self.closed = True
                 for waiting in self.waiting.values():
                     waiting["event"].set()
                 return
@@ -202,20 +211,29 @@ def handle(conn):
         if job is None:
             return
         last_job[0] = time.time()
-        h = host(job["host"])
-        started = time.time()
-        files = needed(job, job["since"])
-        h.learn([p for p, _ in files])
-        for path, st in files:
-            h.put(path, st)
-        sent = time.time()
-        result = h.run(job["run"]) if h.alive() else None
-        reply = result or {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": "the agent stopped"}
-        reply["times"] = {"sync": round(sent - started, 3), "compile": round(time.time() - sent, 3), "files": len(files)}
-        send(f, reply)
+        send(f, work(job))
+    except Exception as e:
+        try:
+            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r}"})
+        except OSError:
+            pass
     finally:
         f.close()
         conn.close()
+
+
+def work(job):
+    h = host(job["host"])
+    started = time.time()
+    files = needed(job, job["since"])
+    h.learn([p for p, _ in files])
+    for path, st in files:
+        h.put(path, st)
+    sent = time.time()
+    result = h.run(job["run"]) if h.alive() else None
+    reply = result or {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": "the agent stopped"}
+    reply["times"] = {"sync": round(sent - started, 3), "compile": round(time.time() - sent, 3), "files": len(files)}
+    return reply
 
 
 def serve():

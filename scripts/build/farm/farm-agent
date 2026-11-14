@@ -67,7 +67,7 @@ def put(header, payload):
 def run(job):
     if refused:
         send({"op": "done", "id": job["id"], "code": 70, "stdout": "", "read": {},
-              "stderr": f"refused to write under an NFS mount: {refused[0]}"})
+              "stderr": f"a file was not written: {refused[0]}"})
         return
     for d in job["dirs"]:
         os.makedirs(d, exist_ok=True)
@@ -101,7 +101,11 @@ while True:
     if header is None:
         break
     if header["op"] == "put":
-        put(header, payload)
+        try:
+            put(header, payload)
+        except OSError as e:
+            print(f"farm-agent: {header['path']}: {e}", file=sys.stderr, flush=True)
+            refused.append(f"{header['path']} ({e})")
     elif header["op"] == "run":
         threading.Thread(target=run, args=(header,), daemon=True).start()
     elif header["op"] == "have":
