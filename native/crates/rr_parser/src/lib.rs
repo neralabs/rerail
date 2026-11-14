@@ -1506,6 +1506,21 @@ pub mod tests {
         assert_eq!(filtered, vec![b"-".to_vec(), b"0".to_vec()]);
     }
 
+    /// The pair rule's table as the lean lexer's nibble tables (`native_cpu_block::pair_nibbles`):
+    /// the token loop reads a pair's second byte from a block's word, a bit a byte, not the
+    /// table at each token. Each first byte of `.rr`'s pairs is its own bit.
+    #[test]
+    fn the_pairs_are_a_blocks_word() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let found: Vec<usize> = r.rules.iter().enumerate().filter_map(|(k, e)| match *e {
+            rerail_compiler::records::EndRule::Next(i) => rerail_compiler::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
+            _ => None,
+        }).collect();
+        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits.
+        assert_eq!(found, vec![6]);
+    }
+
     /// What a rule's count tests need of the bytes, together (`native_cpu_bytes::needs`): a
     /// string's, a control byte or a backslash from the byte before it (`escaped`'s run) to
     /// its last. A string with none of them skips its tests' call, by one vector compare.

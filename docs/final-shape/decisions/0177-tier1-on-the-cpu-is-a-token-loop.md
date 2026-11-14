@@ -725,3 +725,29 @@ each of its functions is structured control, not the fallback loop over a `match
 Measured (`jit_against_aot`): tier 1 ahead of time 213 instructions a node, unchanged (the
 path is cold). The JIT went from 285 to 306: Cranelift's register allocator weighs a call in
 a cold block as one in the loop. That is open.
+
+## A pair's second byte from the block's word
+
+The lean lexer finds the two-byte punctuation once a block. Its window looks up each byte's
+first-byte bits and the next byte's second-byte bits, `and`s them, and keeps one `pair` word.
+A token then tests one bit. The generated loop loaded the pair table's row for the next byte
+at every token: a shift, an add, a load and a test, on the token's own chain.
+
+Now the compiler makes the lean lexer's tables from the pair table (`pair_nibbles`). Each
+first byte with a pair gets its own bit, eight at most, so the first byte's lookup is exact.
+The second byte's bits are the first bytes it ends a pair after. The tables are checked
+against the table for every first byte and every next byte; a table they do not match, or one
+with a pair ending in a zero byte (the padding), keeps the per-token load. The refill makes
+the word with the block's other words (`PAIR_WORD`, in the registers), and the fused pair
+rule's last is the token's first byte plus its bit.
+
+The fused run rule's last is read the same way: the run after the first byte by two shifts of
+the block's word, one bound on where it ends. No check is left for a token at the block's
+last byte.
+
+For `.rr` the six first bytes (`:` `=` `!` `<` `>` `-`) are six bits
+(`the_pairs_are_a_blocks_word`).
+
+Measured (`jit_against_aot`): tier 1 ahead of time 222 instructions and 65 cycles a node,
+from 213 and 73. The word costs its block more than the loads cost its tokens, but no token
+waits on a load for its end. The JIT 292 and 67, from 306 and 79.
