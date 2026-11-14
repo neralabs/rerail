@@ -3343,6 +3343,7 @@ dependencies = [
  "rerail-rust-lean",
  "rerail-sessions",
  "rerail-simdjson",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
@@ -3524,6 +3525,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -4419,6 +4421,14 @@ name = "rerail-simdjson-native"
 version = "0.1.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "rerail-sql-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

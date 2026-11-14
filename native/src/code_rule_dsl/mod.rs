@@ -4946,6 +4946,11 @@ pub(crate) fn install_languages() {
             // goes to tree-sitter-md.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Markdown, name: "lean Markdown parser", rank: 0, runs: true, parser: &tape::markdown_lean::Lean });
         }
+        if cfg!(feature = "lang-sql") {
+            // The lean SQL parser (`tape::sql_lean`, decision 0214); a file it refuses goes to
+            // tree-sitter-sql.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Sql, name: "lean SQL parser", rank: 0, runs: true, parser: &tape::sql_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

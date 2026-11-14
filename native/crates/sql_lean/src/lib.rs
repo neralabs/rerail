@@ -122,4 +122,21 @@ mod tests {
             "program [0..17]\n  statement [0..15]\n    select [0..8]\n      keyword_select [0..6]\n      select_expression [7..8]\n        term [7..8]\n          field value: [7..8]\n            identifier name: [7..8]\n    from [9..15]\n      keyword_from [9..13]\n      relation [14..15]\n        object_reference [14..15]\n          identifier name: [14..15]\n  ; [15..16]\n"
         );
     }
+
+    /// A profiling loop: the lean parser over `RERAIL_SQL_FILES` (a list of paths), the files it reads,
+    /// `RERAIL_SQL_PASSES` times (default 2,000), for a sampling profiler to watch.
+    #[test]
+    #[ignore = "a profiling loop; needs RERAIL_SQL_FILES"]
+    fn profile_loop() {
+        let list = std::fs::read_to_string(std::env::var("RERAIL_SQL_FILES").expect("set RERAIL_SQL_FILES")).unwrap();
+        let passes: usize = std::env::var("RERAIL_SQL_PASSES").ok().and_then(|s| s.parse().ok()).unwrap_or(2000);
+        let files: Vec<Vec<u8>> = list.lines().filter_map(|p| std::fs::read(p).ok()).filter(|f| crate::tape(f).is_ok()).collect();
+        let mut n = 0;
+        for _ in 0..passes {
+            for f in &files {
+                n += crate::tape(f).map_or(0, |t| t.code.len());
+            }
+        }
+        eprintln!("{} files, {n} codes", files.len());
+    }
 }

@@ -67,6 +67,8 @@ pub mod html_lean;
 pub mod css_lean;
 /// Markdown's tape from the lean parser (`rerail_markdown_lean`).
 pub mod markdown_lean;
+/// SQL's tape from the lean parser (`rerail_sql_lean`).
+pub mod sql_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

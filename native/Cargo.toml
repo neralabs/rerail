@@ -211,6 +211,8 @@ rerail-html-lean = { path = "crates/html_lean" }
 rerail-css-lean = { path = "crates/css_lean" }
 # The lean Markdown parser, measured directly (`tape::tests::markdown_parse_costs`).
 rerail-markdown-lean = { path = "crates/markdown_lean" }
+# The lean SQL parser, measured directly (`tape::tests::sql_parse_costs`).
+rerail-sql-lean = { path = "crates/sql_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.

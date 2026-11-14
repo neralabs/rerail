@@ -3782,6 +3782,121 @@ fn css_parse_costs() {
     }
 }
 
+/// SQL's tapes from the lean parser (the product's parser for SQL, decision 0214) are
+/// tree-sitter-sql's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
+/// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
+/// `rerail-css-lean`'s `oracle`.
+#[test]
+fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::sql_lean;
+    let sources = [
+        "",
+        "  \n",
+        "-- a comment\nSELECT a, b AS c FROM t WHERE a = 1 AND b <> 'x' ORDER BY a DESC LIMIT 10;\n",
+        "select count(*), t.* from s.t as t join u on t.id = u.id left join v using (id) group by 1 having count(*) > 2;\n",
+        "WITH x AS (SELECT 1) SELECT * FROM x UNION ALL SELECT 2;\n",
+        "INSERT INTO t (a, b) VALUES (1, 'a'), (2, NULL);\nUPDATE t SET a = a + 1 WHERE b IS NOT NULL;\nDELETE FROM t WHERE a IN (1, 2);\n",
+        "CREATE TABLE t (id serial PRIMARY KEY, name varchar(20) NOT NULL DEFAULT '', u int REFERENCES u (id));\n",
+        "CREATE INDEX i ON t (a, b DESC);\nDROP TABLE IF EXISTS t;\nALTER TABLE t ADD COLUMN c text;\n",
+        "SELECT CASE WHEN a BETWEEN 1 AND 2 THEN 'x' ELSE 'y' END, a::text, CAST(b AS int) FROM t /* c */;\n",
+        "BEGIN;\nGRANT SELECT ON t TO r;\nCOMMIT;\n",
+        "CREATE FUNCTION f(a int) RETURNS int AS $$ SELECT a $$ LANGUAGE sql;\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Sql.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = sql_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for invalid in ["SELECT (1;\n", "SELECT a FROM t WHERE;\n", "CREATE TABLE t (a int;\n", "SELECT 'a;\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads SQL with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-sql.
+#[test]
+fn the_product_reads_sql_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::sql_lean;
+    let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
+    assert!(tree_parser(GrammarDialect::Sql).is_some(), "SQL's parser is installed");
+    let source = "SELECT a FROM t WHERE b = 1;\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = sql_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let invalid = "SELECT (1;\n";
+    assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a SQL file's tape costs, by parser: the lean parser (`tape::sql_lean`, the product's)
+/// against tree-sitter-sql, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn sql_parse_costs() {
+    use crate::code_rule_dsl::tape::sql_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Sql;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| sql_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| sql_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(sql_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("SQL: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
 /// Markdown's tapes from the lean parser (the product's parser for Markdown, decision 0205) are
 /// tree-sitter-md's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
 /// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is

@@ -886,6 +886,14 @@ impl P<'_> {
     fn storage_parameters(&mut self) -> R<()> {
         let m = self.a.mark();
         self.expect(K::KeywordWith)?;
+        self.storage_parameter_list()?;
+        self.a.node(K::StorageParameters, m);
+        Ok(())
+    }
+
+    /// `(name [= value], …)`, each a `_storage_parameter`: storage_parameters' list, and
+    /// `alter table`'s `set (…)` and `reset (…)`.
+    fn storage_parameter_list(&mut self) -> R<()> {
         self.expect_punct(b"(", K::TLParen)?;
         loop {
             self.expect_ident(NONE, 0)?;
@@ -918,7 +926,6 @@ impl P<'_> {
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::StorageParameters, m);
         Ok(())
     }
 
@@ -1075,6 +1082,14 @@ impl P<'_> {
         if self.kw(K::KeywordConstraint)?.is_some() {
             self.expect_ident(NONE, f::NAME)?;
         }
+        self.constraint_body()?;
+        self.a.node(K::Constraint, m);
+        Ok(())
+    }
+
+    /// `_constraint_body`: a primary key, unique, foreign key or check constraint, with none of
+    /// `_constraint_attribute`'s words after it.
+    fn constraint_body(&mut self) -> R<()> {
         let ws = self.words()?;
         let Some(&(_, k)) = ws.first() else { return self.refuse() };
         match k {
@@ -1112,7 +1127,6 @@ impl P<'_> {
         if self.is(K::KeywordInclude)? || self.is(K::KeywordWith)? || self.is(K::KeywordUsing)? || self.is(K::KeywordDeferrable)? || self.is(K::KeywordNot)? || self.is(K::KeywordInitially)? {
             return self.refuse();
         }
-        self.a.node(K::Constraint, m);
         Ok(())
     }
 
@@ -1925,10 +1939,10 @@ impl P<'_> {
         }
         self.expect(K::KeywordTable)?;
         self.if_exists()?;
-        if self.is(K::KeywordOnly)? {
-            return self.refuse();
-        }
-        if self.object_reference(Ctx::Sure(&[&[K::KeywordIf, K::KeywordOnly]]), 0)?.is_none() {
+        // `only t`: a keyword after `only` is refused (`only` may be the table's name).
+        let only = self.kw(K::KeywordOnly)?.is_some();
+        let named = if only { self.object_reference(Ctx::Unsure(&[]), 0)? } else { self.object_reference(Ctx::Sure(&[&[K::KeywordIf, K::KeywordOnly]]), 0)? };
+        if named.is_none() {
             return self.refuse();
         }
         loop {
@@ -1937,7 +1951,18 @@ impl P<'_> {
                 self.expect(K::KeywordAdd)?;
                 let ws = self.words()?;
                 if ws.iter().any(|&(_, k)| matches!(k, K::KeywordConstraint | K::KeywordPrimary | K::KeywordUnique | K::KeywordForeign | K::KeywordCheck | K::KeywordExclude)) {
-                    return self.refuse();
+                    // `add_constraint`: `add [constraint name] body`, the body a `constraint`.
+                    if self.kw(K::KeywordConstraint)?.is_some() {
+                        self.expect_ident(NONE, 0)?;
+                    }
+                    let c = self.a.mark();
+                    self.constraint_body()?;
+                    self.a.node(K::Constraint, c);
+                    self.a.node(K::AddConstraint, s);
+                    if self.punct(b",", K::TComma)?.is_none() {
+                        break;
+                    }
+                    continue;
                 }
                 self.kw(K::KeywordColumn)?;
                 self.if_not_exists()?;
@@ -1958,6 +1983,11 @@ impl P<'_> {
                     self.kw(K::KeywordRestrict)?;
                 }
                 self.a.node(K::DropColumn, s);
+            } else if (self.is(K::KeywordSet)? || self.is(K::KeywordReset)?) && self.next_is_paren()? {
+                // `set (…)`, `reset (…)`: storage parameters.
+                let kind = if self.kw(K::KeywordSet)?.is_some() { K::SetStorageParameters } else { self.expect(K::KeywordReset)?; K::ResetStorageParameters };
+                self.storage_parameter_list()?;
+                self.a.node(kind, s);
             } else {
                 return self.refuse();
             }
@@ -1967,6 +1997,16 @@ impl P<'_> {
         }
         self.a.node(K::AlterTable, m);
         Ok(())
+    }
+
+    /// Whether the token after the next is `(`.
+    fn next_is_paren(&mut self) -> R<bool> {
+        let save = (self.at, self.last_end, self.look);
+        let t = self.peek()?;
+        self.take(t);
+        let paren = self.at_punct(b"(")?;
+        (self.at, self.last_end, self.look) = save;
+        Ok(paren)
     }
 
     /// `set [session | local] name to | = value, …`, `set time zone …`.

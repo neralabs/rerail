@@ -1,0 +1,183 @@
+# 0214: SQL is read by a lean parser that writes tree-sitter-sql's tape, or refuses
+
+Status: built (user, 2026-11-14: "We also need SQL, I forgot to mention it last time"). SQL is a
+product language (`languages/sql.json`, `lang-sql`), read by tree-sitter-sql until now.
+
+## Intro
+
+The engine reads a source file into a tape: its syntax tree in preorder, one code a node.
+
+The lean parsers of 0163 through 0205 write that tape directly. Each one writes exactly the tape
+tree-sitter's tree encodes to, and refuses any file it cannot read exactly. This decision builds the
+same parser for SQL, at rank 0, before tree-sitter-sql.
+
+SQL differs from the other languages in two ways:
+
+- **Its keywords are words.** tree-sitter-sql has about 500 keywords, and almost any of them may
+  also be a name. tree-sitter's lexer takes a word as a keyword only where the parse state takes that
+  keyword. The parser asks the same question at each word.
+- **Its tape leaves out most punctuation by the parent's grammar.** Which tokens the tape stores is
+  decided by the engine's implied-token automata, per node. The parser runs the same automata on
+  each node it writes.
+
+```
+a .sql file
+  -> stage 1: byte classes, 64 bytes a step (rerail-simd8): blanks, word bytes, `/*`, line ends,
+     quotes
+  -> statements, top down, writing the tape:
+       a word: the keywords it is (one lookup a token); a keyword where the state takes it,
+       a name where it does not, refused where the parser cannot tell
+       expressions: precedence climbing, by tree-sitter-sql's precedence levels
+       each node's tokens: stored or left out by the engine's automata
+       a syntax error, or a construct not read exactly -> refused -> tree-sitter-sql
+```
+
+There is one behavior: tree-sitter's tape, or a refusal. A file with a syntax error is always
+refused, and tree-sitter reads it with its own recovery.
+
+## Prior work consulted
+
+- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 3,353
+  SQL files (PostgreSQL's tests and contrib, sqlfluff's dialect fixtures, TimescaleDB). The oracle's
+  set is 600 of them.
+- **0205 (lean Markdown), 0200 (lean CSS), 0199, 0198, 0196, 0195, 0193, 0163.** **Agrees and
+  follows:** the same crate shape, writer and oracle; "no error recovery: one behavior".
+- **0140 (the tape's writer).** **Agrees:** the parser writes through `rerail_tape_format::Writer`.
+- **The engine's implied-token automata (`tape::tokens`).** **Followed, by the automata
+  themselves:** the engine now prints them (`TokenGrammar::automata_text`, the ignored test
+  `token_automata_text`), and the crate's generator turns them into tables. The parser builds each
+  node's children with all their tokens, then decides which the tape stores exactly as the engine
+  does (a gap's tokens are left out only where the gap is the automaton's implied word and the token
+  is not kept). It never writes a token to filter it out afterwards: the arena holds the parse, and
+  the tape is written once, from it.
+- **tree-sitter-sql** (DerekStride's grammar, as the engine vendors it): its `grammar.json` gives
+  the kinds, fields, keywords and precedences. The readings below follow it, checked by the oracle.
+
+## Decision
+
+### The crate: `rerail-sql-lean`
+
+`native/crates/sql_lean`, in the shape of `rerail-css-lean`:
+
+- `block`: stage 1. A mask a class for each 64-byte block: blanks, word bytes (`[A-Za-z0-9_$]` and
+  bytes past ASCII), `/*` and `*/`, line ends, `'` and `\`, `"`. Blank runs, words, comments
+  (nested) and quoted strings end at the lowest set bit of a mask.
+- `parse`: the lexer, the arena (nodes and their children, in parse order), the automata walk, and
+  the writer's pass. `parse::expr`: expressions, types, arguments. `parse::stmt`: statements.
+- `gen_kinds.py`: writes `kinds.rs` from tree-sitter-sql's grammar and the engine's automata
+  (`automata.tsv`, `implied.tsv`): 773 kinds, 61 fields, the 517 keyword words, the automata
+  tables, and the FIRST sets of an expression and a type.
+
+A key is `kind | field << 10 | extra << 16`.
+
+### Keywords
+
+A word's keywords are looked up once a token (a word may be two: `character`). Where the parser
+reads a name, it says which keywords the state could take there:
+
+- **Sure:** a keyword the state does not take is a name (`select a from t`: `a` and `t`).
+- **Unsure:** where the parser cannot tell, a keyword is refused (`alter table only add …`: is
+  `only` the table?).
+
+The keywords that may follow a term (`AFTER_TERM`) end an expression, so `select a from t` reads
+`from` as a keyword, not as `a`'s alias.
+
+### Where tree-sitter's choices are kept
+
+These were found by the oracle, and the parser keeps each as tree-sitter reads it:
+
+- **A node's field is the innermost.** tree-sitter's cursor looks for a node's field from its
+  nearest hidden parent out, so a field given inside a hidden rule wins over one given outside it.
+- **Extras** (comments, psql meta-commands) go in the deepest node with children on both sides of
+  them. The program holds the leading and trailing ones, and its span runs from its first token or
+  extra to the text's end.
+- **Operators:** the lexer takes the longest of the grammar's operator strings and `op_other`'s two
+  patterns; a string wins a tie. Precedence levels are tree-sitter-sql's, from `OR` (1) to the `::`
+  cast (21).
+- **GLR choices:** a string argument after a comma is a `term`. `begin; …; commit` is a
+  `transaction` node: the parser reads it from a saved state and falls back to
+  `transaction_statement` where it does not hold. This and a few two-token looks are the only
+  places the parser goes back.
+- **Small shapes:** a function in `from` is `relation > invocation`, with its alias; `float8` is a
+  `double` leaf with no keyword in it; `(values …)` in `from` uses the relation's own parentheses; a
+  send meta-command (`\g`, `\gset`, …) is a named `meta_command` in the program, in a `;` place; an
+  `alter table … add constraint` body is a `constraint` node.
+
+### Read
+
+`select` (with CTEs, set operations, joins, subqueries, `group by`, `having`, `order by`, `limit`,
+`offset`, `fetch`), `values`, `insert`, `update`, `delete`; `create table` (columns, column and
+table constraints, storage parameters), `create index`, `create view`, `create function`,
+`create extension`, `create schema`, `create type`, `create role`; `drop`; `alter table` (add and
+drop columns, add constraints, `set (…)` and `reset (…)`), `alter function`, `alter extension`;
+`grant`, `revoke`; transactions; `set`, `reset`; `comment on`; `call`; `do`; psql meta-commands.
+Expressions: literals, strings with continuations, dollar-quoted strings, parameters, casts,
+`case`, `exists`, `in`, `like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts.
+
+### Refused, for tree-sitter
+
+A file is refused where the lean parser does not read the construct exactly:
+
+- any syntax error;
+- the statements not listed above: `create operator`, `operator class` and `family`, `aggregate`,
+  `trigger`, `sequence`, `materialized view` and `refresh`, `foreign data wrapper`, `transform`,
+  `access method`; `alter operator`; `truncate`, `copy`, `load`, `prepare`;
+- the clauses not listed above: `on conflict`, `partition by`, `inherits`, window functions
+  (`over`), `filter`, `tablesample`, `type 'literal'` casts, nested joins in parentheses, an index
+  field that is a function;
+- forms of other dialects that tree-sitter-sql reads (backticks, `!`, Delta and Spark SQL);
+- bytes that are not UTF-8.
+
+### In the engine
+
+`tape::sql_lean::Lean` is SQL's `TreeParser`, registered at rank 0 under `lang-sql`. A file it
+refuses goes to tree-sitter-sql. Its kinds and fields map to tree-sitter-sql's ids by name.
+
+## Results
+
+**The oracle** (`rerail-sql-lean`'s ignored `oracle` test) compares the parser's tape with
+tree-sitter's, line by line, over the 600 files:
+
+| | same | differ | refused |
+|---|---|---|---|
+| clean texts (224) | 107 | 0 | 117 |
+| texts with errors (376) | — | 0 | 376 |
+
+No tape differs. Of the texts with errors, 277 are sqlfluff's fixtures, many of other dialects
+(T-SQL, BigQuery, Snowflake, …); the rest are PostgreSQL's and TimescaleDB's tests, with forms
+tree-sitter-sql does not read.
+
+**Engine tests:**
+
+- `sql_tapes_from_the_lean_parser_are_tree_sitters`: hand-written cases, byte for byte against
+  tree-sitter's encoded tape; four texts with errors are refused.
+- `the_product_reads_sql_with_the_lean_parser`: the engine's parse route gives the lean tape, and a
+  refused file gets tree-sitter's.
+
+**Cost** (`sql_parse_costs`, profiling build, over the 107 corpus files the lean parser reads:
+126,535 bytes, 16,279 nodes):
+
+| | instructions a node | cycles a node | ns a byte |
+|---|---|---|---|
+| lean: the parser's columns | 975 | 232 | 7.5 |
+| lean: the tape | 1,023 | 230 | 7.4 |
+| tree-sitter-sql: parse | 4,142 | 1,002 | 32.1 |
+| tree-sitter-sql: the tape | 7,120 | 2,172 | 66.8 |
+
+The lean tape costs a seventh of tree-sitter's in instructions, about a tenth in cycles.
+
+The keyword lookup is a bucket by length and first byte, its words compared by their first eight
+bytes, and cached for the last two words (a two-token look goes between them); a token read ahead
+and given back is not lexed again; the arena is sized from the text. The first build searched all
+517 words at each question and allocated in the automata walk: 1,769 instructions a node.
+
+## Open
+
+- **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
+  The clean files' refusals are a long tail; the largest groups are operators (7 files) and
+  materialized views (6).
+- **The cost.** The lean tape is a seventh of tree-sitter's in instructions, where the other lean
+  parsers reach a twentieth. tree-sitter-sql's trees are fine-grained (every keyword a leaf), so tree-sitter's own
+  cost a node is low; the parser's remaining cost is its keyword questions (several a token, by
+  call) and the automata walk a node. A generated keyword dispatch (one table lookup a token,
+  giving the set of keywords the word is) would replace most of the questions.

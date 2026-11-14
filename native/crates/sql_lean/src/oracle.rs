@@ -154,3 +154,4 @@ fn show_diff(path: &str, got: &str, want: &str, src: &[u8]) {
     let e = (s + 80).min(src.len());
     eprintln!("  src: {:?}", String::from_utf8_lossy(&src[s.min(src.len())..e]));
 }
+

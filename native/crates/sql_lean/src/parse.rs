@@ -38,13 +38,14 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     }
     // A leading byte order mark is skipped (tree-sitter's lexer skips it): the text starts after.
     let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
-    let mut p = P { src, b: Blocks::of(src), at: start, last_end: start, look: None, a: Arena::default(), extras: Vec::new(), depth: 0, lower: [0; 48] };
+    let mut p = P { src, b: Blocks::of(src), at: start, last_end: start, look: None, a: Arena::sized(src.len()), extras: Vec::new(), depth: 0, lower: [0; WORD_LEN], words_at: [usize::MAX; 2], words: [&[]; 2], memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0 }) };
     let root = p.program()?;
     let mut widths = Widths::guess(src.len());
     loop {
         let mut w = Writer::new(0, widths, p.a.nodes.len() + p.extras.len() + 1);
         let mut x = 0usize;
-        p.a.emit(&mut w, root, &p.extras, &mut x, true, src.len() as u32)?;
+        let mut dropped = vec![false; p.a.kids.len()];
+        p.a.emit(&mut w, root, &p.extras, &mut x, true, src.len() as u32, &mut dropped)?;
         match w.finish_columns() {
             Ok(columns) => return Ok(columns),
             Err(Redo(nw)) => {
@@ -179,6 +180,13 @@ fn implied(s: u32, next: Option<u32>) -> Option<&'static [u32]> {
 }
 
 impl Arena {
+    /// An arena for a text of `len` bytes: room for its nodes at the corpus's density (a node in
+    /// about every 3 bytes), so the parse does not grow it.
+    fn sized(len: usize) -> Arena {
+        let n = len / 3 + 16;
+        Arena { nodes: Vec::with_capacity(n), kids: Vec::with_capacity(n), stack: Vec::with_capacity(64) }
+    }
+
     #[inline]
     fn mark(&self) -> usize {
         self.stack.len()
@@ -228,60 +236,69 @@ impl Arena {
         }
     }
 
-    /// Which of node `id`'s children the tape stores: its automaton's gaps, as the engine's
-    /// `stored_children` decides them. `None`: all of them (no automaton, or a walk it refuses).
-    fn stored(&self, id: u32) -> Option<Vec<bool>> {
+    /// Marks in `dropped` (indexed as `kids`) node `id`'s children the tape leaves out: its
+    /// automaton's gaps, as the engine's `stored_children` decides them. None where it has no
+    /// automaton, or the walk is refused.
+    fn drop_gaps(&self, id: u32, dropped: &mut [bool]) {
         let n = self.nodes[id as usize];
         let a = kinds::AUTOMATON[n.kind as usize];
         if a == 0 || n.n == 0 {
-            return None;
+            return;
         }
         let a = a - 1;
-        let kept = |l: u32| kinds::KEPT.binary_search(&(a, l)).is_ok();
-        let kids = &self.kids[n.at as usize..(n.at + n.n) as usize];
-        let mut stored = vec![true; kids.len()];
-        let mut state = kinds::START[a as usize];
-        let mut gap: Vec<usize> = Vec::new();
-        let close = |state: u32, gap: &[usize], next: Option<u32>, stored: &mut [bool]| -> Option<u32> {
-            let mut at = state;
-            for &i in gap {
-                at = step(at, label(&self.nodes[kids[i] as usize]))?;
+        let at = n.at as usize;
+        let kids = &self.kids[at..at + n.n as usize];
+        // Only a token can be left out: with none among the children, nothing is.
+        if kids.iter().all(|&k| kinds::KINDS[self.nodes[k as usize].kind as usize].1) {
+            return;
+        }
+        let lab = |i: usize| label(&self.nodes[kids[i] as usize]);
+        // The gap `from..to` before the named child `next` (`None`: the end), from `state`.
+        let close = |state: u32, from: usize, to: usize, next: Option<u32>, dropped: &mut [bool]| -> Option<u32> {
+            let mut s = state;
+            for i in from..to {
+                s = step(s, lab(i))?;
             }
             let after = match next {
-                Some(l) => step(at, l)?,
-                None if accepts(at) => at,
+                Some(l) => step(s, l)?,
+                None if accepts(s) => s,
                 None => return None,
             };
-            if !gap.is_empty()
+            if to > from
                 && let Some(word) = implied(state, next)
-                && word.len() == gap.len()
-                && word.iter().zip(gap).all(|(&w, &i)| w == label(&self.nodes[kids[i] as usize]))
+                && word.len() == to - from
+                && word.iter().zip(from..to).all(|(&w, i)| w == lab(i))
             {
-                for &i in gap {
-                    if !kept(label(&self.nodes[kids[i] as usize])) {
-                        stored[i] = false;
+                for i in from..to {
+                    if kinds::KEPT.binary_search(&(a, lab(i))).is_err() {
+                        dropped[at + i] = true;
                     }
                 }
             }
             Some(after)
         };
-        for (i, &k) in kids.iter().enumerate() {
-            let c = &self.nodes[k as usize];
-            if kinds::KINDS[c.kind as usize].1 {
-                state = close(state, &gap, Some(label(c)), &mut stored)?;
-                gap.clear();
-            } else {
-                gap.push(i);
+        let walk = |dropped: &mut [bool]| -> Option<()> {
+            let mut state = kinds::START[a as usize];
+            let mut from = 0;
+            for (i, &k) in kids.iter().enumerate() {
+                let c = &self.nodes[k as usize];
+                if kinds::KINDS[c.kind as usize].1 {
+                    state = close(state, from, i, Some(label(c)), dropped)?;
+                    from = i + 1;
+                }
             }
+            close(state, from, kids.len(), None, dropped)?;
+            Some(())
+        };
+        if walk(dropped).is_none() {
+            dropped[at..at + kids.len()].fill(false);
         }
-        close(state, &gap, None, &mut stored)?;
-        Some(stored)
     }
 
     /// Writes node `id` and its subtree, the extras from `x` on that fall between its children
     /// placed among them. `root`: the program, whose extras before its first child and after its
     /// last are its own.
-    fn emit(&self, w: &mut Writer, id: u32, extras: &[(K, u32, u32)], x: &mut usize, root: bool, end: u32) -> R<()> {
+    fn emit(&self, w: &mut Writer, id: u32, extras: &[(K, u32, u32)], x: &mut usize, root: bool, end: u32, dropped: &mut [bool]) -> R<()> {
         let n = self.nodes[id as usize];
         let start = if root {
             let first = if n.n == 0 { end } else { n.s };
@@ -290,7 +307,7 @@ impl Arena {
             n.s
         };
         let at = w.push(key(n.kind, n.field, false), start);
-        let stored = self.stored(id);
+        self.drop_gaps(id, dropped);
         let kids = &self.kids[n.at as usize..(n.at + n.n) as usize];
         for (i, &k) in kids.iter().enumerate() {
             let c = self.nodes[k as usize];
@@ -303,10 +320,10 @@ impl Arena {
                     *x += 1;
                 }
             }
-            if stored.as_ref().is_some_and(|s| !s[i]) {
+            if dropped[n.at as usize + i] {
                 continue;
             }
-            self.emit(w, k, extras, x, false, end)?;
+            self.emit(w, k, extras, x, false, end, dropped)?;
         }
         if root {
             while let Some(&(xk, xs, xe)) = extras.get(*x) {
@@ -318,6 +335,52 @@ impl Arena {
         w.close(at, if root { end } else { n.e });
         Ok(())
     }
+}
+
+/// `kinds::WORDS` by length and first byte (`bucket`): a word's keywords are a few compares in
+/// its bucket, not a search of all of them.
+struct WordIndex {
+    /// Bucket `b`'s words are `words[at[b]..at[b + 1]]`, sorted by word (a word of several keywords
+    /// is a run).
+    at: Vec<u32>,
+    words: Vec<(&'static str, K)>,
+    /// Each word's first 8 bytes (`prefix`): most compares are one.
+    heads: Vec<u64>,
+}
+
+/// A word's first 8 bytes, as one number (zeros past its end).
+#[inline]
+fn prefix(w: &[u8]) -> u64 {
+    let mut b = [0u8; 8];
+    let n = w.len().min(8);
+    b[..n].copy_from_slice(&w[..n]);
+    u64::from_le_bytes(b)
+}
+
+const WORD_LEN: usize = 48;
+
+/// A lower-case word's bucket: its length and its first byte's low five bits.
+#[inline]
+fn bucket(w: &[u8]) -> usize {
+    w.len() * 32 + usize::from(w[0] & 31)
+}
+
+fn word_index() -> &'static WordIndex {
+    static INDEX: std::sync::OnceLock<WordIndex> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut words: Vec<(&'static str, K)> = kinds::WORDS.iter().copied().filter(|(w, _)| !w.is_empty() && w.len() <= WORD_LEN).collect();
+        words.sort_by_key(|&(w, _)| (bucket(w.as_bytes()), w));
+        let buckets = (WORD_LEN + 1) * 32;
+        let mut at = vec![0u32; buckets + 1];
+        for &(w, _) in &words {
+            at[bucket(w.as_bytes()) + 1] += 1;
+        }
+        for b in 0..buckets {
+            at[b + 1] += at[b];
+        }
+        let heads = words.iter().map(|(w, _)| prefix(w.as_bytes())).collect();
+        WordIndex { at, words, heads }
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -355,7 +418,14 @@ pub(crate) struct P<'s> {
     /// Comments, in order: (kind, start, end).
     extras: Vec<(K, u32, u32)>,
     depth: u32,
-    lower: [u8; 48],
+    lower: [u8; WORD_LEN],
+    /// The keywords of the last two words looked up, at `words_at` (`words`): looked up once a token,
+    /// as the parser asks after several, and a look ahead goes between two.
+    words_at: [usize; 2],
+    words: [&'static [(&'static str, K)]; 2],
+    /// The last token read (`lex`), and where its read started: read again from there, it is the
+    /// same token. `restore` clears it (the extras it read may be gone).
+    memo: (usize, Tok),
 }
 
 impl<'s> P<'s> {
@@ -376,6 +446,7 @@ impl<'s> P<'s> {
 
     fn restore(&mut self, s: Saved) {
         (self.at, self.last_end, self.look, self.depth) = (s.at, s.last_end, s.look, s.depth);
+        self.memo.0 = usize::MAX;
         self.a.nodes.truncate(s.nodes);
         self.a.kids.truncate(s.kids);
         self.a.stack.truncate(s.stack);
@@ -489,10 +560,23 @@ impl<'s> P<'s> {
     }
 
     /// The next token.
+    #[inline]
     fn peek(&mut self) -> R<Tok> {
-        if let Some(t) = self.look {
-            return Ok(t);
+        match self.look {
+            Some(t) => Ok(t),
+            None => self.lex(),
         }
+    }
+
+    /// The next token, read from the text (`peek` when none is read ahead).
+    #[inline(never)]
+    fn lex(&mut self) -> R<Tok> {
+        // A token read ahead and given back (a two-token look) is not read again.
+        if self.memo.0 == self.at {
+            self.look = Some(self.memo.1);
+            return Ok(self.memo.1);
+        }
+        let from = self.at;
         let s = self.skip()?;
         let c = self.byte(s);
         let tok = |t, e| Tok { t, s, e };
@@ -541,6 +625,7 @@ impl<'s> P<'s> {
             tok(T::Punct, s)
         };
         self.look = Some(t);
+        self.memo = (from, t);
         Ok(t)
     }
 
@@ -640,6 +725,12 @@ impl<'s> P<'s> {
     /// The keywords the next token, a word, is (`kinds::WORDS`), lower case; empty for any other.
     fn words(&mut self) -> R<&'static [(&'static str, K)]> {
         let t = self.peek()?;
+        if t.s == self.words_at[0] {
+            return Ok(self.words[0]);
+        }
+        if t.s == self.words_at[1] {
+            return Ok(self.words[1]);
+        }
         if t.t != T::Word || t.e - t.s > self.lower.len() {
             return Ok(&[]);
         }
@@ -648,9 +739,17 @@ impl<'s> P<'s> {
             self.lower[i] = self.src[t.s + i].to_ascii_lowercase();
         }
         let w = &self.lower[..n];
-        let lo = kinds::WORDS.partition_point(|(x, _)| x.as_bytes() < w);
-        let hi = lo + kinds::WORDS[lo..].iter().take_while(|(x, _)| x.as_bytes() == w).count();
-        Ok(&kinds::WORDS[lo..hi])
+        let index = word_index();
+        let b = bucket(w);
+        let at = index.at[b] as usize..index.at[b + 1] as usize;
+        let head = prefix(w);
+        let same = |i: usize| index.heads[i] == head && (n <= 8 || index.words[i].0.as_bytes()[8..] == w[8..]);
+        let lo = at.clone().find(|&i| same(i)).unwrap_or(at.end);
+        let hi = (lo..at.end).find(|&i| !same(i)).unwrap_or(at.end);
+        let found = &index.words[lo..hi];
+        self.words_at = [t.s, self.words_at[0]];
+        self.words = [found, self.words[0]];
+        Ok(found)
     }
 
     /// Whether the next token is keyword `k`.
@@ -800,26 +899,31 @@ impl<'s> P<'s> {
     fn object_reference(&mut self, ctx: Ctx, field: u8) -> R<Option<u32>> {
         let m = self.a.mark();
         let Some(first) = self.ident(ctx, f::NAME)? else { return Ok(None) };
-        let mut parts = vec![first];
+        let mut parts = [first; 4];
+        let mut n = 1;
         while self.at_punct(b".")? {
             let t = self.peek()?;
             let save = (self.at, self.last_end, self.look);
             self.take(Tok { e: t.s + 1, ..t });
             if let Some(id) = self.ident(NONE, f::NAME)? {
-                parts.push(id);
+                if n == 4 {
+                    return self.refuse();
+                }
+                parts[n] = id;
+                n += 1;
             } else {
                 // `a.*`, `a.(`: not this object reference's.
                 (self.at, self.last_end, self.look) = save;
                 break;
             }
-            if parts.len() > 3 {
+            if n > 3 {
                 return self.refuse();
             }
         }
         // The dots between the parts are tokens: their places are known (each part ends where its dot
         // starts, white space aside).
         self.a.stack.truncate(m);
-        self.push_reference(&parts, field);
+        self.push_reference(&parts[..n], field);
         Ok(Some(*self.a.stack.last().expect("pushed")))
     }
 
