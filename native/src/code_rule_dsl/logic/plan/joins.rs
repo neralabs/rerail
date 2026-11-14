@@ -156,6 +156,9 @@ pub struct Note {
     pub proposals: Vec<(Vec<StoredStep>, f64)>,
     /// The rule's exact pair statistics (`put_exact`): per binding pattern, bindings in and rows out.
     pub exact: Vec<(Sig, [i64; 2])>,
+    /// The columns the line raised to keep their heavy values (decision 0209 §4): (relation, column). Kept with the
+    /// note, so a later process makes them from its first plan (O172).
+    pub raised: Vec<(String, usize)>,
 }
 
 impl Note {
@@ -211,10 +214,21 @@ pub(super) fn unstored(order: &[StoredStep]) -> Vec<Step> {
     order.iter().map(|&(at, mode)| Step { at: at.into(), mode }).collect()
 }
 
-/// Raises column `c` of `rel` to keep its heavy values (decision 0209 §4); whether it was not yet.
-pub(super) fn raise(rel: &str, c: usize) -> bool {
+/// Raises column `c` of `rel` to keep its heavy values (decision 0209 §4), for line `key` where a line raised it
+/// (kept with its note); whether it was not yet.
+pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
     RAISED.store(true, Relaxed);
-    MEMO.write().raised.insert((rel.to_owned(), c))
+    let mut m = MEMO.write();
+    if let Some(key) = key {
+        // A trial raises before its line is noted (`put_tried` notes it, with its rule, right after).
+        NOTED.store(true, Relaxed);
+        let n = m.notes.entry(key).or_default();
+        if !n.raised.iter().any(|(r, k)| r == rel && *k == c) {
+            n.raised.push((rel.to_owned(), c));
+            m.dirty = true;
+        }
+    }
+    m.raised.insert((rel.to_owned(), c))
 }
 
 /// Whether column `c` of `rel` keeps its heavy values.
@@ -921,19 +935,23 @@ pub fn of_exact_row(ints: &[i64], rel: &str, cols: &str, c: [i64; 2]) -> Option<
     Some((key, rule as u64, (rel.to_owned(), parsed), c))
 }
 
+/// The memo's rows for the store: its notes, their exact statistics, and the columns they raised.
+pub type Stored = (Vec<(PlanKey, Note)>, Vec<(PlanKey, u64, Sig, [i64; 2])>, Vec<(PlanKey, String, usize)>);
+
 /// The memo's notes and exact statistics, for the store, where any changed since the last call.
-pub fn to_store() -> Option<(Vec<(PlanKey, Note)>, Vec<(PlanKey, u64, Sig, [i64; 2])>)> {
+pub fn to_store() -> Option<Stored> {
     let mut m = MEMO.write();
     if !std::mem::take(&mut m.dirty) {
         return None;
     }
     let notes: Vec<(PlanKey, Note)> = m.notes.iter().map(|(k, n)| (*k, n.clone())).collect();
     let exact = notes.iter().flat_map(|(k, n)| n.exact.iter().map(move |(s, c)| (*k, n.rule, s.clone(), *c))).collect();
-    Some((notes, exact))
+    let raised = notes.iter().flat_map(|(k, n)| n.raised.iter().map(move |(r, c)| (*k, r.clone(), *c))).collect();
+    Some((notes, exact, raised))
 }
 
 /// Takes the store's notes: a line this process noted already keeps its own (memory is ahead of the store).
-pub fn from_store(notes: Vec<(PlanKey, Note)>, exact: Vec<(PlanKey, u64, Sig, [i64; 2])>) {
+pub fn from_store((notes, exact, raised): Stored) {
     if notes.is_empty() {
         return;
     }
@@ -952,6 +970,19 @@ pub fn from_store(notes: Vec<(PlanKey, Note)>, exact: Vec<(PlanKey, u64, Sig, [i
             n.exact.push((sig, c));
             let _ = rule;
         }
+    }
+    for (k, rel, c) in raised {
+        if taken.contains(&k)
+            && let Some(n) = m.notes.get_mut(&k)
+        {
+            n.raised.push((rel, c));
+        }
+    }
+    // The columns every note raised: made from a stratum's first plan (`Run::heavy_for`).
+    let all: Vec<(String, usize)> = m.notes.values().flat_map(|n| n.raised.iter().cloned()).collect();
+    if !all.is_empty() {
+        RAISED.store(true, Relaxed);
+        m.raised.extend(all);
     }
     let rules: Vec<(u64, HashMap<Sig, [i64; 2]>)> = m.notes.values().filter(|n| !n.exact.is_empty()).map(|n| (n.rule, n.exact.iter().cloned().collect())).collect();
     for (rule, map) in rules {

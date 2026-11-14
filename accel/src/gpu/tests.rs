@@ -330,3 +330,29 @@ fn concurrent_submissions_are_exact() {
         }
     });
 }
+
+/// Decision 0209 §6: the device's column statistics, several columns in one command buffer, are the exact counts:
+/// distinct values, sums of counts squared and cubed, and the most common values with their counts.
+#[test]
+fn column_statistics_on_the_device_are_the_exact_counts() {
+    use std::collections::HashMap;
+    let mut rng = Rng(0x5eed_0209);
+    // A skewed wide key (node-like ids), a narrow one, one value, and none.
+    let skewed: Vec<i64> = (0..30_000).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
+    let narrow: Vec<i64> = (0..5_000).map(|_| rng.below(7) as i64 - 3).collect();
+    let one: Vec<i64> = vec![42; 300];
+    let none: Vec<i64> = Vec::new();
+    let cols: Vec<&[i64]> = vec![&skewed, &narrow, &one, &none];
+    let got = join::column_stats(&cols, 16).expect("the device");
+    for (col, g) in cols.iter().zip(&got) {
+        let mut counts: HashMap<i64, u64> = HashMap::new();
+        for &v in col.iter() { *counts.entry(v).or_default() += 1; }
+        let sq: u64 = counts.values().map(|&n| n * n).sum();
+        let cube: u64 = counts.values().map(|&n| n * n * n).sum();
+        assert_eq!((g.rows, g.ndv, g.sq, g.cube), (col.len() as u64, counts.len() as u64, sq, cube));
+        let mut by: Vec<u64> = counts.values().copied().collect();
+        by.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(g.top.iter().map(|t| t.1).collect::<Vec<_>>(), by.iter().take(16).copied().collect::<Vec<_>>());
+        for (v, n) in &g.top { assert_eq!(counts.get(v), Some(n), "value {v}"); }
+    }
+}

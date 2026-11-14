@@ -412,6 +412,9 @@ pub struct Stats {
     /// (rel, col) → its heavy values (decision 0209 §4), made for the columns a line raised (`Run::heavy_for`).
     /// Shared, not copied, by a component's model.
     pub heavy: table::ColMap<std::sync::Arc<table::HeavyCol>>,
+    /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
+    /// since is merged into them, not counted again (O172).
+    pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
     /// By rule first: a component's model takes its rules' alone (`Model::fork`).
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
@@ -503,6 +506,7 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -672,6 +676,7 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -832,6 +837,7 @@ impl Model {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            heavy_mark: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -848,6 +854,7 @@ impl Model {
         for r in rels {
             if let Some(&n) = st.card.get(r) { stats.card.insert(r.clone(), n); }
             if let Some(&n) = st.delta_rows.get(r) { stats.delta_rows.insert(r.clone(), n); }
+            if let Some(m) = st.heavy_mark.get(r) { stats.heavy_mark.insert(r.clone(), m.clone()); }
             if let Some(m) = st.memo.get(r) { stats.memo.insert(r.clone(), m.clone()); }
             for c in 0..width(r) {
                 let k = (r.clone(), c);
@@ -880,9 +887,12 @@ impl Model {
         }
         // Heavy values a fork made, of any relation it read: made once, kept for the strata after.
         for ((r, c), h) in fork.stats.heavy.iter() {
-            if self.stats.heavy.get_at(&r, c).is_none_or(|m| m.rows != h.rows) {
+            if self.stats.heavy.get_at(&r, c).is_none_or(|m| !std::sync::Arc::ptr_eq(m, h)) {
                 self.stats.heavy.insert((&*r, c), h.clone());
             }
+        }
+        for (r, m) in fork.stats.heavy_mark.iter() {
+            self.stats.heavy_mark.insert(&*r, m.clone());
         }
         for r in own {
             put(&mut self.stats.card, &mut fork.stats.card, r);
@@ -6219,7 +6229,7 @@ impl<'a> Run<'a, '_> {
     /// values are not made over its rows now. With `raise`, a column whose values are skewed past `table::HEAVY`
     /// (ndv over it, and sq · ndv / rows² over 2) is raised; otherwise only raised columns are made. Returns the
     /// columns made.
-    fn heavy_for<'r>(&mut self, rules: impl IntoIterator<Item = &'r Rule>, raise: bool) -> usize {
+    fn heavy_for<'r>(&mut self, rules: impl IntoIterator<Item = &'r Rule>, raise: bool, key: Option<PlanKey>) -> usize {
         static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_STATS_HEAVY").map_or(true, |v| v != "off"));
         if !*ON || !raise && !joins::any_raised() {
             return 0;
@@ -6235,7 +6245,7 @@ impl<'a> Run<'a, '_> {
             }
             for cols in held.values().filter(|cols| cols.len() >= 2) {
                 for &(rel, c) in cols {
-                    if self.model.stats.solving.contains(rel) || self.model.heavy_of(rel, c).is_some() {
+                    if self.model.stats.solving.contains(rel) || self.heavy_current(rel, c) {
                         continue;
                     }
                     let wanted = joins::raised(rel, c) || raise && {
@@ -6251,32 +6261,80 @@ impl<'a> Run<'a, '_> {
             return 0;
         }
         let _span = super::profile::span(|| "heavy values (decision 0209)".into());
-        let reqs: Vec<(String, Vec<usize>)> = want.into_iter().map(|(r, cs)| (r, cs.into_iter().collect())).collect();
-        let made = table::heavy_batch(reqs.iter().map(|(rel, cols)| (super::native::component::derived(self.db, rel), cols.clone())).collect());
+        use super::native::component as engine;
+        // O172: a relation whose heavy values were made over it as it was (`heavy_mark`) merges its change since;
+        // the others are counted, in one batch.
         let mut n = 0;
-        for ((rel, cols), got) in reqs.iter().zip(made) {
-            let Some(got) = got else { continue };
-            for (&c, h) in cols.iter().zip(got) {
-                if raise { joins::raise(rel, c); }
-                joins::log(|| format!("heavy values {rel}.{c}: {} rows, {} values, top {} hold {:.0}%", h.rows, h.ndv, h.top.len(), 100.0 * (1.0 - h.tail_rows / h.rows.max(1.0))));
+        let mut full: Vec<(String, Vec<usize>)> = Vec::new();
+        for (rel, cols) in want {
+            let cols: Vec<usize> = cols.into_iter().collect();
+            let now = engine::held(self.db, &rel);
+            let change = now.as_ref().zip(self.model.stats.heavy_mark.get(&rel))
+                .filter(|_| cols.iter().all(|&c| self.model.stats.heavy.get_at(&rel, c).is_some()))
+                .and_then(|(now, mark)| now.delta_since_mark(mark));
+            let (Some(now), Some((added, removed))) = (now, change) else { full.push((rel, cols)); continue };
+            let k = now.k;
+            for &c in &cols {
+                let count = |rows: &[i64]| -> rustc_hash::FxHashMap<i64, u64> {
+                    let mut m = rustc_hash::FxHashMap::default();
+                    for row in rows.chunks_exact(k) { *m.entry(row[c]).or_default() += 1; }
+                    m
+                };
+                let old = self.model.stats.heavy.get_at(&rel, c).cloned().expect("checked");
+                let ndv = self.model.ndv.get_at(&rel, c).copied().unwrap_or(old.ndv);
+                let h = old.merge(&count(&added), &count(&removed), ndv);
+                if raise { joins::raise(key, &rel, c); }
+                joins::log(|| format!("heavy values {rel}.{c}, merged: {} rows added, {} removed; {} rows, {} values", added.len() / k.max(1), removed.len() / k.max(1), h.rows, h.ndv));
                 self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
                 n += 1;
             }
+            self.model.stats.heavy_mark.insert(rel.as_str(), std::sync::Arc::new(now.mark()));
+        }
+        let held: Vec<_> = full.iter().map(|(rel, _)| engine::held(self.db, rel)).collect();
+        let made = table::heavy_batch(full.iter().map(|(rel, cols)| (engine::derived(self.db, rel), cols.clone())).collect());
+        for (((rel, cols), got), now) in full.iter().zip(made).zip(held) {
+            let Some(got) = got else { continue };
+            for (&c, h) in cols.iter().zip(got) {
+                if raise { joins::raise(key, rel, c); }
+                joins::log(|| format!("heavy values {rel}.{c}: {} rows, {} values, top {} hold {:.0}% (batches: {:?} CPU, GPU)", h.rows, h.ndv, h.top.len(), 100.0 * (1.0 - h.tail_rows / h.rows.max(1.0)), table::batches()));
+                self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
+                n += 1;
+            }
+            if let Some(now) = now { self.model.stats.heavy_mark.insert(rel.as_str(), std::sync::Arc::new(now.mark())); }
         }
         n
     }
 
-    /// Decision 0209 §5's spike: whether a line's best order differs between its heavy key values and the rest.
-    /// The key is a variable a raised column holds whose heavy values are made; the lead's rows reach it through
-    /// the one atom holding both (`inf(f, m)` from `kind(m, return)`). Each candidate runs to the end over each part,
-    /// cut at 4 times the part's least work so far. Logged only.
-    #[allow(clippy::too_many_arguments)]
-    fn split_spike(&mut self, name: &str, line: usize, r: &Rule, orders: &[Vec<Step>], lead: usize, first: Option<usize>, cut_order: &[Step], ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Result<()> {
+    /// Whether column `c` of `rel`'s heavy values are of its rows now: made or merged over the engine's relation as
+    /// it is (its mark), else, with no relation to mark, within a tenth of its rows (`Model::heavy_of`).
+    fn heavy_current(&self, rel: &str, c: usize) -> bool {
+        if self.model.stats.heavy.get_at(rel, c).is_none() {
+            return false;
+        }
+        match (super::native::component::held(self.db, rel), self.model.stats.heavy_mark.get(rel)) {
+            (Some(now), Some(mark)) => now.delta_since_mark(mark).is_some_and(|(a, r)| a.is_empty() && r.is_empty()),
+            (Some(_), None) => false,
+            (None, _) => self.model.heavy_of(rel, c).is_some(),
+        }
+    }
+
+    /// The rows a line's trials draw from (`trial_ids`), split by whether their key is one of a heavy column's values
+    /// (O171, and decision 0216's spike): the key is a variable at a column whose heavy values are made, held by the
+    /// lead itself, or by the one atom holding both it and a variable of the lead (`inf(f, m)` from
+    /// `kind(m, return)`). Returns the heavy column, and the rows of heavy keys and of the rest.
+    fn heavy_parts(&self, name: &str, line: usize, r: &Rule, lead: usize) -> Result<Option<(String, usize, Vec<u32>, Vec<u32>)>> {
         use super::native::component as engine;
-        let Literal::Atom(la) = &r.body[lead] else { return Ok(()) };
-        // The key: a variable at a column with heavy values, and the atom linking the lead to it.
-        let mut found = None;
+        let Literal::Atom(la) = &r.body[lead] else { return Ok(None) };
+        // (the linking relation, its key column, its column of the lead's variable, that variable's lead column)
+        let mut found: Option<(String, usize, Option<(usize, usize)>, HashSet<i64>)> = None;
+        for (cv, t) in la.args.iter().enumerate() {
+            if let Term::Var(_) = t && let Some(h) = self.model.heavy_of(&la.rel, cv) {
+                found = Some((la.rel.to_string(), cv, None, h.top.iter().map(|t| t.0).collect()));
+                break;
+            }
+        }
         'find: for (d, l) in r.body.iter().enumerate() {
+            if found.is_some() { break }
             let Literal::Atom(a) = l else { continue };
             if d == lead || a.neg { continue }
             for (cv, t) in a.args.iter().enumerate() {
@@ -6286,21 +6344,49 @@ impl<'a> Run<'a, '_> {
                     let Term::Var(u) = t2 else { continue };
                     if u == v { continue }
                     if let Some(lc) = la.args.iter().position(|t| matches!(t, Term::Var(x) if x == u)) {
-                        found = Some((a.rel.clone(), cv, cu, lc, h.top.iter().map(|t| t.0).collect::<HashSet<i64>>()));
+                        found = Some((a.rel.to_string(), cv, Some((cu, lc)), h.top.iter().take(table::HEAVY).map(|t| t.0).collect()));
                         break 'find;
                     }
                 }
             }
         }
-        let Some((link, cv, cu, lc, heavy)) = found else { joins::log(|| format!("split spike {}: no heavy key reached from the lead", r.head.rel)); return Ok(()) };
-        let (Some(ids), Some(lsrc), Some(dsrc)) = (engine::trial_ids(self.db, name, line)?, engine::derived(self.db, &la.rel), engine::derived(self.db, &link)) else { return Ok(()) };
-        let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
-        for row in 0..dsrc.len() { keys.entry(dsrc.value(row, cu)).or_default().push(dsrc.value(row, cv)); }
+        let Some((link, cv, via, _)) = found.as_ref().map(|f| (f.0.clone(), f.1, f.2, ())) else { return Ok(None) };
+        // The heavy values reported: the `HEAVY` largest of those kept.
+        let heavy: HashSet<i64> = {
+            let h = self.model.heavy_of(&link, cv).expect("found");
+            let mut top = h.top.clone();
+            top.sort_by(|a, b| b.1.total_cmp(&a.1));
+            top.into_iter().take(table::HEAVY).map(|t| t.0).collect()
+        };
+        let (Some(ids), Some(lsrc)) = (engine::trial_ids(self.db, name, line)?, engine::derived(self.db, &la.rel)) else { return Ok(None) };
         let (mut hot, mut cold) = (Vec::new(), Vec::new());
-        for &id in &ids {
-            let u = lsrc.value(id as usize, lc);
-            if keys.get(&u).is_some_and(|vs| vs.iter().any(|v| heavy.contains(v))) { hot.push(id) } else { cold.push(id) }
+        match via {
+            None => {
+                for &id in &ids {
+                    if heavy.contains(&lsrc.value(id as usize, cv)) { hot.push(id) } else { cold.push(id) }
+                }
+            }
+            Some((cu, lc)) => {
+                let Some(dsrc) = engine::derived(self.db, &link) else { return Ok(None) };
+                let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
+                for row in 0..dsrc.len() { keys.entry(dsrc.value(row, cu)).or_default().push(dsrc.value(row, cv)); }
+                for &id in &ids {
+                    let u = lsrc.value(id as usize, lc);
+                    if keys.get(&u).is_some_and(|vs| vs.iter().any(|v| heavy.contains(v))) { hot.push(id) } else { cold.push(id) }
+                }
+            }
         }
+        Ok(Some((link, cv, hot, cold)))
+    }
+
+    /// Decision 0209 §5's spike: whether a line's best order differs between its heavy key values and the rest.
+    /// The key is a variable a raised column holds whose heavy values are made; the lead's rows reach it through
+    /// the one atom holding both (`inf(f, m)` from `kind(m, return)`). Each candidate runs to the end over each part,
+    /// cut at 4 times the part's least work so far. Logged only.
+    #[allow(clippy::too_many_arguments)]
+    fn split_spike(&mut self, name: &str, line: usize, r: &Rule, orders: &[Vec<Step>], lead: usize, first: Option<usize>, cut_order: &[Step], ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Result<()> {
+        let Some((link, cv, hot, cold)) = self.heavy_parts(name, line, r, lead)? else { joins::log(|| format!("split spike {}: no heavy key reached from the lead", r.head.rel)); return Ok(()) };
+        use super::native::component as engine;
         let mut report = Vec::new();
         for (part, picked) in [("heavy", &hot), ("rest", &cold)] {
             let mut least: Option<u64> = None;
@@ -7341,7 +7427,7 @@ impl<'a> Run<'a, '_> {
         let mut wanted = BTreeSet::new();
         self.model.wants(seed_bodies.iter().map(|b| (b, None)), &mut wanted);
         self.model.make_statistics(prog, &wanted)?;
-        self.heavy_for(seeds.iter().copied(), false);
+        self.heavy_for(seeds.iter().copied(), false, None);
         plan_site("a stratum's seed");
         for (r, b) in seeds.iter().zip(&seed_bodies) {
             self.model.late(prog, b, None, false)?;
@@ -7439,7 +7525,7 @@ impl<'a> Run<'a, '_> {
         }).collect();
         self.model.wants(round, &mut wanted);
         self.model.make_statistics(prog, &wanted)?;
-        self.heavy_for(rules.iter().copied(), false);
+        self.heavy_for(rules.iter().copied(), false, None);
         let mut probes = Vec::new();
         // Each probe's whole plan's order, where it has one (O168: a whole plan cut is handed off as a probe is).
         let mut wholes: HashMap<usize, Vec<Step>> = HashMap::new();
@@ -7861,7 +7947,7 @@ impl<'a> Run<'a, '_> {
                     let exact = self.exact_statistics(&name, line, r, &probes[k].2);
                     joins::log(|| format!("slow {} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows; {} exact pair statistics", r.head.rel, exact.len()));
                     joins::put_exact(key, rule, exact);
-                    self.heavy_for([r], true);
+                    self.heavy_for([r], true, Some(key));
                     replanned_at.force(k);
                     self.request_search(r, Some(ai), rule, key, work)?;
                 }
@@ -8071,7 +8157,7 @@ impl<'a> Run<'a, '_> {
                         let exact = self.exact_statistics(&name, line, r, &running);
                         joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, r.head.rel, c.done, exact.len()));
                         joins::put_exact(key, rule, exact);
-                        self.heavy_for([r], true);
+                        self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work)?;
                         // With trials (decision 0207) the orders are measured below instead.
@@ -8092,7 +8178,7 @@ impl<'a> Run<'a, '_> {
                 let joined = r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg)).count() >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
                     // Decision 0209: the candidates are priced with the line's skewed join columns' heavy values.
-                    self.heavy_for([r], true);
+                    self.heavy_for([r], true, Some(key));
                     let running = order_now(&orders, &probes, &wholes);
                     let cut_order = old.clone().unwrap_or_else(|| running.clone());
                     let lead = first.unwrap_or(cut_order[0].at);
@@ -8109,22 +8195,57 @@ impl<'a> Run<'a, '_> {
                         if o.len() == r.body.len() && !distinct.iter().any(|d| same_order(d, &o)) { distinct.push(o); }
                     }
                     distinct.truncate(6);
+                    // O171: where the line's key has heavy values, the sample is drawn from the heavy keys' rows and
+                    // the rest apart, a quarter of it from the heavy, and each order's work per row is their mean
+                    // weighted by the parts' rows. At a stride alone, a key whose heavy values hold most of the work
+                    // was measured on its light rows (`call_ret`: 23% of the rows did 96% of the work).
+                    let parts = match self.heavy_parts(&name, line, r, lead)? {
+                        Some((_, _, hot, cold)) if !hot.is_empty() && !cold.is_empty() => {
+                            let stride = |ids: &[u32], k: usize| -> Vec<u32> { let st = ids.len().div_ceil(k.max(1)).max(1); ids.iter().step_by(st).copied().collect() };
+                            let kh = (sample / 4).max(2).min(hot.len());
+                            let kc = sample.saturating_sub(kh).max(1).min(cold.len());
+                            Some([(stride(&hot, kh), hot.len()), (stride(&cold, kc), cold.len())])
+                        }
+                        _ => None,
+                    };
                     let mut measured: Vec<(Vec<Step>, super::native::component::TrialRun)> = Vec::new();
-                    let mut least: Option<u64> = None;
+                    let mut least: [Option<u64>; 2] = [None; 2];
                     for (i, o) in distinct.iter().enumerate() {
-                        let budget = least.map_or(cap, |w| ((joins::trial_cutoff() * w as f64) as u64).clamp(1, cap));
-                        let run = if i == 0 {
-                            super::native::component::trial(self.db, &name, line, None, None, sample, budget)?
-                        } else {
+                        let spec = if i == 0 { None } else {
                             let at = first.map(|ai| o.iter().position(|s| s.at == ai));
                             if at == Some(None) { continue; }
                             let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, o), at.flatten(), &ri, scc, native_rels) else { continue };
-                            let step = (o[0].at == cut_order[0].at).then_some(0);
-                            super::native::component::trial(self.db, &name, line, Some(&spec), step, sample, budget)?
+                            Some((spec, (o[0].at == cut_order[0].at).then_some(0)))
                         };
-                        let Some(run) = run else { continue };
-                        if !run.cut { least = Some(least.map_or(run.work, |w| w.min(run.work))); }
+                        let budget = |least: Option<u64>, cap: u64| least.map_or(cap, |w| ((joins::trial_cutoff() * w as f64) as u64).clamp(1, cap));
+                        let one = |this: &mut Self, pick: std::result::Result<&[u32], usize>, budget: u64| match &spec {
+                            None => super::native::component::trial_over(this.db, &name, line, None, None, pick, budget),
+                            Some((spec, step)) => super::native::component::trial_over(this.db, &name, line, Some(spec), *step, pick, budget),
+                        };
+                        let run = match &parts {
+                            None => {
+                                let Some(run) = one(self, Err(sample), budget(least[0], cap))? else { continue };
+                                if !run.cut { least[0] = Some(least[0].map_or(run.work, |w| w.min(run.work))); }
+                                run
+                            }
+                            Some(ps) => {
+                                let mut got = Vec::new();
+                                for (p, (pick, _)) in ps.iter().enumerate() {
+                                    let Some(run) = one(self, Ok(pick), budget(least[p], cap / 2))? else { break };
+                                    if !run.cut { least[p] = Some(least[p].map_or(run.work, |w| w.min(run.work))); }
+                                    got.push(run);
+                                }
+                                if got.len() < 2 { continue; }
+                                let all = (ps[0].1 + ps[1].1) as f64;
+                                let per_row: f64 = got.iter().zip(ps).map(|(run, (_, size))| *size as f64 / all * run.work as f64 / run.rows.max(1) as f64).sum();
+                                let rows = got[0].rows + got[1].rows;
+                                super::native::component::TrialRun { work: (per_row * rows as f64).round() as u64, rows, made: got[0].made + got[1].made, cut: got[0].cut || got[1].cut }
+                            }
+                        };
                         measured.push((o.clone(), run));
+                    }
+                    if let Some(ps) = &parts {
+                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1));
                     }
                     let rule = order_rules[line];
                     let mut prices = Vec::new();

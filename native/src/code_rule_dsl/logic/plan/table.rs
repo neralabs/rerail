@@ -338,15 +338,21 @@ impl<T, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
     }
 }
 
-/// Decision 0209 §4, level 1: how many of a column's values are kept by their counts.
+/// Decision 0209 §4, level 1: how many of a column's values are reported by their counts.
 pub const HEAVY: usize = 64;
+/// The counters a column keeps: twice what it reports, so a value that grows into the top is seen as a delta is
+/// merged (a Misra–Gries summary's 2k counters).
+pub const KEPT: usize = 2 * HEAVY;
 
 /// A column's heavy values: its most common values with their exact rows, and what is left (the tail), made over
 /// `rows` rows (decision 0209 §4).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeavyCol {
-    /// The values and their rows, by value (for lookups), at most `HEAVY`.
+    /// The values and their rows, by value (for lookups), at most `KEPT`.
     pub top: Vec<(i64, f64)>,
+    /// How many rows a value's count may miss: 0 when made by a full pass; after merges (`merge`), the most a value
+    /// left out of `top` held, which a value that came in since may have had before it came.
+    pub err: f64,
     pub rows: f64,
     pub ndv: f64,
     /// Rows and distinct values outside `top`.
@@ -369,14 +375,56 @@ impl HeavyCol {
             cube += n * n * n;
         }
         let ndv = all.len() as f64;
-        if all.len() > HEAVY {
-            all.select_nth_unstable_by(HEAVY - 1, |a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            all.truncate(HEAVY);
+        if all.len() > KEPT {
+            all.select_nth_unstable_by(KEPT - 1, |a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            all.truncate(KEPT);
         }
         let mut top: Vec<(i64, f64)> = all.into_iter().map(|(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
         let held: f64 = top.iter().map(|t| t.1).sum();
-        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, rows, ndv, sq, cube }
+        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq, cube }
+    }
+    /// Decision 0209 §4's merge (O172): the column after a change of `added` and `removed` rows a value, its
+    /// distinct values now `ndv` (the sketch's). A kept value's count moves by its change, exact if it was. A value
+    /// not kept that the change adds comes in at what it added, and the kept stay the `KEPT` largest; the rest are
+    /// the tail. sq and cube move by each value's change, a tail value's taken at the tail's mean.
+    pub fn merge(&self, added: &FxHashMap<i64, u64>, removed: &FxHashMap<i64, u64>, ndv: f64) -> HeavyCol {
+        let mean = self.tail_mean();
+        let mut counts: FxHashMap<i64, f64> = self.top.iter().copied().collect();
+        let (mut rows, mut sq, mut cube) = (self.rows, self.sq, self.cube);
+        let mut tail_rows = self.tail_rows;
+        let mut moved = |was: f64, now: f64| {
+            sq += now * now - was * was;
+            cube += now * now * now - was * was * was;
+        };
+        for (&v, &a) in added {
+            let a = a as f64;
+            rows += a;
+            match counts.get_mut(&v) {
+                Some(n) => { moved(*n, *n + a); *n += a; }
+                None => { moved(mean, mean + a); counts.insert(v, a); }
+            }
+        }
+        for (&v, &r) in removed {
+            let r = r as f64;
+            rows -= r;
+            match counts.get_mut(&v) {
+                Some(n) => { let now = (*n - r).max(0.0); moved(*n, now); *n = now; }
+                None => { tail_rows -= r; moved(mean, (mean - r).max(0.0)); }
+            }
+        }
+        let mut all: Vec<(i64, f64)> = counts.into_iter().filter(|c| c.1 > 0.0).collect();
+        let mut err = self.err;
+        if all.len() > KEPT {
+            all.select_nth_unstable_by(KEPT - 1, |a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            err = err.max(all[KEPT..].iter().map(|c| c.1).fold(0.0, f64::max));
+            all.truncate(KEPT);
+        }
+        all.sort_unstable_by_key(|t| t.0);
+        let held: f64 = all.iter().map(|t| t.1).sum();
+        let ndv = ndv.max(all.len() as f64);
+        let _ = tail_rows;
+        HeavyCol { tail_rows: (rows - held).max(0.0), tail_ndv: ndv - all.len() as f64, top: all, err, rows, ndv, sq: sq.max(rows), cube: cube.max(rows) }
     }
     /// Value `v`'s rows, where it is heavy.
     #[inline]
@@ -419,10 +467,25 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
     (den > 0.0).then(|| num / den)
 }
 
-/// Decision 0209 §6, the CPU batch: each relation's requested columns' heavy values, in one pass over its rows (its
-/// source, where it has one), the relations spread over the pool.
+/// Decision 0209 §6: each relation's requested columns' heavy values, in one batch: on the GPU in one command
+/// buffer (`heavy_of_values_gpu`) where the round's rows make a launch pay (`gpu_pays`), else on the CPU, one pass
+/// over each relation's rows (its source, where it has one), the relations spread over the pool.
 pub fn heavy_batch(reqs: Vec<(Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Vec<usize>)>) -> Vec<Option<Vec<HeavyCol>>> {
     use rayon::prelude::*;
+    let rows: usize = reqs.iter().map(|(s, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
+    if gpu_pays(rows) {
+        let values: Vec<Option<Vec<Vec<i64>>>> = reqs
+            .par_iter()
+            .map(|(src, cols)| src.as_ref().map(|src| cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()))
+            .collect();
+        let flat: Vec<&[i64]> = values.iter().flatten().flat_map(|cs| cs.iter().map(Vec::as_slice)).collect();
+        if let Some(mut made) = heavy_of_values_gpu(&flat) {
+            BATCHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut made = made.drain(..);
+            return values.iter().map(|v| v.as_ref().map(|cs| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
+        }
+    }
+    BATCHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     reqs.into_par_iter()
         .map(|(src, cols)| {
             let src = src?;
@@ -435,6 +498,45 @@ pub fn heavy_batch(reqs: Vec<(Option<std::sync::Arc<dyn crate::code_rule_dsl::fa
             Some(counts.into_iter().map(HeavyCol::of_counts).collect())
         })
         .collect()
+}
+
+/// The batches made, on the CPU and on the GPU.
+static BATCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
+pub fn batches() -> [u64; 2] {
+    BATCHES.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Whether a round of `rows` rows (each column's rows, summed) is made on the GPU: `RERAIL_STATS_GPU` on or off,
+/// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing.
+fn gpu_pays(rows: usize) -> bool {
+    const GPU_ROWS: usize = 1 << 20;
+    static MODE: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
+        Ok("on") => Some(true),
+        Ok("off") => Some(false),
+        _ => None,
+    });
+    MODE.unwrap_or(rows >= GPU_ROWS)
+}
+
+/// Columns' heavy values made on the GPU (`rerail_accel::gpu::join::column_stats`), exact; `None` without a device.
+pub fn heavy_of_values_gpu(cols: &[&[i64]]) -> Option<Vec<HeavyCol>> {
+    #[cfg(target_os = "macos")]
+    {
+        let made = rerail_accel::gpu::join::column_stats(cols, KEPT).ok()?;
+        Some(made.into_iter().map(|m| {
+            let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
+            top.sort_unstable_by_key(|t| t.0);
+            let held: f64 = top.iter().map(|t| t.1).sum();
+            let (rows, ndv) = (m.rows as f64, m.ndv as f64);
+            HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq: m.sq as f64, cube: m.cube as f64 }
+        }).collect())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cols;
+        None
+    }
 }
 
 #[cfg(test)]
@@ -465,15 +567,75 @@ mod tests {
     }
     #[test]
     fn heavy_values_price_a_skewed_self_join_value_by_value() {
-        // 100 values of 1 row and one of 300: a three-way self-join on the column.
-        let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
+        // 200 values of 1 row and one of 300: a three-way self-join on the column.
+        let counts: Vec<(i64, u64)> = (0..200).map(|v| (v, 1)).chain([(1000, 300)]).collect();
         let true3: f64 = counts.iter().map(|&(_, n)| (n as f64).powi(3)).sum();
         let true2: f64 = counts.iter().map(|&(_, n)| (n as f64).powi(2)).sum();
         let h = HeavyCol::of_counts(counts.clone());
-        assert_eq!((h.rows, h.ndv, h.top.len(), h.count(1000), h.tail_ndv), (400.0, 101.0, 64, Some(300.0), 37.0));
+        assert_eq!((h.rows, h.ndv, h.top.len(), h.count(1000), h.tail_ndv), (500.0, 201.0, KEPT, Some(300.0), 73.0));
         // The second atom's rows a binding are sq / rows; the third's, cube / sq.
-        assert!((heavy_fan(&h, &[&h]).unwrap() - true2 / 400.0).abs() < 1e-9);
+        assert!((heavy_fan(&h, &[&h]).unwrap() - true2 / 500.0).abs() < 1e-9);
         assert!((heavy_fan(&h, &[&h, &h]).unwrap() - true3 / true2).abs() < 1e-9);
         assert_eq!((h.sq, h.cube), (true2, true3));
+    }
+    #[test]
+    fn a_change_merged_into_heavy_values_is_its_full_count() {
+        // 300 values of 2 rows and one of 100, then a change: 50 rows more of the heavy value, 40 of a new one, 30
+        // of a tail value, and the heavy value's 10 rows less.
+        let base: Vec<(i64, u64)> = (0..300).map(|v| (v, 2)).chain([(9_999, 100)]).collect();
+        let h = HeavyCol::of_counts(base.clone());
+        let added: FxHashMap<i64, u64> = [(9_999, 50), (77_777, 40), (250, 30)].into_iter().collect();
+        let removed: FxHashMap<i64, u64> = [(9_999, 10)].into_iter().collect();
+        let mut now: FxHashMap<i64, u64> = base.into_iter().collect();
+        for (v, a) in &added { *now.entry(*v).or_default() += a; }
+        for (v, r) in &removed { *now.get_mut(v).unwrap() -= r; }
+        let full = HeavyCol::of_counts(now.clone());
+        let merged = h.merge(&added, &removed, full.ndv);
+        // The heavy value and the new one are counted exactly; the rows, exactly.
+        assert_eq!((merged.count(9_999), merged.count(77_777), merged.rows, merged.ndv), (Some(140.0), Some(40.0), full.rows, full.ndv));
+        // Its price of a three-way self-join is the full count's within 2%.
+        let (m3, f3) = (heavy_fan(&merged, &[&merged, &merged]).unwrap(), heavy_fan(&full, &[&full, &full]).unwrap());
+        assert!((m3 / f3 - 1.0).abs() < 0.02, "{m3} against {f3}");
+        assert!(merged.err <= 2.0 + 30.0, "a value left out held at most its rows: {}", merged.err);
+    }
+    #[test]
+    fn the_gpu_batch_makes_the_cpu_batch_heavy_values() {
+        // A skewed key of node-like ids, and a narrow one; where there is no device, nothing to compare.
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        let wide: Vec<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
+        let narrow: Vec<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
+        let Some(gpu) = heavy_of_values_gpu(&[&wide, &narrow]) else { return };
+        for (col, g) in [&wide, &narrow].into_iter().zip(gpu) {
+            let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
+            for &v in col { *counts.entry(v).or_default() += 1; }
+            let cpu = HeavyCol::of_counts(counts);
+            assert_eq!((g.rows, g.ndv, g.sq, g.cube, g.tail_rows, g.tail_ndv), (cpu.rows, cpu.ndv, cpu.sq, cpu.cube, cpu.tail_rows, cpu.tail_ndv));
+            // The same top counts (ties may take other values of the same count).
+            let counts_of = |h: &HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
+            assert_eq!(counts_of(&g), counts_of(&cpu));
+            assert!((heavy_fan(&g, &[&g, &g]).unwrap() / heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
+        }
+    }
+    /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
+    #[test]
+    #[ignore]
+    fn heavy_batches_timed() {
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        for n in [1usize << 20, 8 << 20] {
+            let col: Vec<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
+            let _ = heavy_of_values_gpu(&[&col]);
+            let t = std::time::Instant::now();
+            let gpu = heavy_of_values_gpu(&[&col]).expect("a device");
+            let g = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
+            for &v in &col { *counts.entry(v).or_default() += 1; }
+            let cpu = HeavyCol::of_counts(counts);
+            let c = t.elapsed().as_secs_f64();
+            assert_eq!((gpu[0].ndv, gpu[0].sq), (cpu.ndv, cpu.sq));
+            eprintln!("heavy batch, {n} rows: GPU {:.1} ms, CPU {:.1} ms", g * 1e3, c * 1e3);
+        }
     }
 }

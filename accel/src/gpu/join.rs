@@ -989,6 +989,114 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
     Ok(SortParts { perm, starts, rkeys, nruns, key })
 }
 
+/// A column's statistics made on the device (decision 0209 §6): its rows, distinct values, the sums of its values'
+/// counts squared and cubed, and its `k` most common values with their counts, most common first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ColStats {
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+    pub cube: u64,
+    pub top: Vec<(i64, u64)>,
+}
+
+/// The kernels of `column_stats` for a sort word `key`.
+fn col_stats_source(key: Width) -> String {
+    let k = key.ty();
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+
+// One threadgroup: each run's length (0 past the runs), and the runs' count, sum of lengths squared and cubed.
+kernel void col_stats(device const uint* starts [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uint* lens [[buffer(2)]],
+                      device ulong* out [[buffer(3)]], constant uint* p [[buffer(4)]], uint t [[thread_index_in_threadgroup]]) {{
+    uint n = p[0];
+    uint runs = n > 0 ? nruns[0] : 0;
+    ulong sq = 0, cube = 0;
+    for (uint r = t; r < n; r += 256) {{
+        uint len = r < runs ? starts[r + 1] - starts[r] : 0;
+        lens[r] = len;
+        ulong l = len;
+        sq += l * l;
+        cube += l * l * l;
+    }}
+    threadgroup ulong S[256];
+    threadgroup ulong C[256];
+    S[t] = sq; C[t] = cube;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {{
+        if (t < s) {{ S[t] += S[t + s]; C[t] += C[t + s]; }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (t == 0) {{ out[0] = runs; out[1] = S[0]; out[2] = C[0]; }}
+}}
+
+// The k longest runs, longest first, from the lengths' sort (ascending, stable): each one's key and length.
+kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* lens [[buffer(1)]], device const {k}* rkeys [[buffer(2)]],
+                    device ulong* out [[buffer(3)]], constant uint* p [[buffer(4)]], uint t [[thread_position_in_grid]]) {{
+    uint n = p[0], k = p[1];
+    if (t >= k) return;
+    ulong key = 0, len = 0;
+    if (t < n) {{ uint r = perm[n - 1 - t]; len = lens[r]; key = ulong(rkeys[r]); }}
+    out[3 + t] = key;
+    out[3 + k + t] = len;
+}}
+"#
+    )
+}
+
+/// Decision 0209 §6, the GPU batch: each column's statistics (`ColStats`) and its `k` most common values, all in one
+/// command buffer. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
+/// `col_stats` reduces the lengths; a second sort of the lengths gives the longest runs (`col_top`). The host reads
+/// one small buffer a column. Exact, as the CPU's batch is.
+pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> {
+    device()?;
+    let queue = queue()?;
+    let command = queue.new_command_buffer();
+    let pass = Pass::new(command);
+    let mut keep: Vec<Held> = Vec::new();
+    let mut reads: Vec<Column> = Vec::new();
+    let mut outs: Vec<Option<(Held, i64)>> = Vec::new();
+    for col in cols {
+        let n = col.len();
+        if n == 0 {
+            outs.push(None);
+            continue;
+        }
+        let c = Column::upload(col)?;
+        let parts = encode_sort(&pass, &c.buffer.buffer, c.width, c.bits, n)?;
+        let variant = format!("column stats {:?}", parts.key.bytes());
+        let stats = pipeline(&variant, "col_stats", || col_stats_source(parts.key))?;
+        let top = pipeline(&variant, "col_top", || col_stats_source(parts.key))?;
+        let lens = Held::new(4 * n)?;
+        let out = Held::zeroed(8 * (3 + 2 * k))?;
+        let nn = n as u32;
+        pass.run(&stats, &[&parts.starts.buffer, &parts.nruns.buffer, &lens.buffer, &out.buffer], &[nn], &[], 1);
+        let by_len = encode_sort(&pass, &lens.buffer, Width::W32, 32, n)?;
+        pass.run(&top, &[&by_len.perm.buffer, &lens.buffer, &parts.rkeys.buffer, &out.buffer], &[nn, k as u32], &[], groups(k));
+        outs.push(Some((out, c.base)));
+        keep.extend([lens, parts.perm, parts.starts, parts.rkeys, parts.nruns, by_len.perm, by_len.starts, by_len.rkeys, by_len.nruns]);
+        reads.push(c);
+    }
+    pass.end();
+    let mut done = Submitted::commit(command)?;
+    done.reads = reads;
+    done.wait();
+    drop(keep);
+    Ok(outs
+        .into_iter()
+        .zip(cols)
+        .map(|(o, col)| {
+            let Some((out, base)) = o else { return ColStats::default() };
+            // SAFETY: `3 + 2k` words, written by `col_stats` and `col_top`; the command buffer completed.
+            let w = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u64>(), 3 + 2 * k) };
+            let ndv = w[0];
+            let top = (0..k.min(ndv as usize)).map(|i| ((w[3 + i] as i64).wrapping_add(base), w[3 + k + i])).collect();
+            ColStats { rows: col.len() as u64, ndv, sq: w[1], cube: w[2], top }
+        })
+        .collect())
+}
+
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
 pub struct Probed {
     pub pairs: Vec<(u32, u32)>,

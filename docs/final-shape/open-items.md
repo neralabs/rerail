@@ -5093,7 +5093,10 @@ SQL statistics' loads, not the search.
 
 A trial (decision 0207) samples a line's rows at a stride. On `call_ret`, 23% of the rows (those of the 64
 largest functions) do 96% of the work, so a 9-row sample measures mostly light rows: 492 rows of work a row, where
-the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both. Open.
+the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both.
+
+Closed (2026-11-14, decision 0221): trials sample a skewed key's heavy rows and the rest apart, weighted back by
+the parts' rows. The winner's estimate went from 0.56 to 0.68 of the line's work per row.
 
 ## O172. Heavy values: deltas, processes, GPU (decision 0216)
 
@@ -5101,4 +5104,8 @@ Heavy values are made by a full pass over a relation when a column is raised. Op
 - a delta's Misra–Gries summary merged into the kept one (0209 §4), so a growing relation is not counted again;
 - a line's raised columns kept with its note across processes;
 - the GPU batch (0209 §6, step 4).
+
+Closed (2026-11-14, decision 0221): a change is merged into kept heavy values (`HeavyCol::merge`, from a mark of
+the relation); raised columns are kept with their note in the store (`rr_join_raised`); the GPU batch is
+`rerail_accel::gpu::join::column_stats`, one command buffer a round, exact.
 

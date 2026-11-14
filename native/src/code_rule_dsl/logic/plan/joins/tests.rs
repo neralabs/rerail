@@ -20,6 +20,7 @@ fn notes_and_exact_statistics_read_back_as_written() {
         tried: vec![Tried { order: vec![(0, None), (2, Some(Mode::Range)), (1, None)], ratio: 12.5, runs: 2 }],
         proposals: vec![(vec![(2, None), (0, None), (1, Some(Mode::Climb)), (3, None), (4, None)], 80.0)],
         exact: Vec::new(),
+        raised: Vec::new(),
     };
     let key: PlanKey = (5u128 << 70) | 9;
     assert_eq!(of_note_row(&note_row(key, &n)), Some((key, n)));

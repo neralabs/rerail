@@ -3907,6 +3907,10 @@ unsafe impl VTabCursor for DerivedCursor {
 /// is not counted again from its rows there (decision 0096 step 4). Columns named `c0`, `c1`, … until read.
 #[derive(Clone)]
 pub struct KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats);
+/// A relation as `InRel::mark` saw it: enough to find its change later (`delta_since_mark`).
+#[derive(Clone, Debug)]
+pub struct RelMark { at: usize, n: usize, k: usize, dead: Vec<u64> }
+
 impl KeptStats {
     fn of(k: usize) -> KeptStats {
         KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats::paired((0..k).map(|c| format!("c{c}")).collect()))
@@ -3925,6 +3929,47 @@ impl InRel {
         rel.count_dead();
         InRel { k: rel.k, n: rel.n, rows: rel.data.freeze(rel.n), view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx, sorted: rel.sorted,
                 sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
+    }
+    /// What `delta_since_mark` needs of this relation later, without holding it: its address, rows and dead rows.
+    pub fn mark(&self) -> RelMark {
+        RelMark { at: self as *const InRel as usize, n: self.n, k: self.k, dead: self.dead.clone() }
+    }
+    /// `delta_since`, from a mark of the relation it started as (`mark`), not the relation itself: decision 0216's
+    /// heavy values merge a relation's change without keeping its old rows alive (O172).
+    pub fn delta_since_mark(&self, old: &RelMark) -> Option<(Vec<i64>, Vec<i64>)> {
+        if self.k != old.k || self.view.is_some() {
+            return None;
+        }
+        if self as *const InRel as usize == old.at && self.n == old.n && self.dead == old.dead {
+            return Some((Vec::new(), Vec::new()));
+        }
+        let k = self.k;
+        match &self.from {
+            Some(Origin::Based { at: a, n }) if *a == old.at && *n == old.n => {}
+            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == old.at && *old_n == old.n => {
+                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).flat_map(|id| self.row(id).iter().copied()).collect();
+                return Some((added, removed.clone()));
+            }
+            _ => return None,
+        }
+        let mut removed = Vec::new();
+        for (w, &bits) in self.dead.iter().enumerate() {
+            let mut new = bits & !old.dead.get(w).copied().unwrap_or(0);
+            while new != 0 {
+                let id = w * 64 + new.trailing_zeros() as usize;
+                new &= new - 1;
+                if id < old.n {
+                    removed.extend_from_slice(self.row(id));
+                }
+            }
+        }
+        let mut added = Vec::with_capacity((self.n - old.n) * k);
+        for id in old.n..self.n {
+            if !is_dead(&self.dead, id as u32) {
+                added.extend_from_slice(self.row(id));
+            }
+        }
+        Some((added, removed))
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in

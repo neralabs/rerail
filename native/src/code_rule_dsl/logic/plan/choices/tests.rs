@@ -86,12 +86,14 @@
         let line: super::super::PlanKey = 0x5eed_0192_u128 << 64 | 0x77;
         let sig: super::super::Sig = ("b".into(), vec![(0, None)]);
         let note = super::super::joins::Note { rule: 42, runs: 1, critical: 0.5, est: 10.0, ran: 1e6, wants_search: true, ..Default::default() };
-        let rows = note_rows((vec![(line, note.clone())], vec![(line, 42, sig.clone(), [50, 50_000])]));
+        let rows = note_rows((vec![(line, note.clone())], vec![(line, 42, sig.clone(), [50, 50_000])], vec![(line, "inf".into(), 0)]));
         assert!(write_plans(&store, &prepared, &[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &rows).unwrap());
         let read = read_plans(&store, &prepared).unwrap();
         assert_eq!(read.get(&key), Some(&stored), "the plans are kept beside the notes");
         let taken = super::super::joins::note(&line).expect("the note, taken from the store");
         assert_eq!((taken.rule, taken.ran, taken.wants_search, taken.exact.clone()), (42, 1e6, true, vec![(sig, [50, 50_000])]));
+        assert_eq!(taken.raised, vec![("inf".to_owned(), 0)], "the columns it raised, kept with it (O172)");
+        assert!(super::super::joins::raised("inf", 0), "and raised in this process");
         assert!(read_plans(&store, &[8u8; 32]).unwrap().is_empty(), "another prepared program's are not taken");
         assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
         drop(store);

@@ -168,7 +168,7 @@ impl Drop for Durable {
             let notes = notes.unwrap_or_default();
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
-            let bytes = rows.iter().chain(&notes.0).chain(&notes.1).map(|r| 9 * r.len() + 8).sum();
+            let bytes = rows.iter().chain(&notes.0).chain(&notes.1).chain(&notes.2).map(|r| 9 * r.len() + 8).sum();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} join notes queued for the store", rows.len(), notes.0.len()));
             store.write_back("the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows, &notes).map(drop)));
         }
@@ -265,6 +265,8 @@ const PLANS_REL: &str = "rr_kept_plan";
 /// The join memo's notes and exact statistics (decision 0203 §6), in the same entry.
 const NOTES_REL: &str = "rr_join_note";
 const EXACT_REL: &str = "rr_join_exact";
+/// The columns the notes raised to keep heavy values (decision 0209 §4, O172).
+const RAISED_REL: &str = "rr_join_raised";
 
 /// The join memo's notes and exact statistics read from `facts`, given to this process's memo.
 fn take_notes(facts: &Facts) {
@@ -283,13 +285,22 @@ fn take_notes(facts: &Facts) {
             _ => None,
         })
         .collect();
-    super::joins::from_store(notes, exact);
+    let raised = facts
+        .get(RAISED_REL)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| match row.as_slice() {
+            [Value::Int(hi), Value::Int(lo), Value::Str(rel), Value::Int(c)] => Some(((*hi as u64 as u128) << 64 | *lo as u64 as u128, rel.to_string(), usize::try_from(*c).ok()?)),
+            _ => None,
+        })
+        .collect();
+    super::joins::from_store((notes, exact, raised));
 }
 
 /// The memo's rows for the entry.
-pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>);
+pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
 
-fn note_rows((notes, exact): (Vec<(super::PlanKey, super::joins::Note)>, Vec<(super::PlanKey, u64, super::Sig, [i64; 2])>)) -> NoteRows {
+fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
     let notes = notes.iter().map(|(k, n)| super::joins::note_row(*k, n).into_iter().map(Value::Int).collect()).collect();
     let exact = exact
         .iter()
@@ -298,7 +309,8 @@ fn note_rows((notes, exact): (Vec<(super::PlanKey, super::joins::Note)>, Vec<(su
             ints.into_iter().map(Value::Int).chain([Value::Str(rel.into()), Value::Str(cols.into()), Value::Int(c[0]), Value::Int(c[1])]).collect()
         })
         .collect();
-    (notes, exact)
+    let raised = raised.iter().map(|(k, rel, c)| vec![Value::Int((k >> 64) as i64), Value::Int(*k as i64), Value::Str(rel.as_str().into()), Value::Int(*c as i64)]).collect();
+    (notes, exact, raised)
 }
 
 /// The plans kept under `prepared`: one read of the store.
@@ -321,6 +333,7 @@ fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], n
     if !notes.0.is_empty() {
         facts.insert(NOTES_REL.to_owned(), notes.0.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         facts.insert(EXACT_REL.to_owned(), notes.1.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+        facts.insert(RAISED_REL.to_owned(), notes.2.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     }
     let text = source_text(prepared);
     let hash = HashKey::sha256(text.as_bytes());
