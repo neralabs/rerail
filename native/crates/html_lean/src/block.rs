@@ -18,8 +18,7 @@ const LT: usize = 5; // '<'
 const GT: usize = 6; // '>'
 const DQUOTE: usize = 7; // '"'
 const QUOTE: usize = 8; // '\''
-const HIGH: usize = 9; // a byte from 0x80: part of a character past ASCII
-const MASKS: usize = 10;
+const MASKS: usize = 9;
 
 // The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
 const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
@@ -106,7 +105,7 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> Masks {
         let value = S::or(S::or(S::or(lt, gt), S::or(dq, q)), S::or(eq, blank_v));
         let avalue = S::to_bitmask(value);
         let aname = avalue | S::eq_mask(v, b'/');
-        [text, blank, name, aname, avalue, S::to_bitmask(lt), S::to_bitmask(gt), S::to_bitmask(dq), S::to_bitmask(q), S::to_bitmask(S::ge(v, 0x80))]
+        [text, blank, name, aname, avalue, S::to_bitmask(lt), S::to_bitmask(gt), S::to_bitmask(dq), S::to_bitmask(q)]
     }
 }
 
@@ -127,7 +126,6 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<Masks> {
         let past = !0u64 << n;
         m[BLANK] &= !past;
         m[NAME] &= !past;
-        m[HIGH] &= !past;
         for k in [TEXT, ANAME, AVALUE, LT, GT, DQUOTE, QUOTE] {
             m[k] |= past;
         }
@@ -171,12 +169,6 @@ impl<'s> Blocks<'s> {
             }
             m = self.m[b][k] ^ flip;
         }
-    }
-
-    /// Whether any byte in `from..to` has its bit in mask `k`.
-    #[inline(always)]
-    fn any(&self, from: usize, to: usize, k: usize) -> bool {
-        from < to && self.next(from, k, true) < to
     }
 
     /// The first `<`, `>` or `&` from `at`: a text's end.
@@ -226,12 +218,6 @@ impl<'s> Blocks<'s> {
     pub fn quote(&self, at: usize, quote: u8) -> usize {
         self.next(at, if quote == b'"' { DQUOTE } else { QUOTE }, true)
     }
-
-    /// Whether `from..to` holds a byte from 0x80 (a character past ASCII).
-    #[inline]
-    pub fn has_high(&self, from: usize, to: usize) -> bool {
-        self.any(from, to, HIGH)
-    }
 }
 
 #[cfg(test)]
@@ -261,7 +247,6 @@ mod tests {
                 o[GT] |= bit(c == b'>');
                 o[DQUOTE] |= bit(c == b'"');
                 o[QUOTE] |= bit(c == b'\'');
-                o[HIGH] |= bit(c >= 0x80);
             }
         }
         out
@@ -302,7 +287,5 @@ mod tests {
         assert_eq!(Blocks::of(b"x  \n y").blank_end(1), 5);
         assert_eq!(Blocks::of(b"href=a/b>").attribute_name_end(0), 4);
         assert_eq!(Blocks::of(b"a/b>").attribute_value_end(0), 3);
-        assert!(Blocks::of("aé".as_bytes()).has_high(0, 3));
-        assert!(!Blocks::of(b"abc").has_high(0, 3));
     }
 }

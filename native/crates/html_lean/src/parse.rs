@@ -323,7 +323,7 @@ impl<'a> P<'a> {
                     self.close(element, self.at);
                     return Ok(());
                 }
-                0 | b'<' | b'"' | b'\'' | b'=' | b'/' | b'>' => return self.refuse(),
+                0 | b'<' | b'"' | b'\'' | b'=' | b'/' => return self.refuse(),
                 _ => self.attribute()?,
             }
         }

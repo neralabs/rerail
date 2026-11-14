@@ -83,11 +83,11 @@ out = ['// Written by gen_kinds.py from the token grammar; do not edit.', '',
 out += [f'    {v},' for v, _, _ in rows]
 out += ['}', '', '/// Each kind\'s name and whether it is named, in `K`\'s order.', 'pub const KINDS: &[(&str, bool)] = &[']
 out += [f'    ({json.dumps(n)}, {str(b).lower()}),' for _, n, b in rows]
-out += ['];', '', '/// The last kind.', f'pub const LAST: K = K::{rows[-1][0]};', '']
+out += ['];', '', '/// The last kind.', '#[allow(dead_code)] // the tests\' check of the table', f'pub const LAST: K = K::{rows[-1][0]};', '']
 fields.sort()
 out += ['/// Fields, as the tape names them; 0 is no field.', 'pub const FIELDS: &[&str] = &[', '    "",']
 out += [f'    "{f}",' for f in fields]
-out += ['];', '', '/// Field ids, in `FIELDS`\' order.', 'pub mod f {', '    pub const NONE: u8 = 0;']
+out += ['];', '', '/// Field ids, in `FIELDS`\' order.', 'pub mod f {', '    #[allow(dead_code)] // no field', '    pub const NONE: u8 = 0;']
 out += [f'    pub const {f.upper()}: u8 = {i + 1};' for i, f in enumerate(fields)]
 out += ['}', '']
 index = {(n, b): i for i, (_, n, b) in enumerate(rows)}

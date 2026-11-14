@@ -71,6 +71,7 @@ pub const KINDS: &[(&str, bool)] = &[
 ];
 
 /// The last kind.
+#[allow(dead_code)] // the tests' check of the table
 pub const LAST: K = K::TDQuote;
 
 /// Fields, as the tape names them; 0 is no field.
@@ -80,6 +81,7 @@ pub const FIELDS: &[&str] = &[
 
 /// Field ids, in `FIELDS`' order.
 pub mod f {
+    #[allow(dead_code)] // no field
     pub const NONE: u8 = 0;
 }
 
