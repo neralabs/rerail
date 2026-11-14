@@ -85,6 +85,7 @@ pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
 pub mod statkeep;
 pub mod lower;
 pub mod joins;
+pub mod table;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
@@ -401,13 +402,13 @@ pub struct Stats {
     size: std::sync::Arc<HashMap<String, f64>>,
     pub nodes: f64,
     parents: std::sync::Arc<IndexMap<String, IndexMap<String, f64>>>,
-    pub card: HashMap<String, f64>,
+    pub card: table::RelMap<f64>,
     /// Current wave cardinalities, distinct from full relation cardinalities.
-    pub delta_rows: HashMap<String, f64>,
+    pub delta_rows: table::RelMap<f64>,
     /// (rel, col) → posting-weighted fanout of an equality probe: sq / rows.
-    pub fan: HashMap<(String, usize), f64>,
+    pub fan: table::ColMap<f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
-    pub dfreq: HashMap<(String, usize), HashMap<Constant, i64>>,
+    pub dfreq: table::ColMap<HashMap<Constant, i64>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
     /// By rule first: a component's model takes its rules' alone (`Model::fork`).
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
@@ -494,10 +495,10 @@ impl Stats {
             size: Default::default(),
             nodes: 0.0,
             parents: Default::default(),
-            card: HashMap::new(),
-            delta_rows: HashMap::new(),
-            fan: HashMap::new(),
-            dfreq: HashMap::new(),
+            card: Default::default(),
+            delta_rows: Default::default(),
+            fan: Default::default(),
+            dfreq: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -662,10 +663,10 @@ impl Stats {
                     (c, ps.into_iter().map(|(p, n)| (p, n as f64 / total)).collect())
                 })
                 .collect()),
-            card: HashMap::new(),
-            delta_rows: HashMap::new(),
-            fan: HashMap::new(),
-            dfreq: HashMap::new(),
+            card: Default::default(),
+            delta_rows: Default::default(),
+            fan: Default::default(),
+            dfreq: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -744,7 +745,7 @@ pub struct Model {
     /// The inputs of the program last asked about, hashed (`is_input`), with the list's address and length.
     pub input_set: std::sync::Mutex<(usize, usize, rustc_hash::FxHashSet<String>)>,
     pub stats: Stats,
-    pub ndv: HashMap<(String, usize), f64>,
+    pub ndv: table::ColMap<f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
     pub docof: std::sync::Arc<HashMap<String, (usize, usize)>>,
     /// View over one input atom → (input, the input column behind each view column).
@@ -821,10 +822,10 @@ impl Model {
             size: st.size.clone(),
             nodes: st.nodes,
             parents: st.parents.clone(),
-            card: HashMap::default(),
-            delta_rows: HashMap::default(),
-            fan: HashMap::default(),
-            dfreq: HashMap::default(),
+            card: Default::default(),
+            delta_rows: Default::default(),
+            fan: Default::default(),
+            dfreq: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -837,7 +838,7 @@ impl Model {
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
-        let mut ndv = HashMap::default();
+        let mut ndv = table::ColMap::default();
         for r in rels {
             if let Some(&n) = st.card.get(r) { stats.card.insert(r.clone(), n); }
             if let Some(&n) = st.delta_rows.get(r) { stats.delta_rows.insert(r.clone(), n); }
@@ -864,16 +865,19 @@ impl Model {
     /// `absorb`, with `width` a relation's columns, taking from `fork` what is taken (a component of several forms
     /// takes each form's own in turn).
     fn absorb_with(&mut self, width: &dyn Fn(&str) -> usize, fork: &mut Model, own: &BTreeSet<String>, rules: &[u64]) {
-        fn put<K: std::hash::Hash + Eq, V>(to: &mut HashMap<K, V>, from: &mut HashMap<K, V>, k: K) {
+        fn put<V>(to: &mut table::RelMap<V>, from: &mut table::RelMap<V>, k: &str) {
+            match from.remove(k) { Some(v) => { to.insert(k, v); } None => { to.remove(k); } }
+        }
+        fn put_col<V>(to: &mut table::ColMap<V>, from: &mut table::ColMap<V>, k: (&str, usize)) {
             match from.remove(&k) { Some(v) => { to.insert(k, v); } None => { to.remove(&k); } }
         }
         for r in own {
-            put(&mut self.stats.card, &mut fork.stats.card, r.clone());
-            put(&mut self.stats.delta_rows, &mut fork.stats.delta_rows, r.clone());
+            put(&mut self.stats.card, &mut fork.stats.card, r);
+            put(&mut self.stats.delta_rows, &mut fork.stats.delta_rows, r);
             for c in 0..width(r) {
-                put(&mut self.ndv, &mut fork.ndv, (r.clone(), c));
-                put(&mut self.stats.fan, &mut fork.stats.fan, (r.clone(), c));
-                put(&mut self.stats.dfreq, &mut fork.stats.dfreq, (r.clone(), c));
+                put_col(&mut self.ndv, &mut fork.ndv, (r, c));
+                put_col(&mut self.stats.fan, &mut fork.stats.fan, (r, c));
+                put_col(&mut self.stats.dfreq, &mut fork.stats.dfreq, (r, c));
             }
             if fork.stats.prior_later.contains(r) { self.stats.prior_later.insert(r.clone()); } else { self.stats.prior_later.remove(r); }
         }
@@ -1667,7 +1671,7 @@ impl Model {
     pub fn kind_frequency(&self, kind: &Constant) -> Option<i64> {
         // A complete current histogram is authoritative, including absent values.
         // Sampled corpus priors describe a different population and are a fallback.
-        if let Some(freq) = self.stats.dfreq.get(&("kind".to_owned(), 1)) {
+        if let Some(freq) = self.stats.dfreq.get_at("kind", 1) {
             return Some(freq.get(kind).copied().unwrap_or(0));
         }
         let key = match kind { Constant::Str(s) => s.clone(), Constant::Int(i) => i.to_string() };
@@ -1682,7 +1686,7 @@ impl Model {
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
-        (self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
+        (self.ndv.get_at(&rel, c).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
     }
 
     /// Bound a binding's distinct values by measured rows surviving its constant filters. The full column's
@@ -1695,20 +1699,20 @@ impl Model {
             let Some(k) = b.constant(*t) else { continue };
             let measured = if rel == "kind" && c == 1 {
                 self.kind_frequency(&k).map(|n| n as f64)
-            } else if let Some(freq) = self.stats.dfreq.get(&(rel.to_string(), c)) {
+            } else if let Some(freq) = self.stats.dfreq.get_at(&rel, c) {
                 Some(freq.get(&k).copied().unwrap_or(0) as f64)
             } else {
                 self.stats.memo.get(rel).and_then(|m| m.get(&(self.col(rel, c), k))).map(|n| *n as f64)
             };
             if let Some(n) = measured { cap = cap.min(n); }
         }
-        (0..b.args(i).len()).map(|c| self.ndv.get(&(rel.to_string(), c)).map(|n| n.min(cap))).collect()
+        (0..b.args(i).len()).map(|c| self.ndv.get_at(&rel, c).map(|n| n.min(cap))).collect()
     }
 
     /// Complete small value sets already in statistics. SQL can load only the constants requested by a rule,
     /// so an absent memo entry proves nothing unless both its distinct count and total cover the column.
     fn small_values(&self, rel: &str, c: usize) -> Option<Vec<&Constant>> {
-        if let Some(freq) = self.stats.dfreq.get(&(rel.to_owned(), c)) {
+        if let Some(freq) = self.stats.dfreq.get_at(&rel, c) {
             return Some(freq.iter().filter(|(_, n)| **n > 0).map(|(v, _)| v).collect());
         }
         if self.stats.solving.contains(rel) { return None; }
@@ -2164,13 +2168,13 @@ impl Model {
             let rel = b.rel(b.atom(i).expect("an atom"));
             for (c,t) in b.args(i).iter().enumerate() {
                 if matches!(t, TermRef::Wild) { continue; }
-                sizes.push(self.ndv.get(&(rel.to_string(),c)).copied().unwrap_or(1.0));
-                sizes.push(self.stats.fan.get(&(rel.to_string(),c)).copied().unwrap_or(1.0));
+                sizes.push(self.ndv.get_at(&rel, c).copied().unwrap_or(1.0));
+                sizes.push(self.stats.fan.get_at(&rel, c).copied().unwrap_or(1.0));
                 if let Some(k) = b.constant(*t) {
                     let n = if rel == "kind" && c == 1 {
                         self.kind_frequency(&k)
                     } else {
-                        self.stats.dfreq.get(&(rel.to_string(),c)).map(|f|f.get(&k).copied().unwrap_or(0))
+                        self.stats.dfreq.get_at(&rel, c).map(|f|f.get(&k).copied().unwrap_or(0))
                             .or_else(||self.stats.const_freq(rel,&self.col(rel,c),&k))
                     };
                     sizes.push(n.map_or(-1.0, |n| if n == 0 { -2.0 } else { n as f64 }));
@@ -2669,6 +2673,8 @@ impl Model {
         struct AtomCols {
             card: f64,
             input: bool,
+            /// The relation's number, where it has statistics (`table::find`).
+            id: Option<table::RelId>,
             /// Each column's, read when first asked: a re-price reads only the columns its order binds.
             cols: Vec<std::cell::OnceCell<Col>>,
         }
@@ -2677,13 +2683,14 @@ impl Model {
                 self.cols[c].get_or_init(|| {
                     let rel = b.rel(b.atom(i).expect("an atom"));
                     let (stats, card) = (&m.stats, self.card);
-                    let key = (rel.to_string(), c);
-                    let ndv = m.ndv.get(&key).copied();
+                    // The relation's number, once an atom (decision 0209 §3): its columns are array slots.
+                    let id = self.id;
+                    let ndv = id.and_then(|r| m.ndv.at_rel(r, c)).copied();
                     let ndv1 = m.ndv_or_1(rel, c);
-                    let fan = stats.fan.get(&key).map(|f| (f * skew(rel, c, 1)).max(1.0)).unwrap_or_else(|| card / ndv1);
+                    let fan = id.and_then(|r| stats.fan.at_rel(r, c)).map(|f| (f * skew(rel, c, 1)).max(1.0)).unwrap_or_else(|| card / ndv1);
                     let (mut konst, mut counted) = (None, None);
                     if let Some(k) = b.constant(b.args(i)[c]) {
-                        let dfreq = stats.dfreq.get(&key);
+                        let dfreq = id.and_then(|r| stats.dfreq.at_rel(r, c));
                         let name = m.col(rel, c);
                         let freq = if self.input { stats.const_freq(rel, &name, &k) } else { None };
                         // A count is at least one row, as `card`: a constant absent from the chunk that plans is not
@@ -2720,7 +2727,7 @@ impl Model {
                     eprintln!("column tables: {} made, {} relations, {} relations with their constants", g.0, g.1.as_ref().map_or(0, |s| s.len()), g.2.as_ref().map_or(0, |s| s.len()));
                 }
             }
-            AtomCols { card: self.card(rel), input: self.is_input(prog, rel), cols: (0..args.len()).map(|_| std::cell::OnceCell::new()).collect() }
+            AtomCols { card: self.card(rel), input: self.is_input(prog, rel), id: table::find(rel), cols: (0..args.len()).map(|_| std::cell::OnceCell::new()).collect() }
         };
         let atom_cols: std::cell::RefCell<Vec<Option<std::rc::Rc<AtomCols>>>> = std::cell::RefCell::new(vec![None; b.len()]);
         let cols_at = |i: usize| -> std::rc::Rc<AtomCols> {
@@ -3641,7 +3648,7 @@ impl Model {
         let no_filter = a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild))
             && variables.iter().collect::<BTreeSet<_>>().len() == variables.len();
         let preserves_key = h.args.iter().any(|t| match t {
-            Term::Var(v) => src.get(v.as_str()).is_some_and(|bc| self.ndv.get(&(a.rel.to_string(), *bc)) == Some(&base)),
+            Term::Var(v) => src.get(v.as_str()).is_some_and(|bc| self.ndv.get_at(&a.rel, *bc) == Some(&base)),
             _ => false,
         });
         for (c, t) in h.args.iter().enumerate() {
@@ -3734,7 +3741,7 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
 }
 
 /// An input's cardinality, distinct counts and fanouts, from its measured columns.
-fn input_stats(stats: &mut Stats, ndv: &mut HashMap<(String, usize), f64>, prog: &Program, rel: &str) -> Result<()> {
+fn input_stats(stats: &mut Stats, ndv: &mut table::ColMap<f64>, prog: &Program, rel: &str) -> Result<()> {
     let width = prog.decls.get(rel).map(|c| c.len()).ok_or_else(|| Error::Statistics(format!("the input {rel} is not declared")))?;
     for col in 0..width {
         let name = sql_col(rel, col);
@@ -3755,7 +3762,7 @@ pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<
     // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).chain(prog.facts.keys().filter(|rel| !prog.inputs.contains(*rel)).cloned()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
-    let mut ndv = HashMap::new();
+    let mut ndv = table::ColMap::new();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
         stats.card.insert(rel.clone(), rows);
@@ -5577,8 +5584,8 @@ fn prior_now(model: &mut Model, prog: &Program, r: &str, fill: bool) -> Option<f
     for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
         let (ndv, fan) = (ndv.max(1) as f64, if n != 0 { sq as f64 / n as f64 } else { 1.0 });
         if fill {
-            model.ndv.entry((r.to_owned(), c)).or_insert(ndv);
-            model.stats.fan.entry((r.to_owned(), c)).or_insert(fan);
+            model.ndv.entry_or_insert_with((r, c), || ndv);
+            model.stats.fan.entry_or_insert_with((r, c), || fan);
         } else {
             model.ndv.insert((r.to_owned(), c), ndv);
             model.stats.fan.insert((r.to_owned(), c), fan);
@@ -8009,7 +8016,7 @@ impl<'a> Run<'a, '_> {
                 .filter_map(|r| {
                     let rows = *self.model.stats.card.get(*r)?;
                     let width = prog.decls.get(r.as_str()).map_or(0, |c| c.len());
-                    let cols = (0..width).map(|c| (self.model.ndv.get(&((*r).clone(), c)).copied(), self.model.stats.fan.get(&((*r).clone(), c)).copied())).collect();
+                    let cols = (0..width).map(|c| (self.model.ndv.get_at(r, c).copied(), self.model.stats.fan.get_at(r, c).copied())).collect();
                     Some(keeps::Seen { rel: r.as_str(), rows, cols })
                 })
                 .collect();
@@ -11319,7 +11326,7 @@ mod search_tests {
     fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel.to_owned(), rows);

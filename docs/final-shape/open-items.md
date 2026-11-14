@@ -5080,4 +5080,11 @@ and its sample leaves the rows left (`keep_trial_rows`, decision 0207).
 ## O170. Statistics' maps move to one flat table (decision 0209)
 
 Every reader of `plan::Stats`' string-keyed maps moves to the flat table of numbered relations and columns
-(0209 §3). Until then the maps are views over it; the planner's tests hold unchanged at each step. Open.
+(0209 §3). Until then the maps are views over it; the planner's tests hold unchanged at each step.
+
+Closed (2026-11-14). `plan::table` numbers each relation once in the process (`rel_id`). `Stats.card`,
+`delta_rows`, `fan`, `dfreq` and `Model.ndv` are arrays by those numbers (`RelMap`, `ColMap`: a relation's columns a
+block of slots in one array). The planner's prepared atoms (`AtomCols`) resolve their relation once and read slots;
+readers by name pay one lookup of the name, where each read built a `(String, usize)` key before. Planner tests: 116
+pass (the 115 unchanged, and the table's own). `ColStats` (input columns by name) stays as it is: its readers are the
+SQL statistics' loads, not the search.

@@ -1253,7 +1253,7 @@ fn overlay<'a>(prog: &Program, model: &mut Model, rels: impl Iterator<Item = &'a
         let Some(rows) = observed_rows(rel, nodes) else { continue };
         let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let cols = observed_cols(rel, nodes, rows);
-        let before = (0..width).map(|c| (model.ndv.get(&(rel.to_owned(), c)).copied(), model.stats.fan.get(&(rel.to_owned(), c)).copied())).collect();
+        let before = (0..width).map(|c| (model.ndv.get_at(&rel, c).copied(), model.stats.fan.get_at(&rel, c).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
         model.stats.card.insert(rel.to_owned(), rows.max(1.0));
         for (c, (ndv, fan)) in cols.into_iter().enumerate().take(width) {
@@ -1310,7 +1310,7 @@ fn bounds(prog: &Program, model: &Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, 
             continue;
         }
         let Some(&n) = model.stats.card.get(rel) else { continue };
-        let cols = (0..a.args.len()).map(|c| model.ndv.get(&(rel.to_owned(), c)).map_or(n, |d| d.min(n))).collect();
+        let cols = (0..a.args.len()).map(|c| model.ndv.get_at(&rel, c).map_or(n, |d| d.min(n))).collect();
         counted.insert(rel, cols);
     }
     for scc in sccs {
@@ -1475,7 +1475,7 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                                 && !a.neg
                                 && let Some(k) = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))
                             {
-                                if let Some(&d) = model.ndv.get(&(a.rel.to_string(), k)) {
+                                if let Some(&d) = model.ndv.get_at(&a.rel, k) {
                                     ndv = ndv.min(d);
                                 }
                             }
@@ -1578,7 +1578,7 @@ pub mod tests {
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
         for (rel, rows, ndv) in [
@@ -1646,18 +1646,18 @@ pub mod tests {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         let mut stats = Stats::empty(&prog);
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            stats.card.insert(rel.into(), n);
+            stats.card.insert(rel, n);
         }
         let mut inputs = Inputs::file();
         inputs.facts.clear();
         inputs.given = Some(stats);
         let mut model = make_plan(&prog, &db, inputs).unwrap();
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            model.stats.card.insert(rel.into(), n);
+            model.stats.card.insert(rel, n);
         }
         for (rel, ndvs) in [("load", vec![200_000.0, 500.0]), ("look", vec![5_000.0, 400.0, 800.0]), ("binding", vec![1_000.0, 700.0, 3_000.0])] {
             for (c, d) in ndvs.into_iter().enumerate() {
-                model.ndv.insert((rel.into(), c), d);
+                model.ndv.insert((rel, c), d);
             }
         }
         let decided = |model: &mut Model| choose(&prog, model).unwrap().map(|(_, done)| done).unwrap_or_default();
@@ -1757,7 +1757,7 @@ pub mod tests {
         use std::collections::{HashMap, HashSet};
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel.to_owned(), rows);

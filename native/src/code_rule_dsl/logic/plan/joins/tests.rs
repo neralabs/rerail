@@ -129,12 +129,12 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let p = parse(".decl a(x: number, y: number)\n.decl b(y: number, z: number)\n.decl h(x: number, z: number)\nh(x, z) :- a(x, y), b(y, z).\n.output h\n").unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("a", 50.0), ("b", 100.0)] {
-        model.stats.card.insert(rel.into(), rows);
+        model.stats.card.insert(rel, rows);
         for c in 0..2 {
-            model.ndv.insert((rel.into(), c), rows);
-            model.stats.fan.insert((rel.into(), c), 1.0);
+            model.ndv.insert((rel, c), rows);
+            model.stats.fan.insert((rel, c), 1.0);
         }
     }
     let r = &p.rules[0];

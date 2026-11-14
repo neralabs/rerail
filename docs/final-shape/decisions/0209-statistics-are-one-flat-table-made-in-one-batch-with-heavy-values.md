@@ -1,6 +1,7 @@
 # 0209: Statistics are one flat table, made in one batch, and keep a column's heavy values
 
-Status: design (2026-11-14). Measured gap below; build order in §6. One question is open to the user (§5).
+Status: step 1 built (2026-11-14, `plan::table`, O170); steps 2–3 in progress. The user chose price only, with a
+spike on split plans (§5, 2026-11-14).
 
 ## Intro
 
@@ -178,5 +179,4 @@ a launch pays, as the device joins decide (decision 0095). Otherwise the CPU's b
 
 ## Open
 
-- **O170, the move from `Stats`' maps.** Every reader of `Stats` moves to the table. Until then the maps are views
-  over it, and the planner's tests must hold unchanged at each step.
+- **O170, the move from `Stats`' maps.** Closed (2026-11-14): step 1 is built (`plan::table`); see O170.
