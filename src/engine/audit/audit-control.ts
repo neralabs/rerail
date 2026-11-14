@@ -155,14 +155,29 @@ export class SqliteAuditControlStore {
   /**
    * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
    * folder under the key `spelled` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
-   * sharing the database goes on writing that row, so it is read where it is rather than copied. The earlier key costs
-   * a realpath only when the canonical key has no row and `spelled` is not already spelt as the disk stores it.
+   * sharing the database goes on writing that row, so it is read where it is rather than copied. The earlier key is
+   * looked for only when the canonical key has no row and `spelled` is not already spelt as the disk stores it.
    */
   #settingsRow(workspaceRoot: string, spelled: string): typeof auditSettings.$inferSelect | undefined {
     const row = this.#settingsAt(workspaceRoot);
     if (row !== undefined || process.platform !== "win32" || spelled === workspaceRoot) return row;
-    const earlier = earlierWorkspace(spelled);
+    const earlier = this.#earlierKey(spelled);
     return earlier === workspaceRoot ? undefined : this.#settingsAt(earlier);
+  }
+
+  /**
+   * The keys Rerail 0.1.4 and earlier gave each folder spelling this store was asked about. The runtime reads a session's
+   * settings before each of its events, so the realpath runs once per spelling rather than once per event; a link in
+   * the path changed while this process runs keeps the key it had.
+   */
+  readonly #earlierKeys = new Map<string, string>();
+
+  #earlierKey(spelled: string): string {
+    const known = this.#earlierKeys.get(spelled);
+    if (known !== undefined) return known;
+    const earlier = earlierWorkspace(spelled);
+    this.#earlierKeys.set(spelled, earlier);
+    return earlier;
   }
 
   #settingsAt(workspaceRoot: string): typeof auditSettings.$inferSelect | undefined {
