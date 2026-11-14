@@ -30,6 +30,41 @@ fn empty_obj() -> &'static Obj {
     &E
 }
 
+/// An `ast` that is itself `{"$option": O, "cases": {v: ast}, "default": ast}`, where each case is only a
+/// `language`, an empty `languageOptions` and a `rule`: the one `ast` whose `rule` is the `$option` over the cases'
+/// rules, which the rule lowering guards per configured value. Any other form is left as it is (`None`).
+fn option_ast(a: &Obj) -> Option<Obj> {
+    let name = a.get("$option").filter(|n| n.is_str())?;
+    let plain = |c: &Value| {
+        c.as_obj().is_some_and(|o| {
+            o.has("rule")
+                && o.iter().all(|(k, v)| k == "rule" || k == "language" || (k == "languageOptions" && !v.truthy()))
+        })
+    };
+    let cases = a.get("cases").and_then(Value::as_obj);
+    let default = a.get("default");
+    if !cases.is_some_and(|c| c.iter().all(|(_, v)| plain(v))) || !default.is_none_or(plain) {
+        return None;
+    }
+    let first = cases.and_then(|c| c.iter().next().map(|(_, v)| v)).or(default)?;
+    let mut rule = Obj::default();
+    rule.insert("$option", name.clone());
+    let mut cs = Obj::default();
+    for (k, v) in cases.expect("cases").iter() {
+        cs.insert(k, v.get("rule").expect("a rule").clone());
+    }
+    rule.insert("cases", Value::Obj(cs));
+    if let Some(d) = default {
+        rule.insert("default", d.get("rule").expect("a rule").clone());
+    }
+    let mut out = Obj::default();
+    if let Some(l) = first.get("language") {
+        out.insert("language", l.clone());
+    }
+    out.insert("rule", Value::Obj(rule));
+    Some(out)
+}
+
 fn obj_of<'a>(v: Option<&'a Value>) -> &'a Obj {
     v.and_then(Value::as_obj).unwrap_or(empty_obj())
 }
@@ -286,11 +321,12 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
             prog.untranslated += 1;
             continue;
         }
-        let a = obj_of(forbid.get("ast"));
+        let a_owned = option_ast(obj_of(forbid.get("ast")));
+        let a = a_owned.as_ref().unwrap_or_else(|| obj_of(forbid.get("ast")));
         let utils = obj_of(a.get("utils").filter(|u| u.truthy()));
         let mut sc = indexmap::IndexMap::new();
         for name in utils.keys() {
-            let s = snake(name);
+            let s = super::lower::util_name(name);
             let v = if prog.util_rels.contains(&s) { format!("{s}_{}", snake(&cid)) } else { s };
             sc.insert(name.to_owned(), v);
         }

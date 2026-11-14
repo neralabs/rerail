@@ -366,20 +366,51 @@ ann_type(a, a) :- kind(a, "type_annotation"), count : { child(a, c, _), !kind(c,
 // `languageOptions` globals and lib, which the translated rule does not carry.
 .decl site_builtin(site: node)
 site_builtin(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), es_global(x).
-// site_directives(site, "eslint"): main's `directives: "eslint"` is no filter of its own: it widens `builtin` and
-// `exported` to the names ESLint's `/* global */` and `/* exported */` comments list. The translator writes it as a
-// separate atom, and those comments have no rows here, so it holds for every site and widens nothing.
-.decl site_directives(site: node, tool: symbol)
-site_directives(d, "eslint") :- binding(_, _, d, _).
+// With main's `directives: "eslint"`, `builtin` and `exported` also read ESLint's comments. site_builtin_directives:
+// a script's top-level variable a `/* global x */` comment names (on or off). site_exported_directives: one an
+// `/* exported x */` comment names.
+.decl site_builtin_directives(site: node)
+site_builtin_directives(d) :- site_builtin(d).
+site_builtin_directives(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), docof(p, doc),
+    directive_named(doc, "global", x).
+.decl site_exported_directives(site: node)
+site_exported_directives(d) :- site_exported(d).
+site_exported_directives(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), docof(p, doc),
+    directive_named(doc, "exported", x).
 
 // global_ref(r, "window"): r is a value reference with no declaration in the file, and the name is a known global
 // (from the environment tables in es_global). Undeclared names that are not globals match neither relation.
 .decl global_ref(r: node, x: symbol)  // a reference no file-local declaration binds, to a declared global
 global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
+// global_ref_with(r, x, directives, script): global_ref as main's `resolves.global` reads it with `directives:
+// "eslint"` (1: `/* global x */` comments add x, `x: off` removes it) and `scriptDeclarations` (1: a reference to a
+// script's top-level declaration is the global variable itself).
+.decl global_ref_with(r: node, x: symbol, directives: number, script: number)
+global_ref_with(r, x, 0, 0) :- global_ref(r, x), ref(r, _, _).
+global_ref_with(r, x, 1, 0) :- ref(r, x, "value"), !ref_site(r, _), docof(r, d),
+    (es_global(x), !directive_turned_off(d, x) ; directive_global(d, x)).
+global_ref_with(r, x, dr, 1) :- global_ref_with(r, x, dr, 0).
+global_ref_with(r, x, dr, 1) :- (dr = 0 ; dr = 1), ref(r, x, "value"), ref_site(r, s), binding(p, x, s, _),
+    kind(p, "program"), main_script_top(p).
+.decl directive_turned_off(d: number, x: symbol)
+directive_turned_off(d, x) :- directive_named(d, "global", x), !directive_global(d, x).
+// A `/* global x */` comment's item (the `eslint-directive` guest's `item`, valued by its name) resolves to the
+// global x when the environment has one: main's `resolves: {global: true}` on a directive's item.
+global_ref(r, x) :- kind(r, "item"), value(r, x), es_global(x).
 
 // directive_global(d, "jQuery") for a file with `/* global jQuery */`: ESLint treats such names as declared.
-// No rules here: rows come from a native comment reader (comments are not on the syntax tape).
 .decl directive_global(d: number, x: symbol)  // names from `/* global */` comments (native comment reader)
+// directive_named(d, "global" | "exported", x): a `/* global a, b:off */` or `/* exported a */` comment of document
+// d names x, read through the comment's `eslint-directive` tree (an `item` per name; `globals` is `global`).
+.decl directive_named(d: number, label: symbol, x: symbol)
+directive_named(d, l, x) :- kind(c, "comment"), parsed(c, "eslintDirective", r), value(r, v),
+    (match("globals?", v), l = "global" ; v = "exported", l = "exported"),
+    child(r, i, _), kind(i, "item"), value(i, x), docof(c, d).
+// A `/* global x */` comment's names, less those it turns off (`x: off`).
+directive_global(d, x) :- kind(c, "comment"), parsed(c, "eslintDirective", r), value(r, v), match("globals?", v),
+    child(r, i, _), kind(i, "item"), value(i, x), !directive_off(i), docof(c, d).
+.decl directive_off(i: node)
+directive_off(i) :- child(i, s, _), kind(s, "setting"), value(s, "off").
 
 // unresolved_ref(r): main's `resolves: {unresolved: true}`. r names x, nothing on its search path declares x, and x is
 // no global: not the environment's (es_global), not a `/* global x */` comment's. An export clause's name
@@ -558,3 +589,4 @@ imported_sym(n, q) :- sym_of(n, q), ref_site(n, sp), import_binding(sp, _, _, _)
 // es_global(x): names that exist without a declaration: "window", "document", "Promise", "process", ….
 // No rules here; the facts are generated and shipped with the library.
 .decl es_global(x: symbol)  // shipped as facts, generated from ESLint's and TypeScript's lib tables
+#include "tsx/es-globals.rr"

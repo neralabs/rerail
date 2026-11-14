@@ -9,7 +9,7 @@
 // PT017(n): a finding at node n, from clause `pytest-assert-in-except`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT017(at: loc, a: node, n: loc) "Move this assert out of the `except`: wrap the raising call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value` instead of `{n}`; leave non-test code alone."
+.violation PT017(at: loc, a: node, n_mv: loc) "Move this assert out of the `except`: wrap the raising call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value` instead of `{n_mv}`; leave non-test code alone."
     suppress noqa "PT017"
 PT017(A, n, N) :- kind(n, "except_clause"), child(n, c1, _), kind(c1, "as_pattern"),
     child(c1, c2, _), kind(c2, "as_pattern_target"), child(c2, c3, _),

@@ -110,12 +110,12 @@ up007_in_local_annotation(n) :- within(n, p1), up007_annotation_root(p1), child(
 // union_in_string(n): the JSON util `union-in-string`, used where the JSON says `matches: "union-in-string"`
 //   NAME: metavariable this relation binds for the calling rule
 .decl up007_union_in_string(n: node, name: loc)
-up007_union_in_string(n, NAME) :- up007_string_annotation(n), parsed(n, "annotation", r1),
+up007_union_in_string(n, NAME) :- up007_string_annotation_util(n), parsed(n, "annotation", r1),
     within(c2, r1), up007_alt_4(c2, NAME).
 
-// string_annotation(n): the JSON util `string-annotation`, used where the JSON says `matches: "string-annotation"`
-.decl up007_string_annotation(n: node)
-up007_string_annotation(n) :- kind(n, "string"),
+// string_annotation_util(n): the JSON util `string-annotation`, used where the JSON says `matches: "string-annotation"`
+.decl up007_string_annotation_util(n: node)
+up007_string_annotation_util(n) :- kind(n, "string"),
     (count : { contains("\\", n) } = 0 ; match("[a-zA-Z]*[rR].*", n)).
 
 // union_head(n): the JSON util `union-head`, used where the JSON says `matches: "union-head"`

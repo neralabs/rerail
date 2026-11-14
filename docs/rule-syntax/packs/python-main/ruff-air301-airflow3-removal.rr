@@ -475,7 +475,7 @@ air301_apply_defaults(n) :- kind(n, "parenthesized_expression"), child(n, c2, _)
 // AIR301(n): a finding at node n, from clause `removed-py-version`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301(at: loc, n: node) "`{n}` was removed in Airflow 3; compare `sys.version_info` instead."
+.violation AIR301(at: loc, n_mv: node) "`{n_mv}` was removed in Airflow 3; compare `sys.version_info` instead."
     suppress noqa "AIR301"
 AIR301(N, n) :- air301_old_name(n), node(_, n, _, _, _), N = n, !air301_deleted_name(n).
 AIR301(N, n) :- air301_quoted(n, N).
@@ -494,7 +494,7 @@ air301_quoted(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // AIR301_removed_requires_access(n): a finding at node n, from clause `removed-requires-access`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_requires_access(at: loc, n: node) code "AIR301" "`requires_access` was removed in Airflow 3; use the matching `requires_access_*` function from `airflow.api_fastapi.core_api.security`."
+.violation AIR301_removed_requires_access(at: loc, n_mv: node) code "AIR301" "`requires_access` was removed in Airflow 3; use the matching `requires_access_*` function from `airflow.api_fastapi.core_api.security`."
     suppress noqa "AIR301"
 AIR301_removed_requires_access(N, n) :- air301_old_name_of(n, "removed_requires_access"),
     node(_, n, _, _, _), N = n, !air301_deleted_name(n).
@@ -509,7 +509,7 @@ air301_quoted_removed_requires_access(n, N) :- (kind(n, "string") ; kind(n, "con
 // AIR301_removed_contrib(n): a finding at node n, from clause `removed-contrib`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_contrib(at: loc, n: node) code "AIR301" "`airflow.contrib` was removed in Airflow 3; replace `{n}` with its equivalent in a provider package or in core Airflow."
+.violation AIR301_removed_contrib(at: loc, n_mv: node) code "AIR301" "`airflow.contrib` was removed in Airflow 3; replace `{n_mv}` with its equivalent in a provider package or in core Airflow."
     suppress noqa "AIR301"
 AIR301_removed_contrib(N, n) :- air301_old_name_removed_contrib(n), node(_, n, _, _, _), N = n,
     !air301_deleted_name(n).
@@ -529,7 +529,7 @@ air301_quoted_removed_contrib(n, N) :- (kind(n, "string") ; kind(n, "concatenate
 // AIR301_removed_dataset_event(n): a finding at node n, from clause `removed-dataset-event`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_dataset_event(at: loc, n: node) code "AIR301" "`DatasetEvent` is private in Airflow 3; annotate with `dict[str, Any]` instead."
+.violation AIR301_removed_dataset_event(at: loc, n_mv: node) code "AIR301" "`DatasetEvent` is private in Airflow 3; annotate with `dict[str, Any]` instead."
     suppress noqa "AIR301"
 AIR301_removed_dataset_event(N, n) :- air301_old_name_of(n, "removed_dataset_event"),
     node(_, n, _, _, _), N = n, !air301_deleted_name(n).
@@ -544,7 +544,7 @@ air301_quoted_removed_dataset_event(n, N) :- (kind(n, "string") ; kind(n, "conca
 // AIR301_removed_subdag(n): a finding at node n, from clause `removed-subdag`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_subdag(at: loc, n: node) code "AIR301" "`airflow.operators.subdag` was removed in Airflow 3; restructure the sub-workflow as a `TaskGroup`."
+.violation AIR301_removed_subdag(at: loc, n_mv: node) code "AIR301" "`airflow.operators.subdag` was removed in Airflow 3; restructure the sub-workflow as a `TaskGroup`."
     suppress noqa "AIR301"
 AIR301_removed_subdag(N, n) :- air301_old_name_removed_subdag(n), node(_, n, _, _, _), N = n, !air301_deleted_name(n).
 AIR301_removed_subdag(N, n) :- air301_quoted_removed_subdag(n, N).
@@ -563,7 +563,7 @@ air301_quoted_removed_subdag(n, N) :- (kind(n, "string") ; kind(n, "concatenated
 // AIR301_removed_days_ago(n): a finding at node n, from clause `removed-days-ago`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_days_ago(at: loc, n: node) code "AIR301" "`days_ago` was removed in Airflow 3; use `pendulum.today('UTC').add(days=-N)` instead."
+.violation AIR301_removed_days_ago(at: loc, n_mv: node) code "AIR301" "`days_ago` was removed in Airflow 3; use `pendulum.today('UTC').add(days=-N)` instead."
     suppress noqa "AIR301"
 AIR301_removed_days_ago(N, n) :- air301_old_name_of(n, "removed_days_ago"), node(_, n, _, _, _), N = n,
     !air301_deleted_name(n).
@@ -578,7 +578,7 @@ air301_quoted_removed_days_ago(n, N) :- (kind(n, "string") ; kind(n, "concatenat
 // AIR301_removed_mkdirs(n): a finding at node n, from clause `removed-mkdirs`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_mkdirs(at: loc, n: node) code "AIR301" "`mkdirs` was removed in Airflow 3; use `pathlib.Path(path).mkdir(parents=True, exist_ok=True)` instead."
+.violation AIR301_removed_mkdirs(at: loc, n_mv: node) code "AIR301" "`mkdirs` was removed in Airflow 3; use `pathlib.Path(path).mkdir(parents=True, exist_ok=True)` instead."
     suppress noqa "AIR301"
 AIR301_removed_mkdirs(N, n) :- air301_old_name_of(n, "removed_mkdirs"), node(_, n, _, _, _), N = n,
     !air301_deleted_name(n).
@@ -593,7 +593,7 @@ air301_quoted_removed_mkdirs(n, N) :- (kind(n, "string") ; kind(n, "concatenated
 // AIR301_removed_without_replacement(n): a finding at node n, from clause `removed-without-replacement`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_removed_without_replacement(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3 with no replacement; delete this usage or reimplement the behavior yourself."
+.violation AIR301_removed_without_replacement(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3 with no replacement; delete this usage or reimplement the behavior yourself."
     suppress noqa "AIR301"
 AIR301_removed_without_replacement(N, n) :- air301_old_name_removed_without_replacement(n),
     node(_, n, _, _, _), N = n, !air301_deleted_name(n).
@@ -613,7 +613,7 @@ air301_quoted_removed_without_replacement(n, N) :- (kind(n, "string") ; kind(n, 
 // AIR301_renamed_api_connexion_security_requires_access_dataset(n): a finding at node n, from clause `renamed-api-connexion-security-requires-access-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_api_connexion_security_requires_access_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `requires_access_asset`, imported from `airflow.api_fastapi.core_api.security`."
+.violation AIR301_renamed_api_connexion_security_requires_access_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `requires_access_asset`, imported from `airflow.api_fastapi.core_api.security`."
     suppress noqa "AIR301"
 AIR301_renamed_api_connexion_security_requires_access_dataset(N, n) :- air301_old_name_of(n, "renamed_api_connexion_security_requires_access_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_88(n).
@@ -657,7 +657,7 @@ air301_quoted_renamed_api_connexion_security_requires_access_dataset(n, N) :- (k
 // AIR301_renamed_auth_managers_base_auth_manager_baseauthmanager(n): a finding at node n, from clause `renamed-auth-managers-base-auth-manager-baseauthmanager`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_auth_managers_base_auth_manager_baseauthmanager(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `BaseAuthManager`, imported from `airflow.api_fastapi.auth.managers.base_auth_manager`."
+.violation AIR301_renamed_auth_managers_base_auth_manager_baseauthmanager(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `BaseAuthManager`, imported from `airflow.api_fastapi.auth.managers.base_auth_manager`."
     suppress noqa "AIR301"
 AIR301_renamed_auth_managers_base_auth_manager_baseauthmanager(N, n) :- air301_old_name_of(n, "renamed_auth_managers_base_auth_manager_baseauthmanager"),
     node(_, n, _, _, _), N = n, !air301_alt_92(n).
@@ -683,7 +683,7 @@ air301_quoted_renamed_auth_managers_base_auth_manager_baseauthmanager(n, N) :- (
 // AIR301_renamed_auth_managers_models_resource_details_datasetdetails(n): a finding at node n, from clause `renamed-auth-managers-models-resource-details-datasetdetails`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_auth_managers_models_resource_details_datasetdetails(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AssetDetails`, imported from `airflow.api_fastapi.auth.managers.models.resource_details`."
+.violation AIR301_renamed_auth_managers_models_resource_details_datasetdetails(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AssetDetails`, imported from `airflow.api_fastapi.auth.managers.models.resource_details`."
     suppress noqa "AIR301"
 AIR301_renamed_auth_managers_models_resource_details_datasetdetails(N, n) :- air301_old_name_of(n, "renamed_auth_managers_models_resource_details_datasetdetails"),
     node(_, n, _, _, _), N = n, !air301_alt_96(n).
@@ -709,7 +709,7 @@ air301_quoted_renamed_auth_managers_models_resource_details_datasetdetails(n, N)
 // AIR301_renamed_datasets_manager_datasetmanager(n): a finding at node n, from clause `renamed-datasets-manager-datasetmanager`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_datasets_manager_datasetmanager(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AssetManager`, imported from `airflow.assets.manager`."
+.violation AIR301_renamed_datasets_manager_datasetmanager(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AssetManager`, imported from `airflow.assets.manager`."
     suppress noqa "AIR301"
 AIR301_renamed_datasets_manager_datasetmanager(N, n) :- air301_old_name_of(n, "renamed_datasets_manager_datasetmanager"),
     node(_, n, _, _, _), N = n, !air301_alt_100(n).
@@ -735,7 +735,7 @@ air301_quoted_renamed_datasets_manager_datasetmanager(n, N) :- (kind(n, "string"
 // AIR301_renamed_datasets_manager_dataset_manager(n): a finding at node n, from clause `renamed-datasets-manager-dataset-manager`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_datasets_manager_dataset_manager(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `asset_manager`, imported from `airflow.assets.manager`."
+.violation AIR301_renamed_datasets_manager_dataset_manager(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `asset_manager`, imported from `airflow.assets.manager`."
     suppress noqa "AIR301"
 AIR301_renamed_datasets_manager_dataset_manager(N, n) :- air301_old_name_of(n, "renamed_datasets_manager_dataset_manager"),
     node(_, n, _, _, _), N = n, !air301_alt_104(n).
@@ -761,7 +761,7 @@ air301_quoted_renamed_datasets_manager_dataset_manager(n, N) :- (kind(n, "string
 // AIR301_renamed_datasets_manager_resolve_dataset_manager(n): a finding at node n, from clause `renamed-datasets-manager-resolve-dataset-manager`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_datasets_manager_resolve_dataset_manager(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `resolve_asset_manager`, imported from `airflow.assets.manager`."
+.violation AIR301_renamed_datasets_manager_resolve_dataset_manager(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `resolve_asset_manager`, imported from `airflow.assets.manager`."
     suppress noqa "AIR301"
 AIR301_renamed_datasets_manager_resolve_dataset_manager(N, n) :- air301_old_name_of(n, "renamed_datasets_manager_resolve_dataset_manager"),
     node(_, n, _, _, _), N = n, !air301_alt_108(n).
@@ -787,7 +787,7 @@ air301_quoted_renamed_datasets_manager_resolve_dataset_manager(n, N) :- (kind(n,
 // AIR301_renamed_lineage_hook_datasetlineageinfo(n): a finding at node n, from clause `renamed-lineage-hook-datasetlineageinfo`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_lineage_hook_datasetlineageinfo(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AssetLineageInfo`, imported from `airflow.lineage.hook`."
+.violation AIR301_renamed_lineage_hook_datasetlineageinfo(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AssetLineageInfo`, imported from `airflow.lineage.hook`."
     suppress noqa "AIR301"
 AIR301_renamed_lineage_hook_datasetlineageinfo(N, n) :- air301_old_name_of(n, "renamed_lineage_hook_datasetlineageinfo"),
     node(_, n, _, _, _), N = n, !air301_alt_112(n).
@@ -813,7 +813,7 @@ air301_quoted_renamed_lineage_hook_datasetlineageinfo(n, N) :- (kind(n, "string"
 // AIR301_renamed_listeners_spec_dataset_on_dataset_created(n): a finding at node n, from clause `renamed-listeners-spec-dataset-on-dataset-created`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_listeners_spec_dataset_on_dataset_created(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `on_asset_created`, imported from `airflow.listeners.spec.asset`."
+.violation AIR301_renamed_listeners_spec_dataset_on_dataset_created(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `on_asset_created`, imported from `airflow.listeners.spec.asset`."
     suppress noqa "AIR301"
 AIR301_renamed_listeners_spec_dataset_on_dataset_created(N, n) :- air301_old_name_of(n, "renamed_listeners_spec_dataset_on_dataset_created"),
     node(_, n, _, _, _), N = n, !air301_alt_116(n).
@@ -839,7 +839,7 @@ air301_quoted_renamed_listeners_spec_dataset_on_dataset_created(n, N) :- (kind(n
 // AIR301_renamed_listeners_spec_dataset_on_dataset_changed(n): a finding at node n, from clause `renamed-listeners-spec-dataset-on-dataset-changed`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_listeners_spec_dataset_on_dataset_changed(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `on_asset_changed`, imported from `airflow.listeners.spec.asset`."
+.violation AIR301_renamed_listeners_spec_dataset_on_dataset_changed(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `on_asset_changed`, imported from `airflow.listeners.spec.asset`."
     suppress noqa "AIR301"
 AIR301_renamed_listeners_spec_dataset_on_dataset_changed(N, n) :- air301_old_name_of(n, "renamed_listeners_spec_dataset_on_dataset_changed"),
     node(_, n, _, _, _), N = n, !air301_alt_120(n).
@@ -865,7 +865,7 @@ air301_quoted_renamed_listeners_spec_dataset_on_dataset_changed(n, N) :- (kind(n
 // AIR301_renamed_metrics_validators_allowlistvalidator(n): a finding at node n, from clause `renamed-metrics-validators-allowlistvalidator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_metrics_validators_allowlistvalidator(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `PatternAllowListValidator`, imported from `airflow.metrics.validators`."
+.violation AIR301_renamed_metrics_validators_allowlistvalidator(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `PatternAllowListValidator`, imported from `airflow.metrics.validators`."
     suppress noqa "AIR301"
 AIR301_renamed_metrics_validators_allowlistvalidator(N, n) :- air301_old_name_of(n, "renamed_metrics_validators_allowlistvalidator"),
     node(_, n, _, _, _), N = n, !air301_alt_124(n).
@@ -891,7 +891,7 @@ air301_quoted_renamed_metrics_validators_allowlistvalidator(n, N) :- (kind(n, "s
 // AIR301_renamed_metrics_validators_blocklistvalidator(n): a finding at node n, from clause `renamed-metrics-validators-blocklistvalidator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_metrics_validators_blocklistvalidator(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `PatternBlockListValidator`, imported from `airflow.metrics.validators`."
+.violation AIR301_renamed_metrics_validators_blocklistvalidator(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `PatternBlockListValidator`, imported from `airflow.metrics.validators`."
     suppress noqa "AIR301"
 AIR301_renamed_metrics_validators_blocklistvalidator(N, n) :- air301_old_name_of(n, "renamed_metrics_validators_blocklistvalidator"),
     node(_, n, _, _, _), N = n, !air301_alt_128(n).
@@ -917,7 +917,7 @@ air301_quoted_renamed_metrics_validators_blocklistvalidator(n, N) :- (kind(n, "s
 // AIR301_renamed_secrets_local_filesystem_load_connections(n): a finding at node n, from clause `renamed-secrets-local-filesystem-load-connections`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_secrets_local_filesystem_load_connections(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `load_connections_dict`, imported from `airflow.secrets.local_filesystem`."
+.violation AIR301_renamed_secrets_local_filesystem_load_connections(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `load_connections_dict`, imported from `airflow.secrets.local_filesystem`."
     suppress noqa "AIR301"
 AIR301_renamed_secrets_local_filesystem_load_connections(N, n) :- air301_old_name_of(n, "renamed_secrets_local_filesystem_load_connections"),
     node(_, n, _, _, _), N = n, !air301_alt_132(n).
@@ -943,7 +943,7 @@ air301_quoted_renamed_secrets_local_filesystem_load_connections(n, N) :- (kind(n
 // AIR301_renamed_security_permissions_resource_dataset(n): a finding at node n, from clause `renamed-security-permissions-resource-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_security_permissions_resource_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `RESOURCE_ASSET`, imported from `airflow.security.permissions`."
+.violation AIR301_renamed_security_permissions_resource_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `RESOURCE_ASSET`, imported from `airflow.security.permissions`."
     suppress noqa "AIR301"
 AIR301_renamed_security_permissions_resource_dataset(N, n) :- air301_old_name_of(n, "renamed_security_permissions_resource_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_136(n).
@@ -969,7 +969,7 @@ air301_quoted_renamed_security_permissions_resource_dataset(n, N) :- (kind(n, "s
 // AIR301_renamed_timetables_simple_datasettriggeredtimetable(n): a finding at node n, from clause `renamed-timetables-simple-datasettriggeredtimetable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_timetables_simple_datasettriggeredtimetable(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AssetTriggeredTimetable`, imported from `airflow.timetables.simple`."
+.violation AIR301_renamed_timetables_simple_datasettriggeredtimetable(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AssetTriggeredTimetable`, imported from `airflow.timetables.simple`."
     suppress noqa "AIR301"
 AIR301_renamed_timetables_simple_datasettriggeredtimetable(N, n) :- air301_old_name_of(n, "renamed_timetables_simple_datasettriggeredtimetable"),
     node(_, n, _, _, _), N = n, !air301_alt_140(n).
@@ -995,7 +995,7 @@ air301_quoted_renamed_timetables_simple_datasettriggeredtimetable(n, N) :- (kind
 // AIR301_renamed_utils_file_temporarydirectory(n): a finding at node n, from clause `renamed-utils-file-temporarydirectory`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_utils_file_temporarydirectory(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `TemporaryDirectory`, imported from `tempfile`."
+.violation AIR301_renamed_utils_file_temporarydirectory(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `TemporaryDirectory`, imported from `tempfile`."
     suppress noqa "AIR301"
 AIR301_renamed_utils_file_temporarydirectory(N, n) :- air301_old_name_of(n, "renamed_utils_file_temporarydirectory"),
     node(_, n, _, _, _), N = n, !air301_alt_144(n).
@@ -1021,7 +1021,7 @@ air301_quoted_renamed_utils_file_temporarydirectory(n, N) :- (kind(n, "string") 
 // AIR301_renamed_providers_amazon_aws_datasets_s3_create_dataset(n): a finding at node n, from clause `renamed-providers-amazon-aws-datasets-s3-create-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_amazon_aws_datasets_s3_create_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.amazon.aws.assets.s3`."
+.violation AIR301_renamed_providers_amazon_aws_datasets_s3_create_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.amazon.aws.assets.s3`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_amazon_aws_datasets_s3_create_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_amazon_aws_datasets_s3_create_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_148(n).
@@ -1047,7 +1047,7 @@ air301_quoted_renamed_providers_amazon_aws_datasets_s3_create_dataset(n, N) :- (
 // AIR301_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n): a finding at node n, from clause `renamed-providers-amazon-aws-datasets-s3-convert-dataset-to-openlineage`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.amazon.aws.assets.s3`."
+.violation AIR301_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.amazon.aws.assets.s3`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(N, n) :- air301_old_name_of(n, "renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage"),
     node(_, n, _, _, _), N = n, !air301_alt_152(n).
@@ -1080,7 +1080,7 @@ air301_quoted_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openli
 // AIR301_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n): a finding at node n, from clause `renamed-providers-amazon-aws-datasets-s3-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.amazon.aws.assets.s3`."
+.violation AIR301_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.amazon.aws.assets.s3`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_amazon_aws_datasets_s3_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_156(n).
@@ -1106,7 +1106,7 @@ air301_quoted_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n, N) :- (ki
 // AIR301_renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities_dataset(n): a finding at node n, from clause `renamed-providers-amazon-aws-auth-manager-avp-entities-avpentities-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AvpEntities.ASSET`, importing `AvpEntities` from `airflow.providers.amazon.aws.auth_manager.avp.entities`."
+.violation AIR301_renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AvpEntities.ASSET`, importing `AvpEntities` from `airflow.providers.amazon.aws.auth_manager.avp.entities`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities_dataset"),
     node(_, n, _, _, _), N = n, !air301_deleted_name(n).
@@ -1121,7 +1121,7 @@ air301_quoted_renamed_providers_amazon_aws_auth_manager_avp_entities_avpentities
 // AIR301_renamed_providers_common_io_datasets_file_create_dataset(n): a finding at node n, from clause `renamed-providers-common-io-datasets-file-create-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_common_io_datasets_file_create_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.common.io.assets.file`."
+.violation AIR301_renamed_providers_common_io_datasets_file_create_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.common.io.assets.file`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_common_io_datasets_file_create_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_common_io_datasets_file_create_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_161(n).
@@ -1147,7 +1147,7 @@ air301_quoted_renamed_providers_common_io_datasets_file_create_dataset(n, N) :- 
 // AIR301_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n): a finding at node n, from clause `renamed-providers-common-io-datasets-file-convert-dataset-to-openlineage`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.common.io.assets.file`."
+.violation AIR301_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.common.io.assets.file`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(N, n) :- air301_old_name_of(n, "renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage"),
     node(_, n, _, _, _), N = n, !air301_alt_165(n).
@@ -1173,7 +1173,7 @@ air301_quoted_renamed_providers_common_io_datasets_file_convert_dataset_to_openl
 // AIR301_renamed_providers_common_io_datasets_file_sanitize_uri(n): a finding at node n, from clause `renamed-providers-common-io-datasets-file-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_common_io_datasets_file_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.common.io.assets.file`."
+.violation AIR301_renamed_providers_common_io_datasets_file_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.common.io.assets.file`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_common_io_datasets_file_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_common_io_datasets_file_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_169(n).
@@ -1199,7 +1199,7 @@ air301_quoted_renamed_providers_common_io_datasets_file_sanitize_uri(n, N) :- (k
 // AIR301_renamed_providers_google_datasets_bigquery_create_dataset(n): a finding at node n, from clause `renamed-providers-google-datasets-bigquery-create-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_google_datasets_bigquery_create_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.google.assets.bigquery`."
+.violation AIR301_renamed_providers_google_datasets_bigquery_create_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.google.assets.bigquery`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_google_datasets_bigquery_create_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_google_datasets_bigquery_create_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_173(n).
@@ -1235,7 +1235,7 @@ air301_quoted_renamed_providers_google_datasets_bigquery_create_dataset(n, N) :-
 // AIR301_renamed_providers_google_datasets_gcs_create_dataset(n): a finding at node n, from clause `renamed-providers-google-datasets-gcs-create-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_google_datasets_gcs_create_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.google.assets.gcs`."
+.violation AIR301_renamed_providers_google_datasets_gcs_create_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `create_asset`, imported from `airflow.providers.google.assets.gcs`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_google_datasets_gcs_create_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_google_datasets_gcs_create_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_177(n).
@@ -1261,7 +1261,7 @@ air301_quoted_renamed_providers_google_datasets_gcs_create_dataset(n, N) :- (kin
 // AIR301_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n): a finding at node n, from clause `renamed-providers-google-datasets-gcs-convert-dataset-to-openlineage`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.google.assets.gcs`."
+.violation AIR301_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `convert_asset_to_openlineage`, imported from `airflow.providers.google.assets.gcs`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(N, n) :- air301_old_name_of(n, "renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage"),
     node(_, n, _, _, _), N = n, !air301_alt_181(n).
@@ -1287,7 +1287,7 @@ air301_quoted_renamed_providers_google_datasets_gcs_convert_dataset_to_openlinea
 // AIR301_renamed_providers_google_datasets_gcs_sanitize_uri(n): a finding at node n, from clause `renamed-providers-google-datasets-gcs-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_google_datasets_gcs_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.google.assets.gcs`."
+.violation AIR301_renamed_providers_google_datasets_gcs_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.google.assets.gcs`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_google_datasets_gcs_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_google_datasets_gcs_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_185(n).
@@ -1313,7 +1313,7 @@ air301_quoted_renamed_providers_google_datasets_gcs_sanitize_uri(n, N) :- (kind(
 // AIR301_renamed_providers_mysql_datasets_mysql_sanitize_uri(n): a finding at node n, from clause `renamed-providers-mysql-datasets-mysql-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_mysql_datasets_mysql_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.mysql.assets.mysql`."
+.violation AIR301_renamed_providers_mysql_datasets_mysql_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.mysql.assets.mysql`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_mysql_datasets_mysql_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_mysql_datasets_mysql_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_189(n).
@@ -1339,7 +1339,7 @@ air301_quoted_renamed_providers_mysql_datasets_mysql_sanitize_uri(n, N) :- (kind
 // AIR301_renamed_providers_postgres_datasets_postgres_sanitize_uri(n): a finding at node n, from clause `renamed-providers-postgres-datasets-postgres-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_postgres_datasets_postgres_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.postgres.assets.postgres`."
+.violation AIR301_renamed_providers_postgres_datasets_postgres_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.postgres.assets.postgres`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_postgres_datasets_postgres_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_postgres_datasets_postgres_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_193(n).
@@ -1365,7 +1365,7 @@ air301_quoted_renamed_providers_postgres_datasets_postgres_sanitize_uri(n, N) :-
 // AIR301_renamed_providers_openlineage_utils_utils_datasetinfo(n): a finding at node n, from clause `renamed-providers-openlineage-utils-utils-datasetinfo`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_openlineage_utils_utils_datasetinfo(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `AssetInfo`, imported from `airflow.providers.openlineage.utils.utils`."
+.violation AIR301_renamed_providers_openlineage_utils_utils_datasetinfo(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `AssetInfo`, imported from `airflow.providers.openlineage.utils.utils`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_openlineage_utils_utils_datasetinfo(N, n) :- air301_old_name_of(n, "renamed_providers_openlineage_utils_utils_datasetinfo"),
     node(_, n, _, _, _), N = n, !air301_alt_197(n).
@@ -1391,7 +1391,7 @@ air301_quoted_renamed_providers_openlineage_utils_utils_datasetinfo(n, N) :- (ki
 // AIR301_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n): a finding at node n, from clause `renamed-providers-openlineage-utils-utils-translate-airflow-dataset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `translate_airflow_asset`, imported from `airflow.providers.openlineage.utils.utils`."
+.violation AIR301_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `translate_airflow_asset`, imported from `airflow.providers.openlineage.utils.utils`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(N, n) :- air301_old_name_of(n, "renamed_providers_openlineage_utils_utils_translate_airflow_dataset"),
     node(_, n, _, _, _), N = n, !air301_alt_201(n).
@@ -1417,7 +1417,7 @@ air301_quoted_renamed_providers_openlineage_utils_utils_translate_airflow_datase
 // AIR301_renamed_providers_trino_datasets_trino_sanitize_uri(n): a finding at node n, from clause `renamed-providers-trino-datasets-trino-sanitize-uri`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_renamed_providers_trino_datasets_trino_sanitize_uri(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.trino.assets.trino`."
+.violation AIR301_renamed_providers_trino_datasets_trino_sanitize_uri(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3; replace it with `sanitize_uri`, imported from `airflow.providers.trino.assets.trino`."
     suppress noqa "AIR301"
 AIR301_renamed_providers_trino_datasets_trino_sanitize_uri(N, n) :- air301_old_name_of(n, "renamed_providers_trino_datasets_trino_sanitize_uri"),
     node(_, n, _, _, _), N = n, !air301_alt_205(n).
@@ -1444,7 +1444,7 @@ air301_quoted_renamed_providers_trino_datasets_trino_sanitize_uri(n, N) :- (kind
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes L from other metavariables' text; its literals end each rule.
-.violation AIR301_moved_to_conf(at: loc, n: node, l: symbol) code "AIR301" "`{n}` was removed in Airflow 3; import `conf` from `airflow.configuration` and call `conf.{l}` instead."
+.violation AIR301_moved_to_conf(at: loc, n_mv: node, l: symbol) code "AIR301" "`{n_mv}` was removed in Airflow 3; import `conf` from `airflow.configuration` and call `conf.{l}` instead."
     suppress noqa "AIR301"
 AIR301_moved_to_conf(N, n, L) :- air301_old_name_moved_to_conf(n), node(_, n, _, _, _), N = n, !air301_deleted_name(n),
     text(N, t1), L = @replace_all(t1, "(?s)^.*\\.", "").
@@ -1464,7 +1464,7 @@ air301_quoted_moved_to_conf(n, N) :- (kind(n, "string") ; kind(n, "concatenated_
 // AIR301_moved_to_sdk_notifications_basenotifier_basenotifier(n): a finding at node n, from clause `moved-to-sdk-notifications-basenotifier-basenotifier`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_notifications_basenotifier_basenotifier(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `BaseNotifier` from `airflow.sdk.bases.notifier` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_notifications_basenotifier_basenotifier(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `BaseNotifier` from `airflow.sdk.bases.notifier` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_notifications_basenotifier_basenotifier(N, n) :- air301_old_name_of(n, "moved_to_sdk_notifications_basenotifier_basenotifier"),
     node(_, n, _, _, _), N = n, !air301_alt_211(n).
@@ -1490,7 +1490,7 @@ air301_quoted_moved_to_sdk_notifications_basenotifier_basenotifier(n, N) :- (kin
 // AIR301_moved_to_sdk_operators_python_get_current_context(n): a finding at node n, from clause `moved-to-sdk-operators-python-get-current-context`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_operators_python_get_current_context(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `get_current_context` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_operators_python_get_current_context(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `get_current_context` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_operators_python_get_current_context(N, n) :- air301_old_name_of(n, "moved_to_sdk_operators_python_get_current_context"),
     node(_, n, _, _, _), N = n, !air301_alt_215(n).
@@ -1527,7 +1527,7 @@ air301_quoted_moved_to_sdk_operators_python_get_current_context(n, N) :- (kind(n
 // AIR301_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n): a finding at node n, from clause `moved-to-sdk-sensors-base-sensor-operator-basesensoroperator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `BaseSensorOperator` from `airflow.sdk.bases.sensor` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `BaseSensorOperator` from `airflow.sdk.bases.sensor` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(N, n) :- air301_old_name_of(n, "moved_to_sdk_sensors_base_sensor_operator_basesensoroperator"),
     node(_, n, _, _, _), N = n, !air301_alt_219(n).
@@ -1553,7 +1553,7 @@ air301_quoted_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n, N)
 // AIR301_moved_to_sdk_utils_helpers_chain(n): a finding at node n, from clause `moved-to-sdk-utils-helpers-chain`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_utils_helpers_chain(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `chain` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_utils_helpers_chain(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `chain` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_utils_helpers_chain(N, n) :- air301_old_name_of(n, "moved_to_sdk_utils_helpers_chain"),
     node(_, n, _, _, _), N = n, !air301_alt_223(n).
@@ -1579,7 +1579,7 @@ air301_quoted_moved_to_sdk_utils_helpers_chain(n, N) :- (kind(n, "string") ; kin
 // AIR301_moved_to_sdk_utils_helpers_cross_downstream(n): a finding at node n, from clause `moved-to-sdk-utils-helpers-cross-downstream`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_utils_helpers_cross_downstream(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `cross_downstream` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_utils_helpers_cross_downstream(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `cross_downstream` from `airflow.sdk` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_utils_helpers_cross_downstream(N, n) :- air301_old_name_of(n, "moved_to_sdk_utils_helpers_cross_downstream"),
     node(_, n, _, _, _), N = n, !air301_alt_227(n).
@@ -1605,7 +1605,7 @@ air301_quoted_moved_to_sdk_utils_helpers_cross_downstream(n, N) :- (kind(n, "str
 // AIR301_moved_to_sdk_utils_log_secrets_masker(n): a finding at node n, from clause `moved-to-sdk-utils-log-secrets-masker`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_to_sdk_utils_log_secrets_masker(at: loc, n: node) code "AIR301" "`{n}` moved in Airflow 3; import `secrets_masker` from `airflow.sdk.execution_time` (needs apache-airflow-task-sdk>=1.0.0)."
+.violation AIR301_moved_to_sdk_utils_log_secrets_masker(at: loc, n_mv: node) code "AIR301" "`{n_mv}` moved in Airflow 3; import `secrets_masker` from `airflow.sdk.execution_time` (needs apache-airflow-task-sdk>=1.0.0)."
     suppress noqa "AIR301"
 AIR301_moved_to_sdk_utils_log_secrets_masker(N, n) :- air301_old_name_of(n, "moved_to_sdk_utils_log_secrets_masker"),
     node(_, n, _, _, _), N = n, !air301_alt_231(n).
@@ -1631,7 +1631,7 @@ air301_quoted_moved_to_sdk_utils_log_secrets_masker(n, N) :- (kind(n, "string") 
 // AIR301_moved_base_hook(n): a finding at node n, from clause `moved-base-hook`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR301_moved_base_hook(at: loc, n: node) code "AIR301" "`{n}` was removed in Airflow 3.0; import `BaseHook` from `airflow.hooks.base`, which Airflow 3.1+ deprecates in turn."
+.violation AIR301_moved_base_hook(at: loc, n_mv: node) code "AIR301" "`{n_mv}` was removed in Airflow 3.0; import `BaseHook` from `airflow.hooks.base`, which Airflow 3.1+ deprecates in turn."
     suppress noqa "AIR301"
 AIR301_moved_base_hook(N, n) :- air301_old_name_of(n, "moved_base_hook"), node(_, n, _, _, _), N = n,
     !air301_alt_235(n).

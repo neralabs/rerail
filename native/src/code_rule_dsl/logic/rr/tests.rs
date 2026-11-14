@@ -3473,3 +3473,19 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
     assert!(n > 20, "{n} programs compared");
 }
 
+
+/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
+/// name (the scope code reads the same table, `scope::options::EsGlobals`).
+#[test]
+fn es_globals_match_the_engines_table() {
+    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
+    let latest = table["latest"].as_u64().unwrap().to_string();
+    let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
+    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
+    let got: std::collections::BTreeSet<String> = rows
+        .lines()
+        .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
+        .collect();
+    assert!(!want.is_empty());
+    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+}

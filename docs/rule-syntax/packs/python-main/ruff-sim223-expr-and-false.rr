@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 .violation SIM223(at: node) "Drop the operands after the always-falsy value in this `and`; they never run, so the result is that value."
     suppress noqa "SIM223"
-SIM223(n) :- sim223_value(n), !sim223_skip(n), (sim223_tok_precedes_11(n) ; sim223_prev_skip(n)),
+SIM223(n) :- sim223_value_util(n), !sim223_skip(n), (sim223_tok_precedes_11(n) ; sim223_prev_skip(n)),
     (sim223_tok_precedes_11(n) ; sim223_tok_follows_23(n, s1), sim223_clean(s1)), sim223_run_has_trigger(n).
 
 // and_op(n): the JSON util `and-op`, used where the JSON says `matches: "and-op"`
@@ -169,9 +169,9 @@ sim223_boolean_test(n) :- child(p28, n, _),
 .decl sim223_short(n: node)
 sim223_short(n) :- sim223_falsy(n).
 
-// value(n): the JSON util `value`, used where the JSON says `matches: "value"`
-.decl sim223_value(n: node)
-sim223_value(n) :- !sim223_alt_38(n), child(p1, n, _), sim223_and_op(p1).
+// value_util(n): the JSON util `value`, used where the JSON says `matches: "value"`
+.decl sim223_value_util(n: node)
+sim223_value_util(n) :- !sim223_alt_38(n), child(p1, n, _), sim223_and_op(p1).
 
 // has_next(n): the JSON util `has-next`, used where the JSON says `matches: "has-next"`
 .decl sim223_has_next(n: node)
@@ -186,7 +186,7 @@ sim223_next_short(n) :- sim223_tok_follows_15(n), child(p18, n, _), sim223_and_o
 
 // trigger(n): the JSON util `trigger`, used where the JSON says `matches: "trigger"`
 .decl sim223_trigger(n: node)
-sim223_trigger(n) :- sim223_value(n), (sim223_short(n), sim223_has_next(n) ; !sim223_skip(n), sim223_next_short(n)).
+sim223_trigger(n) :- sim223_value_util(n), (sim223_short(n), sim223_has_next(n) ; !sim223_skip(n), sim223_next_short(n)).
 
 // clean(n): the JSON util `clean`, used where the JSON says `matches: "clean"`
 .decl sim223_clean(n: node)
@@ -453,16 +453,16 @@ sim223_tok_follows_7(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\{)\\s
 
 // truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
 .decl sim223_truthy_value(n: node, b: symbol)
-sim223_truthy_value(n, "false") :- sim223_value(n, x), value_type(x, "NoneType").
-sim223_truthy_value(n, b) :- sim223_value(n, x), value_type(x, "boolean"), b = x.
-sim223_truthy_value(n, "false") :- sim223_value(n, x),
+sim223_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+sim223_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+sim223_truthy_value(n, "false") :- value(n, x),
     (value_type(x, "int") ; value_type(x, "float")),
     (x = "0" ; x = "0.0" ; x = "-0.0").
-sim223_truthy_value(n, "true") :- sim223_value(n, x),
+sim223_truthy_value(n, "true") :- value(n, x),
     (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
-sim223_truthy_value(n, "false") :- sim223_value(n, x),
+sim223_truthy_value(n, "false") :- value(n, x),
     (value_type(x, "str") ; value_type(x, "bytes")), x = "".
-sim223_truthy_value(n, "true") :- sim223_value(n, x),
+sim223_truthy_value(n, "true") :- value(n, x),
     (value_type(x, "str") ; value_type(x, "bytes")), x != "".
 
 // tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^(if|elif|while)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
@@ -752,7 +752,7 @@ sim223_alt_27(n) :-
 sim223_alt_27(n) :- sim223_t_string(n).
 sim223_alt_27(n) :- sim223_plain_nonempty(n).
 sim223_alt_27(n) :- sim223_f_nonempty(n).
-sim223_alt_27(n) :- (kind(n, "integer") ; kind(n, "float")), sim223_value(n, v1),
+sim223_alt_27(n) :- (kind(n, "integer") ; kind(n, "float")), value(n, v1),
     sim223_truthy_value(n, "true").
 sim223_alt_27(n) :- (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple")), child(n, c2, _),
     !sim223_alt_24(c2).
@@ -768,7 +768,7 @@ sim223_alt_27(n) :- kind(n, "call"), child(n, c4, _), kind(c4, "identifier"),
 sim223_alt_34(n) :- (kind(n, "false") ; kind(n, "none")).
 sim223_alt_34(n) :- sim223_plain_empty(n).
 sim223_alt_34(n) :- sim223_f_empty(n).
-sim223_alt_34(n) :- (kind(n, "integer") ; kind(n, "float")), sim223_value(n, v1),
+sim223_alt_34(n) :- (kind(n, "integer") ; kind(n, "float")), value(n, v1),
     sim223_truthy_value(n, "false").
 sim223_alt_34(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
     count : { child(n, c2, _), !glob("[\\[\\](){},]", c2) } = 0.

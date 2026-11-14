@@ -76,6 +76,13 @@ fn underscores(s: &str) -> String {
     out
 }
 
+/// A util's relation: its name in snake case, and `_util` after a name core.rr declares (a util `field` is not the
+/// core `field(p, f, c)` the rules beside it read).
+pub fn util_name(name: &str) -> String {
+    let s = snake(name);
+    if crate::code_rule_dsl::logic::rr::lower::is_core(&s) { format!("{s}_util") } else { s }
+}
+
 pub fn snake(name: &str) -> String {
     let cs: Vec<char> = name.chars().collect();
     let mut s = String::new();
@@ -473,6 +480,9 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(option_cases(px, prog, val, ro, v, false)?);
         } else if (k == "cases" || k == "default") && ro.has("$option") {
             continue;
+        } else if k == "stored" && ro.has("regex") {
+            // Main's note on why the regex reads a stored token's text: the `regex` beside it is the test.
+            continue;
         } else if k == "value" && vo.is_some_and(|o| o.len() == 1) {
             let (op, arg) = vo.expect("an object").0[0].clone();
             match op.as_str() {
@@ -723,9 +733,17 @@ fn nth_child(px: &Patterns, prog: &mut Program, c: &Obj, v: &str, vs: &mut Vars)
 
 fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &mut Vars) -> R<Vec<String>> {
     let mut lits = Vec::new();
+    // Main's `directives: "eslint"` is no filter of its own: `builtin` and `exported` also read ESLint's `/* global */`
+    // and `/* exported */` comments (the names library's `site_builtin_directives`, `site_exported_directives`).
+    let directives = filters.get("directives").is_some_and(|d| d.as_str() == Some("eslint"));
     for (bk, bv) in filters.iter() {
         let bo = bv.as_obj();
-        if bk == "form" && bv.is_str() {
+        if bk == "directives" && directives {
+            continue;
+        } else if directives && (bk == "builtin" || bk == "exported") && matches!(bv, Value::Bool(_)) {
+            let not = if bv.is_true() { "" } else { "!" };
+            lits.push(format!("{not}site_{bk}_directives({s})"));
+        } else if bk == "form" && bv.is_str() {
             lits.push(format!("main_form({s}, {})", q_val(bv)));
         } else if bk == "form" && bv.is_list() {
             lits.push(one_of(prog, vs, &format!("main_form({s}, {{}})"), bv.as_list().expect("a list"), "f", "binding forms the JSON accepts"));
@@ -782,6 +800,23 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
                 _ => lits.push(format!("binding({sc}, {x}, {s2}, _)")),
             }
             lits.push(format!("{s2} < {s}"));
+        } else if bk == "redefines"
+            && let Some(o) = bo.filter(|o| o.keys_within(&["every", "site", "form", "scope", "used", "referenced", "exported", "builtin", "directives", "value", "annotation"]))
+        {
+            // The variable's other definitions: some earlier one the term accepts (its filters and sub-rules on it),
+            // or with `every`, each other one (main's TypeScript `redefines`; vacuous where there is no other).
+            let every = o.get("every").is_some_and(Value::is_true);
+            let accepts = prog.helper("redefined", "the definitions the JSON `binds.redefines` accepts");
+            let mut body = vec!["binding(_, _, n, _)".to_owned()];
+            body.extend(site_filters(px, prog, &o.without(&["every"]), "n", &mut Vars::default())?);
+            prog.add_rule(format!("{accepts}(n)"), body);
+            let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
+            lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            if every {
+                lits.push(format!("count : {{ binding({sc}, {x}, {s2}, _), {s2} != {s}, !{accepts}({s2}) }} = 0"));
+            } else {
+                lits.push(format!("binding({sc}, {x}, {s2}, _), {s2} < {s}, {accepts}({s2})"));
+            }
         } else {
             let term = Value::obj(vec![("binds", Value::obj(vec![(bk, bv.clone())]))]);
             lits.push(ast_atom(prog, s, term));
@@ -1337,15 +1372,31 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
             }
         } else if k == "prefix" {
             continue;
+        } else if (k == "directives" || k == "scriptDeclarations") && r.has("global") {
+            // They widen `global` (below): no filter of their own.
+            continue;
         } else if k == "directives" && val.is_str() {
             lits.push(format!("global_directives({v}, {})", q_val(val)));
         } else if k == "global" {
             prog.use_("names");
+            // Main's `directives: "eslint"` adds `/* global */` comments' names (less those turned off), and
+            // `scriptDeclarations` a script's top-level declarations, which are the global variables themselves.
+            let dir = r.get("directives").and_then(Value::as_str) == Some("eslint");
+            let script = r.get("scriptDeclarations").is_some_and(Value::is_true);
+            let rel = |g: &str| if dir || script { format!("global_ref_with({v}, {g}, {}, {})", dir as u8, script as u8) } else { format!("global_ref({v}, {g})") };
             if let Value::List(l) = val {
-                lits.push(one_of(prog, vs, &format!("global_ref({v}, {{}})"), l, "g", "names from the JSON `resolves.global`"));
+                lits.push(one_of(prog, vs, &rel("{}"), l, "g", "names from the JSON `resolves.global`"));
             } else {
-                lits.push(format!("global_ref({v}, _)"));
+                lits.push(rel("_"));
             }
+        } else if k == "sloppyFunctions" && r.get("this").and_then(Value::as_str) == Some("global") {
+            continue;
+        } else if k == "this" && val.as_str() == Some("global") {
+            // `this` is the global object: a script's top level, and with `sloppyFunctions` a sloppy function
+            // called plainly (tsx/eslint-a-globals).
+            prog.use_("eslint-a-globals");
+            let sloppy = r.get("sloppyFunctions").is_some_and(Value::is_true);
+            lits.push(if sloppy { format!("global_this({v})") } else { format!("global_this_top({v})") });
         } else if k == "unresolved" && (matches!(val, Value::Bool(true) | Value::Int(1)) || matches!(val, Value::Float(f) if *f == 1.0) || val.as_str() == Some("star")) {
             prog.use_("names");
             if prog.lang == "python" {
@@ -1614,14 +1665,14 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
         let mut sorted: Vec<&String> = cols.iter().collect();
         sorted.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
         for c in sorted {
-            let rep = format!("{{{}}}", c.to_lowercase());
+            let rep = format!("{{{}}}", col(c));
             m = sub(&re(&format!(r"\$\$?\$?{}\b", esc(c))), &m, |_| rep.clone());
         }
         msg = Value::Str(m);
     }
     let colsig: String = cols
         .iter()
-        .map(|c| format!(", {}: {}", c.to_lowercase(), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
+        .map(|c| format!(", {}: {}", col(c), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
         .collect();
     let mut head = format!(".violation {rel}(at: node{colsig})");
     if code.as_str() != Some(rel) {
@@ -1631,7 +1682,7 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
     let anchor = viol.get("anchor").filter(|a| a.truthy()).map(py_str);
     if let Some(a) = &anchor {
         if let Some(c) = a.strip_prefix("capture.") {
-            lines.push(format!("    anchor {}", c.to_lowercase()));
+            lines.push(format!("    anchor {}", col(c)));
         } else if a != "witness.span" {
             lines.push(format!("    anchor {}", a.replace("witness.", "")));
         }

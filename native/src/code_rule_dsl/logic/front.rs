@@ -729,6 +729,25 @@ pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
     }) {
         return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
     }
+    // And with the columns it declares: a read of another arity names some other relation (a rule's own `field(n)`
+    // beside the core `field(p, f, c)`), which no plan can join.
+    let atoms = rule.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+        _ => None,
+    });
+    for a in std::iter::once(&rule.head).chain(atoms) {
+        if let Some(cols) = prog.decls.get(a.rel.as_str())
+            && cols.len() != a.args.len()
+        {
+            return Err(Error::Syntax(format!(
+                "relation {} is declared with {} columns and read with {} in the rule for {}",
+                a.rel,
+                cols.len(),
+                a.args.len(),
+                rule.head.rel
+            )));
+        }
+    }
     Ok(())
 }
 

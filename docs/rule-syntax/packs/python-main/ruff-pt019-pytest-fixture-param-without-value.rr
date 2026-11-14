@@ -10,7 +10,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes T1, T10, T11, T12, T2, T3, T4, T5, T6, T7, T8, T9, TE from other metavariables' text; its literals end each rule.
-.violation PT019(at: node, n: loc) "If the test never reads `{n}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n}\")` to the test; if it reads the value, leave it as is."
+.violation PT019(at: node, n_mv: loc) "If the test never reads `{n_mv}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n_mv}\")` to the test; if it reads the value, leave it as is."
     suppress noqa "PT019"
 PT019(n, N) :- pt019_alt_1(n, N), pt019_alt_2(n), child(p16, n, _), kind(p16, "parameters"),
     child(p17, p16, _), kind(p17, "function_definition"), field(p17, "name", c18),

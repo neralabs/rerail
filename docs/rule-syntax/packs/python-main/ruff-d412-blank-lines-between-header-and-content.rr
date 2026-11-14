@@ -84,7 +84,7 @@ D412(rr_at, L) :- kind(n, "string_content"), child(p1_1, n, _), d412_docstring(p
 // D412_blank_lines_between_header_and_content_numpy_capitalized(n): findings from clauses `blank-lines-between-header-and-content-numpy-capitalized`, `blank-lines-between-header-and-content-google-capitalized`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D412_blank_lines_between_header_and_content_numpy_capitalized(at: loc, n: node) code "D412" "Remove the blank lines between the `{n}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+.violation D412_blank_lines_between_header_and_content_numpy_capitalized(at: loc, n_mv: node) code "D412" "Remove the blank lines between the `{n_mv}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
     suppress noqa "D412"
 // N: not bound by this rule, so empty (unset) here, as in ast-grep.
 D412_blank_lines_between_header_and_content_numpy_capitalized(rr_at, N) :- kind(n, "string_content"), child(p1_6, n, _), d412_docstring(p1_6), (d412_spaced_header_numpy(n, w6_k, w6_l, N) ; d412_spaced_first_numpy(n, w6_f)), d412_numpy_mode(n), !d412_directive_hides_header(n),

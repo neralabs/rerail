@@ -69,7 +69,7 @@ impl Program {
 
     /// The relation of the util `name` where it is called or defined: the clause's own, if it has one.
     pub fn util_rel(&self, name: &str) -> String {
-        self.scope.get(name).cloned().unwrap_or_else(|| super::lower::snake(name))
+        self.scope.get(name).cloned().unwrap_or_else(|| super::lower::util_name(name))
     }
 
     pub fn helper(&mut self, base: &str, note: &str) -> String {

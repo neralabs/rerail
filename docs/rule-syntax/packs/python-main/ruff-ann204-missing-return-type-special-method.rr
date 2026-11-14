@@ -11,7 +11,7 @@
 // ANN204(n): a finding at node n, from clause `missing-return-type-special-method`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ANN204(at: node, n: loc) "Add a return type annotation to `{n}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
+.violation ANN204(at: node, n_mv: loc) "Add a return type annotation to `{n_mv}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
     suppress noqa "ANN204"
 ANN204(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, prefix("__", n), suffix("__", n),
     field(p1, "name", n), kind(p1, "function_definition"), ann204_unannotated_method(p1),

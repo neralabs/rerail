@@ -6,9 +6,9 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-// str(n): the JSON util `str`, used where the JSON says `matches: "str"`
-.decl fly002_str(n: node)
-fly002_str(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+// str_util(n): the JSON util `str`, used where the JSON says `matches: "str"`
+.decl fly002_str_util(n: node)
+fly002_str_util(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
 
 // plain(n): the JSON util `plain`, used where the JSON says `matches: "plain"`
 .decl fly002_plain(n: node)
@@ -74,8 +74,9 @@ fly002_raw_first(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly
 
 // all3(n): the JSON util `all3`, used where the JSON says `matches: "all3"`
 .decl fly002_all3(n: node)
-fly002_all3(n) :- within(c1, n), fly002_str(c1), value(c1, v2), match("(?s:.*)[\\n\\r](?s:.*)", v2),
-    within(c3, n), fly002_str(c3), value(c3, v4), contains("'''", v4), within(c5, n), fly002_str(c5),
+fly002_all3(n) :- within(c1, n), fly002_str_util(c1),
+    value(c1, v2), match("(?s:.*)[\\n\\r](?s:.*)", v2), within(c3, n), fly002_str_util(c3),
+    value(c3, v4), contains("'''", v4), within(c5, n), fly002_str_util(c5),
     value(c5, v6), contains("\"\"\"", v6).
 
 // join_call(n): the JSON util `join-call`, used where the JSON says `matches: "join-call"`
@@ -122,13 +123,14 @@ fly002_fs_join(n) :- fly002_join_call(n), child(n, c1, _), kind(c1, "argument_li
 // lit_in_type(n): the JSON util `lit-in-type`, used where the JSON says `matches: "lit-in-type"`
 //   C: metavariable this relation binds for the calling rule
 .decl fly002_lit_in_type(n: node, c: loc)
-fly002_lit_in_type(n, C) :- fly002_str(n), parsed(n, "annotation", r1), within(c2, r1),
+fly002_lit_in_type(n, C) :- fly002_str_util(n), parsed(n, "annotation", r1), within(c2, r1),
     fly002_alt_10(c2, C).
 
 // fs_in_type(n): the JSON util `fs-in-type`, used where the JSON says `matches: "fs-in-type"`
 //   C: metavariable this relation binds for the calling rule
 .decl fly002_fs_in_type(n: node, c: loc)
-fly002_fs_in_type(n, C) :- fly002_str(n), parsed(n, "annotation", r1), within(c2, r1), fly002_alt_11(c2, C).
+fly002_fs_in_type(n, C) :- fly002_str_util(n), parsed(n, "annotation", r1), within(c2, r1),
+    fly002_alt_11(c2, C).
 
 // FLY002(n): a finding at node n, from clause `static-join-of-literals`.
 // Each rule below is one way the JSON `rule` can match.

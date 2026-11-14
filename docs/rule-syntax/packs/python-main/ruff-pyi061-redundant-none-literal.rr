@@ -172,7 +172,7 @@ PYI061(NONE, n, "Move `None` out of this Literal and write `Literal[...] | None`
 // PYI061_none_only_literal_in_string(n, detail): findings from clauses `none-only-literal-in-string`, `none-with-other-members-in-string`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI061_none_only_literal_in_string(at: loc, n: node, detail: symbol) code "PYI061" "{detail}. Leave it if runtime code reads this annotation's arguments."
+.violation PYI061_none_only_literal_in_string(at: loc, n_mv: node, detail: symbol) code "PYI061" "{detail}. Leave it if runtime code reads this annotation's arguments."
     suppress noqa "PYI061"
 PYI061_none_only_literal_in_string(N, n, "This Literal holds only `None`; write plain `None` instead") :- pyi061_string_none_only(n, N).
 PYI061_none_only_literal_in_string(N, n, "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10)") :- pyi061_string_none_with_other(n, N).

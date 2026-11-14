@@ -41,9 +41,9 @@ ruf001_future_annotations(n) :- kind(n, "future_import_statement"), child(n, c1,
 ruf001_future_seen(n) :- ruf001_demand_future_seen(n), within(n, p1), precedes(s2, p1),
     ruf001_future_annotations(s2).
 
-// string_annotation(n): the JSON util `string-annotation`, used where the JSON says `matches: "string-annotation"`
-.decl ruf001_string_annotation(n: node)
-ruf001_string_annotation(n) :- kind(n, "type"), child(n, c1, _), ruf001_string_expression(c1),
+// string_annotation_util(n): the JSON util `string-annotation`, used where the JSON says `matches: "string-annotation"`
+.decl ruf001_string_annotation_util(n: node)
+ruf001_string_annotation_util(n) :- kind(n, "type"), child(n, c1, _), ruf001_string_expression(c1),
     ( field(p1, "type", n), (kind(p1, "typed_parameter") ; kind(p1, "typed_default_parameter") ; kind(p1, "assignment"))
     ; field(p2, "return_type", n), kind(p2, "function_definition")
     ).
@@ -166,7 +166,7 @@ ruf001_demand_future_seen(n) :- ruf001_string_text(n), ruf001_without_unambiguou
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl ruf001_up_1(n: node, p: node)
-ruf001_up_1(n, p) :- ruf001_demand_in_string_annotation(n), within(n, p), ruf001_string_annotation(p).
+ruf001_up_1(n, p) :- ruf001_demand_in_string_annotation(n), within(n, p), ruf001_string_annotation_util(p).
 
 // counted_1(n): the siblings the JSON `nthChild.ofRule` counts
 .decl ruf001_counted_1(n: node)

@@ -11,7 +11,7 @@
 // ANN205(n): a finding at node n, from clause `missing-return-type-static-method`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ANN205(at: node, n: loc) "Add a return type annotation to static method `{n}`, such as `-> int`, naming the type it returns."
+.violation ANN205(at: node, n_mv: loc) "Add a return type annotation to static method `{n_mv}`, such as `-> int`, naming the type it returns."
     suppress noqa "ANN205"
 ANN205(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, field(p1, "name", n),
     kind(p1, "function_definition"), ann205_unannotated_method(p1), !ann205_overload_impl(p1, N),

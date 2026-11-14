@@ -10,7 +10,7 @@
 // F823(n): a finding at node n, from clause `undefined-local`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F823(at: node, n: loc) "Assign `{n}` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable."
+.violation F823(at: node, n_mv: loc) "Assign `{n_mv}` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable."
     suppress noqa "F823"
 F823(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
     ast(n, {"language": "python", "rule": {"resolves": {"beforeLocal": true}}}).
