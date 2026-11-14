@@ -85,6 +85,8 @@ rerail-python-lean = { path = "../python_lean" }
 # JavaScript's, TypeScript's and TSX's lean parser: their tree-sitter tapes, written as the parse
 # goes (`tape::ecma_lean`).
 rerail-ecma-lean = { path = "../ecma_lean" }
+# Rust's lean parser: tree-sitter-rust's tape, written as the parse goes (`tape::rust_lean`).
+rerail-rust-lean = { path = "../rust_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
