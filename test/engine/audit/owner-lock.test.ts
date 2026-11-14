@@ -67,18 +67,19 @@ describe("an engine service's owner lock", () => {
     expect(readdirSync(owners)).toEqual(["notes.txt"]);
   });
 
-  it("holds no lock when another start removed its file before it locked it, and lets go of the lock it took", async () => {
+  it("holds no lock when another start removed its file before it locked it, lets go of the lock it took, and says so", async () => {
     const { databasePath, owners } = await home();
     let released = 0;
     taking.lock = (path, lock) => {
       unlinkSync(path);
       return { release: () => { released += 1; lock.release(); } };
     };
-    const lock = holdOwnerLock(databasePath);
+    const lock = withStderr(() => holdOwnerLock(databasePath));
     taking.lock = undefined;
-    expect(lock.id).toBeUndefined();
+    expect(lock.value.id).toBeUndefined();
     expect(released).toBe(1);
     expect(readdirSync(owners)).toEqual([]);
+    expect(lock.lines).toEqual([expect.stringMatching(/^rerail: no owner lock in .+: another start removed its file before it was locked; .+\n$/u)]);
   });
 
   it("reads a lock this process holds as held, one let go as freed whenever asked, and one with no file as held", async () => {
@@ -95,10 +96,23 @@ describe("an engine service's owner lock", () => {
     expect(existsSync(join(owners, `${unknown}.lock`)), "a file made by asking").toBe(false);
   });
 
-  it("holds none where the owners' folder cannot be made", async () => {
+  it("holds none where the owners' folder cannot be made, and says why", async () => {
     const { databasePath, owners } = await home();
     mkdirSync(join(owners, ".."), { recursive: true });
     writeFileSync(owners, "");
-    expect(holdOwnerLock(databasePath).id).toBeUndefined();
+    const lock = withStderr(() => holdOwnerLock(databasePath));
+    expect(lock.value.id).toBeUndefined();
+    expect(lock.lines).toEqual([expect.stringMatching(/^rerail: no owner lock in .+: .*E(EXIST|NOTDIR).*; .+\n$/u)]);
   });
 });
+
+/** What `run` answers, with the lines it wrote to stderr meanwhile. */
+function withStderr<T>(run: () => T): { value: T; lines: string[] } {
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    const value = run();
+    return { value, lines: stderr.mock.calls.map(([line]) => String(line)) };
+  } finally {
+    stderr.mockRestore();
+  }
+}
