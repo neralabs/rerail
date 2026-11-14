@@ -48,6 +48,7 @@ pub mod extents;
 pub mod grouped;
 pub mod handles;
 pub mod passes;
+mod show;
 pub mod strings;
 mod tree;
 pub mod version;

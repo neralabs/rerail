@@ -74,6 +74,7 @@ pub mod choices;
 pub mod issue;
 pub mod demand;
 pub mod keeps;
+pub mod body;
 pub mod native_demand;
 pub mod replanning;
 pub mod compose;
@@ -136,7 +137,7 @@ pub enum Constant {
     Str(String),
 }
 
-fn constant(t: &Term) -> Option<Constant> {
+pub fn constant(t: &Term) -> Option<Constant> {
     match t {
         Term::Int(i) => Some(Constant::Int(*i)),
         Term::Str(s) => Some(Constant::Str(s.to_string())),
@@ -253,7 +254,7 @@ type Sig = (String, Vec<(usize, Option<Constant>)>);
 /// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
 /// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
 /// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
-fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
+pub fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
     // The rule's digest (`digest_atom`, `digest_literal`), not its text written out: it is asked at every search.
     let d = super::derived::digest(|d| {
         digest_atom(d, head);
@@ -1006,14 +1007,14 @@ fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) ->
     (ready && !bound.contains(y.as_str())).then_some(y)
 }
 
-fn is_join(l: &Literal) -> bool {
+pub fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
 
 /// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
 /// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
 /// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
-fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
+pub fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),

@@ -743,3 +743,50 @@ fn a_rewrite_copies_what_it_does_not_change() {
     // Encoded again, the image opens and reads back.
     same(&Version::open(&encode(&d.program(&Lists::default()).unwrap()).unwrap()).unwrap().program(&Lists::default()).unwrap(), &d.program(&Lists::default()).unwrap());
 }
+
+/// The planner's reading of a rule (`plan::body::Body`) says what the tree says of it, on the pack programs and on a
+/// program of every part: each literal's text, variables, whether it joins and when it can run (after each prefix of the
+/// body, and after each literal alone), each constant, and the key the rule's observations are kept under.
+#[test]
+fn the_planners_reading_of_a_rule_is_the_trees() {
+    use crate::code_rule_dsl::logic::plan::{self, body::{Body, VarSet, made}};
+    use std::collections::BTreeSet;
+    let mut progs: Vec<Program> = pack_programs().into_iter().map(|(_, p)| p).collect();
+    progs.push(every_part());
+    progs.push(analysed());
+    let mut n = 0;
+    for prog in &progs {
+        let v = made(&prog.rules).unwrap();
+        for (k, rule) in prog.rules.iter().enumerate() {
+            let b = Body::of(&v, v.rule(RuleId(k as u32)).unwrap());
+            assert_eq!(b.show_head(), rule.head.to_string());
+            assert_eq!(b.len(), rule.body.len(), "{rule}");
+            assert_eq!(b.observed_key(), plan::obs_rule(&rule.head, &rule.body), "{rule}");
+            let names = |s: &VarSet| -> BTreeSet<String> { s.iter().map(|x| b.var(x).to_owned()).collect() };
+            let slots = |names: &BTreeSet<String>| -> VarSet { VarSet::of(v.rule(RuleId(k as u32)).unwrap().vars().enumerate().filter(|(_, a)| names.contains(v.text(*a))).map(|(i, _)| super::Slot(i as u32))) };
+            let mut bounds: Vec<BTreeSet<String>> = vec![BTreeSet::new()];
+            for l in rule.body.iter() {
+                let mut next = bounds.last().unwrap().clone();
+                next.extend(l.vars());
+                bounds.push(next);
+                bounds.push(l.vars());
+            }
+            for (i, l) in rule.body.iter().enumerate() {
+                assert_eq!(b.show(i), l.to_string());
+                assert_eq!(names(b.vars(i)), l.vars(), "{l}");
+                assert_eq!(b.is_join(i), plan::is_join(l), "{l}");
+                for bound in &bounds {
+                    assert_eq!(b.ready(i, &slots(bound)), plan::ready(l, bound), "{l} with {bound:?} bound");
+                }
+                if let (Some(a), Some(t)) = (b.atom(i), l.atom()) {
+                    assert_eq!(b.rel(a), t.rel.as_str());
+                    for (x, y) in a.args().zip(t.args.iter()) {
+                        assert_eq!(b.constant(x), plan::constant(y));
+                    }
+                }
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 1000, "{n}");
+}
