@@ -66,6 +66,13 @@ const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
  */
 export const OLDER_WRITE_WINDOW_MS = 7 * 24 * 3_600_000;
 
+/**
+ * The longest the wait for an older Rerail sleeps before it reads the file and the clock again. Node fires a timer
+ * longer than 2^31 - 1 ms (about 24.9 days) after 1 ms, which an audit dated weeks past the clock would ask for. A timer
+ * counts only the time the machine is awake on Linux and macOS, so after a sleep the move starts at most this late.
+ */
+const OLDER_WAIT_PASS_MS = 3_600_000;
+
 const DAY_MS = 24 * 3_600_000;
 
 export interface RuleProvenanceMoveOptions {
@@ -110,11 +117,29 @@ type MoveState =
 const NONE: MoveState = { kind: "none" };
 const MOVE: MoveState = { kind: "move" };
 
+/** A wait for an older Rerail (`MoveState`). */
+type OlderWait = Extract<MoveState, { kind: "wait" }>;
+
 /** What `moveRuleProvenancesInWorker` hands the thread it starts (`rule-provenance-move-worker.ts`). */
 export interface MoveWorkerData {
   readonly path: string;
   readonly olderWindowMs: number;
 }
+
+/** Waits `ms`, holding no process open, and rejects once `signal` aborts. */
+export type MoveTimer = (ms: number, signal: AbortSignal | undefined) => Promise<unknown>;
+
+export interface MoveInWorkerOptions {
+  /** How long after an older Rerail's last audit the move waits (`OLDER_WRITE_WINDOW_MS`); tests pass their own. */
+  readonly olderWindowMs?: number;
+  /** The time in epoch milliseconds the calling thread compares that audit with; tests pass their own. */
+  readonly clock?: () => number;
+  /** The timer each pass of the wait for an older Rerail sleeps on; tests pass their own. */
+  readonly timer?: MoveTimer;
+}
+
+/** Node's timer from `timers/promises`, unreferenced: a daemon that ends does not wait for it. */
+const unreferencedSleep: MoveTimer = (ms, signal) => sleep(ms, undefined, { signal, ref: false });
 
 type Client = RerailDatabase["$client"];
 
@@ -150,7 +175,7 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
 }
 
 /** The clock and window `options` give for an older Rerail's last audit, else the time now and `OLDER_WRITE_WINDOW_MS`. */
-function olderWritesOf(options: RuleProvenanceMoveOptions): OlderWrites {
+function olderWritesOf(options: Pick<RuleProvenanceMoveOptions, "clock" | "olderWindowMs">): OlderWrites {
   return { clock: options.clock ?? (() => Date.now()), windowMs: options.olderWindowMs ?? OLDER_WRITE_WINDOW_MS };
 }
 
@@ -215,25 +240,26 @@ function nextBatchSize(size: number, took: number, most: number): number {
  *
  * While an audit that names no stored copy of its provenance has begun within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS`
  * unless a test passes its own), recorded before the step or by an older Rerail since, this thread starts no move:
- * stderr says why and until when, it waits that long on a timer that holds nothing open, and reads the file again. A
- * move such an audit stopped before its next batch waits the same way; one that ended with work left for any other
- * reason goes on at the next start, as before.
+ * stderr says why and until when, and it waits on a timer that holds nothing open, reading the file and the clock again
+ * at least once in `OLDER_WAIT_PASS_MS` (`olderPass`). A move such an audit stopped before its next batch waits the
+ * same way; one that ended with work left for any other reason goes on at the next start, as before.
  */
 export async function moveRuleProvenancesInWorker(
   path: string,
   signal?: AbortSignal,
-  { olderWindowMs = OLDER_WRITE_WINDOW_MS }: { readonly olderWindowMs?: number } = {},
+  options: MoveInWorkerOptions = {},
 ): Promise<number> {
-  const older: OlderWrites = { clock: () => Date.now(), windowMs: olderWindowMs };
+  const older = olderWritesOf(options);
+  const waitedFor = olderPass(path, older, options.timer, signal);
   const stateNow = (): MoveState => (signal?.aborted === true || !existsSync(path) ? NONE : moveState(path, older));
   let moved = 0;
   for (let state = stateNow(); state.kind !== "none";) {
     if (state.kind === "wait") {
-      if (!(await olderGone(path, state, older.windowMs, signal))) return moved;
+      if (!(await waitedFor(state))) return moved;
       state = stateNow();
       continue;
     }
-    moved += await movedInWorker({ path, olderWindowMs }, signal);
+    moved += await movedInWorker({ path, olderWindowMs: older.windowMs }, signal);
     state = waitsOrEnds(stateNow());
   }
   return moved;
@@ -257,22 +283,29 @@ async function movedInWorker(data: MoveWorkerData, signal: AbortSignal | undefin
 }
 
 /**
- * Says why the move waits and until when (`sayWaitsForOlder`), then waits until `wait.until`: false when `signal` ends
- * the wait. The timer holds no process open.
+ * One pass of the wait for an older Rerail: says why the move waits and until when (`sayWaitsForOlder`) when the audit
+ * it waits for is not the one it named last, so a wait says it once, then sleeps on `timer` (Node's, unreferenced,
+ * unless a test passes its own) until `wait.until` by `older.clock`, or `OLDER_WAIT_PASS_MS`, whichever comes first.
+ * False when `signal` ends the pass.
  */
-async function olderGone(
+function olderPass(
   path: string,
-  wait: Extract<MoveState, { kind: "wait" }>,
-  windowMs: number,
+  older: OlderWrites,
+  timer: MoveTimer | undefined,
   signal: AbortSignal | undefined,
-): Promise<boolean> {
-  sayWaitsForOlder(path, wait, windowMs);
-  try {
-    await sleep(Math.max(0, wait.until - Date.now()), undefined, { signal, ref: false });
-    return true;
-  } catch {
-    return false;
-  }
+): (wait: OlderWait) => Promise<boolean> {
+  const sleepFor = timer ?? unreferencedSleep;
+  let named: number | undefined;
+  return async wait => {
+    if (wait.at !== named) sayWaitsForOlder(path, wait, older.windowMs);
+    named = wait.at;
+    try {
+      await sleepFor(Math.min(Math.max(0, wait.until - older.clock()), OLDER_WAIT_PASS_MS), signal);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 }
 
 /**

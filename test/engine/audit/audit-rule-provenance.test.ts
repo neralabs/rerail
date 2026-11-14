@@ -622,6 +622,53 @@ describe("audit rule provenance", () => {
     expect(inlineAudits(path)).toBe(2);
   }, 60_000);
 
+  it("waits at most an hour a pass for an audit dated past its clock, reading the file again after each, and says so once", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, [provenanceOf("/home/dev/app", 20)]);
+    openRerailDatabase(path).$client.close();
+    // An older Rerail recorded an audit 30 days after the clock this test moves, its provenance in its row, as when a
+    // clock ran ahead while it recorded and was then set right. The week after it ends past the longest timer Node
+    // keeps (2^31 - 1 ms, about 24.9 days); Node fires a longer one after 1 ms.
+    const day = 24 * 3_600_000;
+    let now = Date.now();
+    const ahead = recordAsOlder(path, "older-ahead", provenanceOf("/home/dev/app", 20), now + 30 * day);
+    const stop = new AbortController();
+    // The timer the move waits on: it moves the clock by what it is asked, and ends the wait on its fifth pass.
+    const asked: number[] = [];
+    const timer = (ms: number, signal: AbortSignal | undefined): Promise<void> => {
+      asked.push(ms);
+      now += ms;
+      if (asked.length === 5) stop.abort();
+      return signal?.aborted === true ? Promise.reject(new Error("stopped")) : Promise.resolve();
+    };
+    const warnings: string[] = [];
+    const warned = (warning: Error): void => {
+      warnings.push(warning.name);
+    };
+    process.on("warning", warned);
+    // A second on the real clock ends a move that does not take this test's timer.
+    const deadline = setTimeout(() => stop.abort(), 1_000);
+    const stderr = spyOnStderr();
+    let logged = "";
+    try {
+      expect(await moveRuleProvenancesInWorker(path, stop.signal, { clock: () => now, timer })).toBe(0);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+      clearTimeout(deadline);
+      process.off("warning", warned);
+    }
+
+    // One line, naming the audit and the end of the week after it, however many passes.
+    const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
+    expect(waits.length, "wait lines").toBe(1);
+    expect(waits[0]).toContain(`waits until ${new Date(ahead + 7 * day).toISOString()}`);
+    expect(warnings).toEqual([]);
+    // Five passes of an hour each, the file and the clock read again after each; nothing moved.
+    expect(asked).toEqual(Array.from({ length: 5 }, () => 3_600_000));
+    expect(inlineAudits(path)).toBe(2);
+  });
+
   it("sizes each batch from how long the one before held the write lock", async () => {
     /** How many audits each batch of a move of 30 moved, timed by `now`. */
     const batchSizes = async (now: () => number): Promise<number[]> => {
