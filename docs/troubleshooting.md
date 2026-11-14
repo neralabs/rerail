@@ -433,7 +433,7 @@ shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in t
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
-what you asked for. A session that starts with no daemon running says so once, as it starts: Claude Code and Codex
+what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
 show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
 `rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
 nothing is recorded, and to start it with `rerail daemon start`.
