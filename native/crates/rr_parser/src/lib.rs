@@ -1347,9 +1347,9 @@ pub mod tests {
     #[test]
     fn token_rules_are_their_last_masks() {
         let old = crate::GRAMMAR
-            .replace("start hash & directive run code & word", "start hash & directive last hashword & ~next(hashword & ~directive)")
-            .replace("start alpha & ident & ~prev(ident) run ident", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
-            .replace("start digit & int & ~prev(int) run numeral", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
+            .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
+            .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last");
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
         let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
@@ -1360,7 +1360,13 @@ pub mod tests {
         for f in &inputs {
             let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
             assert_eq!(x.positions[usize::from(ra.starts)], y.positions[usize::from(rb.starts)], "the starts");
-            assert_eq!(x.positions[usize::from(ra.lasts)], y.positions[usize::from(rb.lasts)], "the lasts");
+            let (lx, ly) = (&x.positions[usize::from(ra.lasts)], &y.positions[usize::from(rb.lasts)]);
+            if let Some(k) = lx.iter().zip(ly).position(|(p, q)| p != q) {
+                let s0 = x.positions[usize::from(ra.starts)][k] as usize;
+                let text = String::from_utf8_lossy(&f[s0.saturating_sub(10)..(s0 + 30).min(f.len())]).into_owned();
+                panic!("token {k} at {s0}: the rule's last {}, the mask's {}: {text:?}", lx[k], ly[k]);
+            }
+            assert_eq!(lx.len(), ly.len(), "the lasts' count");
         }
         eprintln!("{} files: the same starts and lasts", inputs.len());
     }
@@ -1447,6 +1453,60 @@ pub mod tests {
         let cpu = c.native.cpu_form();
         assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the starts' mask");
         assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
+    }
+
+    /// Decision 0177's census of the CPU's form: each output, its label, the operations it
+    /// reads and those only it reads (what its going would take out).
+    #[test]
+    #[ignore = "a census: run by hand"]
+    fn cpu_outputs_by_operations() {
+        let c = crate::compiled().expect("compiles");
+        let cpu = c.native.cpu_form();
+        let n = cpu.insts.len();
+        let reach = |o: usize| {
+            let mut seen = vec![false; n];
+            let mut todo = vec![usize::from(cpu.outputs[o])];
+            while let Some(x) = todo.pop() {
+                if x < n && !seen[x] {
+                    seen[x] = true;
+                    todo.extend(cpu.insts[x].operands());
+                }
+            }
+            seen
+        };
+        let all: Vec<Vec<bool>> = (0..cpu.outputs.len()).map(reach).collect();
+        let mut rows = Vec::new();
+        for o in 0..cpu.outputs.len() {
+            let mine = all[o].iter().filter(|&&b| b).count();
+            let only = (0..n).filter(|&x| all[o][x] && (0..cpu.outputs.len()).all(|p| p == o || !all[p][x])).count();
+            let mut label: Vec<String> = c.labels.iter().filter(|(_, k)| usize::from(*k) == o).map(|(l, _)| l.clone()).collect();
+            label.dedup();
+            if let Some(r) = &c.native.records {
+                use rerail_compiler::records::EndRule;
+                for rule in &r.rules {
+                    match *rule {
+                        EndRule::Run(k) if usize::from(k) == o => label.push("run".into()),
+                        EndRule::Pair(k) if usize::from(k) == o => label.push("pair".into()),
+                        EndRule::Last(k) if usize::from(k) == o => label.push("last".into()),
+                        _ => {}
+                    }
+                }
+                if r.skip.map(usize::from) == Some(o) {
+                    label.push("skip".into());
+                }
+                for (m, &(k, w)) in r.marks.iter().enumerate() {
+                    if usize::from(k) == o {
+                        label.push(format!("recmark{m}(w{w})"));
+                    }
+                }
+            }
+            rows.push((only, mine, o, label.join(",")));
+        }
+        rows.sort_by(|a, b| b.cmp(a));
+        eprintln!("the CPU's form: {n} operations, {} outputs", cpu.outputs.len());
+        for (only, mine, o, label) in rows {
+            eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
+        }
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

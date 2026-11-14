@@ -190,9 +190,11 @@ mask id_first   = alpha & ident & ~prev(ident)
 # --- Punctuation -------------------------------------------------------------------------------
 
 # A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
-mask two        = code & ((colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt)))
+# Not masked by `code`: no run of them crosses a region's edge (no closer is one), and the
+# token loop never starts inside a region (decision 0177, 2c).
+mask two        = (colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt))
 mask two_start  = two & ~escaped(two)
-mask second     = prev(two_start)
+mask second     = prev(two_start) & code
 mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second
 mask p_last     = (p_start & ~two_start) | second
@@ -200,18 +202,21 @@ mask p_last     = (p_start & ~two_start) | second
 error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
 
 # A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
-# bit (decision 0177); the others by their last byte's mask.
+# bit (decision 0177); the others by their last byte's mask. The rules read no `code`: the token
+# loop starts each token after the one before, so never inside a region (2c). A number's run is
+# its digits and a float's `.` between two digits.
+mask num_run    = digit | (dot & prev(digit) & next(digit))
 # --- Tokens ------------------------------------------------------------------------------------
 
 token string     = start quote & o_str last closing
 token comment    = start slash & (o_line | o_block) last line_last | block_last
 token code_literal = start tick & o_tick last t1_last | t2_last | t3_last | e2_last
-token hash_word  = start hash & directive run code & word
+token hash_word  = start hash & directive run word
 keywords hash_word { "#include" } required
-token identifier = start alpha & ident & ~prev(ident) run ident
+token identifier = start alpha & ident & ~prev(ident) run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
-token number     = start digit & int & ~prev(int) run numeral
+token number     = start digit & int & ~prev(int) run num_run
 token punct      = start punct & p_start pair two_start
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
@@ -220,7 +225,7 @@ token punct      = start punct & p_start pair two_start
 keywords identifier { } soft { "test" "fixtures" "exactly" "uses" "end" "decl" "violation" "policy" "edit" "functor" "type" "input" "output" "lattice" "pragma" "true" "false" "null" "_" "must" "may" "count" "min" "max" "sum" "mean" "join" "by" "sep" "code" "in" "tag" "fix" "safe" "suppress" "over" "options" }
 keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" "{" "}" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
 
-skip code & ws
+skip ws
 
 # --- Line breaks -------------------------------------------------------------------------------
 

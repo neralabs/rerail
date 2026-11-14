@@ -174,3 +174,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Tried, not kept: an `&`/`|` chain lowered by delay (tier 1 JIT 491.5M, AOT 477.6M, from 501.5M and 465.9M; chosen per chain, no better); `two` by its second byte (JIT 505.2M, AOT 469.3M); `uesc`'s escape bytes one word before their carry (JIT 500.2M, AOT 468.0M). The pressure blamed on a statement does not price it | | | |
 | 0177 stage 1: end rules (`run`, `pair`), their meaning and the interpreter's lasts built; the CPU's rule in the record pass, the lasts' extract gone (kept: a step of the shape; the ends move into the block loop with the token loop) | | | |
 | 0177 stage 2a: the starts by the loop (`skip`'s words after the token before), no starts extract on the CPU; 329 operations from 334 | | | |
+| 0177 stage 2c: skip, runs and pair read no `code`: skip 1 op, runs 1 and 9, pair 31 (from 111); body 331, held by the fallback and the marks (stage 3) | | | |

@@ -1,7 +1,8 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
 Status: decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from
-them; see Stage 1); stage 2a landed (the starts by the loop); 2b next.
+them; see Stage 1); stage 2a and 2c landed (the starts by the loop; the rules read no `code`); 2b is
+stage 3's (see Stage 2c); stage 3 next.
 Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
 pass" does not). Metal keeps the bit-parallel form.
 The design: docs/parser-generators/36; the log: docs/parser-generators/35.
@@ -135,4 +136,19 @@ A byte no token begins with has no rule (`NO_RULE`): its token is the byte alone
 tokens are the masks' over the corpus (1,473 files, 2,567,918 tokens,
 `the_loops_tokens_are_the_masks`). The CPU's form: 329 operations, from 334; the start masks
 are still made for their other readers (marks, row modes), which 2b takes on.
+
+## Stage 2c, and 2b's readers
+
+Built: `skip` is `ws`, the word runs `word`, the number's run its digits and a float's `.`
+between two (`num_run`), and `two` reads no `code`. The CPU's lean-lexer masks are now what
+the lean lexer's are: `skip` one operation, the word run one, the number's run 9, the pair 31
+(from 111). `second` keeps `code`, so the masks' meaning (Metal's `p_last`) is unchanged
+(`token_rules_are_their_last_masks`).
+
+The census (`cpu_outputs_by_operations`) shows what still reads the token start masks and
+`code`, and so holds the body at 331 operations: the fallback (the gap check, a byte no token
+covers; the escapes and errors), reading 199, 32 of them its own; the marks tier 2 reads
+(`newline` through `after_comma` and `starts_g`, `json_bad`, `float_after`), each reading 70 to
+250, mostly shared; and the regions' last bytes. Each is a check of stage 3, made at the token:
+2b (the start masks go) is done there, not apart.
 
