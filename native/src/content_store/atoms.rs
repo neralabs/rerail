@@ -940,7 +940,7 @@ impl Atoms {
                     // of its own: the strings the store holds then are left out (found by key, never stored twice).
                     if let Ok(donor) = std::env::var("RERAIL_TEST_FORK_FROM") {
                         let path = path.clone();
-                        let appended = std::thread::spawn(move || -> rusqlite::Result<(usize, i64)> {
+                        let appended = rerail_accel::exec::service("rerail-test-fork append", None, move || -> rusqlite::Result<(usize, i64)> {
                             super::hazards::behind_the_run();
                             let strings = |c: &rusqlite::Connection, schema: &str| -> rusqlite::Result<Vec<String>> {
                                 let mut st = c.prepare(&format!("SELECT ends, bytes FROM {schema}.atom_segment ORDER BY first"))?;
@@ -976,6 +976,7 @@ impl Atoms {
                             c.execute_batch("COMMIT")?;
                             Ok((fresh.len(), end))
                         })
+                        .expect("the test fork's thread")
                         .join();
                         match appended {
                             Ok(Ok((n, end))) => eprintln!("rerail: test fork after {k} ids: {n} strings of another store appended, the store ends at {end}"),
@@ -998,7 +999,7 @@ impl Atoms {
                 // Waited for, so the ids just given are still pending when the store moves; but not on the writer's
                 // batch thread, whose transaction the append waits for.
                 if super::connection::in_batch() {
-                    std::thread::spawn(append);
+                    let _ = rerail_accel::exec::service("rerail-test-fork", None, append);
                 } else {
                     append();
                 }
