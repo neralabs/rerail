@@ -447,19 +447,23 @@ function cutStalledRequests(connections: ReadonlyMap<Socket, ConnectionState>): 
 
 /**
  * What the close knows of an open connection: `undefined` until a request's headers have arrived, then the latest such
- * request, then, once that request's answer is written, how many bytes the connection had read by then.
+ * request, then, once that request has all arrived and its answer is written, how many bytes the connection had read
+ * by then.
  */
 export type ConnectionState = IncomingMessage | number | undefined;
 
 /**
  * Whether `socket` is still sending a request: it has sent none yet, or one whose body has not all arrived, or, after
- * an answer on a connection its client keeps open, bytes of a next request whose headers have not all arrived. So a
- * next request that stalls in its headers is cut off as a first one is. A kept connection that sends nothing after its
- * answer is not: Node's keep-alive timeout ends it about 6 s after that answer, as when the close made no looks, and a
- * whole request its client sends there meanwhile is answered. So such a connection answered more than 4 s into the
- * close holds it past the 10 s `rerail daemon stop` gives before its kill. Bytes that came before the answer was
- * written (a client that sends its next request without waiting for the answer) count with the answered request, so
- * that connection is left to the same timeout.
+ * the answer to a request that had all arrived, on a connection its client keeps open, bytes of a next request whose
+ * headers have not all arrived. So a next request that stalls in its headers is cut off as a first one is. A kept
+ * connection that sends nothing after such an answer is not: Node's keep-alive timeout ends it about 6 s after that
+ * answer, as when the close made no looks, and a whole request its client sends there meanwhile is answered. So such a
+ * connection answered more than 4 s into the close holds it past the 10 s `rerail daemon stop` gives before its kill.
+ * Part of a next request's headers that came before the answer was written (a client that sends its next request
+ * without waiting for the answer) counts with the answered request, so that connection is left to the same timeout.
+ * A request answered on its headers alone (a wrong path, a refused access token, the capability proof) keeps its
+ * entry, since the rest of its body is not a next request: it is cut while that body stalls, and once the body has
+ * come it is left to the same timeout.
  */
 function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
   if (typeof state === "number") return socket.bytesRead > state;
@@ -479,9 +483,11 @@ export function trackConnections(server: Server): ReadonlyMap<Socket, Connection
   server.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
     const { socket } = incoming;
     connections.set(socket, incoming);
-    // Left as it is when a next request on the connection has replaced this one, or when the connection has closed.
+    // Left as it is when a next request on the connection has replaced this one, when the connection has closed, or
+    // when this request's body has not all arrived (an answer on its headers alone), whose rest would read as a next
+    // request.
     response.once("finish", () => {
-      if (connections.get(socket) === incoming) connections.set(socket, socket.bytesRead);
+      if (connections.get(socket) === incoming && incoming.complete) connections.set(socket, socket.bytesRead);
     });
   });
   return connections;

@@ -263,6 +263,40 @@ describe("engine service session concurrency", () => {
     }
   }, 20_000);
 
+  it("answers a whole request sent seconds after the body of a request answered on its headers alone, on a connection its client keeps open, when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      // The service answers a wrong path on its headers alone, before its body has come. The client keeps the
+      // connection open and sends that body once the close has begun.
+      const kept = await keptConnection(held.engine.socketPath);
+      const answered = nextAnswerWritten();
+      const body = "{}";
+      await kept.send(`POST /nope HTTP/1.1\r\nHost: localhost\r\ncontent-length: ${body.length}\r\n\r\n`);
+      await answered;
+      const began = performance.now();
+      const closing = held.service.close();
+      try {
+        await sleep(300);
+        await kept.send(body);
+        // Two looks for stalled requests find nothing sent since that body, then the client sends its next request
+        // whole, as Node's keep-alive timeout lets it: the rest of an answered request is not a next request.
+        await sleep(Math.max(0, began + 3_000 - performance.now()));
+        expect(await whenCut(kept.closed, began, 0)).toBe("still open");
+        await kept.send(keptRequest({ kind: "user-prompt", eventId: "late", sessionId: "busy", text: "continue" }));
+        await vi.waitFor(() => expect(kept.answers()).toEqual(["404", "200"]), { timeout: 5_000, interval: 20 });
+      } finally {
+        kept.destroy();
+        held.release();
+        await closing;
+      }
+      expect(recorded(held.databasePath)).toContain("late");
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
   it("lets an answer larger than a socket holds finish arriving when it closes", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const held = await holdingService(root);
@@ -440,19 +474,25 @@ function keptRequest(event: unknown): string {
   return `POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
 }
 
-/** Resolves once a server has written its answer to the next request it reads the headers of. */
+/**
+ * Resolves once a server has written its answer to the next request it reads the headers of. It listens before the
+ * server's handler runs, so an answer the handler writes on the headers alone is not missed.
+ */
 async function nextAnswerWritten(): Promise<void> {
-  const response = await nextMessage("http.server.request.start", message => field(message, "response", ServerResponse));
-  await once(response, "finish");
+  const answer = await nextMessage("http.server.request.start", message => {
+    const response = field(message, "response", ServerResponse);
+    return response === undefined ? undefined : { written: once(response, "finish") };
+  });
+  await answer.written;
 }
 
 /**
  * When a connection the close cut off closed (`closed`, a `performance.now()` time), counted from the close's start
  * (`began`): `cut off 1 s in` at the look 1 s in, which finds it silent since the look the close takes as it begins;
- * how long it took when a later look, or something other than a look, closed it; or `still open` after 5 s.
+ * how long it took when a later look, or something other than a look, closed it; or `still open` after `wait` ms.
  */
-async function whenCut(closed: Promise<number>, began: number): Promise<string> {
-  const at = await Promise.race([closed, sleep(5_000).then(() => undefined)]);
+async function whenCut(closed: Promise<number>, began: number, wait = 5_000): Promise<string> {
+  const at = await Promise.race([closed, sleep(wait).then(() => undefined)]);
   if (at === undefined) return "still open";
   const after = at - began;
   return after >= 900 && after < 1_950 ? "cut off 1 s in" : `cut off ${Math.round(after)} ms in`;
