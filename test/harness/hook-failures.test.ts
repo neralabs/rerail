@@ -608,6 +608,33 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect({ count: countOf(said), listings }).toEqual({ count: 3, listings: 1 });
   });
 
+  // As above, but another process has the stopped hook's pid since, as Windows soon hands out a freed pid again: this
+  // test's own process stands for it, and status reads an hour after the log last changed.
+  it("reads the log at once when the log a stopped hook left in place of .1 names a pid another process has now", async () => {
+    const rerailHome = await home();
+    writeFileSync(takenName(rerailHome, process.pid), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
+    const { said, listings } = await statusWith(rerailHome, {}, Date.now() + 60 * 60_000);
+    expect({ count: countOf(said), listings }).toEqual({ count: 3, listings: 1 });
+  });
+
+  // A hook that still runs takes `.1` under its own name just before status lists the home, and a second one moves it on
+  // from there to its own name before it goes back to `.1`. Both hooks still run: this test's own process stands for them.
+  it("says since when it counts when running hooks move .1 from name to name from before status lists the home", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
+    const [movedAside, first, second] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, process.pid), takenName(rerailHome, process.pid)];
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      if (String(args[0]) !== HOME) return readdir(...args);
+      globalThis.listings = (globalThis.listings ?? 0) + 1;
+      const move = { 1: [${JSON.stringify(movedAside)}, ${JSON.stringify(first)}], 2: [${JSON.stringify(first)}, ${JSON.stringify(second)}], 3: [${JSON.stringify(second)}, ${JSON.stringify(movedAside)}] }[globalThis.listings];
+      if (move !== undefined) fs.renameSync(move[0], move[1]);
+      return readdir(...args);
+    }`);
+    expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
+  });
+
   // Another program can hold `.1` open on Windows so that no other program can read it, as a backup can.
   it("says since when it counts from the live part, at once, when .1 cannot be read", async () => {
     const rerailHome = await home();
@@ -764,16 +791,16 @@ async function recordWithWrapped(rerailHome: string, at: number | undefined, wra
  * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), and how many
  * times it listed the Rerail home, when a process of its own reads them with each `node:fs` function `wraps` names made
  * by the function source given for it: a hook moving the log, or another program holding a file, as status reads it.
- * `HOME` in those sources is the Rerail home.
+ * `HOME` in those sources is the Rerail home. `Date.now` is fixed at `clock` when given.
  */
-async function statusWith(rerailHome: string, wraps: Wraps): Promise<{ said: string; listings: number }> {
+async function statusWith(rerailHome: string, wraps: Wraps, clock?: number): Promise<{ said: string; listings: number }> {
   const say = `const list = fs.readdirSync;
 let listings = 0;
 fs.readdirSync = (...args) => { if (String(args[0]) === HOME) listings += 1; return list(...args); };
 syncBuiltinESMExports();
 const said = hookFailures.hookFailureLines(hookFailures.readHookFailures(HOME, 0), Number.MAX_SAFE_INTEGER).join("");
 fs.writeSync(1, JSON.stringify({ said, listings }));`;
-  return JSON.parse(await outputOf(rerailHome, say, wraps)) as { said: string; listings: number };
+  return JSON.parse(await outputOf(rerailHome, say, wraps, clock)) as { said: string; listings: number };
 }
 
 /** What {@link statusWith} says when `fs.readdirSync` is the function `wrapListing` makes of the real one. */

@@ -439,13 +439,14 @@ function readPart(home: string, name: string, parts: Map<string, LogPart>): void
 /**
  * Lists the files of the log in `home`, reads each one `parts` has not met, and says whether a file moved under it: a
  * name gone by the time it looked or opened it, another file under the live name or `.1` than the one last found there,
- * or no file known as `.1` while a part says a hook moved one there and a hook that still runs holds a log.
+ * or no file known as `.1` while a part says a hook moved one there and a hook that still runs holds a log it took a
+ * moment ago.
  */
 function readUnmet(home: string, parts: Map<string, LogPart>): boolean {
   const names = listLog(home);
   const missed = readNew(home, names, parts);
   const moved = nameParts(parts, names);
-  return missed || moved || awaitingMovedAside(parts);
+  return missed || moved || awaitingMovedAside(home, parts);
 }
 
 /** The files of the log a listing found, by name: each one's file id, or null when it was gone before it was looked at. */
@@ -500,20 +501,39 @@ function giveName(parts: ReadonlyMap<string, LogPart>, name: string, id: string)
 /**
  * Whether no file of the log is known as `.1` though a part holds a start ({@link PartStart}), which a hook writes only
  * once it has moved a full log to `.1`, where a log stays until the next replaces it, and a hook that still runs holds a
- * log under its own name: a hook on Windows moves `.1` on to its own name for a moment, and a read that stopped there
- * would say it counts the last 24 hours though the part before was dropped. A hook that has ended moves nothing, so a
- * log it left is not waited for.
+ * log in `home` under its own name that it took a moment ago: a hook on Windows moves `.1` on to its own name for a
+ * moment, and a read that stopped there would say it counts the last 24 hours though the part before was dropped. A hook
+ * that has ended moves nothing, so a log it left is not waited for, nor is a log unchanged for longer than
+ * {@link TAKEN_LOG_MOVING_MS}, whose pid another process may have taken since its hook was stopped.
  */
-function awaitingMovedAside(parts: ReadonlyMap<string, LogPart>): boolean {
+function awaitingMovedAside(home: string, parts: ReadonlyMap<string, LogPart>): boolean {
   const all = [...parts.values()];
   return !all.some(part => part.name === MOVED_ASIDE_FILE) && all.some(part => part.name !== MOVED_ON && part.startedAt !== undefined)
-    && all.some(part => heldByRunningHook(part.name));
+    && all.some(part => heldByRunningHook(home, part.name));
 }
 
-/** Whether `name` is a log a hook took ({@link TAKEN_LOG}) and that hook still runs. */
-function heldByRunningHook(name: string): boolean {
+/**
+ * How long status waits for a log a hook took, past the moment it last changed. A take renames the file, which sets its
+ * change time as a write does, and a hook that holds `.1` under its own name moves it on after one stat and one rename,
+ * which the pauses wait out. A log unchanged for longer is one a stopped hook left: Windows hands a freed pid to another
+ * process soon, and without this bound every status would wait out all the pauses for as long as that process runs.
+ */
+const TAKEN_LOG_MOVING_MS = 2_000;
+
+/** Whether `name` is a log a hook took ({@link TAKEN_LOG}) in `home`, that hook still runs, and the log changed lately. */
+function heldByRunningHook(home: string, name: string): boolean {
   const pid = TAKEN_LOG.exec(name)?.[1];
-  return pid !== undefined && processState(Number(pid)) !== "gone";
+  return pid !== undefined && processState(Number(pid)) !== "gone" && changedLately(join(home, name));
+}
+
+/** Whether the file at `path` changed in the last {@link TAKEN_LOG_MOVING_MS}, or is gone from that name. */
+function changedLately(path: string): boolean {
+  try {
+    return Date.now() - statSync(path).ctimeMs < TAKEN_LOG_MOVING_MS;
+  } catch {
+    // Gone since the read met it, as a hook moved it on to its own name, or refused: a log that moves.
+    return true;
+  }
 }
 
 /**
