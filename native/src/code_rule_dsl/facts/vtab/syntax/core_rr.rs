@@ -591,6 +591,10 @@ pub(super) struct Skip {
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
+    /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
+    pub(super) str: bool,
+    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    pub(super) literal_value: bool,
     /// `structural_before`, `structural_after`.
     pub(super) structural: bool,
 }
@@ -704,10 +708,10 @@ impl CoreRows {
                 self.strprefix.push([n, string(prefix) as i64]);
                 token_like = true;
             }
-            if let Some(v) = &lit.str {
+            if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
             }
-            if let Some((v, ty)) = &lit.value {
+            if !self.skip.literal_value && let Some((v, ty)) = &lit.value {
                 self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python

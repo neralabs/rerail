@@ -196,9 +196,45 @@ copies): the copies, requests and answers are 133,658 of 11.7 M (1.1%). A large 
 (`rr_wide_cached_gate`: "readers would add 950543476 work") is the price of inlining the copy into its readers,
 which is why it is stored. It is not work done.
 
-## 8. Order
+## 8. Step 2, `value` and `token`: as built (2026-11-13)
+
+`rr::lower`'s `sources_on_request` runs over a table of attributes (`ON_REQUEST`), in two rounds, with one widening
+for all of them (copies `rr_wide_<attribute>_<relation>`):
+
+- **Round 1, `token`.** A request `rr_token_req(p)` asks for a parent's tokens. Its answer is a rule, not a
+  function: `token(p, i, t, s, e) :- rr_token_req(p), rr_token_named(p, i, c, s, e), node_text(c, t)`, over
+  `rr_token_named` (the named children that are nodes, by position and span). Their text is `node_text`, so it
+  becomes a reader that round 2 answers on request in turn. The rest of the tokens (anonymous ones: their kind is
+  their text; named ones without a node) stay an eager input, `rr_token_anon`, joined in by a rule
+  `token(…) :- rr_token_anon(…)`. Those texts are a grammar's few keywords and punctuation, not the source.
+- **Round 2, `node_text` and `value`.** `value` is answered by `@rr_node_value(n)`, which reads the node's literal
+  value from the tape through the same registry (per document, once). The literal values a rule names by constant
+  stay eager as `rr_value_lit`.
+- **A negation asks like a positive read.** `out(s) :- node(_, n, "call", _, _), !node_text(n, "x")` asks
+  `rr_node_text_req(n) :- node(_, n, "call", _, _)`: the answer for each node asked is complete, so the negation
+  over it is the same. Only a constant node, an aggregate, or a node nothing binds keeps the attribute eager.
+- **Literal strings only where read.** `str` and the literal values were interned for every literal whenever
+  any literal relation was read. They are now interned only where `str` or `value` is itself read.
+
+Checked against the oracle (`RERAIL_NODE_SOURCES=eager`), cold stores, strict SQL:
+
+| Rule, corpus | Findings | Atoms | Peak memory | Wall |
+|---|---|---|---|---|
+| `schema-introspection-data-paths`, `impl/` | 0 = 0 | 433.6 → 112.7 MB | 1.40 → 0.97 GB | 20.0 → 12.5 s |
+| `schema-introspection-data-paths`, `impl/sqlite` | 0 = 0 | 21.1 → 6.0 MB | 0.42 → 0.34 GB | |
+| `serverplan-target-architecture`, `impl/sqlite` | 7 = 7 | 21.0 → 1.5 MB | | |
+| `versioned-merged-identity`, `impl/sqlite` | 1 = 1 | 20.9 → 1.5 MB | | |
+| `cached-pure-lazy-allowlist`, `impl/sqlite` | 8 = 8 | 57.0 → 38.2 MB | | |
+| `classvar-check` (reads `token`), `impl/` | 0 = 0 | 432.8 → 145.7 MB | 1.59 → 0.93 GB | 12.0 → 10.2 s |
+| `graphql-plan-ownership` (reads `token`), `impl/` | 0 = 0 | 433.9 → 85.6 MB | 1.62 → 1.01 GB | 17.8 → 14.1 s |
+
+Walls are measured with the oracle run first; the first run of a pair is slower (the corpus's pages). What
+`schema-introspection-data-paths` keeps over `impl/` is mostly the text of modules, which it reads.
+`error-handling` reads every module's text, so its atoms stay 21 MB over `impl/sqlite`.
+
+## 9. Order
 
 1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.
-2. `value` on request, measured on `schema-introspection-data-paths`.
+2. `value` (and `token`) on request, measured on `schema-introspection-data-paths`. Done, §8.
 3. `text` past the bound on request. Remove the twins, `rr_long_text_node` and `text_kind_demand`'s long half.
 4. Measure `text` within the bound (§6), and keep it eager unless requests are cheaper.

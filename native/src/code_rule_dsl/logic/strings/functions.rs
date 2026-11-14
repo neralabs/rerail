@@ -114,6 +114,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_text", &[Number], Text),
     // A node's exact text at any length (`facts::vtab::syntax::node_text_any`): `node_text`'s answer (decision 0174).
     ("rr_node_text_any", &[Number], Text),
+    // A node's value as W reads it (`facts::vtab::syntax::node_value_any`): `value`'s answer (decision 0174).
+    ("rr_node_value", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -294,6 +296,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_node_text_any" => crate::code_rule_dsl::facts::vtab::syntax::node_text_any(numbers[0]),
+        "rr_node_value" => crate::code_rule_dsl::facts::vtab::syntax::node_value_any(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

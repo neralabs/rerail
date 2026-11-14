@@ -62,7 +62,7 @@ pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -74,10 +74,12 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
     ("op_at", &[2]),
     ("prev_token", &[1]),
     ("token", &[2]),
+    ("rr_token_anon", &[2]),
     ("path_part", &[1]),
     ("file_name", &[1]),
     ("value", &[1]),
     ("static_value", &[1]),
+    ("rr_value_lit", &[1]),
     ("value_type_of", &[1]),
     ("value_type", &[0, 1]),
     ("comment", &[1]),

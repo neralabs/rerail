@@ -428,7 +428,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
-    sources_on_request(&mut l.prog);
+    for round in ON_REQUEST {
+        sources_on_request(&mut l.prog, round);
+    }
     let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
@@ -3496,9 +3498,35 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, a file's lines, `file_line(path, i, text)` (from 1), and a file's content
 /// digest, `file_digest(path, c)` (a cache key's, decision 0103: a library's tape is kept by it).
-/// The per-node source attributes answered on request (decision 0174): the relation, its request relation, and the
-/// native function that answers a request for a node.
-pub const ON_REQUEST: [(&str, &str, &str); 1] = [("node_text", "rr_node_text_req", "rr_node_text_any")];
+/// A per-node source attribute answered on request (decision 0174): its relation, keyed by its first column; its
+/// request relation; what answers a request; and the input holding the rows still made eagerly (`value`: the literals
+/// of documents W reads no values of; `token`: the anonymous children, whose text is their kind).
+#[derive(Clone, Copy)]
+pub struct OnRequest {
+    pub rel: &'static str,
+    pub req: &'static str,
+    pub answer: Answer,
+    pub eager: Option<&'static str>,
+}
+
+/// What answers an attribute's request for a node.
+#[derive(Clone, Copy)]
+pub enum Answer {
+    /// `a(n, x) :- req(n), x = @f(n)`.
+    Function(&'static str),
+    /// `token(p, i, s, a, b) :- req(p), named(p, i, c, a, b), node_text(c, s)`: the named children by node, their
+    /// text `node_text`'s, itself answered on request in the next round.
+    Children { named: &'static str },
+}
+
+/// The attributes, by round: an answer may read an attribute of a later round (`token` reads `node_text`).
+pub const ON_REQUEST: [&[OnRequest]; 2] = [
+    &[OnRequest { rel: "token", req: "rr_token_req", answer: Answer::Children { named: "rr_token_named" }, eager: Some("rr_token_anon") }],
+    &[
+        OnRequest { rel: "node_text", req: "rr_node_text_req", answer: Answer::Function("rr_node_text_any"), eager: None },
+        OnRequest { rel: "value", req: "rr_value_req", answer: Answer::Function("rr_node_value"), eager: Some("rr_value_lit") },
+    ],
+];
 
 /// Each per-node source attribute of `ON_REQUEST` answered on request (decision 0174), after 0145's shape: each rule
 /// reading `a(n, x)` with `n` bound by its other literals asks for those nodes, `rr_a_req(n) :- <those literals>`,
@@ -3511,21 +3539,23 @@ pub const ON_REQUEST: [(&str, &str, &str); 1] = [("node_text", "rr_node_text_req
 /// row of `r` and reads no attribute, so requests stratify below every reader (read through `r` itself, a request
 /// would be recursive with the attribute, and through a negation, not stratifiable).
 ///
-/// Where a reader negates the attribute, reads it inside an aggregate, or does not bind `n`, the attribute stays an
+/// A negated read asks as a positive one does (its node bound by the rule's other literals, the rows it tests asked
+/// for). Where a reader reads the attribute inside an aggregate, of a constant node, or does not bind `n`, it stays an
 /// input, made for every node, as all are with `RERAIL_NODE_SOURCES=eager`. The analysis is made either way and
 /// written to the profile's decisions (`<a> on request`, its readers and the widened copies): what each reader asks,
 /// what it leaves out and why.
-fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
+fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Program, round: &[OnRequest]) {
     use crate::code_rule_dsl::logic::profile::{decision, on};
-    let attrs: Vec<(&str, &str, &str)> = ON_REQUEST.into_iter().filter(|(rel, ..)| prog.inputs.iter().any(|i| i == rel)).collect();
+    let attrs: Vec<OnRequest> = round.iter().copied().filter(|a| prog.inputs.iter().any(|i| i == a.rel)).collect();
     if attrs.is_empty() {
         return;
     }
     let applied = !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager");
-    let w = Widen::new(prog, attrs.iter().map(|(rel, ..)| *rel).collect());
+    let w = Widen::new(prog, attrs.iter().map(|a| a.rel).collect());
     let mut all: Vec<Rule> = Vec::new();
-    let mut answered: Vec<(&str, &str, &str)> = Vec::new();
-    'attr: for &(rel, req, function) in &attrs {
+    let mut answered: Vec<OnRequest> = Vec::new();
+    'attr: for &attr in &attrs {
+        let (rel, req) = (attr.rel, attr.req);
         let topic = format!("{rel} on request");
         let mut requests: Vec<Rule> = Vec::new();
         let mut explained: Vec<String> = Vec::new();
@@ -3540,8 +3570,10 @@ fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Progra
                     }
                     _ => continue,
                 };
-                let (false, Some(Term::Var(n))) = (a.neg, a.args.first()) else {
-                    eager(&format!("reads `{lit}`, a negation or a constant node"));
+                // A negation asks as a positive read does: its node is bound by the rule's other literals, and the
+                // rows asked for are the ones it tests.
+                let Some(Term::Var(n)) = a.args.first() else {
+                    eager(&format!("reads `{lit}`, of a constant node"));
                     continue 'attr;
                 };
                 let mut out: BTreeSet<String> = BTreeSet::new();
@@ -3587,25 +3619,50 @@ fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Progra
             decision(&format!("{rel} on request: readers"), || e);
         }
         all.extend(requests);
-        answered.push((rel, req, function));
+        answered.push(attr);
     }
     let wide = w.rules(&all);
     for (rel, cols) in &wide.copies {
-        decision("on request: widened copies", || format!("{} of {rel}, columns {cols:?} of {}{}", Widen::wide(rel), w.arity(rel), if cols.len() < w.arity(rel) { " (the others are bound only by what the copy leaves out)" } else { "" }));
+        decision("on request: widened copies", || format!("{} of {rel}, columns {cols:?} of {}{}", w.wide(rel), w.arity(rel), if cols.len() < w.arity(rel) { " (the others are bound only by what the copy leaves out)" } else { "" }));
     }
     if !applied {
         return;
     }
-    for (rel, req, function) in answered {
-        let (n, x) = (Term::Var("n".to_owned()), Term::Var("x".to_owned()));
-        all.push(Rule {
-            head: Atom { rel: rel.into(), args: vec![n.clone(), x.clone()], neg: false, gated: false },
-            body: vec![
-                Literal::Atom(Atom { rel: req.into(), args: vec![n.clone()], neg: false, gated: false }),
-                Literal::Cmp { l: x, op: "=", r: Term::Call(function.to_owned(), vec![n]) },
-            ],
-        });
-        prog.decls.insert(req.to_owned(), vec![("n".to_owned(), "node".to_owned())]);
+    let atom = |rel: &str, args: Vec<Term>| Atom { rel: rel.into(), args, neg: false, gated: false };
+    let var = |v: &str| Term::Var(v.to_owned());
+    for OnRequest { rel, req, answer, eager } in answered {
+        let cols = prog.decls.get(rel).cloned().unwrap_or_else(|| vec![("n".to_owned(), "node".to_owned()), ("v".to_owned(), "symbol".to_owned())]);
+        let args: Vec<Term> = (0..cols.len()).map(|i| var(&format!("x{i}"))).collect();
+        if let Some(input) = eager {
+            all.push(Rule { head: atom(rel, args.clone()), body: vec![Literal::Atom(atom(input, args.clone()))] });
+            prog.decls.insert(input.to_owned(), cols.clone());
+            prog.inputs.push(input.to_owned());
+        }
+        match answer {
+            Answer::Function(function) => all.push(Rule {
+                head: atom(rel, args.clone()),
+                body: vec![Literal::Atom(atom(req, vec![args[0].clone()])), Literal::Cmp { l: args[1].clone(), op: "=", r: Term::Call(function.to_owned(), vec![args[0].clone()]) }],
+            }),
+            Answer::Children { named } => {
+                // token(p, i, s, a, b): the named child c in place of its text s, which node_text gives.
+                let mut by_node = args.clone();
+                by_node[2] = var("c");
+                all.push(Rule {
+                    head: atom(rel, args.clone()),
+                    body: vec![Literal::Atom(atom(req, vec![args[0].clone()])), Literal::Atom(atom(named, by_node)), Literal::Atom(atom("node_text", vec![var("c"), args[2].clone()]))],
+                });
+                let mut named_cols = cols.clone();
+                named_cols[2] = ("c".to_owned(), "node".to_owned());
+                prog.decls.insert(named.to_owned(), named_cols);
+                prog.inputs.push(named.to_owned());
+                if !prog.inputs.iter().any(|i| i == "node_text") {
+                    // Typed as the attribute's own columns: its node, and its text.
+                    prog.decls.entry("node_text".to_owned()).or_insert_with(|| vec![("n".to_owned(), cols[0].1.clone()), ("s".to_owned(), cols[2].1.clone())]);
+                    prog.inputs.push("node_text".to_owned());
+                }
+            }
+        }
+        prog.decls.insert(req.to_owned(), vec![(cols[0].0.clone(), "node".to_owned())]);
         prog.inputs.retain(|i| i != rel);
     }
     prog.decls.extend(wide.decls);
@@ -3621,6 +3678,8 @@ fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Progra
 struct Widen<'a> {
     prog: &'a crate::code_rule_dsl::logic::front::ast::Program,
     attrs: BTreeSet<&'static str>,
+    /// The copies' prefix: `rr_wide_<a>_`, `a` the round's first attribute (a relation may be copied in each round).
+    prefix: String,
     /// The relations that read an attribute, and the columns their widened copies keep.
     cols: BTreeMap<String, Vec<usize>>,
 }
@@ -3654,7 +3713,8 @@ impl<'a> Widen<'a> {
             reading.remove(*a);
         });
         let arity = |r: &str| prog.rules.iter().find(|x| x.head.rel == r).map_or(0, |x| x.head.args.len());
-        let mut w = Widen { prog, attrs, cols: reading.iter().map(|r| (r.clone(), (0..arity(r)).collect())).collect() };
+        let prefix = format!("rr_wide_{}_", attrs.iter().next().copied().unwrap_or_default());
+        let mut w = Widen { prog, attrs, prefix, cols: reading.iter().map(|r| (r.clone(), (0..arity(r)).collect())).collect() };
         // Each column a rule of r leaves unbound once widened goes, to a fixpoint (a column of a widened atom
         // in the body may go in turn).
         loop {
@@ -3685,8 +3745,8 @@ impl<'a> Widen<'a> {
         !matches!(t, Term::Wild | Term::Top) && vars.is_subset(bound)
     }
 
-    fn wide(rel: &str) -> String {
-        format!("rr_wide_{rel}")
+    fn wide(&self, rel: &str) -> String {
+        format!("{}{rel}", self.prefix)
     }
 
     /// The literals a request left out, and why, for the profile.
@@ -3716,7 +3776,7 @@ impl<'a> Widen<'a> {
                 Literal::Atom(a) if self.attrs.contains(&*a.rel) => dropped.push((l.to_string(), "an attribute on request")),
                 Literal::Atom(a) => match self.cols.get(&*a.rel) {
                     Some(cols) if cols.is_empty() => dropped.push((l.to_string(), "its widened copy keeps no column")),
-                    Some(cols) => lits.push(Literal::Atom(Atom { rel: Self::wide(&a.rel).into(), args: cols.iter().map(|&c| a.args[c].clone()).collect(), neg: false, gated: false })),
+                    Some(cols) => lits.push(Literal::Atom(Atom { rel: self.wide(&a.rel).into(), args: cols.iter().map(|&c| a.args[c].clone()).collect(), neg: false, gated: false })),
                     None => lits.push(l.clone()),
                 },
                 Literal::Agg { .. } => dropped.push((l.to_string(), "an aggregate")),
@@ -3783,7 +3843,7 @@ impl<'a> Widen<'a> {
     fn rules(&self, rules: &[Rule]) -> Widened {
         let mut out = Widened::default();
         let reads = |rules: &[Rule]| -> Vec<String> {
-            rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).filter_map(|a| a.rel.strip_prefix("rr_wide_").map(str::to_owned)).collect()
+            rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).filter_map(|a| a.rel.strip_prefix(self.prefix.as_str()).map(str::to_owned)).collect()
         };
         let mut todo = reads(rules);
         let mut done: BTreeSet<String> = BTreeSet::new();
@@ -3792,7 +3852,7 @@ impl<'a> Widen<'a> {
                 continue;
             }
             let cols = &self.cols[&rel];
-            let wide = Self::wide(&rel);
+            let wide = self.wide(&rel);
             let decl = self.prog.decls.get(&rel);
             out.decls.insert(wide.clone(), cols.iter().map(|&c| decl.and_then(|d| d.get(c)).cloned().unwrap_or_else(|| (format!("c{c}"), "symbol".to_owned()))).collect());
             if let Some(rows) = self.prog.facts.get(&rel) {

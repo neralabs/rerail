@@ -723,7 +723,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "field" => &["p", "f", "c"],
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
-        "value" | "static_value" => &["n", "v"],
+        "value" | "static_value" | "rr_value_lit" => &["n", "v"],
         "value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
@@ -765,7 +765,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tree_digest" | "def_digest" => &["n", "s"],
         // core.rr's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],
-        "token" => &["p", "i", "s", "start", "end_"],
+        "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
+        "rr_token_named" => &["p", "i", "c", "start", "end_"],
         // W's Python reference graph (`logic::plan::corpus::references`).
         "reference_edge" => &["src", "dst", "via"],
         "reference_open" => &["n"],

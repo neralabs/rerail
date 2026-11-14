@@ -1146,7 +1146,8 @@ fn text_only_for_the_nodes_read() {
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
 /// nodes its other literals bind, less those that read the text; a relation that reads `node_text` is read through
-/// its widened copy. A reader that negates it or binds its node by nothing else keeps it an input, for every node.
+/// its widened copy; a negation asks for the nodes it tests. A reader that binds its node by nothing else keeps it an
+/// input, for every node.
 /// Made for every node, a module's text, each class's in it and each function's in those were all interned (390 MB of
 /// atoms from 69 MB of source).
 #[test]
@@ -1171,12 +1172,13 @@ fn node_text_answered_on_request() {
     ]);
     // A node bound by a relation that reads node_text: through its widened copy, on the columns it binds without it.
     one("named(n, s) :- node(_, n, \"identifier\", _, _), node_text(n, s).\nout(t) :- named(n, \"x\"), field(n, \"name\", m), node_text(m, t).", &[
-        "rr_node_text_req(m) :- rr_wide_named(n), field(n, \"name\", m).",
+        "rr_node_text_req(m) :- rr_wide_node_text_named(n), field(n, \"name\", m).",
         "rr_node_text_req(n) :- node(_, n, \"identifier\", _, _).",
-        "rr_wide_named(n) :- node(_, n, \"identifier\", _, _).",
+        "rr_wide_node_text_named(n) :- node(_, n, \"identifier\", _, _).",
     ]);
+    // A negation asks for the nodes it tests.
+    one("out(s) :- node(_, n, \"call\", _, _), !node_text(n, \"x\"), s = \"y\".", &["rr_node_text_req(n) :- node(_, n, \"call\", _, _)."]);
     // Every node: eager, as before.
-    assert_eq!(requests("out(s) :- node(_, n, _, _, _), !node_text(n, \"x\"), s = \"y\"."), None);
     assert_eq!(requests("out(s) :- node_text(_, s)."), None);
 }
 
