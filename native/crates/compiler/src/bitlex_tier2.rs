@@ -137,6 +137,9 @@ pub struct Mark {
     pub first: ByteSet,
     /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
     pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
+    /// `unless after`: the words of the grammar token before that make it none
+    /// (`records::Records::unless`); the records' words name them.
+    pub unless: Vec<Vec<u8>>,
 }
 
 struct Emit<'a> {
@@ -1046,6 +1049,9 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
             e.mark_words.insert(k as u8, s);
         }
         token_marks.push((k as u8, refusing(m, arms), elems));
+    }
+    for w in marks.iter().flat_map(|m| m.unless.iter()) {
+        e.string(w);
     }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));

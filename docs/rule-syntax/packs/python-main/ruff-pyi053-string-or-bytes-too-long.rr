@@ -342,10 +342,6 @@ pyi053_stop_12(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 pyi053_stop_13(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
     !kind(n, "keyword_argument").
 
-// counted_14(n): the siblings the JSON `nthChild.ofRule` counts
-.decl pyi053_counted_14(n: node)
-pyi053_counted_14(n) :- kind(n, "for_in_clause").
-
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi053_alt_15(n: node)
 pyi053_alt_15(n) :- pyi053_long_literal(n).

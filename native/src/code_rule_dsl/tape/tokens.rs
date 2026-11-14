@@ -813,6 +813,8 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::Rust => grammar!("token-grammars/rust"),
         GrammarDialect::Php => grammar!("token-grammars/php"),
         GrammarDialect::Json => grammar!("token-grammars/json"),
+        GrammarDialect::Java => grammar!("token-grammars/java"),
+        GrammarDialect::CSharp => grammar!("token-grammars/csharp"),
         _ => return None,
     })
 }

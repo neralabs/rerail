@@ -31,10 +31,6 @@ ret502_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 ret502_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
     match("(?s).*..*", c1), !ret502_alt_2(c1).
 
-// own_return(n): the JSON util `own-return`, used where the JSON says `matches: "own-return"`
-.decl ret502_own_return(n: node)
-ret502_own_return(n) :- kind(n, "return_statement").
-
 // has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
 .decl ret502_has_result(n: node)
 ret502_has_result(n) :- within_stop(c1, n, ret502_stop_1), ret502_value_return(c1).

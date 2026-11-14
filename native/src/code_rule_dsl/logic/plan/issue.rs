@@ -36,7 +36,7 @@ type Members<'a> = Vec<(BTreeSet<String>, Vec<&'a Rule>)>;
 /// What a component's job leaves waiting on the run's wave (decision 0123 §6): its members still waiting on their
 /// device wave, the launches they queued on the job's thread, and its members' rules (to resume them).
 pub(super) struct Parked<'a> {
-    waiting: Vec<(usize, Box<Driving<'a>>)>,
+    waiting: Vec<(usize, Box<Driving>)>,
     queued: super::super::lanes::wave::Queued,
     data: Members<'a>,
 }
@@ -55,7 +55,7 @@ struct Waiting<'a> {
     times: Vec<(Instant, Instant)>,
     reserved: crate::content_store::atoms::Reserved,
     inline: bool,
-    waiting: Vec<(usize, Box<Driving<'a>>)>,
+    waiting: Vec<(usize, Box<Driving>)>,
     data: Members<'a>,
 }
 

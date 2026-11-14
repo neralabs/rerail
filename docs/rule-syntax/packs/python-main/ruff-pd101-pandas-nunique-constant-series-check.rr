@@ -18,8 +18,8 @@ pd101_literal_receiver(n) :- kind(n, "concatenated_string"),
 // relevant_name(n): the JSON util `relevant-name`, used where the JSON says `matches: "relevant-name"`
 .decl pd101_relevant_name(n: node)
 pd101_relevant_name(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_form(b1, f1), pd101_set_2(f1)
-    ; ref_site(n, b2), site_form(b2, "parameter"), !glob("{self,cls}", n)
+    ( ref_site(n, b1), main_form(b1, f1), pd101_set_2(f1)
+    ; ref_site(n, b2), main_form(b2, "parameter"), !glob("{self,cls}", n)
     ),
 
     count : { ref_site(n, b4), site_scope(b4, "module"), (st5 = b4 ; within(b4, st5)), within(st5, p6), pd101_dunder_all_statement(p6) } = 0,

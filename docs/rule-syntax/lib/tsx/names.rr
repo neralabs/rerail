@@ -191,11 +191,187 @@ ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
 site_form(d, f) :- decl_site(_, _, d, f, _).
+// Main's binding terms (rerail.policy/v1 `binds`): the interface lib/python/names.rr defines, here. bind_name(n, site):
+// n is the name node of the declaration at site (where ESLint reports a definition): the declared identifier, an
+// import's local name.
+.decl bind_name(n: node, site: node)
+bind_name(d, d) :- decl_site(_, _, d, _, _),
+    (kind(d, "identifier") ; kind(d, "shorthand_property_identifier_pattern") ; kind(d, "undefined")).
+bind_name(n, d) :- decl_site(_, _, d, _, _), kind(d, "import_specifier"), field(d, "alias", n).
+bind_name(n, d) :- decl_site(_, _, d, _, _), kind(d, "import_specifier"), !field(d, "alias", _), field(d, "name", n).
+bind_name(n, d) :- decl_site(_, _, d, _, _), (kind(d, "import_clause") ; kind(d, "namespace_import")), child(d, n, 0),
+    kind(n, "identifier").
+bind_name(n, d) :- decl_site(_, _, d, _, _), !kind(d, "import_specifier"), field(d, "name", n).
+// main_form(site, form): main's name for the declaration's form: `assignment` (a declarator or its pattern), `for`
+// (a loop's declared name), `definition` (a function, class or type), `parameter`, `except` (a catch parameter),
+// `import`.
+.decl main_form(site: node, form: symbol)
+main_form(d, "assignment") :- decl_site(_, _, d, f, _), (f = "var" ; f = "let" ; f = "pattern"), !for_binding(_, d, _).
+main_form(d, "for") :- decl_site(_, _, d, _, _), for_binding(_, d, _).
+main_form(d, "definition") :- decl_site(_, _, d, f, _), (f = "function" ; f = "class" ; f = "type").
+main_form(d, "parameter") :- decl_site(_, _, d, "param", _).
+main_form(d, "except") :- decl_site(_, _, d, "catch", _).
+main_form(d, "import") :- decl_site(_, _, d, "import", _).
 // binding_value(site, v): the initialiser of a variable. `const R = BrowserRouter` gives v = the BrowserRouter
 // identifier, so rules can see through simple aliases.
 .decl binding_value(site: node, v: node)
 binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "let", _).
 binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "var", _).
+// ---- main's binding filters (rerail.policy/v1 `binds`, `resolves.binding`, `redefines`) ----------------------------
+// What the JSON translator writes for the filters on a site (lib/python/names.rr has the same interface). Main reads
+// a variable as eslint-scope does: one scope's bindings of one name. Its filters are per variable, so a filter on
+// one site asks about every site of that variable.
+// binding(scope, x, site, form): site binds x in scope, scope as main's scope table has it; form is the library's
+// (site_form). Two things differ from decl_site's scope column:
+//   - a function's body block is the function's own scope (eslint-scope opens no block for it), so in
+//     `function f(a) { let b }` a and b are both bound in f; likewise a static block's and a namespace's body;
+//   - declarations decl_site has no row for are bindings here (more_site, below): enums, namespaces, overload
+//     signatures, generator functions, abstract classes and type parameters.
+// e.g. `function f(a) { let b = 1 }`: binding(<f>, "a", <a>, "param"), binding(<f>, "b", <the declarator>, "let").
+.decl binding(scope: node, x: symbol, site: node, form: symbol)
+binding(sc, x, d, f) :- decl_site(s, x, d, f, _), (body_of(s, sc) ; !body_of(s, _), sc = s).
+binding(sc, x, d, f) :- more_site(s, x, d, f), (body_of(s, sc) ; !body_of(s, _), sc = s).
+// body_of(b, o): block b is the body of o, whose scope it shares: a function, a static block, a namespace.
+.decl body_of(b: node, o: node)
+body_of(b, o) :- kind(b, "statement_block"), field(o, "body", b), kind(o, k), (fn_scope(k) ; k = "internal_module" ;
+    k = "module").
+body_of(b, o) :- kind(b, "statement_block"), child(o, b, _), kind(o, "class_static_block").
+// more_site(s, x, site, form): declarations the lookup above does not model, as main binds them. They are bindings
+// for `binds` (bind_name, main_form, the filters), but no reference resolves to them: ref_site and `look` read
+// decl_site alone. So an enum's or a namespace's uses do not count as references (site_referenced).
+.decl more_site(s: node, x: symbol, site: node, form: symbol)
+// `function* g() {}`, `abstract class A {}`, `enum E {}` and an overload `function f(): void;` bind in their block.
+more_site(s, x, d, f) :- kind(d, k), more_def(k, f), field(d, "name", n), kind(n, nk),
+    (nk = "identifier" ; nk = "type_identifier"), text(n, x), nearest(d, s, block_scope).
+.decl more_def(kind: symbol, form: symbol)
+more_def("generator_function_declaration", "function"). more_def("abstract_class_declaration", "class").
+more_def("enum_declaration", "enum"). more_def("function_signature", "function").
+// `namespace A.B {}` binds A (the head of its name); `declare module "m" {}` binds nothing.
+more_site(s, x, d, "namespace") :- (kind(d, "internal_module") ; kind(d, "module")), field(d, "name", n),
+    ns_head(n, h), text(h, x), nearest(d, s, block_scope).
+.decl ns_head(n: node, h: node)
+ns_head(n, n) :- kind(n, "identifier").
+ns_head(n, h) :- kind(n, "nested_identifier"), field(n, "object", o), ns_head(o, h).
+// `<T>` binds T in its owner's scope: a function's (with its parameters), a class's, or the type-level scope of a
+// type alias, an interface or a signature.
+more_site(o, x, tp, "type_param") :- kind(tp, "type_parameter"), child(tps, tp, _), kind(tps, "type_parameters"),
+    child(o, tps, _), field(tp, "name", n), text(n, x).
+// main_form for these: `definition`, or `typeParameter`.
+main_form(d, "definition") :- more_site(_, _, d, f), f != "type_param".
+main_form(d, "typeParameter") :- more_site(_, _, d, "type_param").
+bind_name(n, d) :- more_site(_, _, d, f), f != "namespace", field(d, "name", n).
+bind_name(h, d) :- more_site(_, _, d, "namespace"), field(d, "name", n), ns_head(n, h).
+// site_scope(site, k): the kind of scope that holds the binding, in eslint-scope's names: "global" (a script's top
+// level), "module" (a module's or CommonJS file's top level), "function" (arrows and static blocks too), "class" (a
+// class expression's own name, a class's type parameters), "block" (blocks, loops, `switch`, `catch`), "namespace",
+// "typeParameters" (type aliases, interfaces, signatures) and "functionName" (a named function expression's own
+// name). The top level is "global" only where the policy sets sourceType "script" (without globalReturn), as the
+// engine reads a file with no sourceType option as a module or CommonJS.
+// e.g. `const f = function g() {}`: g's site_scope is "functionName"; f's is "module".
+.decl site_scope(site: node, k: symbol)
+site_scope(d, k) :- binding(sc, _, d, _), d != sc, main_scope_kind(sc, k).
+// A function or class expression's own name: its site is the expression, which is also its scope.
+site_scope(d, "functionName") :- binding(d, _, d, _), !kind(d, "class").
+site_scope(d, "class") :- binding(d, _, d, _), kind(d, "class").
+.decl main_scope_kind(s: node, k: symbol)
+main_scope_kind(p, "global") :- binding(p, _, _, _), kind(p, "program"), option("sourceType", "script"),
+    !option("globalReturn", "true").
+main_scope_kind(p, "module") :- binding(p, _, _, _), kind(p, "program"), !main_script_top(p).
+main_scope_kind(s, k) :- binding(s, _, _, _), kind(s, sk), main_scope_name(sk, k).
+.decl main_script_top(p: node)  // the top level is eslint-scope's global scope
+main_script_top(p) :- kind(p, "program"), option("sourceType", "script"), !option("globalReturn", "true").
+.decl main_scope_name(kind: symbol, k: symbol)
+main_scope_name("function_declaration", "function"). main_scope_name("generator_function_declaration", "function").
+main_scope_name("function_expression", "function"). main_scope_name("function", "function").
+main_scope_name("generator_function", "function"). main_scope_name("arrow_function", "function").
+main_scope_name("method_definition", "function"). main_scope_name("class_static_block", "function").
+main_scope_name("statement_block", "block"). main_scope_name("for_statement", "block").
+main_scope_name("for_in_statement", "block"). main_scope_name("catch_clause", "block").
+main_scope_name("switch_body", "block"). main_scope_name("class_body", "block").
+main_scope_name("class", "class"). main_scope_name("class_declaration", "class").
+main_scope_name("abstract_class_declaration", "class").
+main_scope_name("internal_module", "namespace"). main_scope_name("module", "namespace").
+main_scope_name("type_alias_declaration", "typeParameters"). main_scope_name("interface_declaration", "typeParameters").
+main_scope_name("function_signature", "typeParameters"). main_scope_name("method_signature", "typeParameters").
+main_scope_name("abstract_method_signature", "typeParameters"). main_scope_name("call_signature", "typeParameters").
+main_scope_name("construct_signature", "typeParameters"). main_scope_name("function_type", "typeParameters").
+main_scope_name("constructor_type", "typeParameters").
+// site_referenced(site): some reference resolves to the variable, writes included: a read, an assignment, and the
+// writes eslint-scope makes at a definition (an initialiser, a default, a `for … in/of` declaration). Main leaves it
+// unknown in a scope where a direct `eval(…)` or a `with` runs (in it or nested in it): then neither `referenced`
+// nor its negation holds. One relation cannot say "unknown", so those sites count as referenced here: a rule that
+// asks `referenced: false` skips them, as main does; one asking `referenced: true` matches them, where main would not.
+// e.g. in `function f(err) {}` err is not referenced; in `function f(err = null) {}` it is (the default writes it).
+.decl site_referenced(site: node)
+site_referenced(d) :- binding(sc, x, d, _), binding(sc, x, o, _), var_ref(o).
+site_referenced(d) :- binding(sc, x, d, _), binding(sc, x, o, _), def_write(o).
+site_referenced(d) :- binding(sc, _, d, _), dynamic_scope(sc).
+// var_ref(site): a reference resolves to site. Not one: a declaration's own name (`ref` takes every type_identifier,
+// so the name of `interface I {}` resolves to I), and a class's own name read inside the class, which main binds
+// again in the class's scope, a variable of its own (`class C { m() { return C } }` leaves the outer C unread).
+.decl var_ref(site: node)
+var_ref(d) :- ref_site(r, d), !bind_name(r, _), !kind(d, "class_declaration").
+var_ref(d) :- ref_site(r, d), !bind_name(r, _), kind(d, "class_declaration"), !within(r, d).
+// def_write(site): eslint-scope writes the name where it is defined: `let x = 1`, `const { a } = o`, `for (const k
+// of ks)`, a default `a = 1` in a pattern or parameter, a parameter pattern with a default `({ a }) = {}`.
+.decl def_write(site: node)
+def_write(d) :- kind(d, "variable_declarator"), field(d, "value", _), decl_site(_, _, d, _, _).
+def_write(p) :- pattern_name(p, _, d), field(d, "value", _).
+def_write(n) :- for_binding(l, n, _), (op(l, "let") ; op(l, "const") ; op(l, "var")).
+def_write(p) :- decl_site(_, _, p, _, _), field(a, "left", p), (kind(a, "assignment_pattern") ;
+    kind(a, "object_assignment_pattern")).
+def_write(p) :- decl_site(_, _, p, "param", _), field(rp, "pattern", pat), field(rp, "value", _),
+    (p = pat ; within(p, pat)).
+// dynamic_scope(s): a direct `eval(…)` (the bare name, parentheses aside) or a `with` statement is in scope s.
+.decl dynamic_scope(s: node)
+dynamic_scope(s) :- binding(s, _, _, _), dynamic_at(w), within(w, s).
+.decl dynamic_at(w: node)
+dynamic_at(w) :- kind(w, "with_statement").
+dynamic_at(c) :- kind(c, "call_expression"), field(c, "function", e), eval_callee(e).
+.decl eval_callee(e: node)
+eval_callee(e) :- kind(e, "identifier"), text(e, "eval").
+eval_callee(e) :- kind(e, "parenthesized_expression"), child(e, i, _), eval_callee(i).
+// site_exported(site): some definition of the variable stands in an `export` statement, a `declare` between them
+// aside (typescript-eslint's isExported, over every definition). `export { x }` is a reference, not this.
+// Parameters, catch and loop names, type parameters and imports are never exported.
+// e.g. `export const a = 1, b = 2`: a and b; `export declare function f(): void`: f.
+.decl site_exported(site: node)
+site_exported(d) :- binding(sc, x, d, _), binding(sc, x, o, f), f != "param", f != "catch", f != "import",
+    f != "type_param", def_stmt(o, st), exported_stmt(st).
+// def_stmt(site, st): the statement a definition is: a declarator's (or its pattern name's) declaration, or the
+// declaration node itself.
+.decl def_stmt(site: node, st: node)
+def_stmt(d, st) :- kind(d, "variable_declarator"), child(st, d, _).
+def_stmt(p, st) :- pattern_name(p, _, d), child(st, d, _).
+def_stmt(d, d) :- binding(_, _, d, _), !kind(d, "variable_declarator"), !pattern_name(d, _, _).
+.decl exported_stmt(st: node)
+exported_stmt(st) :- child(e, st, _), kind(e, "export_statement").
+exported_stmt(st) :- child(a, st, _), kind(a, "ambient_declaration"), exported_stmt(a).
+// site_annotation(site, t): the site's declaration carries type t: a declarator's (`let x: T`, every name of `const
+// { a }: T = o` too), a parameter's (`(x: T)`, `({ a }: T)`) or a catch clause's (`catch (e: unknown)`). t is the type
+// written after the `:`, without it; the type_annotation node itself where that is not one node.
+// e.g. in `function f(o: typeof Foo) {}` o's annotation is the type_query `typeof Foo`.
+.decl site_annotation(site: node, t: node)
+site_annotation(d, t) :- kind(d, "variable_declarator"), decl_site(_, _, d, _, _), field(d, "type", a), ann_type(a, t).
+site_annotation(p, t) :- pattern_name(p, _, d), field(d, "type", a), ann_type(a, t).
+site_annotation(p, t) :- decl_site(_, _, p, "param", _), field(rp, "pattern", pat), (p = pat ; within(p, pat)),
+    field(rp, "type", a), ann_type(a, t).
+site_annotation(p, t) :- decl_site(c, _, p, "catch", _), field(c, "type", a), ann_type(a, t).
+.decl ann_type(a: node, t: node)
+ann_type(a, t) :- kind(a, "type_annotation"), child(a, t, _), !kind(t, "comment"),
+    count : { child(a, c, _), !kind(c, "comment") } = 1.
+ann_type(a, a) :- kind(a, "type_annotation"), count : { child(a, c, _), !kind(c, "comment") } != 1.
+// site_builtin(site): the variable is a configured global's: it sits in a script's top level (site_scope "global")
+// and its name is a global the environment declares (es_global). Approximation: es_global stands for the policy's
+// `languageOptions` globals and lib, which the translated rule does not carry.
+.decl site_builtin(site: node)
+site_builtin(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), es_global(x).
+// site_directives(site, "eslint"): main's `directives: "eslint"` is no filter of its own: it widens `builtin` and
+// `exported` to the names ESLint's `/* global */` and `/* exported */` comments list. The translator writes it as a
+// separate atom, and those comments have no rows here, so it holds for every site and widens nothing.
+.decl site_directives(site: node, tool: symbol)
+site_directives(d, "eslint") :- binding(_, _, d, _).
+
 // global_ref(r, "window"): r is a value reference with no declaration in the file, and the name is a known global
 // (from the environment tables in es_global). Undeclared names that are not globals match neither relation.
 .decl global_ref(r: node, x: symbol)  // a reference no file-local declaration binds, to a declared global
@@ -204,6 +380,15 @@ global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
 // directive_global(d, "jQuery") for a file with `/* global jQuery */`: ESLint treats such names as declared.
 // No rules here: rows come from a native comment reader (comments are not on the syntax tape).
 .decl directive_global(d: number, x: symbol)  // names from `/* global */` comments (native comment reader)
+
+// unresolved_ref(r): main's `resolves: {unresolved: true}`. r names x, nothing on its search path declares x, and x is
+// no global: not the environment's (es_global), not a `/* global x */` comment's. An export clause's name
+// (`export { foo }`, no `from`) reads the top level's foo, so it is unresolved when the top level declares none.
+.decl unresolved_ref(r: node)
+unresolved_ref(r) :- ref(r, x, "value"), !ref_site(r, _), !es_global(x), docof(r, d), !directive_global(d, x).
+unresolved_ref(r) :- field(p, "name", r), kind(p, "export_specifier"), within(p, c), kind(c, "export_clause"),
+    child(st, c, _), !field(st, "source", _), text(r, x), nearest(r, s, lex_scope), !decl_site(s, x, _, _, _),
+    !es_global(x), docof(r, d), !directive_global(d, x).
 
 // ---- imports and exports -----------------------------------------------------------------------------------------
 // import_binding(site, local, source, imported): imported is "default", "*" or the exported name.

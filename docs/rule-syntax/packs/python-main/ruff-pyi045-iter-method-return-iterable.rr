@@ -36,7 +36,8 @@ pyi045_later_import_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LATE =
     ; (kind(n, "string") ; kind(n, "concatenated_string")), pyi045_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), node(_, c5, _, _, _), LATE = c5,
-    site_form(c5, "import"), site_scope(c5, "module"), site_latest(c5),
+    bind_name(c5, b6), main_form(b6, "import"), site_scope(b6, "module"),
+    site_latest(b6),
     ( kind(c5, "dotted_name"), (imported_sym(c5, "typing.Iterable") ; imported_sym(c5, "collections.abc.Iterable"))
     ; kind(c5, "identifier"), precedes(s1, c5), kind(s1, "dotted_name"), (imported_sym(s1, "typing.Iterable") ; imported_sym(s1, "collections.abc.Iterable"))
     ).
@@ -93,7 +94,8 @@ pyi045_later_import_ref_aiter_returns_async_iterable(n) :- kind(n, "identifier")
     ; (kind(n, "string") ; kind(n, "concatenated_string")), pyi045_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), node(_, c5, _, _, _), LATE = c5,
-    site_form(c5, "import"), site_scope(c5, "module"), site_latest(c5),
+    bind_name(c5, b6), main_form(b6, "import"), site_scope(b6, "module"),
+    site_latest(b6),
     ( kind(c5, "dotted_name"), (imported_sym(c5, "typing.AsyncIterable") ; imported_sym(c5, "collections.abc.AsyncIterable"))
     ; kind(c5, "identifier"), precedes(s1, c5), kind(s1, "dotted_name"), (imported_sym(s1, "typing.AsyncIterable") ; imported_sym(s1, "collections.abc.AsyncIterable"))
     ).

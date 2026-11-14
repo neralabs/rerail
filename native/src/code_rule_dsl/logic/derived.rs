@@ -39,6 +39,11 @@ thread_local! {
     static MEMO: RefCell<Option<Shared>> = const { RefCell::new(None) };
 }
 
+/// Carries the run's derived values to a job on another thread (`run_state`): shared, what it derives is the run's.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.part(&["MEMO"], crate::code_rule_dsl::logic::run_state::Shared(share(), enter));
+}
+
 /// This thread's memo, for a job on another thread to `enter`.
 pub(in crate::code_rule_dsl) fn share() -> Option<Shared> {
     MEMO.with(|m| m.borrow().clone())

@@ -45,9 +45,9 @@ pyi049_simple_target(n) :- (kind(n, "tuple_pattern"), !pyi049_tok_has_3(n) ; kin
 .violation PYI049(at: node, name: loc) "Nothing in this file uses the private TypedDict `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI049"
 PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
-    (site_form(n, "definition") ; site_form(n, "assignment")),
-    (st1 = n ; within(n, st1)), pyi049_typeddict_site(st1), site_latest(n), !site_used(n),
-    (site_scope(n, "module") ; site_scope(n, "function")).
+    bind_name(n, b1), (main_form(b1, "definition") ; main_form(b1, "assignment")),
+    (st2 = b1 ; within(b1, st2)), pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1),
+    (site_scope(b1, "module") ; site_scope(b1, "function")).
 
 // PYI049_unused_private_typed_dict_stub(n): a finding at node n, from clause `unused-private-typed-dict-stub`.
 // Each rule below is one way the JSON `rule` can match.
@@ -56,8 +56,9 @@ PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
 .violation PYI049_unused_private_typed_dict_stub(at: node, name: loc) code "PYI049" "Nothing in this file uses the private TypedDict `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI049"
 PYI049_unused_private_typed_dict_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
-    prefix("_", n), (site_form(n, "definition") ; site_form(n, "assignment")),
-    (st1 = n ; within(n, st1)), pyi049_typeddict_site(st1), site_latest(n), !site_used(n).
+    prefix("_", n), bind_name(n, b1),
+    (main_form(b1, "definition") ; main_form(b1, "assignment")),
+    (st2 = b1 ; within(b1, st2)), pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1).
 
 // PYI049_unused_comprehension_variable_in_stub_typed_dict(n): a finding at node n, from clause `unused-comprehension-variable-in-stub-typed-dict`.
 // Each rule below is one way the JSON `rule` can match.
@@ -66,10 +67,10 @@ PYI049_unused_private_typed_dict_stub_raw(n, NAME) :- kind(n, "identifier"), nod
 .violation PYI049_unused_comprehension_variable_in_stub_typed_dict(at: node, name: loc) code "PYI049" "The comprehension variable `{name}` in this stub TypedDict definition is never read. Replace the comprehension with literal fields or plain types; stubs only declare types."
     suppress noqa "PYI049"
 PYI049_unused_comprehension_variable_in_stub_typed_dict_raw(n, NAME) :- kind(n, "identifier"),
-    node(_, n, _, _, _), NAME = n, prefix("_", n), site_scope(n, "comprehension"), site_latest(n),
-    !site_used(n), within_stop(n, p1, pyi049_stop_3),
-    ( pyi049_typeddict_site(p1)
-    ; kind(p1, "decorated_definition"), field(p1, "definition", c1), pyi049_typeddict_site(c1)
+    node(_, n, _, _, _), NAME = n, prefix("_", n), bind_name(n, b1), site_scope(b1, "comprehension"),
+    site_latest(b1), !site_used(b1), within_stop(n, p2, pyi049_stop_3),
+    ( pyi049_typeddict_site(p2)
+    ; kind(p2, "decorated_definition"), field(p2, "definition", c1), pyi049_typeddict_site(c1)
     ).
 
 

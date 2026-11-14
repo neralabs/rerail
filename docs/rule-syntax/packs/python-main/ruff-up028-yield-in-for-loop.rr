@@ -38,7 +38,7 @@ up028_yielded(n, V) :- kind(n, "parenthesized_expression"), child(n, c10, _),
 //   N: metavariable of the calling rule, passed in (bound by the caller)
 .decl up028_bind_x(n: node, n_mv: loc)
 up028_bind_x(n, N) :- up028_demand_bind_x(n, N), kind(n, "identifier"), node(_, n, _, _, _), B = n,
-    text(B, t1), text(N, t1), (bind_only(n) ; aug_target(n)),
+    text(B, t1), text(N, t1), bind_name(n, _),
     count : { up028_stop_12_within(n, p3), kind(p3, "delete_statement") } = 0, @doc(B) = @doc(N).
 
 // restarting_del(n): the JSON util `restarting-del`, used where the JSON says `matches: "restarting-del"`

@@ -18,8 +18,8 @@
 //! (`DEVICE_FORMS`), and only under the Metal binding. Otherwise the stratum runs on the CPU, and the profile says
 //! where the GPU would have been cheaper and which forms it lacks: the work the device must take on next, by its cost.
 
-use super::{Mode, Order, Step};
-use crate::code_rule_dsl::logic::front::{AggOp, Literal, Term};
+use super::{Mode, Order};
+use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, TermRef, Version};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -174,6 +174,11 @@ thread_local! {
     static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
 }
 
+/// Carries the binding to a job on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["DEVICE"], &DEVICE);
+}
+
 /// Whether this thread's run may use the device.
 pub(in crate::code_rule_dsl) fn device() -> bool {
     DEVICE.with(Cell::get) != Binding::Cpu
@@ -222,40 +227,49 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
 }
 
-/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
-fn not_row(t: &Term) -> Option<String> {
+/// A call's name and arguments.
+fn call<'v, 't>(v: &'v Version, t: TermRef<'t>) -> Option<(&'v str, Vec<TermRef<'t>>)> {
     match t {
-        Term::Call(f, args) if !row_term(t) => Some(args.iter().find_map(not_row).unwrap_or_else(|| format!("@{f}"))),
-        // Row code as a whole (a cat inside `str_cmp` is read from its parts).
-        Term::Call(..) => None,
+        TermRef::Call(f, args) => Some((v.text(f), args.collect())),
         _ => None,
     }
+}
+
+fn is_call(t: &TermRef<'_>) -> bool {
+    matches!(t, TermRef::Call(..))
+}
+
+/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
+fn not_row(v: &Version, t: TermRef<'_>) -> Option<String> {
+    let (f, args) = call(v, t)?;
+    // Row code as a whole (a cat inside `str_cmp` is read from its parts).
+    (!row_term(v, t)).then(|| args.iter().find_map(|&a| not_row(v, a)).unwrap_or_else(|| format!("@{f}")))
 }
 
 /// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
 /// (`@in(x, {…})`), integer arithmetic of row code (`setfix::device`'s arithmetic binds), or `str_cmp` of variables
 /// and constants (the device compares the names). Anything else computes
 /// a value the device has no form for.
-fn row_term(t: &Term) -> bool {
-    match t {
-        Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
-        Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
-        Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
+fn row_term(v: &Version, t: TermRef<'_>) -> bool {
+    let Some((f, args)) = call(v, t) else { return true };
+    match f {
+        "doc" => matches!(args.as_slice(), [TermRef::Var(_)]),
+        f if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !is_call(a)),
+        f if DEVICE_ARITHMETIC.contains(&f) && args.len() == 2 => args.iter().all(|&a| row_term(v, a)),
         // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
         // Of names or cats' texts (compared from their parts, never made).
-        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a) || is_text_fn_of_rows(a)),
+        "str_cmp" if args.len() == 2 => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
         // A name's characters (or a cat's text's): counted over the device's names.
-        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]) || is_text_fn_of_rows(&args[0]),
+        "strlen" | "rr_strlen" if args.len() == 1 => !is_call(&args[0]) || is_cat_of_rows(v, args[0]) || is_text_fn_of_rows(v, args[0]),
         // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
-        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => is_text_fn_of_rows(t),
-        Term::Call(..) => false,
-        _ => true,
+        f if DEVICE_TEXT_FUNCTIONS.contains(&f) => is_text_fn_of_rows(v, t),
+        _ => false,
     }
 }
 
 /// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
-fn is_cat_of_rows(t: &Term) -> bool {
-    matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
+fn is_cat_of_rows(v: &Version, t: TermRef<'_>) -> bool {
+    call(v, t).is_some_and(|(f, args)| (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !is_call(a)))
 }
 
 /// The text functions the device makes (`metal_join::ROW_MAP`), by the names the planner's terms and the native
@@ -266,25 +280,21 @@ const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
 ];
 
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
-fn is_text_fn_of_rows(t: &Term) -> bool {
-    match t {
-        Term::Call(f, args) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) && !args.is_empty() => {
+fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
+    match call(v, t) {
+        Some((f, args)) if DEVICE_TEXT_FUNCTIONS.contains(&f) && !args.is_empty() => {
             // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
-            let constants = !matches!(f.as_str(), "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, Term::Var(_)));
-            constants && (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
+            let constants = !matches!(f, "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
+            constants && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0])) && args[1..].iter().all(|a| !is_call(a))
         }
         _ => false,
     }
 }
 
-/// The first text function in `t` (`@lower`): a text the device makes into its arena, which a recursive stratum's
-/// rounds and an atom's keys cannot read.
-fn text_fn_in(t: &Term) -> Option<String> {
-    match t {
-        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => Some(format!("@{f}")),
-        Term::Call(_, args) => args.iter().find_map(text_fn_in),
-        _ => None,
-    }
+/// The first text function the device makes in `t` (its arena), the operation it needs.
+fn text_fn_in(v: &Version, t: TermRef<'_>) -> Option<String> {
+    let (f, args) = call(v, t)?;
+    if DEVICE_TEXT_FUNCTIONS.contains(&f) { Some(format!("@{f}")) } else { args.iter().find_map(|&a| text_fn_in(v, a)) }
 }
 
 /// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
@@ -299,8 +309,9 @@ impl Shape {
         }
     }
 
-    /// Adds one planned rule: its steps in order, its head's terms and its planned work.
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_>, head: &[Term], work: f64, recursive: bool) {
+    /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
+    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
+        let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
         self.work += work.max(0.0);
@@ -310,53 +321,72 @@ impl Shape {
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
         // not in a recursive stratum, whose rounds would join it before it is one.
         // A text function's text, likewise (the device's arena; never in a recursive stratum).
-        let arena = |t: &Term| if recursive { text_fn_in(t) } else { None };
-        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(|t| not_row(t).or_else(|| arena(t))) {
+        let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
+        if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
+        let tests = |t: TermRef<'_>| call(v, t).map(|(f, _)| f).filter(|f| crate::code_rule_dsl::logic::strings::TESTS.contains(f));
         for step in order.steps {
             if let Some(m @ (Mode::Range | Mode::Climb | Mode::Descend)) = step.mode {
                 self.note(Form::TreeAxis, || format!("a tree axis read as a {}", m.name()));
             }
-            match order.lit(step) {
-                Literal::Atom(a) => {
-                    self.forms.insert(if a.neg { Form::Negation } else { Form::Join });
-                    if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.note(Form::TextTest, || format!("text test {}", a.rel));
+            match order.view(step) {
+                Lit::Atom(a) => {
+                    let rel = b.rel(a);
+                    self.forms.insert(if a.neg() { Form::Negation } else { Form::Join });
+                    if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
+                        self.note(Form::TextTest, || format!("text test {rel}"));
                     }
-                    if let Some(op) = a.args.iter().find_map(|t| not_row(t).or_else(|| text_fn_in(t))) {
+                    if let Some(op) = a.args().find_map(|t| not_row(v, t).or_else(|| text_fn_in(v, t))) {
                         self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
                 // A text test as a comparison (`@contains(s, p) = 1`, `rx`'s search): a text test, not a value.
-                Literal::Cmp { l: Term::Call(f, _), .. } | Literal::Cmp { r: Term::Call(f, _), .. } if crate::code_rule_dsl::logic::strings::TESTS.contains(&f.as_str()) => {
+                Lit::Cmp { l, r, .. } if let Some(f) = tests(l).or_else(|| tests(r)) => {
                     self.note(Form::TextTest, || format!("text test @{f}"));
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
                 // text bound, made on the device when the head alone reads it; not in a recursive stratum.
-                Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
-                    Term::Var(v) => !recursive || order.steps.iter().any(|s| matches!(order.lit(s), Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
-                    Term::Call(..) => false,
-                    _ => true,
-                }) => {
+                Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
+                    if [(l, r), (r, l)].into_iter().any(|(c, o)| {
+                        is_cat_of_rows(v, c)
+                            && match o {
+                                TermRef::Var(x) => {
+                                    !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
+                                }
+                                TermRef::Call(..) => false,
+                                _ => true,
+                            }
+                    }) =>
+                {
                     self.note(Form::Comparison, String::new);
                 }
-                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t).or_else(|| arena(t))) {
+                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t).or_else(|| arena(t))) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
-                Literal::Agg { op, atom, .. } => {
+                Lit::Agg { op, atom, .. } => {
                     match op {
-                        AggOp::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
-                        op => self.note(Form::Aggregate, || format!("aggregate {}", format!("{op:?}").to_lowercase())),
+                        AggRef::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
+                        op => {
+                            let name = match op {
+                                AggRef::Count => "count",
+                                AggRef::Min => "min",
+                                AggRef::Max => "max",
+                                AggRef::Sum => "sum",
+                                _ => "product",
+                            };
+                            self.note(Form::Aggregate, || format!("aggregate {name}"))
+                        }
                     }
-                    if atom.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.note(Form::TextTest, || format!("text test {} in an aggregate", atom.rel));
+                    let rel = b.rel(atom);
+                    if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
+                        self.note(Form::TextTest, || format!("text test {rel} in an aggregate"));
                     }
                 }
-                Literal::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
-                Literal::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
+                Lit::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
+                Lit::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
             }
         }
     }
@@ -376,16 +406,17 @@ impl Shape {
 
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows.
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
+    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
         let mut input = 1.0;
         for (step, priced) in order.steps.iter().zip(&plan.steps) {
-            if let Literal::Atom(a) = order.lit(step)
-                && !a.neg
+            if let Some(a) = order.b.plain_atom(step.at)
+                && !a.neg()
             {
+                let rel = order.b.rel(a);
                 // "lookup on (c0, c1)", "membership on (c0)", "range in document on (c0)"; a scan has no key.
                 let keys = priced.access.split_once('(').map_or(0, |(_, cols)| cols.split(',').count());
                 if keys > 0 {
-                    self.joins.push(JoinEst { rel: a.rel.to_string(), input, relation: card(&a.rel), output: priced.rows, keys, range: step.mode == Some(Mode::Range) });
+                    self.joins.push(JoinEst { rel: rel.to_string(), input, relation: card(rel), output: priced.rows, keys, range: step.mode == Some(Mode::Range) });
                 }
             }
             input = priced.rows;
@@ -570,7 +601,8 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::front::Atom;
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
+    use crate::code_rule_dsl::logic::plan::Step;
 
     fn atom(rel: &str, neg: bool) -> Literal {
         Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false })
@@ -579,7 +611,10 @@ pub mod tests {
     /// Adds `lits`, planned in their order, to `shape`.
     fn adds(shape: &mut Shape, lits: &[Literal], head: &[Term], work: f64, recursive: bool) {
         let steps: Vec<Step> = (0..lits.len()).map(|at| Step { at, mode: None }).collect();
-        shape.add(Order::new(lits, &steps), head, work, recursive);
+        let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
+        let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
+        let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
+        shape.add(Order::new(&b, &steps), work, recursive);
     }
 
     #[test]

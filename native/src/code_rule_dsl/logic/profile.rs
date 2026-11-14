@@ -803,16 +803,49 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-pub struct Waves(bool);
+/// With the stage this thread's run was at before (`STAGE`).
+pub struct Waves(bool, u8);
 
 pub fn waves() -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true)
+    Waves(true, STAGE.with(|s| s.replace(INSIDE)))
+}
+
+/// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
+/// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
+/// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
+/// A thread with no run's context (a parallel loop's item) goes by the process's count (`WAVES`).
+const BEFORE: u8 = 1;
+const INSIDE: u8 = 2;
+thread_local! {
+    /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
+    pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
+/// waves, until the guard drops.
+pub fn run_begins() -> impl Drop {
+    struct Begun(u8);
+    impl Drop for Begun {
+        fn drop(&mut self) {
+            STAGE.with(|s| s.set(self.0));
+        }
+    }
+    Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
+}
+
+/// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
+fn waves_here() -> bool {
+    match STAGE.with(std::cell::Cell::get) {
+        BEFORE => false,
+        INSIDE => true,
+        _ => WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0,
+    }
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
 pub fn inside_waves() -> bool {
-    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+    waves_here()
 }
 
 
@@ -848,7 +881,7 @@ pub fn strict_statement(conn: &'static str, text: &str) {
         return;
     }
     // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
-    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    let inside = waves_here();
     if !inside && reads_only(text) {
         return;
     }
@@ -900,6 +933,7 @@ impl Drop for Waves {
     fn drop(&mut self) {
         if self.0 {
             WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            STAGE.with(|s| s.set(self.1));
         }
     }
 }
@@ -924,13 +958,13 @@ pub fn is_behind() -> bool {
 }
 
 fn in_waves() -> bool {
-    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+    on() && waves_here() && !BEHIND.with(std::cell::Cell::get)
 }
 
 /// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
 /// wait, for every queued write, is the end of the run.
 fn strict_wait(what: &str) {
-    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && waves_here() {
         violation("inside the waves", &format!("a wait for the store's writer: {what}"));
     }
 }

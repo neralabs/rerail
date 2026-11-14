@@ -4,6 +4,7 @@
 
 pub mod crypto;
 pub mod derived;
+pub mod run_state;
 #[cfg(test)]
 pub mod facts_only;
 /// This crate's own test binary, which the engine does not load: strict mode on every connection, as the engine's

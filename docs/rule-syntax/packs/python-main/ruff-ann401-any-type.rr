@@ -33,7 +33,7 @@ ann401_seen_builtins(n) :- inside(n, p1, "module"), has(p1, c2, "dotted_name"),
 ann401_static_ref(n) :- kind(n, "identifier"), glob("staticmethod", n), !ann401_alt_3(n).
 ann401_static_ref(n) :- ann401_seen_builtins(n), (kind(n, "identifier") ; kind(n, "attribute")),
     global_ref(n, "staticmethod"), sym_of(n, "builtins.staticmethod").
-ann401_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ann401_static_ref(c3).
+ann401_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c6, _), ann401_static_ref(c6).
 
 // overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
 .decl ann401_overload_ref(n: node)
@@ -244,14 +244,14 @@ ann401_late_any_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, do
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_34(c5, LA).
-ann401_late_any_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8), glob("Any", c8),
-    field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LA = c9, docof(c9, d11),
-    modnode(d11, m12),
-    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
-    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+ann401_late_any_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10), glob("Any", c10),
+    field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LA = c11, docof(c11, d13),
+    modnode(d13, m14),
+    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
+    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
     ),
-    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
-    ann401_alt_35(c14, LA).
+    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
+    ann401_alt_35(c16, LA).
 
 // late_optional_ref(n): the JSON util `late-optional-ref`, used where the JSON says `matches: "late-optional-ref"`
 .decl ann401_late_optional_ref(n: node)
@@ -261,14 +261,14 @@ ann401_late_optional_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LO = 
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_36(c5, LO).
-ann401_late_optional_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Optional", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LO = c9,
-    docof(c9, d11), modnode(d11, m12),
-    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
-    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+ann401_late_optional_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Optional", c10), field(n, "object", c11), kind(c11, "identifier"),
+    node(_, c11, _, _, _), LO = c11, docof(c11, d13), modnode(d13, m14),
+    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
+    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
     ),
-    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
-    ann401_alt_37(c14, LO).
+    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
+    ann401_alt_37(c16, LO).
 
 // late_union_ref(n): the JSON util `late-union-ref`, used where the JSON says `matches: "late-union-ref"`
 .decl ann401_late_union_ref(n: node)
@@ -277,14 +277,14 @@ ann401_late_union_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LU = n, 
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_38(c5, LU).
-ann401_late_union_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Union", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LU = c9,
-    docof(c9, d11), modnode(d11, m12),
-    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
-    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+ann401_late_union_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Union", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LU = c11,
+    docof(c11, d13), modnode(d13, m14),
+    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
+    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
     ),
-    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
-    ann401_alt_39(c14, LU).
+    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
+    ann401_alt_39(c16, LU).
 
 // late_annotated_ref(n): the JSON util `late-annotated-ref`, used where the JSON says `matches: "late-annotated-ref"`
 .decl ann401_late_annotated_ref(n: node)
@@ -294,14 +294,14 @@ ann401_late_annotated_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LT =
     ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
     ),
     !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_40(c5, LT).
-ann401_late_annotated_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Annotated", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LT = c9,
-    docof(c9, d11), modnode(d11, m12),
-    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
-    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+ann401_late_annotated_ref(n) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Annotated", c10), field(n, "object", c11), kind(c11, "identifier"),
+    node(_, c11, _, _, _), LT = c11, docof(c11, d13), modnode(d13, m14),
+    ( kind(c11, "identifier"), !bind_only(c11), miss(c11, x12)
+    ; (kind(c11, "string") ; kind(c11, "concatenated_string")), ann401_all_entry(c11, x12), !bound_in(m14, x12)
     ),
-    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
-    ann401_alt_41(c14, LT).
+    !builtin(x12), !star(m14), inside(c11, p15, "module"), within(c16, p15),
+    ann401_alt_41(c16, LT).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ann401_tok_has_1(n: node)
@@ -601,9 +601,9 @@ ann401_demand_alt_34(c5, LA) :- kind(n, "identifier"), node(_, n, _, _, _), LA =
 
 // demand_alt_35: the rows of alt_35 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_35(n: node, la: loc)
-ann401_demand_alt_35(c14, LA) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Any", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LA = c9,
-    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+ann401_demand_alt_35(c16, LA) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Any", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LA = c11,
+    docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"), within(c16, p15).
 
 // demand_alt_36: the rows of alt_36 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_36(n: node, lo: loc)
@@ -612,9 +612,10 @@ ann401_demand_alt_36(c5, LO) :- kind(n, "identifier"), node(_, n, _, _, _), LO =
 
 // demand_alt_37: the rows of alt_37 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_37(n: node, lo: loc)
-ann401_demand_alt_37(c14, LO) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Optional", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LO = c9,
-    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+ann401_demand_alt_37(c16, LO) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Optional", c10), field(n, "object", c11), kind(c11, "identifier"),
+    node(_, c11, _, _, _), LO = c11, docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"),
+    within(c16, p15).
 
 // demand_alt_38: the rows of alt_38 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_38(n: node, lu: loc)
@@ -623,9 +624,9 @@ ann401_demand_alt_38(c5, LU) :- kind(n, "identifier"), node(_, n, _, _, _), LU =
 
 // demand_alt_39: the rows of alt_39 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_39(n: node, lu: loc)
-ann401_demand_alt_39(c14, LU) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Union", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LU = c9,
-    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+ann401_demand_alt_39(c16, LU) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Union", c10), field(n, "object", c11), kind(c11, "identifier"), node(_, c11, _, _, _), LU = c11,
+    docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"), within(c16, p15).
 
 // demand_alt_40: the rows of alt_40 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_40(n: node, lt: loc)
@@ -634,9 +635,10 @@ ann401_demand_alt_40(c5, LT) :- kind(n, "identifier"), node(_, n, _, _, _), LT =
 
 // demand_alt_41: the rows of alt_41 its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_alt_41(n: node, lt: loc)
-ann401_demand_alt_41(c14, LT) :- kind(n, "attribute"), field(n, "attribute", c8),
-    glob("Annotated", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LT = c9,
-    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+ann401_demand_alt_41(c16, LT) :- kind(n, "attribute"), field(n, "attribute", c10),
+    glob("Annotated", c10), field(n, "object", c11), kind(c11, "identifier"),
+    node(_, c11, _, _, _), LT = c11, docof(c11, d13), modnode(d13, m14), inside(c11, p15, "module"),
+    within(c16, p15).
 
 // demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
 .decl ann401_demand_overload_impl(n: node, n_mv: loc)
@@ -658,15 +660,15 @@ ann401_set_42("binary_operator"). ann401_set_42("string"). ann401_set_42("concat
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_2(n: node)
-ann401_alt_2(n) :- site_form(n, "annotation").
-ann401_alt_2(n) :- site_form(n, "except").
+ann401_alt_2(n) :- bind_name(n, b1), main_form(b1, "annotation").
+ann401_alt_2(n) :- bind_name(n, b2), main_form(b2, "except").
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl ann401_alt_3(n: node)
 ann401_alt_3(n) :- ann401_seen_builtins(n).
 ann401_alt_3(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
-    site_scope(c2, "module"), !ann401_alt_2(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann401_alt_2(c2).
 
 // stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl ann401_stop_5(n: node)
@@ -755,14 +757,16 @@ ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions.Any")
     ; imported_sym(n, "_typeshed.Any")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LA).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LA).
 ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_la2), text(LA, t_la2), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing.Any")
-    ; imported_sym(c2, "typing_extensions.Any")
-    ; imported_sym(c2, "_typeshed.Any")
-    ), @doc(c1) = @doc(LA).
+    field(n, "alias", c2), text(c2, t_la2), text(LA, t_la2), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing.Any")
+    ; imported_sym(c4, "typing_extensions.Any")
+    ; imported_sym(c4, "_typeshed.Any")
+    ), @doc(c2) = @doc(LA).
 
 
 // alt_35(n): the JSON `any`: n matches if any one of these rules does
@@ -774,14 +778,16 @@ ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions")
     ; imported_sym(n, "_typeshed")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LA).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LA).
 ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_la4), text(LA, t_la4), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing")
-    ; imported_sym(c2, "typing_extensions")
-    ; imported_sym(c2, "_typeshed")
-    ), @doc(c1) = @doc(LA).
+    field(n, "alias", c2), text(c2, t_la4), text(LA, t_la4), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing")
+    ; imported_sym(c4, "typing_extensions")
+    ; imported_sym(c4, "_typeshed")
+    ), @doc(c2) = @doc(LA).
 
 
 // alt_36(n): the JSON `any`: n matches if any one of these rules does
@@ -793,14 +799,16 @@ ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions.Optional")
     ; imported_sym(n, "_typeshed.Optional")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LO).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LO).
 ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lo6), text(LO, t_lo6), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing.Optional")
-    ; imported_sym(c2, "typing_extensions.Optional")
-    ; imported_sym(c2, "_typeshed.Optional")
-    ), @doc(c1) = @doc(LO).
+    field(n, "alias", c2), text(c2, t_lo6), text(LO, t_lo6), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing.Optional")
+    ; imported_sym(c4, "typing_extensions.Optional")
+    ; imported_sym(c4, "_typeshed.Optional")
+    ), @doc(c2) = @doc(LO).
 
 
 // alt_37(n): the JSON `any`: n matches if any one of these rules does
@@ -812,14 +820,16 @@ ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions")
     ; imported_sym(n, "_typeshed")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LO).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LO).
 ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lo8), text(LO, t_lo8), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing")
-    ; imported_sym(c2, "typing_extensions")
-    ; imported_sym(c2, "_typeshed")
-    ), @doc(c1) = @doc(LO).
+    field(n, "alias", c2), text(c2, t_lo8), text(LO, t_lo8), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing")
+    ; imported_sym(c4, "typing_extensions")
+    ; imported_sym(c4, "_typeshed")
+    ), @doc(c2) = @doc(LO).
 
 
 // alt_38(n): the JSON `any`: n matches if any one of these rules does
@@ -831,14 +841,16 @@ ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions.Union")
     ; imported_sym(n, "_typeshed.Union")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LU).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LU).
 ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lu10), text(LU, t_lu10), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing.Union")
-    ; imported_sym(c2, "typing_extensions.Union")
-    ; imported_sym(c2, "_typeshed.Union")
-    ), @doc(c1) = @doc(LU).
+    field(n, "alias", c2), text(c2, t_lu10), text(LU, t_lu10), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing.Union")
+    ; imported_sym(c4, "typing_extensions.Union")
+    ; imported_sym(c4, "_typeshed.Union")
+    ), @doc(c2) = @doc(LU).
 
 
 // alt_39(n): the JSON `any`: n matches if any one of these rules does
@@ -850,14 +862,16 @@ ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions")
     ; imported_sym(n, "_typeshed")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LU).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LU).
 ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lu12), text(LU, t_lu12), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing")
-    ; imported_sym(c2, "typing_extensions")
-    ; imported_sym(c2, "_typeshed")
-    ), @doc(c1) = @doc(LU).
+    field(n, "alias", c2), text(c2, t_lu12), text(LU, t_lu12), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing")
+    ; imported_sym(c4, "typing_extensions")
+    ; imported_sym(c4, "_typeshed")
+    ), @doc(c2) = @doc(LU).
 
 
 // alt_40(n): the JSON `any`: n matches if any one of these rules does
@@ -869,14 +883,16 @@ ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions.Annotated")
     ; imported_sym(n, "_typeshed.Annotated")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LT).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LT).
 ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lt14), text(LT, t_lt14), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing.Annotated")
-    ; imported_sym(c2, "typing_extensions.Annotated")
-    ; imported_sym(c2, "_typeshed.Annotated")
-    ), @doc(c1) = @doc(LT).
+    field(n, "alias", c2), text(c2, t_lt14), text(LT, t_lt14), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing.Annotated")
+    ; imported_sym(c4, "typing_extensions.Annotated")
+    ; imported_sym(c4, "_typeshed.Annotated")
+    ), @doc(c2) = @doc(LT).
 
 
 // alt_41(n): the JSON `any`: n matches if any one of these rules does
@@ -888,14 +904,16 @@ ann401_alt_41(n, LT) :- ann401_demand_alt_41(n, LT), kind(n, "dotted_name"),
     ; imported_sym(n, "typing_extensions")
     ; imported_sym(n, "_typeshed")
     ),
-    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LT).
+    bind_name(n, b1), main_form(b1, "import"), site_scope(b1, "module"),
+    site_latest(b1), @doc(n) = @doc(LT).
 ann401_alt_41(n, LT) :- ann401_demand_alt_41(n, LT), kind(n, "aliased_import"),
-    field(n, "alias", c1), text(c1, t_lt16), text(LT, t_lt16), site_form(c1, "import"),
-    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
-    ( imported_sym(c2, "typing")
-    ; imported_sym(c2, "typing_extensions")
-    ; imported_sym(c2, "_typeshed")
-    ), @doc(c1) = @doc(LT).
+    field(n, "alias", c2), text(c2, t_lt16), text(LT, t_lt16), bind_name(c2, b3),
+    main_form(b3, "import"), site_scope(b3, "module"), site_latest(b3),
+    field(n, "name", c4),
+    ( imported_sym(c4, "typing")
+    ; imported_sym(c4, "typing_extensions")
+    ; imported_sym(c4, "_typeshed")
+    ), @doc(c2) = @doc(LT).
 
 
 // stop_43(n): the JSON `stopBy` rule: the tree search stops at these nodes

@@ -32,6 +32,11 @@ thread_local! {
     static DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Carries the depth to a job on another thread (`run_state`): a run there does not take the switches again.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["DEPTH"], &DEPTH);
+}
+
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

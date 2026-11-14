@@ -1,0 +1,26 @@
+{
+  "format": "rerail.language/v1",
+  "id": "csharp",
+  "status": "supported",
+  "family": "csharp",
+  "dialects": [
+    {
+      "label": "csharp",
+      "variant": "CSharp",
+      "suffixes": [
+        ".cs"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:CSharp",
+      "tapeTag": 19
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

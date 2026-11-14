@@ -1363,6 +1363,11 @@ fn adapters_read_the_capabilities_the_registry_supports() {
 #[test]
 fn shared_walks_read_the_kinds_they_named() {
     fn scope_kinds<S: ScopeRules>(dialect: GrammarDialect) {
+        // A family without scope (format strings, directive comments) has no walks; its grammar's own kinds
+        // (brace-format's `attribute`) are not the walks' kinds.
+        if !S::SUPPORTED {
+            return;
+        }
         let ids = |names: &[&str]| kind_ids(dialect, names);
         assert_eq!(
             ids(S::PAREN_KINDS),

@@ -52,13 +52,12 @@ impl<'s> Jobs<'s, '_> {
     pub fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
         {
-            // The job's span is under the one open where it was started, on whichever thread runs it.
-            let under = crate::code_rule_dsl::logic::profile::here();
-            // And the run it is of: its frames' uses count that run, not one of their own.
-            let run = crate::code_rule_dsl::logic::plan::corpus::current_run();
+            // The job runs in the run's context where it was started (`run_state`), and its span is under the one
+            // open there, on whichever thread runs it.
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             self.0.spawn(move |s| {
-                let _run = crate::code_rule_dsl::logic::plan::corpus::carry_run(run);
-                let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
+                let _in = carry.enter();
+                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
                 rerail_accel::exec::as_job(name, || f(&Jobs(s)))
             });
         }
@@ -95,10 +94,11 @@ pub(crate) struct Beside<T> {
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
-    let under = crate::code_rule_dsl::logic::profile::here();
+    let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
-        let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
+        let _in = carry.enter();
+        let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };

@@ -66,6 +66,9 @@ fn gaps() -> Vec<Gap> {
             continue;
         }
         let lexed = lex(&src);
+        // Where each line ends: a gap's line by a search, not a count of the file's newlines before it (a count per
+        // gap took 40 s over the repository's 2,000 files).
+        let newlines: Vec<usize> = src.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i).collect();
         // Per node: its named children (start, label) and its tokens.
         let mut named: Vec<Vec<(u32, String)>> = vec![Vec::new(); t.len()];
         let mut toks: Vec<Vec<Tok>> = (0..t.len()).map(|_| Vec::new()).collect();
@@ -123,9 +126,8 @@ fn gaps() -> Vec<Gap> {
                     g.push(tk.next().expect("peeked"));
                 }
                 {
-                    let line = src[..g.first().map_or(t[p].start, |x| x.start) as usize].matches('\n').count() + 1;
-                    let _ = line;
-                    let line = src[..g.first().map_or(t[p].start, |x| x.start) as usize].matches('\n').count() + 1;
+                    let off = g.first().map_or(t[p].start, |x| x.start) as usize;
+                    let line = newlines.partition_point(|&n| n < off) + 1;
                     out.push(Gap { key: (kind.clone(), before.clone(), after.clone()), toks: g, at: format!("{path}:{line}") });
                 }
                 before = after;

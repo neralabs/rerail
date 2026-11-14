@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, Gram, MachineDef, NExpr, Stmt, TokenElem, UClass};
+use crate::syntax::{Arg, Expr, Gram, MachineDef, NExpr, Stmt, TokenElem, TokenTest, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -120,11 +120,20 @@ pub struct Ev<'a> {
     /// The token marks (`Stmt::TokenMark`), by their index in `marks`: the token before, then
     /// the run.
     token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
+    /// A mark's `unless after` words (`Stmt::Mark`), by its index in `marks`.
+    unless: HashMap<usize, Vec<Vec<u8>>>,
+    /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
+    unplaced: HashMap<usize, String>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
     byte_classes: HashMap<String, Vec<(u32, u32)>>,
     checks: Vec<(String, Gram)>,
+    /// Each `escape … at KIND when …` (`Stmt::TokenEscape`): its reason, kind, test, mask, count.
+    token_escapes: Vec<(String, String, TokenTest, Mask, u32)>,
+    /// The marks' token tests (`MarkCheck`): the mark, `after`, the kind, the test, its mask,
+    /// its count.
+    mark_checks: Vec<(usize, bool, String, TokenTest, Mask, u32)>,
 }
 
 type R<T> = Result<T, String>;
@@ -185,10 +194,14 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             marks: vec![],
             token_marks: HashMap::new(),
+            unless: HashMap::new(),
+            unplaced: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
             checks: vec![],
+            token_escapes: vec![],
+            mark_checks: vec![],
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
@@ -400,6 +413,10 @@ impl<'a> Ev<'a> {
                 }
             }
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
+            Stmt::TokenEscape { why, kind, test, expr, least } => {
+                let m = self.mask(expr)?;
+                self.token_escapes.push((why.clone(), kind.clone(), *test, m, *least));
+            }
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
@@ -409,15 +426,25 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
                 let m = self.mask(at)?;
+                for c in checks {
+                    let x = self.mask(&c.expr)?;
+                    self.mark_checks.push((self.marks.len(), c.after, c.kind.clone(), c.test, x, c.least));
+                }
+                if !unless.is_empty() {
+                    self.unless.insert(self.marks.len(), unless.clone());
+                }
+                if let Some(why) = unplaced {
+                    self.unplaced.insert(self.marks.len(), why.clone());
+                }
                 self.marks.push((kind.clone(), m, *end));
             }
             Stmt::TokenMark { kind, before, seq } => {
                 self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
                 self.marks.push((kind.clone(), Mask::zeros(self.n), false));
             }
-            Stmt::Error(msg, e) => {
+            Stmt::Error(msg, e) | Stmt::TokenError(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
             }
@@ -1138,6 +1165,33 @@ impl<'a> Ev<'a> {
         if let Some(i) = gap.first() {
             self.errors.push(format!("byte {i} is in no token"));
         }
+        // Each token test over its kind's tokens' bytes, before the keywords rename them.
+        let passes = |t: &Token, test: &TokenTest, m: &Mask, least: u32| {
+            let n = least as usize;
+            match test {
+                TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
+                TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
+            }
+        };
+        let mut failed = Vec::new();
+        for (why, kind, test, m, least) in &self.token_escapes {
+            for t in toks.iter().filter(|t| &t.kind == kind) {
+                if passes(t, test, m, *least) {
+                    failed.push(format!("escape: {why} (byte {})", t.start));
+                }
+            }
+        }
+        self.errors.extend(failed);
+        // The marks' token tests: each passing token a bit of its mark, at its first byte or
+        // the byte after its last (`after`).
+        let mut checked: Vec<(usize, usize)> = Vec::new();
+        for (k, after, kind, test, m, least) in &self.mark_checks {
+            for t in toks.iter().filter(|t| &t.kind == kind) {
+                if passes(t, test, m, *least) {
+                    checked.push((*k, if *after { t.end } else { t.start }));
+                }
+            }
+        }
         for (kind, words, soft, required) in &self.keywords {
             for t in toks.iter_mut().filter(|t| &t.kind == kind) {
                 let text = &self.src[t.start..t.end];
@@ -1189,14 +1243,28 @@ impl<'a> Ev<'a> {
                 }
             }
         }
+        let mut escapes = Vec::new();
         for (k, (_, m, _)) in self.marks.iter().enumerate() {
-            for i in m.ones_iter() {
+            let unless: Vec<TokenElem> = self.unless.get(&k).map_or(vec![], |ws| ws.iter().cloned().map(TokenElem::Word).collect());
+            let bits: Vec<usize> = m.ones_iter().chain(checked.iter().filter(|c| c.0 == k).map(|c| c.1)).collect();
+            for i in bits {
                 let g = grammar.partition_point(|&t| toks[t].start < i);
-                if let Some(&t) = grammar.get(g) {
-                    before[t][k] = true;
+                // `unless after`: none where the grammar token before is one of its words.
+                if g > 0 && !unless.is_empty() && is(Some(&toks[grammar[g - 1]]), &unless) {
+                    continue;
+                }
+                match grammar.get(g) {
+                    Some(&t) => before[t][k] = true,
+                    // `else escape`: no grammar token at or after the bit.
+                    None => {
+                        if let Some(why) = self.unplaced.get(&k) {
+                            escapes.push(format!("escape: {why} (byte {i})"));
+                        }
+                    }
                 }
             }
         }
+        self.errors.extend(escapes);
         let mut out = Vec::with_capacity(toks.len());
         for (t, tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {

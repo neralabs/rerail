@@ -49,8 +49,8 @@ up034_doubled(n) :- up034_group(n),
 
 // after_open_parenthesis(n): the JSON util `after-open-parenthesis`, used where the JSON says `matches: "after-open-parenthesis"`
 .decl up034_after_open_parenthesis(n: node)
-up034_after_open_parenthesis(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1).
-up034_after_open_parenthesis(n) :- count : { up034_counted_4_precedes(s2, n), !kind(s2, "comment"), !kind(s2, "line_continuation") } = 0,
+up034_after_open_parenthesis(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1).
+up034_after_open_parenthesis(n) :- count : { up034_stop_10_precedes(s2, n), !kind(s2, "comment"), !kind(s2, "line_continuation") } = 0,
     child(p3, n, _), up034_after_open_parenthesis(p3).
 
 // call_of_parenthesized_callee(n): the JSON util `call-of-parenthesized-callee`, used where the JSON says `matches: "call-of-parenthesized-callee"`
@@ -93,45 +93,45 @@ up034_level_clear(n) :- up034_level_clear_u7(n).
 up034_after_args_open(n) :- up034_after_args_open_u7(n).
 
 .decl up034_after_args_open_u1(n: node)
-up034_after_args_open_u1(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u0(p2).
-up034_after_args_open_u1(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u1(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u0(p2).
+up034_after_args_open_u1(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u0(p4).
 
 .decl up034_after_args_open_u2(n: node)
-up034_after_args_open_u2(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u1(p2).
-up034_after_args_open_u2(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u2(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u1(p2).
+up034_after_args_open_u2(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u1(p4).
 
 .decl up034_after_args_open_u3(n: node)
-up034_after_args_open_u3(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u2(p2).
-up034_after_args_open_u3(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u3(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u2(p2).
+up034_after_args_open_u3(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u2(p4).
 
 .decl up034_after_args_open_u4(n: node)
-up034_after_args_open_u4(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u3(p2).
-up034_after_args_open_u4(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u4(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u3(p2).
+up034_after_args_open_u4(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u3(p4).
 
 .decl up034_after_args_open_u5(n: node)
-up034_after_args_open_u5(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u4(p2).
-up034_after_args_open_u5(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u5(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u4(p2).
+up034_after_args_open_u5(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u4(p4).
 
 .decl up034_after_args_open_u6(n: node)
-up034_after_args_open_u6(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u5(p2).
-up034_after_args_open_u6(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u6(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u5(p2).
+up034_after_args_open_u6(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u5(p4).
 
 .decl up034_after_args_open_u7(n: node)
-up034_after_args_open_u7(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
-    child(p2, n, _), up034_call_of_parenthesized_callee_u6(p2).
-up034_after_args_open_u7(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+up034_after_args_open_u7(n) :- precedes_stop(s1, n, up034_stop_10), glob("(", s1), child(p2, n, _),
+    up034_call_of_parenthesized_callee_u6(p2).
+up034_after_args_open_u7(n) :- count : { up034_stop_10_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
     child(p4, n, _), up034_after_args_open_u6(p4).
 
 .decl up034_call_of_parenthesized_callee_u1(n: node)
@@ -523,6 +523,10 @@ up034_counted_5(n) :- node(_, n, _, _, _), !kind(n, "comment"),
 up034_alt_7(n) :- up034_tok_has_3(n).
 up034_alt_7(n) :- up034_consumed_outer(n).
 
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up034_stop_10(n: node)
+up034_stop_10(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
 // stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up034_stop_13(n: node)
 up034_stop_13(n) :- up034_bracket(n).
@@ -535,6 +539,6 @@ up034_alt_15(n) :- up034_alt_15_u7(n).
 .decl up034_stop_13_within(n: node, a: node)
 up034_stop_13_within(x, y) :- within_stop(x, y, up034_stop_13).
 
-// counted_4_precedes: precedes_stop over the stop set counted_4, read inside an aggregate
-.decl up034_counted_4_precedes(a: node, b: node)
-up034_counted_4_precedes(x, y) :- precedes_stop(x, y, up034_counted_4).
+// stop_10_precedes: precedes_stop over the stop set stop_10, read inside an aggregate
+.decl up034_stop_10_precedes(a: node, b: node)
+up034_stop_10_precedes(x, y) :- precedes_stop(x, y, up034_stop_10).

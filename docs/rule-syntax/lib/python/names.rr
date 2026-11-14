@@ -329,6 +329,93 @@ binding(s, x, t, form)    :- tgt(t), kind(t, "identifier"), text(t, x), target_f
 .decl site_form(site: node, form: symbol)
 site_form(site, form) :- binding(_, _, site, form).
 
+// ---- main's binding terms (rerail.policy/v1 `binds`, `resolves.binding`, `redefines`) -------------------------
+// Main's `binds` holds at a binding's name node; its filters are about the binding's site, the node `binding` above
+// names. Main also names the forms its own way. These two relations are that interface; the JSON translator reads
+// main's terms through them, and lib/tsx/names.rr has the same two.
+// bind_name(n, site): n is the name node of the binding at site: the identifier assigned, defined, declared or
+// captured, an unaliased import's dotted_name (`os.path` in `import os.path`), an aliased import's alias.
+// e.g. in `def f(): x = 1`, bind_name(<x>, <the assignment>); in `import a as b`, bind_name(<b>, <a as b>).
+.decl bind_name(n: node, site: node)
+bind_name(l, a) :- binding(_, _, a, "assign"), kind(a, "assignment"), field(a, "left", l).
+bind_name(nm, f) :- binding(_, _, f, "def"), field(f, "name", nm).
+bind_name(nm, f) :- binding(_, _, f, "class"), field(f, "name", nm).
+bind_name(p, p) :- binding(_, _, p, "param"), kind(p, "identifier").
+bind_name(i, p) :- binding(_, _, p, "param"), child(p, i, 0), kind(i, "identifier").
+bind_name(i, i) :- binding(_, _, i, "import"), kind(i, "dotted_name").
+bind_name(al, i) :- binding(_, _, i, "import"), kind(i, "aliased_import"), field(i, "alias", al).
+bind_name(t, t) :- binding(_, _, t, _), tgt(t).
+bind_name(l, a) :- ann_site(_, _, a), field(a, "left", l).
+bind_name(d, d) :- tp_site(_, d).
+// main_form(site, form): main's name for the binding's form: `assignment` (`x = v`, `a, b = v`), `annotated`
+// (`x: T = v`), `annotation` (a bare `x: T`), `augmented`, `named` (walrus), `for`, `with`, `except`, `match`,
+// `typeAlias`, `definition` (`def`, `class`), `parameter`, `import`, `typeParameter`, `global` (the statement, in a
+// function or class), `deletion` (an unconditional `del`).
+.decl main_form(site: node, form: symbol)
+main_form(a, "annotated") :- binding(_, _, a, "assign"), kind(a, "assignment"), field(a, "type", _).
+main_form(a, "assignment") :- binding(_, _, a, "assign"), kind(a, "assignment"), !field(a, "type", _).
+main_form(t, f) :- binding(_, _, t, lf), tgt(t), main_form_name(lf, f).
+main_form(f, "definition") :- binding(_, _, f, "def").
+main_form(f, "definition") :- binding(_, _, f, "class").
+main_form(p, "parameter") :- binding(_, _, p, "param").
+main_form(i, "import") :- binding(_, _, i, "import").
+main_form(a, "annotation") :- ann_site(_, _, a).
+main_form(d, "typeParameter") :- tp_site(_, d).
+// main_form_name(form, main's): a target's form (target_form) in main's words.
+.decl main_form_name(form: symbol, main: symbol)
+main_form_name("assign", "assignment"). main_form_name("augassign", "augmented"). main_form_name("for", "for").
+main_form_name("walrus", "named"). main_form_name("with", "with"). main_form_name("except", "except").
+main_form_name("match", "match"). main_form_name("type", "typeAlias").
+// ann_site(s, x, a): a bare annotation `x: T` (no value) in scope s, which binds x nowhere earlier: Ruff's
+// `Annotation` binding. It is no `binding`: a read passes over it, so ref_site never reaches it.
+.decl ann_site(s: node, x: symbol, a: node)
+ann_site(s, x, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", _),
+    !field(a, "right", _), nearest(a, s0, scope), home(s0, x, s), count : { binding(s, x, o, _), o < a } = 0.
+// tp_site(o, d): definition o declares a PEP 695 type parameter at identifier d (`T` in `def f[T]()`, `*Ts`, `T: int`).
+.decl tp_site(o: node, d: node)
+tp_site(o, d) :- (kind(o, "function_definition") ; kind(o, "class_definition")), field(o, "type_parameters", tp),
+    tp_ident(tp, d).
+tp_site(o, d) :- kind(o, "type_alias_statement"), field(o, "left", l), child(l, g, 0), kind(g, "generic_type"),
+    child(g, tp, _), kind(tp, "type_parameter"), tp_ident(tp, d).
+.decl tp_ident(tp: node, i: node)
+tp_ident(tp, i) :- kind(tp, "type_parameter"), child(tp, ty, _), kind(ty, "type"), child(ty, d, 0), tp_decl_id(d, i).
+// tp_decl_id(d, i): the identifier i of tp_decl's d, rule for rule.
+.decl tp_decl_id(d: node, i: node)
+tp_decl_id(d, d) :- kind(d, "identifier").
+tp_decl_id(d, i) :- kind(d, "splat_type"), child(d, i, _), kind(i, "identifier").
+tp_decl_id(d, i) :- kind(d, "constrained_type"), child(d, ty, 0), child(ty, i, 0), kind(i, "identifier").
+// glob_site(s, n, g): `global x` statement g, in a function or class scope s, names x at identifier n. Ruff binds
+// the name in the declaring scope (a `global` at module level binds nothing).
+.decl glob_site(s: node, n: node, g: node)
+glob_site(s, n, g) :- kind(g, "global_statement"), child(g, n, _), kind(n, "identifier"), nearest(g, s, scope),
+    !kind(s, "module").
+// del_site(s, n, st): `del x` statement st in scope s unbinds x at identifier n (`del x`, `del x, y`, `del (x)`, `del (x, y)`, `del [x]`),
+// where the `del` is unconditional (del_conditional below): Ruff's `Deletion` binding.
+.decl del_site(s: node, n: node, st: node)
+del_site(s, n, st) :- kind(st, "delete_statement"), del_unbinds(st, n), !del_conditional(st), nearest(st, s, scope).
+.decl del_unbinds(st: node, n: node)
+del_unbinds(st, n) :- kind(st, "delete_statement"), child(st, n, _), kind(n, "identifier").
+del_unbinds(st, n) :- kind(st, "delete_statement"), child(st, l, _), (kind(l, "expression_list") ; kind(l, "parenthesized_expression") ; kind(l, "tuple") ; kind(l, "list")),
+    child(l, n, _), kind(n, "identifier").
+// del_conditional(st): main's `conditional_delete`: an `if`, `while` or `match` around st at any depth, an `except`
+// clause in st's own function or class body, or the `else` of a `for`, `while` or `try` around it.
+.decl del_conditional(st: node)
+del_conditional(st) :- kind(st, "delete_statement"), within(st, a),
+    (kind(a, "if_statement") ; kind(a, "while_statement") ; kind(a, "match_statement")).
+del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "else_clause"), child(p, a, _),
+    (kind(p, "for_statement") ; kind(p, "while_statement") ; kind(p, "try_statement")).
+del_conditional(st) :- kind(st, "delete_statement"), within(st, a), (kind(a, "except_clause") ; kind(a, "except_group_clause")),
+    count : { within(st, f), within(f, a), (kind(f, "function_definition") ; kind(f, "class_definition")) } = 0.
+bind_name(n, g) :- glob_site(_, n, g).
+bind_name(n, st) :- del_site(_, n, st).
+main_form(g, "global") :- glob_site(_, _, g).
+main_form(st, "deletion") :- del_site(_, _, st).
+// The filters over sites (below) that a bare annotation, a type parameter, a `global` or a deletion has: its scope.
+site_scope(a, k) :- ann_site(s, _, a), kind(s, sk), scope_kind(sk, k).
+site_scope(d, "typeParameters") :- tp_site(_, d).
+site_scope(g, k) :- glob_site(s, _, g), kind(s, sk), scope_kind(sk, k).
+site_scope(st, k) :- del_site(s, _, st), kind(s, sk), scope_kind(sk, k).
+
 // ref_site(r, site): reference r reads binding site `site` (every site of the scope LEGB lands on: may-precise).
 // e.g. `x = 1; if c: x = 2; print(x)`: the x in print has two ref_site rows. No flow pruning is done here.
 .decl ref_site(r: node, site: node)

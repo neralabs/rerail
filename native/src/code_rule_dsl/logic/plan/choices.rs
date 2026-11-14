@@ -122,7 +122,13 @@ thread_local! {
     /// With the entries, by path, and the texts of the programs they name, by digest: all read at the start. And the
     /// run's late sources (the manifest's), to which each program text read or stored is added, so collection keeps
     /// it while it keeps the run.
-    static DURABLE: std::cell::RefCell<Option<Held>> = const { std::cell::RefCell::new(None) };
+    static DURABLE: std::cell::RefCell<Option<Arc<Held>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Carries the run's durable side to a job on another thread (`run_state`): a nested run there looks up and keeps
+/// its choices in the same store, under the same program, as the run's thread.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["DURABLE"], &DURABLE);
 }
 
 /// The store, the prepared program's key, the entries by path, the programs' texts by digest (with the run's lists,
@@ -138,7 +144,7 @@ impl Durable {
     pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>, lists: Arc<crate::code_rule_dsl::logic::front::Lists>) -> Durable {
         let store = ContentStore::open(path).ok();
         DURABLE.with(|d| {
-            *d.borrow_mut() = store.map(|s| {
+            *d.borrow_mut() = store.map(|s| -> Arc<Held> {
                 let stored = read_all(&s, &prepared).unwrap_or_default();
                 // The rewritten programs' texts too, in one read: parsed when looked up (`decode_chosen`).
                 let digests: Vec<[u8; 32]> = stored.values().filter_map(|entry| rewritten(entry)).collect();
@@ -150,7 +156,7 @@ impl Durable {
                 let plans = read_plans(&s, &prepared).unwrap_or_default();
                 super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans read from the store", plans.len()));
                 super::take_stored_plans(Arc::new(plans));
-                (s, prepared, stored, (texts, lists), late)
+                Arc::new((s, prepared, stored, (texts, lists), late))
             })
         });
         Durable
@@ -161,7 +167,8 @@ impl Drop for Durable {
     /// The run's plans, where it changed any, queued for the store (decision 0116 step 2): the run's plans are
     /// still held here (`KeepPlans` is let before this).
     fn drop(&mut self) {
-        if let Some((store, prepared, _, _, _)) = DURABLE.with(|d| d.borrow_mut().take())
+        if let Some(held) = DURABLE.with(|d| d.borrow_mut().take())
+            && let (store, prepared) = (&held.0, held.1)
             && let Some(plans) = super::plans_to_store()
         {
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
@@ -185,7 +192,7 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // 0.07 s of an edit's).
     let found = DURABLE.with(|d| {
         let d = d.borrow();
-        let (_, _, entries, texts, _) = d.as_ref()?;
+        let (_, _, entries, texts, _) = &**d.as_ref()?;
         entries.get(&path(key)).and_then(|entry| decode_chosen(&texts.0, entry, &texts.1))
     })?;
     keep(*key, found.clone());
@@ -197,7 +204,7 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     DURABLE.with(|d| {
         let d = d.borrow();
-        if let Some((store, prepared, _, _, late)) = d.as_ref() {
+        if let Some((store, prepared, _, _, late)) = d.as_deref() {
             let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
             // Made into facts and written by the store's writer (decision 0102).
             let (prepared, late) = (*prepared, Arc::clone(late));
