@@ -1,3 +1,8 @@
 /* The page for a repository the daemon does not know (views/missing.js). */
 
 .list.missing{margin-top:24px}
+
+/* Reviewer demo: a raw colour, so packs/rerail's rerail-ui-color-tokens rule has something to find. Do not merge. */
+.reviewer-demo {
+  color: #ff3366;
+}
