@@ -995,3 +995,16 @@ pub fn from_store((notes, exact, raised): Stored) {
 
 #[cfg(test)]
 mod tests;
+
+/// Decision 0232: the bindings a key's walk carries through each step (`RERAIL_WALK_WIDTH`, 64).
+pub fn walk_width() -> usize {
+    static W: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64));
+    *W
+}
+
+/// Decision 0232: the probes a line's walks may make, over all its orders and parts (`RERAIL_WALK_PROBES`, 20,000);
+/// past them, a key not walked takes its key rows' size, scaled by the walked keys' ratio.
+pub fn walk_probes() -> u64 {
+    static P: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_PROBES").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000));
+    *P
+}

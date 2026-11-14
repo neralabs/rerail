@@ -79,6 +79,8 @@ sorted `kind` for each filter, took 1.5 s; it is replaced.
 
 ## Open
 
+All three addressed by decision 0232 (2026-11-14): pair counts are replaced by sampled walks through the order.
+
 - **Filters are one variable and constants.** A filter joined on two variables, or a chain of two atoms from
   the key, is taken at 1.
 - **The lead is taken to reach its key once.** A lead row whose link gives it several keys sums them.

@@ -6378,90 +6378,17 @@ impl<'a> Run<'a, '_> {
                 }
             }
             Some((cu, lc)) => {
-                let Some(dsrc) = engine::derived(self.db, &link) else { return Ok(None) };
+                // Each lead row's keys: the link probed by its value (decision 0232), not the link read whole.
+                let Some(lrel) = engine::held(self.db, &link) else { return Ok(None) };
                 let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
-                for row in 0..dsrc.len() { keys.entry(dsrc.value(row, cu)).or_default().push(dsrc.value(row, cv)); }
                 for &id in &ids {
-                    put(&mut parts, id, keys.get(&lsrc.value(id as usize, lc)).cloned().unwrap_or_default());
+                    let u = lsrc.value(id as usize, lc);
+                    let vs = keys.entry(u).or_insert_with(|| { let mut vs = Vec::new(); lrel.probe_each(&[cu], &[u], &mut |row| vs.push(row(cv))); vs }).clone();
+                    put(&mut parts, id, vs);
                 }
             }
         }
         Ok(Some(parts))
-    }
-
-    /// O173: the rule's atoms on `key`, counted per key value (`KeyModel`), from the engine's relations; one pass over
-    /// each atom on the key, and a lookup of each filter by the values the atom gives its variable. `None` where an
-    /// atom's relation is not the engine's.
-    fn key_model(&self, r: &Rule, key: &Term) -> Result<Option<KeyModel>> {
-        use super::native::component as engine;
-        let mut model = KeyModel { raw: HashMap::new(), pass: HashMap::new() };
-        // Counted once per relation and column (a self-join's atoms share them), and per filter's relation and
-        // constants: the values of its variable that pass.
-        let mut raws: HashMap<(String, usize), HashMap<i64, f64>> = HashMap::new();
-        let mut passed: HashMap<(String, usize, Vec<(usize, Option<i64>)>), std::sync::Arc<HashSet<i64>>> = HashMap::new();
-        let mut pairs: HashMap<(String, usize, usize, usize), HashMap<i64, f64>> = HashMap::new();
-        for (d, l) in r.body.iter().enumerate() {
-            let Literal::Atom(a) = l else { continue };
-            if a.neg { continue }
-            let Some(kc) = a.args.iter().position(|t| t == key) else { continue };
-            let Some(src) = engine::derived(self.db, &a.rel) else { return Ok(None) };
-            let raw = raws.entry((a.rel.to_string(), kc)).or_insert_with(|| {
-                let mut m: HashMap<i64, f64> = HashMap::new();
-                for row in 0..src.len() { *m.entry(src.value(row, kc)).or_default() += 1.0; }
-                m
-            }).clone();
-            // Its filters: another positive atom whose one variable is another of this atom's.
-            for (e, l2) in r.body.iter().enumerate() {
-                let Literal::Atom(f) = l2 else { continue };
-                if e == d || f.neg { continue }
-                let fvars: Vec<(usize, &Term)> = f.args.iter().enumerate().filter(|(_, t)| matches!(t, Term::Var(_))).collect();
-                let [(fc, u)] = fvars[..] else { continue };
-                if u == key { continue }
-                let Some(uc) = a.args.iter().position(|t| t == u) else { continue };
-                let mut consts: Vec<(usize, Option<i64>)> = Vec::new();
-                for (c, t) in f.args.iter().enumerate() {
-                    match t {
-                        Term::Int(i) => consts.push((c, Some(*i))),
-                        Term::Str(x) => consts.push((c, engine::symbol_id(self.db, x)?)),
-                        _ => {}
-                    }
-                }
-                if consts.is_empty() { continue }
-                let fkey = (f.rel.to_string(), fc, consts.clone());
-                let ok = match passed.get(&fkey) {
-                    Some(ok) => ok.clone(),
-                    None => {
-                        let Some(fsrc) = engine::derived(self.db, &f.rel) else { continue };
-                        let passes = |row: usize| consts.iter().all(|&(c, id)| id == Some(fsrc.value(row, c)));
-                        // The rows of the first constant, where an index holds them; else one pass.
-                        let (cc, id) = consts[0];
-                        let rows = match id {
-                            None => Some(Vec::new()),
-                            Some(id) if !fsrc.sorts_rows(cc) => fsrc.lookup(cc, &[id]),
-                            Some(_) => None,
-                        };
-                        let ok: HashSet<i64> = match rows {
-                            Some(rows) => rows.into_iter().filter(|&row| passes(row)).map(|row| fsrc.value(row, fc)).collect(),
-                            None => (0..fsrc.len()).filter(|&row| passes(row)).map(|row| fsrc.value(row, fc)).collect(),
-                        };
-                        let ok = std::sync::Arc::new(ok);
-                        passed.insert(fkey, ok.clone());
-                        ok
-                    }
-                };
-                let pkey = (a.rel.to_string(), kc, uc, std::sync::Arc::as_ptr(&ok) as usize);
-                let pass = pairs.entry(pkey).or_insert_with(|| {
-                    let mut m: HashMap<i64, f64> = HashMap::new();
-                    for row in 0..src.len() {
-                        if ok.contains(&src.value(row, uc)) { *m.entry(src.value(row, kc)).or_default() += 1.0; }
-                    }
-                    m
-                }).clone();
-                model.pass.insert((d, e), pass);
-            }
-            model.raw.insert(d, raw);
-        }
-        Ok((!model.raw.is_empty()).then_some(model))
     }
 
     /// Decision 0209 §5's spike: whether a line's best order differs between its heavy key values and the rest.
@@ -8287,12 +8214,12 @@ impl<'a> Run<'a, '_> {
                     // Decision 0223: each part's work is estimated by ratio to its rows' sizes (`heavy_parts`), not
                     // by its rows: a heavy row's work grows with its key's rows, and a part's few sampled rows
                     // stood for all of its rows at their mean.
-                    // O173: a row's size is its order's work at its key, from pair counts (`KeyModel`): the
-                    // key's rows alone missed a heavy function's few calls.
+                    // Decision 0232: a row's size is its order's work at its key, sampled by a walk from the line's
+                    // own rows at that key (`Walker`): filters, chains and the atoms closing cycles and triangles are
+                    // measured at the key, not over the relation.
                     let t_model = std::time::Instant::now();
                     let hp = self.heavy_parts(&name, line, r, lead)?.filter(|hp| !hp.hot.is_empty() && !hp.cold.is_empty());
                     let parts_s = t_model.elapsed().as_secs_f64();
-                    let model = match &hp { Some(hp) => self.key_model(r, &hp.key_var)?, None => None };
                     let parts = hp.as_ref().map(|hp| {
                         // (the rows picked, the part's rows, the picked rows' places in the part)
                         let stride = |ids: &[u32], k: usize| -> (Vec<u32>, usize, usize) {
@@ -8303,21 +8230,69 @@ impl<'a> Run<'a, '_> {
                         let kc = sample.saturating_sub(kh).max(1).min(hp.cold.len());
                         [stride(&hp.hot, kh), stride(&hp.cold, kc)]
                     });
-                    // An order's sizes summed over a part's picked rows and over all its rows.
-                    let sizes = |o: &[Step], p: usize| -> (f64, f64) {
-                        let hp = hp.as_ref().expect("parts");
-                        let (keys, raw) = if p == 0 { (&hp.hot_keys, &hp.hot_x) } else { (&hp.cold_keys, &hp.cold_x) };
-                        let st = parts.as_ref().expect("parts")[p].2;
-                        let xs: Vec<f64> = match &model {
-                            Some(m) => {
-                                let mut memo: HashMap<i64, f64> = HashMap::new();
-                                keys.iter().map(|vs| vs.iter().map(|&v| *memo.entry(v).or_insert_with(|| m.work(r, lead, &hp.key_var, o, v))).sum::<f64>().max(1.0)).collect()
+                    let lead_src = match &r.body[lead] { Literal::Atom(a) if hp.is_some() => super::native::component::derived(self.db, &a.rel), _ => None };
+                    let walker = lead_src.as_ref().map(|_| {
+                        let db = self.db;
+                        Walker::new(r, lead, joins::walk_width(), &|rel| super::native::component::held(db, rel), &|x| super::native::component::symbol_id(db, x).ok().flatten())
+                    });
+                    // Each part's rows grouped by their keys: (the keys, the rows' places in the part).
+                    let groups: Option<[Vec<(Vec<i64>, Vec<usize>)>; 2]> = hp.as_ref().filter(|_| walker.is_some()).map(|hp| {
+                        let group = |keys: &[Vec<i64>]| {
+                            let mut at: HashMap<&[i64], usize> = HashMap::new();
+                            let mut out: Vec<(Vec<i64>, Vec<usize>)> = Vec::new();
+                            for (j, k) in keys.iter().enumerate() {
+                                let g = *at.entry(k.as_slice()).or_insert_with(|| { out.push((k.clone(), Vec::new())); out.len() - 1 });
+                                out[g].1.push(j);
                             }
-                            None => raw.clone(),
+                            out
                         };
-                        (xs.iter().step_by(st).sum(), xs.iter().sum())
+                        [group(&hp.hot_keys), group(&hp.cold_keys)]
+                    });
+                    // An order's sizes summed over a part's picked rows and over all its rows. The groups walked are
+                    // at a stride where all of them would pass the walk's budget of probes; a group not walked takes
+                    // its key rows' size times the walked groups' ratio of walk to key rows.
+                    let walk_s = std::cell::Cell::new(0.0f64);
+                    let size_memo: std::cell::RefCell<HashMap<(Vec<usize>, usize), (f64, f64)>> = Default::default();
+                    let sizes = |o: &[Step], p: usize| -> (f64, f64) {
+                        let memo_key = (o.iter().map(|s| s.at).collect::<Vec<_>>(), p);
+                        if let Some(&got) = size_memo.borrow().get(&memo_key) { return got }
+                        let t_walk = std::time::Instant::now();
+                        let hp = hp.as_ref().expect("parts");
+                        let (ids, raw) = if p == 0 { (&hp.hot, &hp.hot_x) } else { (&hp.cold, &hp.cold_x) };
+                        let st = parts.as_ref().expect("parts")[p].2;
+                        let xs: Vec<f64> = match (&walker, &groups, &lead_src) {
+                            (Some(w), Some(gs), Some(src)) => {
+                                let gs = &gs[p];
+                                let k = match &r.body[lead] { Literal::Atom(a) => a.args.len(), _ => 0 };
+                                let mut x = vec![f64::NAN; ids.len()];
+                                let (mut walked, mut walked_raw) = (0.0f64, 0.0f64);
+                                // The groups the trial ran rows of first, then the rest in a random order, until the
+                                // walk's budget of probes is spent.
+                                let mut by: Vec<(bool, u64, usize)> = gs.iter().enumerate().map(|(g, (_, rows))| (!rows.iter().any(|&j| j % st == 0), (g as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15), g)).collect();
+                                by.sort_unstable();
+                                // One budget for the line's walks, every order and part and the wide walks.
+                                let budget = joins::walk_probes();
+                                for (rest, _, g) in by {
+                                    let over = w.probes() >= budget;
+                                    if rest && over { break }
+                                    let rows = &gs[g].1;
+                                    // A group the trial ran a row of is walked wide (4 times the width, within the
+                                    // budget): its size is the ratio's denominator, where a walk's noise is not
+                                    // averaged out.
+                                    let starts: Vec<Vec<i64>> = rows.iter().step_by(rows.len().div_ceil(4).max(1)).map(|&j| (0..k).map(|c| src.value(ids[j] as usize, c)).collect()).collect();
+                                    let v = w.work_at(o, &starts, if rest || over { joins::walk_width() } else { 4 * joins::walk_width() }).max(1.0);
+                                    for &j in rows { x[j] = v; walked += v; walked_raw += raw[j]; }
+                                }
+                                let scale = if walked_raw > 0.0 { walked / walked_raw } else { 1.0 };
+                                x.iter().zip(raw.iter()).map(|(&v, &rw)| if v.is_nan() { rw * scale } else { v }).collect()
+                            }
+                            _ => raw.clone(),
+                        };
+                        let got = (xs.iter().step_by(st).sum(), xs.iter().sum());
+                        size_memo.borrow_mut().insert(memo_key, got);
+                        walk_s.set(walk_s.get() + t_walk.elapsed().as_secs_f64());
+                        got
                     };
-                    let model_s = t_model.elapsed().as_secs_f64();
                     let t_trials = std::time::Instant::now();
                     let mut measured: Vec<(Vec<Step>, super::native::component::TrialRun)> = Vec::new();
                     let mut least: [Option<u64>; 2] = [None; 2];
@@ -8350,7 +8325,11 @@ impl<'a> Run<'a, '_> {
                                 let all = (ps[0].1 + ps[1].1) as f64;
                                 // A part's work: its sample's over the sizes of the rows it ran (a cut part ran a
                                 // share of them), times all its rows' sizes.
-                                let total: f64 = got.iter().zip(ps).enumerate().map(|(p, (run, (pick, ..)))| {
+                                // A cut order cannot win: it is weighted by its parts' rows (decision 0221), and
+                                // not walked.
+                                let cut = got.iter().any(|run| run.cut);
+                                let total: f64 = got.iter().zip(ps).enumerate().map(|(p, (run, (pick, size, _)))| {
+                                    if cut { return *size as f64 * run.work as f64 / run.rows.max(1) as f64 }
                                     let (xs, xall) = sizes(o, p);
                                     let ran = xs * (run.rows as f64 / pick.len().max(1) as f64).min(1.0);
                                     if ran > 0.0 { run.work as f64 * xall / ran } else { 0.0 }
@@ -8363,8 +8342,11 @@ impl<'a> Run<'a, '_> {
                         measured.push((o.clone(), run));
                     }
                     if let Some(ps) = &parts {
-                        let (h, c) = (sizes(&running, 0), sizes(&running, 1));
-                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's sizes {:.0} of {:.0} and {:.0} of {:.0}, by {} ({:.1} ms to split, {:.1} ms for the pair counts)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, h.0, h.1, c.0, c.1, if model.is_some() { "pair counts" } else { "key rows" }, parts_s * 1e3, (model_s - parts_s) * 1e3));
+                        // Only sizes already walked (an order not cut): the log walks nothing.
+                        let walked = |p: usize| size_memo.borrow().get(&(running.iter().map(|s| s.at).collect::<Vec<_>>(), p)).copied().unwrap_or((f64::NAN, f64::NAN));
+                        let (h, c) = (walked(0), walked(1));
+                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's sizes {:.0} of {:.0} and {:.0} of {:.0}, by {} ({:.1} ms to split, {:.1} ms to walk; {} probes)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, h.0, h.1, c.0, c.1, if walker.is_some() { "walks" } else { "key rows" }, parts_s * 1e3, walk_s.get() * 1e3, walker.as_ref().map_or(0, |w| w.probes())));
+                        if let Some(w) = &walker { joins::log(|| format!("walks {}: {}", r.head.rel, w.spent())); }
                     }
                     let rule = order_rules[line];
                     let mut prices = Vec::new();
@@ -11816,44 +11798,182 @@ struct HeavyParts {
     key_var: Term,
 }
 
-/// O173: a rule's atoms on a key, counted per key value: each positive atom holding the key's rows (`raw`, by body
-/// index), and for an atom whose other variable is checked by a filter atom (one variable, the rest constants:
-/// `kind(n, "call")`), its rows whose variable passes (`pass`, by the two body indices). The filter's share at a
-/// value is its pair count over the atom's rows there: a correlation one column's counts do not see.
-struct KeyModel {
-    raw: HashMap<usize, HashMap<i64, f64>>,
-    pass: HashMap<(usize, usize), HashMap<i64, f64>>,
+/// Decision 0232: an order's work per lead row, sampled. The walk starts from lead rows (their bindings), and carries
+/// a sample of at most `width` bindings through the order's steps after the lead:
+/// - an atom binding new variables is probed with the bound ones (its relation's own index, `InRel::probe_each`); the
+///   bindings multiply by the sample's mean matches, and the matches are sampled again;
+/// - an atom whose variables are all bound (a filter, or the atom closing a cycle or a triangle) is tested on each
+///   binding; the bindings multiply by the share that pass;
+/// - a negated atom passes the bindings it does not match;
+/// - any other literal is taken at 1.
+/// Each step adds the bindings it reads. Exact where the sample holds every binding.
+pub(super) struct Walker<'a> {
+    rule: &'a Rule,
+    lead: usize,
+    /// Each variable's slot in a binding.
+    slots: HashMap<&'a Term, usize>,
+    /// Each body literal's relation, where the engine holds it.
+    rels: Vec<Option<std::sync::Arc<super::native::component::InRel>>>,
+    /// Each body atom's constants, by column: `Some(id)`, or `None` for a text no symbol has (no row holds it).
+    consts: Vec<Vec<(usize, Option<i64>)>>,
+    width: usize,
+    probes: std::cell::Cell<u64>,
+    /// The sampler's state: each thinning draws from it, so walks are unbiased and repeatable.
+    seed: std::cell::Cell<u64>,
+    /// Per body literal: its probes and their seconds (the log's measure).
+    spent: std::cell::RefCell<HashMap<usize, (u64, f64)>>,
 }
 
-impl KeyModel {
-    /// Order `o`'s work for one lead row whose key is `v`: its steps' bindings, each atom on the key multiplying
-    /// them by its rows at `v`, each filter of such an atom by its share at `v`; other steps are taken at 1.
-    fn work(&self, r: &Rule, lead: usize, key: &Term, o: &[Step], v: i64) -> f64 {
-        let Literal::Atom(la) = &r.body[lead] else { return 1.0 };
-        let mut bound: HashSet<&Term> = la.args.iter().filter(|t| matches!(t, Term::Var(_))).collect();
-        let mut by: HashMap<&Term, usize> = HashMap::new();
-        let (mut b, mut work) = (1.0f64, 0.0f64);
-        for s in o {
-            if s.at == lead { continue }
-            work += b;
-            let Literal::Atom(a) = &r.body[s.at] else { continue };
-            if a.neg { continue }
-            let vars: Vec<&Term> = a.args.iter().filter(|t| matches!(t, Term::Var(_))).collect();
-            if let Some(raw) = self.raw.get(&s.at) && bound.contains(key) {
-                let new: Vec<&Term> = vars.iter().copied().filter(|t| !bound.contains(t)).collect();
-                if !new.is_empty() {
-                    b *= raw.get(&v).copied().unwrap_or(0.0);
-                    for t in new { by.insert(t, s.at); bound.insert(t); }
-                }
+impl<'a> Walker<'a> {
+    pub(super) fn new(rule: &'a Rule, lead: usize, width: usize, rel: &dyn Fn(&str) -> Option<std::sync::Arc<super::native::component::InRel>>, sym: &dyn Fn(&str) -> Option<i64>) -> Walker<'a> {
+        let mut slots: HashMap<&'a Term, usize> = HashMap::new();
+        let (mut rels, mut consts) = (Vec::new(), Vec::new());
+        for l in rule.body.iter() {
+            let Literal::Atom(a) = l else { rels.push(None); consts.push(Vec::new()); continue };
+            for t in a.args.iter() {
+                if matches!(t, Term::Var(_)) { let n = slots.len(); slots.entry(t).or_insert(n); }
+            }
+            rels.push(rel(&a.rel));
+            consts.push(a.args.iter().enumerate().filter_map(|(c, t)| match t {
+                Term::Int(i) => Some((c, Some(*i))),
+                Term::Str(x) => Some((c, sym(x))),
+                _ => None,
+            }).collect());
+        }
+        Walker { rule, lead, slots, rels, consts, width: width.max(1), probes: std::cell::Cell::new(0), seed: std::cell::Cell::new(0x0227_5eed), spent: Default::default() }
+    }
+
+    /// The probes made so far.
+    pub(super) fn probes(&self) -> u64 {
+        self.probes.get()
+    }
+
+    /// Per body literal probed: its relation, probes and milliseconds.
+    pub(super) fn spent(&self) -> String {
+        let mut v: Vec<_> = self.spent.borrow().iter().map(|(&d, &(n, t))| (d, n, t)).collect();
+        v.sort_by_key(|x| x.0);
+        v.iter().map(|(d, n, t)| format!("{d} {}: {n} in {:.1} ms", match &self.rule.body[*d] { Literal::Atom(a) => a.rel.to_string(), _ => "?".into() }, t * 1e3)).collect::<Vec<_>>().join(", ")
+    }
+
+    /// Order `o`'s work per lead row, from the lead rows `starts` (each its values by the lead's columns).
+    pub(super) fn work(&self, o: &[Step], starts: &[Vec<i64>]) -> f64 {
+        self.work_at(o, starts, self.width)
+    }
+
+    /// `work` carrying `width` bindings a step.
+    pub(super) fn work_at(&self, o: &[Step], starts: &[Vec<i64>], width: usize) -> f64 {
+        let Literal::Atom(la) = &self.rule.body[self.lead] else { return 1.0 };
+        let n = self.slots.len();
+        let mut bound = vec![false; n];
+        let mut sample: Vec<Vec<i64>> = Vec::with_capacity(starts.len());
+        for row in starts {
+            let mut b = vec![0i64; n];
+            for (c, t) in la.args.iter().enumerate() {
+                if let Some(&i) = self.slots.get(t) { b[i] = row[c]; bound[i] = true; }
+            }
+            sample.push(b);
+        }
+        let (mut mult, mut work) = (1.0f64, 0.0f64);
+        for (si, s) in o.iter().enumerate() {
+            if s.at == self.lead { continue }
+            if sample.is_empty() || mult == 0.0 { break }
+            work += mult;
+            let Literal::Atom(a) = &self.rule.body[s.at] else { continue };
+            let Some(rel) = &self.rels[s.at] else {
+                for t in a.args.iter() { if let Some(&i) = self.slots.get(t) { bound[i] = true } }
+                continue;
+            };
+            let consts = &self.consts[s.at];
+            if consts.iter().any(|c| c.1.is_none()) {
+                // A text constant no symbol has: no row holds it.
+                if !a.neg { mult = 0.0; }
                 continue;
             }
-            if let [u] = vars[..] && let Some(&d) = by.get(u) && let Some(pass) = self.pass.get(&(d, s.at)) {
-                let raw = self.raw[&d].get(&v).copied().unwrap_or(0.0);
-                if raw > 0.0 { b *= pass.get(&v).copied().unwrap_or(0.0) / raw; }
-                continue;
+            // The key: the constants and the bound variables; the free variables, first places and repeats.
+            let mut kcols: Vec<usize> = consts.iter().map(|c| c.0).collect();
+            let mut kfrom: Vec<std::result::Result<i64, usize>> = consts.iter().map(|c| Ok(c.1.expect("checked"))).collect();
+            let mut free: Vec<(usize, usize)> = Vec::new();
+            let mut repeat: Vec<(usize, usize)> = Vec::new();
+            for (c, t) in a.args.iter().enumerate() {
+                let Some(&i) = self.slots.get(t) else { continue };
+                if bound[i] { kcols.push(c); kfrom.push(Err(i)); }
+                else if free.iter().any(|f| f.1 == i) { repeat.push((c, i)); }
+                else { free.push((c, i)); }
             }
-            bound.extend(vars);
+            // An expansion samples `width` of its matches, or 16 times that where checks follow it (a filter, the
+            // atom closing a cycle): a check passing few rows is measured on enough of them. The sample is thinned
+            // back to `width` before the next expansion.
+            let expands = !a.neg && !free.is_empty();
+            let reservoir = if expands {
+                if sample.len() > width { sample = self.thin(sample, width); }
+                let mut after = bound.clone();
+                for &(_, i) in &free { after[i] = true; }
+                let checked = o[si + 1..].iter().find(|x| x.at != self.lead).is_some_and(|x| match &self.rule.body[x.at] {
+                    Literal::Atom(b) => b.args.iter().all(|t| self.slots.get(t).is_none_or(|&i| after[i])),
+                    _ => false,
+                });
+                if checked { 16 * width } else { width }
+            } else { width };
+            let mut ext: Vec<Vec<i64>> = Vec::new();
+            let (mut matched, mut kept) = (0u64, Vec::new());
+            let t_step = std::time::Instant::now();
+            let n_step = sample.len() as u64;
+            for b in &sample {
+                let key: Vec<i64> = kfrom.iter().map(|k| match *k { Ok(v) => v, Err(i) => b[i] }).collect();
+                let mut found = false;
+                self.probes.set(self.probes.get() + 1);
+                rel.probe_each(&kcols, &key, &mut |row| {
+                    let ok = repeat.iter().all(|&(c, i)| free.iter().find(|f| f.1 == i).is_some_and(|f| row(f.0) == row(c)));
+                    if !ok { return }
+                    found = true;
+                    matched += 1;
+                    if !a.neg && !free.is_empty() {
+                        // A reservoir of `width` of the matches, uniform without replacement: the rest are counted,
+                        // not kept.
+                        let at = if ext.len() < reservoir { Some(ext.len()) } else {
+                            let j = (self.draw() % matched) as usize;
+                            (j < reservoir).then_some(j)
+                        };
+                        if let Some(at) = at {
+                            let mut e = b.clone();
+                            for &(c, i) in &free { e[i] = row(c); }
+                            if at == ext.len() { ext.push(e) } else { ext[at] = e }
+                        }
+                    }
+                });
+                if a.neg != found && (a.neg || free.is_empty()) { kept.push(b.clone()); }
+            }
+            { let mut sp = self.spent.borrow_mut(); let e = sp.entry(s.at).or_default(); e.0 += n_step; e.1 += t_step.elapsed().as_secs_f64(); }
+            let len = sample.len() as f64;
+            if a.neg || free.is_empty() {
+                mult *= kept.len() as f64 / len;
+                sample = kept;
+            } else {
+                mult *= matched as f64 / len;
+                for &(_, i) in &free { bound[i] = true; }
+                sample = ext;
+            }
         }
         work
+    }
+}
+
+impl Walker<'_> {
+    /// At most `width` of `rows`, drawn at random without replacement (a partial shuffle).
+    fn thin(&self, mut rows: Vec<Vec<i64>>, width: usize) -> Vec<Vec<i64>> {
+        for i in 0..width.min(rows.len()) {
+            let j = i + (self.draw() % (rows.len() - i) as u64) as usize;
+            rows.swap(i, j);
+        }
+        rows.truncate(width);
+        rows
+    }
+
+    /// The sampler's next draw (xorshift): walks are unbiased, and repeatable from the seed.
+    fn draw(&self) -> u64 {
+        let mut x = self.seed.get();
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        self.seed.set(x);
+        x
     }
 }

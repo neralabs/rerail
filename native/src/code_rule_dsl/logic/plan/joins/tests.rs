@@ -258,51 +258,69 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     assert!((by_heavy / cube - 1.0).abs() < 0.01, "{by_heavy} against {cube}");
 }
 
-/// O173: a key value's work for an order, from pair counts (`KeyModel`), is the work of running the order on it: each
-/// step's bindings, a filter's share taken at the key value, not over the relation. Two functions of one size with
-/// few and many calls have unlike work; one column's counts give them the same.
+/// Decision 0232: an order's work per lead row, by a walk of sampled bindings (`Walker`), is the work of running the
+/// order, exactly where the sample holds every binding: a filter, a chain, and the atom closing a triangle
+/// (`e(n, j)`, over two variables that two other atoms bound) each measured at the row's key. Two functions of one
+/// size and one count of calls, with unlike edges among their nodes, have unlike work.
 #[test]
-fn a_key_values_work_from_pair_counts_is_its_run() {
-    use crate::code_rule_dsl::logic::front::Literal;
-    use crate::code_rule_dsl::logic::plan::{KeyModel, Step};
-    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), k(j, 3).\n.output h\n").unwrap();
+fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    use crate::code_rule_dsl::logic::plan::{Step, Walker};
+    use std::collections::HashMap;
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
     let rule = &p.rules[0];
-    // Two functions of 40 nodes each: function 1 holds 2 calls (kind 1), function 2 holds 30; each has returns
-    // (kind 2) and identifiers (kind 3).
-    let mut r_rows: Vec<(i64, i64)> = Vec::new();
-    let mut kind: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-    for (f, calls) in [(1i64, 2usize), (2, 30)] {
-        for i in 0..40usize {
-            let n = f * 1000 + i as i64;
-            r_rows.push((f, n));
-            kind.insert(n, if i < calls { 1 } else if i < calls + 3 { 2 } else { 3 });
+    // Two functions of 30 nodes: 3 calls (kind 1), 2 returns (kind 2), the rest identifiers (kind 3). Function 1's
+    // calls have an edge to every node; function 2's, one each.
+    let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
+    for f in [1i64, 2] {
+        let nodes: Vec<i64> = (0..30).map(|i| f * 1000 + i).collect();
+        for (i, &n) in nodes.iter().enumerate() {
+            r.push([f, n]);
+            k.push([n, if i < 3 { 1 } else if i < 5 { 2 } else { 3 }]);
+        }
+        for &c in &nodes[..3] {
+            if f == 1 { for &j in &nodes { e.push([c, j]) } } else { e.push([c, nodes[10]]) }
         }
     }
-    let count = |f: i64, t: Option<i64>| r_rows.iter().filter(|&&(g, n)| g == f && t.is_none_or(|t| kind[&n] == t)).count() as f64;
-    let raw = |_| -> std::collections::HashMap<i64, f64> { [1, 2].into_iter().map(|f| (f, count(f, None))).collect() };
-    let pass = |t: i64| -> std::collections::HashMap<i64, f64> { [1, 2].into_iter().map(|f| (f, count(f, Some(t)))).collect() };
-    // Body: 0 r(f,n), 1 k(n,1), 2 r(f,m), 3 k(m,2), 4 r(f,j), 5 k(j,3); the lead is 3.
-    let model = KeyModel {
-        raw: [(0, raw(0)), (2, raw(2)), (4, raw(4))].into_iter().collect(),
-        pass: [((0, 1), pass(1)), ((4, 5), pass(3))].into_iter().collect(),
-    };
-    let order: Vec<Step> = [3, 2, 0, 1, 4, 5].into_iter().map(|at| Step { at, mode: None }).collect();
-    let key = match &rule.body[0] { Literal::Atom(a) => a.args[0].clone(), _ => unreachable!() };
-    // The order run by hand on one return of function `f`: the bindings before each step after the lead, summed.
-    let run = |f: i64| -> f64 {
-        let nodes: Vec<i64> = r_rows.iter().filter(|r| r.0 == f).map(|r| r.1).collect();
+    let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
+    let rels: HashMap<&str, std::sync::Arc<InRel>> = [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().collect();
+    let order: Vec<Step> = [3, 2, 0, 1, 4, 5, 6].into_iter().map(|at| Step { at, mode: None }).collect();
+    // The order run by hand: every binding enumerated, each step adding the bindings it reads.
+    let run = |start: [i64; 2]| -> f64 {
+        let mut binds: Vec<HashMap<String, i64>> = vec![[("m".to_owned(), start[0])].into_iter().collect()];
         let mut work = 0.0;
-        work += 1.0; // r(f, m): binds f
-        work += 1.0; // r(f, n)
-        work += nodes.len() as f64; // k(n, 1)
-        let calls = nodes.iter().filter(|n| kind[n] == 1).count() as f64;
-        work += calls; // r(f, j)
-        work += calls * nodes.len() as f64; // k(j, 3)
+        for s in order.iter().skip(1) {
+            work += binds.len() as f64;
+            let Literal::Atom(a) = &rule.body[s.at] else { unreachable!() };
+            let rows = match a.rel.as_ref() { "r" => &r, "k" => &k, _ => &e };
+            let mut next = Vec::new();
+            for b in &binds {
+                for row in rows.iter() {
+                    let mut nb = b.clone();
+                    let ok = a.args.iter().zip(row).all(|(t, &v)| match t {
+                        Term::Int(i) => *i == v,
+                        Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) => w == v, None => { nb.insert(x.to_string(), v); true } },
+                        _ => true,
+                    });
+                    if ok { next.push(nb) }
+                }
+            }
+            binds = next;
+        }
         work
     };
-    for f in [1, 2] {
-        let got = model.work(rule, 3, &key, &order, f);
-        assert_eq!(got, run(f), "function {f}");
+    let walker = Walker::new(rule, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
+    for f in [1i64, 2] {
+        let start = [f * 1000 + 3, 2];
+        assert_eq!(walker.work(&order, &[start.to_vec()]), run(start), "function {f}");
     }
-    assert!(model.work(rule, 3, &key, &order, 2) > 8.0 * model.work(rule, 3, &key, &order, 1));
+    let (w1, w2) = (walker.work(&order, &[vec![1003, 2]]), walker.work(&order, &[vec![2003, 2]]));
+    // The same size and calls; the difference is the edges the triangle's atom passes: 90 in function 1, 3 in 2.
+    assert_eq!((w1, w2), (215.0, 128.0), "the triangle's edges, measured at the key");
+    // A narrow walk (16 bindings a step, of up to 90) is unbiased: its mean over walks is the work.
+    let narrow = Walker::new(rule, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
+    let walks = 400;
+    let est = (0..walks).map(|_| narrow.work(&order, &[vec![1003, 2]])).sum::<f64>() / walks as f64;
+    assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
 }
