@@ -719,8 +719,8 @@ describe("CodeRuleBridge", () => {
       await mkdir(locked);
       const folder = `src/locked: ${denyFolder(locked)}`;
       // An unlisted file too large to read is said once at its stamp; the folder at each turn the walk cannot read it.
-      await writeFile(join(root, "big.bin"), Buffer.alloc(1_000_001));
-      const large = "big.bin: Source exceeds 1000000 byte policy limit";
+      await writeFile(join(root, "dump.raw"), "x\n".repeat(500_001));
+      const large = "dump.raw: Source exceeds 1000000 byte policy limit";
       const gaps: unknown[] = [];
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
         onDiscoveryGap: gap => { gaps.push(gap); },
