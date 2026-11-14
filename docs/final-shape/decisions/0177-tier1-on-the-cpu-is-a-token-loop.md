@@ -645,3 +645,30 @@ Guard: `a_strings_tests_need_a_control_byte_or_a_backslash`. Measured (`jit_agai
 load average 53): tier 1 ahead of time 263 instructions a node, from 274; tier 1 + 2, 505
 from 516. The JIT's is unchanged (362): Cranelift's vector code for the compare costs about
 the call it saves.
+
+## The two common rules, if-converted
+
+Most tokens are of two rules (`.rr`, by the census over the corpus: a pair's, punctuation,
+55.5%; a run's, words, 35.3%; strings 7.5%, the rest under 2%). Tokens of the two alternate,
+so a branch between them is mispredicted often.
+
+The compiler if-converts them. It takes the pair rule and the run rule (one whose word is in
+a register) that the most first bytes take, where their tests are all first-byte bits. Those
+bits are now set on their rule's bytes alone, so a test can run on a path two rules share.
+Then:
+
+```text
+either = rule == pair || rule == run      one branch, mostly taken
+l_pair = s + the pair's next-byte bit      straight-line (`next_last`)
+l_run  = s + ctz(~(word >> (s + 1)))       the run in the block's word
+slow   = rule == run && the run leaves the word     to the run's own block
+l      = select(rule == pair, l_pair, l_run)
+the two rules' tests, by their bits
+```
+
+Every other rule goes through the jump table as before.
+
+Measured (`jit_against_aot`, load average 59): the JIT's tier 1, 86 cycles a node from 146
+(394 instructions from 362, the mispredicted dispatch gone); its tier 1 + 2, 144 cycles from
+204. Ahead of time, flat: 77 cycles, 274 instructions from 263 (rustc had made the dispatch
+a chain of compares, as cheap as the straight-line work it replaces).

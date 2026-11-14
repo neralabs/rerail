@@ -1600,6 +1600,19 @@ pub mod tests {
         if let Some(r) = &c.native.records {
             let bytes = |k: usize| (0..256).filter(|&b| usize::from(r.ends[b]) == k).count();
             eprintln!("{} end rules: {}", r.rules.len(), r.rules.iter().enumerate().map(|(k, x)| format!("{x:?} ({} bytes)", bytes(k))).collect::<Vec<_>>().join(", "));
+            // Each rule's share of the corpus's tokens (by their first bytes): what a dispatch
+            // is laid out for.
+            let files = corpus();
+            let mut per = vec![0u64; r.rules.len() + 1];
+            for f in &files {
+                let run = c.program.block_programs[0].run(f.as_bytes());
+                for &st in &run.positions[usize::from(r.starts)] {
+                    let rule = usize::from(r.ends[usize::from(f.as_bytes()[st as usize])]);
+                    per[rule.min(r.rules.len())] += 1;
+                }
+            }
+            let all: u64 = per.iter().sum();
+            eprintln!("tokens by rule: {}", per.iter().enumerate().map(|(k, &n)| format!("{k}: {:.1}%", 100.0 * n as f64 / all as f64)).collect::<Vec<_>>().join(", "));
         }
         let reach = |o: usize| {
             let mut seen = vec![false; n];

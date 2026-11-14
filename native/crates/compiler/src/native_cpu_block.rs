@@ -1738,7 +1738,7 @@ impl RecordTables {
             match test_filter(made, c).filter(|_| bit < TOKEN_PAIR_ROW) {
                 Some(n) => {
                     filters.push(Some(bit));
-                    sets.push((bit, n));
+                    sets.push((bit, n, c.rule));
                     bit += 1;
                 }
                 None => filters.push(None),
@@ -1752,7 +1752,9 @@ impl RecordTables {
                 Some(&crate::records::EndRule::Next(i)) => r.nexts[usize::from(i)].row.get(b).copied().unwrap_or(0),
                 _ => 0,
             };
-            let tests = sets.iter().filter(|(_, n)| n.has(b as u8)).fold(0u32, |a, &(k, _)| a | 1 << k);
+            // A bit only on its rule's bytes: a test then runs wherever its bit is set, on a path
+            // that more than one rule takes (`rule_last`'s fused rules).
+            let tests = sets.iter().filter(|(_, n, k)| n.has(b as u8) && *k == rule).fold(0u32, |a, &(k, _, _)| a | 1 << k);
             *e = u32::from(r.kinds[b]) | u32::from(rule) << TOKEN_RULE | u32::from(wordy) << TOKEN_WORDY | tests | u32::from(row) << TOKEN_PAIR_ROW;
         }
         words.extend(entries.chunks(2).map(|c| u64::from(c[0]) | u64::from(c[1]) << 32));
@@ -2176,7 +2178,6 @@ impl Reads<'_> {
 #[allow(clippy::too_many_arguments)]
 fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value) {
     use crate::records::EndRule;
-    let ro = MemFlags::trusted().with_readonly();
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
     let (ended, done) = (f.create_block(), f.create_block());
     f.append_block_param(ended, types::I64);
@@ -2198,6 +2199,47 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let q0 = f.ins().ushr_imm(s, 6);
     let sh = f.ins().band_imm(s, 63);
     let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
+    // The two common rules, if-converted (decision 0177): a pair's (`Next`) and a run's in a
+    // register (`Run`), each the rule most first bytes take of its form, where their tests
+    // are all by first-byte bits (`TOKEN_TESTS`, each on its rule's bytes alone). Both lasts
+    // straight-line and one `select`, no branch between them: a run past its block's word
+    // goes to its rule's block. Most tokens are of the two (`.rr`: punctuation and words).
+    let reg_of = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v));
+    let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
+    let filtered = |k: usize| r.checks.iter().zip(&t.filters).all(|(x, b)| usize::from(x.rule) != k || b.is_some());
+    let kn = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Next(_)) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
+    let kr = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Run(o) if reg_of(o).is_some()) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
+    if let (Some(kn), Some(kr)) = (kn, kr) {
+        let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { unreachable!("the forms chosen") };
+        let (go, table, on) = (f.create_block(), f.create_block(), f.create_block());
+        let is_n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
+        let is_r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
+        let either = f.ins().bor(is_n, is_r);
+        f.ins().brif(either, go, &[], table, &[]);
+        f.switch_to_block(go);
+        let l_n = next_last(f, t, c, s, raw, entry, pi);
+        // The run from `s + 1` in the block's word: whole where it ends inside it.
+        let v = reg_of(o).expect("a register word");
+        let i1 = f.ins().iadd_imm(s, 1);
+        let isn = f.ins().band_imm(i1, 63);
+        let y = f.ins().ushr(v, isn);
+        let y = f.ins().bnot(y);
+        let ones = f.ins().ctz(y);
+        let left = f.ins().irsub_imm(isn, 64);
+        let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, left);
+        let inreg = f.ins().icmp_imm(IntCC::NotEqual, isn, 0);
+        let fast = f.ins().band(short, inreg);
+        let l_r = f.ins().iadd(s, ones);
+        let slow = f.ins().band_not(is_r, fast);
+        f.ins().brif(slow, blocks[kr], &[], on, &[]);
+        f.switch_to_block(on);
+        // The tests' blocks first (`tested` is built from an empty block), then the select.
+        let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(x, _)| usize::from(x.rule) == kn || usize::from(x.rule) == kr).map(|(x, &b)| (*x, b)).collect();
+        let to = if tests.is_empty() { ended } else { tested(f, &tests, rd, c, s, entry, done, heads) };
+        let l = f.ins().select(is_n, l_n, l_r);
+        f.ins().jump(to, &[l.into(), untag.into()]);
+        f.switch_to_block(table);
+    }
     // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
     // alone (`records::NO_RULE`, past the table).
     let none = f.create_block();
@@ -2221,23 +2263,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             // row's set, if inside the file (`PairTable`): the next byte from the token's
             // bytes, one load of the set.
             EndRule::Next(i) => {
-                let (_, sets) = t.pairs[usize::from(i)];
-                let i1 = f.ins().iadd_imm(s, 1);
-                let inside = f.ins().icmp(IntCC::UnsignedLessThan, i1, c.len);
-                let b = f.ins().ushr_imm(raw, 8);
-                let b = f.ins().band_imm(b, 0xff);
-                let row = f.ins().ushr_imm(entry, TOKEN_PAIR_ROW);
-                let w = f.ins().ishl_imm(row, 2);
-                let hi = f.ins().ushr_imm(b, 6);
-                let w = f.ins().iadd(w, hi);
-                let w = f.ins().ishl_imm(w, 3);
-                let wa = f.ins().iadd(c.tables, w);
-                let set = f.ins().load(types::I64, ro, wa, sets as i32);
-                let bit = f.ins().ushr(set, b);
-                let bit = f.ins().band_imm(bit, 1);
-                let inside = f.ins().uextend(types::I64, inside);
-                let bit = f.ins().band(bit, inside);
-                let l = f.ins().iadd(s, bit);
+                let l = next_last(f, t, c, s, raw, entry, i);
                 f.ins().jump(ended, &[l.into(), untag.into()]);
             }
             EndRule::Pair(o) => {
@@ -2445,6 +2471,31 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     f.ins().jump(done, &[l.into(), zero.into(), tag.into(), zero.into()]);
     f.switch_to_block(done);
     (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2], f.block_params(done)[3])
+}
+
+/// A pair's last (`EndRule::Next`, table `i`): the first byte's row (its entry's), then the
+/// next byte's bit in the row's set, if inside the file (`PairTable`): the next byte from the
+/// token's bytes, one load of the set.
+#[allow(clippy::too_many_arguments)]
+fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Value, raw: Value, entry: Value, i: u16) -> Value {
+    let ro = MemFlags::trusted().with_readonly();
+    let (_, sets) = t.pairs[usize::from(i)];
+    let i1 = f.ins().iadd_imm(s, 1);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, i1, c.len);
+    let b = f.ins().ushr_imm(raw, 8);
+    let b = f.ins().band_imm(b, 0xff);
+    let row = f.ins().ushr_imm(entry, TOKEN_PAIR_ROW);
+    let w = f.ins().ishl_imm(row, 2);
+    let hi = f.ins().ushr_imm(b, 6);
+    let w = f.ins().iadd(w, hi);
+    let w = f.ins().ishl_imm(w, 3);
+    let wa = f.ins().iadd(c.tables, w);
+    let set = f.ins().load(types::I64, ro, wa, sets as i32);
+    let bit = f.ins().ushr(set, b);
+    let bit = f.ins().band_imm(bit, 1);
+    let inside = f.ins().uextend(types::I64, inside);
+    let bit = f.ins().band(bit, inside);
+    f.ins().iadd(s, bit)
 }
 
 /// A rule's end block that tests its token `s..=l` (`l` its parameter) by its token tests
