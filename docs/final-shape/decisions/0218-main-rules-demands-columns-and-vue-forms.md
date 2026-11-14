@@ -1,4 +1,4 @@
-# 0218: A demand keeps only what its call's arguments reach
+# 0218: Demands keep what their arguments reach; a column's type through `=`; a witness's end point; export lists are references
 
 Status: decided (2026-11-14, in the work on what decisions 0201 and 0202 left open: "please merge in the hub
 again / Then work through all of these").
@@ -35,6 +35,22 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
    - A cut can make a demand possible where an unconnected, ungrounded literal blocked one before. AIR311's
      `quoted_name_param` and `seen_airflow` now have demands.
 
+2. **An rr helper column's type follows `x = y`** (`rr::lower::type_through`). A context or helper relation's
+   column takes its type from the literals that bind it. When only an equality binds it (react-hooks-immutability's
+   `rr_ctx120($F, …) :- …, $F = $n`), the type is the other variable's. It was `sym`, the fallback. An ordered
+   comparison refuses a symbol column, and guest hiding bounds every node column with one (`$F < 2^62`). So the
+   aggregate's support stratum had no native step, and the run aborted under `RERAIL_SQL_STRICT`.
+3. **`end_point(n, p)`: the point where a node ends** (core.rr). p is an empty span at n's end offset, with its
+   line and column. A finding can sit on it. The syntax vtab places one per node after a document's lines, only for
+   a program that reads `end_point` (`Locs::ends`), so no other program's ids move. It is read off the node's own
+   span, not a token, so a token the tape leaves out cannot move it.
+   - The translator writes main's `witness.end` as `end_point(witness, at)`. Before, it was `@place(path,
+     end_line)`, a place with no column.
+4. **An export list's name is a reference** (`tsx/names.rr`). In `export { e }` with no `from`, `e` reads the top
+   level's e, as main's scope makes it one reference of both spaces. Its `ref` space is `"dual"`: the lookup stops at
+   a scope that declares e as a value or a type, and `ref_site` joins either. Readers of value references
+   (`free_ref`, `env_global`) do not see it, so a type-only `export { T }` is no free global.
+
 ## Consequences
 
 - no-shadow over 62 React and TypeScript files: 3.4 s CPU, against 39 s, with the same findings. Over 10 files:
@@ -46,3 +62,12 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
   1 to 9 findings. AIR311 runs in 0.7 s against 0.8 s.
 - The Ruff fixture comparison is as at 0201: F601 13 missing; F632, F722 and PIE796 find nothing; three codes have
   no generated rule; the other 10 are equal.
+- react-hooks-immutability runs under `RERAIL_SQL_STRICT` on the 292 React fixture and probe files where it aborted
+  before (rc 134), in 5.7 s CPU, with 3 findings.
+- explicit-module-boundary-types, on its nine-line probe, flags lines 1, 4, 5, 7, 8 and 9, as typescript-eslint
+  does. `export const d = () => 1` is at column 19, the end of `()`: main's `witness.end`. `const e = () => 1;
+  export { e }` is now flagged at line 5.
+- Of main's 31 rules only explicit-module-boundary-types translates differently; all pass the reader. The Python
+  pack's goldens are unchanged. Main's four Vue rules match 130 of 142 fixture findings, as before; no-shadow finds
+  the same over the 62 files.
+

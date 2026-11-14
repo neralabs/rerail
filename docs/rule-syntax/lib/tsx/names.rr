@@ -165,6 +165,13 @@ jsx_tag_ref(r) :- kind(r, "identifier"), field(o, "name", r),
     (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), !match("[a-z].*", r).
 // `{ a }` in an object literal reads the variable a: shorthand `{ a }` means `{ a: a }`.
 ref(r, x, "value") :- kind(r, "shorthand_property_identifier"), text(r, x).
+// `export { e }` (no `from`): the name reads the top level's e, a value or a type, as main's scope makes it one
+// reference of both spaces. Its space is "dual": the lookup stops at a scope that declares e in either space. A
+// re-export (`export { e } from "m"`) names no local binding.
+ref(r, x, "dual") :- export_list_name(r), text(r, x).
+.decl export_list_name(r: node)
+export_list_name(r) :- field(p, "name", r), kind(r, "identifier"), kind(p, "export_specifier"), child(c, p, _),
+    kind(c, "export_clause"), child(st, c, _), !field(st, "source", _).
 // `({ a } = obj)` assigns the variable a: a shorthand pattern that declares nothing is a (write) reference.
 ref(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, x), !decl_site(_, x, r, _, _).
 // Lookup: from the innermost scope outwards, to the first that declares the name in its namespace.
@@ -179,7 +186,8 @@ lex_scope(k) :- fn_scope(k) ; block_scope(k).
 // Start at the innermost scope around r.
 look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, lex_scope).
 // Step outwards only while the current scope does not declare x; so the inner declaration shadows outer ones.
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
+look(r, x, sp, p) :- look(r, x, sp, s), sp != "dual", !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
+look(r, x, "dual", p) :- look(r, x, "dual", s), !decl_site(s, x, _, _, _), nearest(s, p, lex_scope).
 
 // ==== interface ===================================================================================================
 // ref_site(r, site): reference r resolves to declaration site. The lookup above stops at the first scope that
@@ -187,6 +195,7 @@ look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p
 // In `import { Link } from "x"; <Link/>`, the use of Link has ref_site to the import specifier.
 .decl ref_site(r: node, site: node)
 ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
+ref_site(r, d) :- look(r, x, "dual", s), decl_site(s, x, d, _, _).
 // site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern" | "catch").
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)

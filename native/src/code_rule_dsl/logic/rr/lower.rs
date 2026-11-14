@@ -3293,6 +3293,27 @@ impl Lowerer {
     /// A helper column's type: the column it fills in the body's atoms, else the type of the aggregate or the
     /// computation that assigns it (`k = 0 - i` is a number, which a `join` orders by value).
     fn type_of(&self, v: &str, bodies: &[Vec<Literal>]) -> String {
+        self.type_through(v, bodies, &mut BTreeSet::new())
+    }
+
+    /// `type_of`, following `x = y` between variables: a context's `$F = $n` gives F n's type (a node), not the
+    /// symbol a column no literal types falls back to, which an ordered comparison refuses.
+    fn type_through(&self, v: &str, bodies: &[Vec<Literal>], seen: &mut BTreeSet<String>) -> String {
+        if !seen.insert(v.to_owned()) {
+            return "sym".to_owned();
+        }
+        let mut alias: Option<String> = None;
+        for literal in bodies.iter().flatten() {
+            if let Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Var(y) } = literal
+                && alias.is_none()
+            {
+                if x == v && !seen.contains(y.as_str()) {
+                    alias = Some(y.to_string());
+                } else if y == v && !seen.contains(x.as_str()) {
+                    alias = Some(x.to_string());
+                }
+            }
+        }
         for literal in bodies.iter().flatten() {
             match literal {
                 Literal::Atom(a) if !a.neg => {
@@ -3338,7 +3359,10 @@ impl Lowerer {
                 _ => {}
             }
         }
-        "sym".to_owned()
+        match alias {
+            Some(y) => self.type_through(&y, bodies, seen),
+            None => "sym".to_owned(),
+        }
     }
 
     fn term(&mut self, t: &STerm) -> Result<Term, Error> {
