@@ -809,3 +809,16 @@ at every token. Now:
 Tier 1 AOT 186 to 171 instructions a node, JIT 259 to 251. The loop
 still spills around its dispatch: see decision 0231, "Why the spills
 stay".
+
+Two more (the same day):
+
+- **`from` is read, not carried.** Where the refill folds the gap marks
+  (decision 0177), the bits not yet taken start past the token before's
+  first byte, in the token's block. That byte is in the record behind the
+  cursor (`FileCols::after_last_start`). The merge, the refill and the end
+  read it there; the loop carries no value a token for it.
+- **Cold blocks are cold in the Rust.** `clif_rust` writes
+  `core::hint::cold_path()` at each block Cranelift has cold, so rustc
+  lays them out and weighs them as Cranelift does.
+
+Tier 1 AOT 171 to 164 instructions a node.

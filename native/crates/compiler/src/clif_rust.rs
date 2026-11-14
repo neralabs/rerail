@@ -140,6 +140,12 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
         out.push_str("    let mut d: u32 = 0;\n");
         let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
             let mut s = String::new();
+            // A cold block (`set_cold_block`) says so to rustc, as Cranelift lays it out: the
+            // branch to it unlikely, its code out of the hot path, and no register kept for it
+            // where the hot path wants one.
+            if f.layout.is_cold(blocks[node]) {
+                s.push_str("core::hint::cold_path();\n");
+            }
             for inst in f.layout.block_insts(blocks[node]) {
                 s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
                 s.push('\n');
@@ -155,6 +161,9 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     writeln!(out, "    let mut b: u32 = {};\n    loop {{\n        match b {{", entry.as_u32()).unwrap();
     for blk in f.layout.blocks() {
         writeln!(out, "            {} => {{", blk.as_u32()).unwrap();
+        if f.layout.is_cold(blk) {
+            out.push_str("                core::hint::cold_path();\n");
+        }
         for inst in f.layout.block_insts(blk) {
             let s = instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}; continue;", to.as_u32())))?;
             for line in s.lines() {

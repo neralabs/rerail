@@ -1900,6 +1900,24 @@ impl FileCols {
         }
     }
 
+    /// One past the first byte of the token before the cursor's (its record, written), 0 at the
+    /// first token: where the gap marks' bits not yet taken start (`records::gap_marks`), as the
+    /// loop leaves it, read where it is needed and not carried a token.
+    fn after_last_start(&self, f: &mut FunctionBuilder<'_>, cur: Value) -> Value {
+        let zero = f.ins().iconst(types::I64, 0);
+        let first = self.cursor(f, zero);
+        let is_first = f.ins().icmp(IntCC::Equal, cur, first);
+        let back = match self.layout {
+            crate::records::RecordLayout::Columns => f.ins().iadd_imm(cur, -1),
+            crate::records::RecordLayout::Rows => f.ins().iadd_imm(cur, -(crate::records::RecordLayout::Rows.stride() as i64)),
+        };
+        let at = f.ins().select(is_first, cur, back);
+        let (a, o) = self.at(f, crate::records::FIELD_START, at);
+        let start = f.ins().uload32(MemFlags::trusted(), a, o);
+        let one = f.ins().iadd_imm(start, 1);
+        f.ins().select(is_first, zero, one)
+    }
+
     /// Field `field` at cursor `cur`: the address and its offset.
     fn at(&self, f: &mut FunctionBuilder<'_>, field: usize, cur: Value) -> (Value, i32) {
         match self.layout {
@@ -3321,7 +3339,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let acc0 = if folded {
                 let q064 = f.ins().ishl_imm(q0, 6);
                 let before = f.ins().iadd_imm(q064, -1);
-                marks_in(f, &rd, c, &lift, h[4], before, None, false, heads)
+                let fr = c.after_last_start(f, h[0]);
+                marks_in(f, &rd, c, &lift, fr, before, None, false, heads)
             } else {
                 zero
             };
@@ -3332,14 +3351,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // Where the gap marks' bits not in `acc` start: in block `q` or before it.
             let (pend_q, from_q) = if folded {
                 let q64 = f.ins().ishl_imm(q, 6);
-                (f.ins().bor(h[3], acc), f.ins().umax(h[4], q64))
+                let fr = c.after_last_start(f, h[0]);
+                (f.ins().bor(h[3], acc), f.ins().umax(fr, q64))
             } else {
                 (h[3], h[4])
             };
             // From the bytes, the block's words wait on no block (`Reads`).
             let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, refill_limit));
             let (look, next) = (f.create_block(), f.create_block());
-            inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), pend_q.into(), from_q.into()]);
+            inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), pend_q.into(), if folded { h[4] } else { from_q }.into()]);
             f.switch_to_block(look);
             // The skip and the run words from one window of the block's bytes.
             let all: Vec<u16> = std::iter::once(o).chain(outs.iter().copied()).collect();
@@ -3368,7 +3388,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             } else {
                 pend_q
             };
-            let found: Vec<Value> = if folded { vec![pend_q, from_q] } else { Vec::new() };
+            // The carried `from` goes on as it came where the loop reads it from the records
+            // (`after_last_start`): a value no token changes.
+            let found: Vec<Value> = if folded { vec![pend_q, h[4]] } else { Vec::new() };
             let args: Vec<BlockArg> = [s1, x].iter().chain(&words).chain(&found).map(|&v| v.into()).collect();
             f.ins().brif(x, from_word, &args, next, &[]);
             f.switch_to_block(next);
@@ -3685,7 +3707,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let after_bits_kept = if folded { f.ins().bor(after_bits, flag) } else { after_bits };
         let mut mine = f.ins().bor(pending_marks, at_bits);
         if gapped {
-            let bits = marks_in(f, &rd, c, &lift, from, s, in_regs, folded, heads);
+            // Folded, the bits not yet taken start past the token before's first byte, in the
+            // token's block (the refill took those before it).
+            let from_eff = if folded {
+                let fr = c.after_last_start(f, cv[0]);
+                f.ins().umax(fr, base)
+            } else {
+                from
+            };
+            let bits = marks_in(f, &rd, c, &lift, from_eff, s, in_regs, folded, heads);
             mine = f.ins().bor(mine, bits);
         }
         let held = if kept_word {
@@ -3718,7 +3748,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 pending = after_bits_kept;
             }
         }
-        if gapped {
+        if gapped && !folded {
             from = f.ins().iadd_imm(s, 1);
         }
         if let Some(join) = join {
@@ -3758,7 +3788,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let mut rest = f.block_params(finish)[2];
         if !unplaced_lift.is_empty() {
             // The gap marks' bits after the last grammar token's first byte.
-            let from = f.block_params(finish)[3];
+            let from = if folded { c.after_last_start(f, f.block_params(finish)[1]) } else { f.block_params(finish)[3] };
             let end = f.ins().iadd_imm(c.len, -1);
             let bits = marks_in(f, &rd, c, &unplaced_lift, from, end, None, false, heads);
             rest = f.ins().bor(rest, bits);
