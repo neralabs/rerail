@@ -755,7 +755,9 @@ export type IdleClose =
   /** This runtime does not hold it open. */
   | { readonly kind: "not-held" }
   /** Its memory is freed; it stays open in the database until it opens again or its daemon stops. */
-  | { readonly kind: "suspended"; readonly suspension: SessionSuspension };
+  | { readonly kind: "suspended"; readonly suspension: SessionSuspension }
+  /** Its memory is freed and its record ended, as its end would (`end`); its next event opens it again. */
+  | { readonly kind: "ended" };
 
 /** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
 function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
@@ -2246,20 +2248,34 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
    * with its next event while their files still hold what they spoke for (`#takeOwed`). `at` is the time by the
    * caller's clock, now by default: the time the session's record ends at if it never opens again
-   * (`SessionSuspension.suspendedAt`).
+   * (`SessionSuspension.suspendedAt`). With `end` the session is ended instead (`#endIdle`).
    */
-  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean; at?: number } = {}): Promise<IdleClose> {
+  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean; at?: number; end?: boolean } = {}): Promise<IdleClose> {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
       const state = this.#sessions.get(sessionId);
       if (state === undefined) return { kind: "not-held" };
       const owing = (): boolean => options.evenIfOwing !== true && this.#owesAgent(state);
       if (owing()) return { kind: "owing" };
+      if (options.end === true) return await this.#endIdle(state);
       const suspension = await this.#suspension(state, options.at ?? Date.now());
       // Asked again: the control timer may have claimed a scan while the walks were read, which the session now runs.
       if (owing()) return { kind: "owing" };
       await this.#suspend(state, suspension);
       return { kind: "suspended", suspension };
     });
+  }
+
+  /**
+   * Ends a quiet session as its end would: its memory freed, its record ended, its scans interrupted and its owner
+   * released, so it reads as ended until its next event opens it again. For a runtime whose owner rows name no lock
+   * (`end` of `closeIdleSession`): after a kill, a later start judges such a row only by its pid, which another process
+   * can hold, so a session kept open would read as live and owned for good. What the session owes its agent waits in
+   * its ledger for that next event, as across its daemon's stop.
+   */
+  async #endIdle(state: RuntimeSessionState): Promise<IdleClose> {
+    state.keepsOwed = true;
+    await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
+    return { kind: "ended" };
   }
 
   /**

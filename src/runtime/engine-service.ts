@@ -412,7 +412,9 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
  * session's next open; then its runtime retires as after an end. The check runs again in the session's lane, so an
  * event that came in meanwhile keeps the session open. A session that still owes its agent a tool call's check, a
  * steer, a held finding or a scan stays as it is until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one
- * whose suspension fails, which is reported; the next sweep looks again.
+ * whose suspension fails, which is reported; the next sweep looks again. A service that holds no owner lock
+ * (`holdOwnerLock` gave none) ends each quiet session instead: after a kill, its rows could be judged only by their
+ * pid, and a session it kept open would read as live and owned for good.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
   /** How long the session at `lane` has sent nothing; minus infinity once it has closed, so it is never idle. */
@@ -428,7 +430,8 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
       // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it, with the time
       // its record ends at if no runtime opens it again.
-      const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing, at: now() });
+      const end = state.ownerLockId === undefined;
+      const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing, at: now(), end });
       if (idle?.kind === "owing") return false;
       state.lastEventAt.delete(lane);
       return true;

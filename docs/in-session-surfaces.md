@@ -252,6 +252,9 @@ are not waited for further: that edit is checked by the first pass once they ope
   sooner, also when another process now has the process id the stopped daemon had. A second daemon already running on
   the same Rerail home does the same within a minute. The session's next event opens it again. A session that a daemon
   still running holds is left as it is.
+- A daemon that could not take its owner lock (a file in `locks/owners/` beside its database, by which a later daemon
+  tells whether it still runs; a file system can refuse it) ends a quiet session when it frees its memory, as earlier
+  versions did: the session shows as ended, a scan asked for it is refused, and its next event opens it again.
 
 </details>
 
