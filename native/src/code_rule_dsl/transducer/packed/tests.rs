@@ -2374,7 +2374,7 @@
         let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
         let report = json!({
             "benchmark": "tempo-fixed-word-transducer-v1",
-            "corpus": fs::canonicalize(&root).unwrap(),
+            "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(), "sourceBytes": source_bytes, "patterns": names,
             "matches": expected.len(), "orderedRangeSha256": digest,
             "iterations": iterations,
@@ -3086,7 +3086,7 @@
         #[allow(unused_mut)]
         let mut report = json!({
             "benchmark": "tempo-contentless-fts-search-index-v1",
-            "corpus": fs::canonicalize(&root).unwrap(),
+            "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(),
             "sourceBytes": source_bytes,
             "nodes": nodes,

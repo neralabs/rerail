@@ -227,8 +227,8 @@ fn read_anchored_prefix(
 /// The path of `relative_path` below `root`, refused where it resolves outside `root`.
 #[cfg(not(unix))]
 fn anchored_path(root: &Path, relative_path: &str) -> std::io::Result<PathBuf> {
-    let root = root.canonicalize()?;
-    let path = root.join(relative_path).canonicalize()?;
+    let root = dunce::canonicalize(root)?;
+    let path = dunce::canonicalize(root.join(relative_path))?;
     if !path.starts_with(&root) {
         return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
     }
@@ -698,7 +698,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 /// status (decision 0105: a run watches them before it reads the status).
 pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
     let repository = gix::discover(root).ok()?;
-    let canonical = |p: &Path| p.canonicalize().ok();
+    let canonical = |p: &Path| dunce::canonicalize(p).ok();
     Some((canonical(repository.workdir()?)?, canonical(repository.git_dir())?, canonical(repository.common_dir())?))
 }
 
@@ -715,12 +715,11 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
             DiscoveryError::Failed(message)
         }
     })?;
-    let worktree = repository
+    let worktree = dunce::canonicalize(repository
         .workdir()
         .ok_or_else(|| {
             DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
-        })?
-        .canonicalize()
+        })?)
         .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
     let case = if repository
         .filesystem_options()
@@ -744,8 +743,7 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
     let mut nested_paths = BTreeSet::new();
     // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
     let scope = if scoped {
-        let canonical = root
-            .canonicalize()
+        let canonical = dunce::canonicalize(root)
             .map_err(|error| discovery_error("cannot resolve the root", error))?;
         canonical
             .strip_prefix(&worktree)
@@ -1241,7 +1239,7 @@ mod tests {
 
         assert_eq!(
             workspace.nested_roots,
-            [parent.canonicalize().unwrap().join("vendor/sub")]
+            [dunce::canonicalize(parent).unwrap().join("vendor/sub")]
         );
 
         assert_eq!(
@@ -1343,7 +1341,7 @@ mod tests {
             ],
         );
 
-        let linked_root = linked.canonicalize().unwrap();
+        let linked_root = dunce::canonicalize(&linked).unwrap();
         let workspace = discover(&linked).unwrap();
         assert_eq!(workspace.worktree_root, linked_root);
         assert!(
@@ -1362,7 +1360,7 @@ mod tests {
 
         std::fs::copy(parent.join("nested/.git"), linked.join("nested/.git")).unwrap();
         let workspace = discover(&linked).unwrap();
-        assert_eq!(workspace.worktree_root, linked.canonicalize().unwrap());
+        assert_eq!(workspace.worktree_root, dunce::canonicalize(&linked).unwrap());
         assert!(
             !workspace
                 .base_files

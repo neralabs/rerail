@@ -169,7 +169,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
     let Seed::Text { t_shape, includes } = seed else {
         return false;
     };
-    let Ok(lib) = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()) else {
+    let Ok(lib) = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()) else {
         return false;
     };
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
@@ -245,7 +245,7 @@ impl Graph {
 /// Runs `bootstrap.rr` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
 pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
-    let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
+    let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rr");
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;

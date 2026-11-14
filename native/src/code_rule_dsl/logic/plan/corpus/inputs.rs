@@ -188,7 +188,7 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
     let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
-    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
+    let canonical = |p: &Path| dunce::canonicalize(p).map_err(|e| unreadable(format!("{}: {e}", p.display())));
     let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
     Ok((repo, tree, prefix))
 }

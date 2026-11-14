@@ -742,7 +742,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
 pub fn config_on_disk(root: &Path, folder: &str) -> Config {
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = dunce::canonicalize(root) else {
         return Config::default();
     };
     let read = |path: &str| {
@@ -759,7 +759,7 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;
         }
-        let file = file.canonicalize().ok()?;
+        let file = dunce::canonicalize(file).ok()?;
         file.starts_with(&canonical_root)
             .then(|| std::fs::read_to_string(file).ok())
             .flatten()

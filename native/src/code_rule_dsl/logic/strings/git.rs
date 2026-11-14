@@ -88,8 +88,8 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 
 fn open(root: &Path) -> Option<Repo> {
     let repo = gix::discover(root).ok()?;
-    let workdir = repo.workdir()?.canonicalize().ok()?;
-    let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
     Some(Repo { repo, prefix })
 }
 

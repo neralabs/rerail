@@ -105,7 +105,7 @@ impl ContentStore {
     #[cfg(not(target_family = "wasm"))]
     fn collection_lock_file(&self) -> StoreResult<File> {
         // Resolve aliases so separate handles and processes protect the same database.
-        let mut path = std::fs::canonicalize(&self.database_path)?.into_os_string();
+        let mut path = dunce::canonicalize(&self.database_path)?.into_os_string();
         path.push(".collection.lock");
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);

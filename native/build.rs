@@ -107,8 +107,7 @@ fn configure_fixtures() {
             fixtures
         }
     };
-    let directory = directory
-        .canonicalize()
+    let directory = dunce::canonicalize(directory)
         .expect("fixtures directory is readable");
     println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
     // What the tests' `fixtures_dir!` reads (`code_rule_dsl/fixtures.rs`); the engine's crates have it from

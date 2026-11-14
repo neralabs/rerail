@@ -138,7 +138,7 @@ mod watchman {
     pub(super) fn since(bin: &Path, roots: &[PathBuf], cursor: Option<&str>) -> Since {
         // A clock is of one watch: one root a query.
         let [root] = roots else { return Since::Lost { cursor: None, why: "Watchman is asked one root at a time" } };
-        let Ok(real) = std::fs::canonicalize(root) else { return Since::Lost { cursor: None, why: "a root is not readable" } };
+        let Ok(real) = dunce::canonicalize(root) else { return Since::Lost { cursor: None, why: "a root is not readable" } };
         let Some(watched) = call(bin, &json!(["watch-project", real])) else { return Since::Lost { cursor: None, why: "Watchman did not answer" } };
         let Some(watch) = watched.get("watch").and_then(Value::as_str) else { return Since::Lost { cursor: None, why: "Watchman named no watch" } };
         let relative = watched.get("relative_path").and_then(Value::as_str);
@@ -178,7 +178,7 @@ mod watchman {
             let root = base.join("repo/sub");
             std::fs::create_dir_all(&root).unwrap();
             let bin = base.join("watchman");
-            let real = std::fs::canonicalize(base.join("repo")).unwrap();
+            let real = dunce::canonicalize(base.join("repo")).unwrap();
             let fresh = base.join("fresh");
             std::fs::write(
                 &bin,
@@ -474,8 +474,8 @@ mod fsevents {
     pub(super) fn prepare(roots: &[(PathBuf, u64)], cookie_dir: &Path) {
         // SAFETY: no arguments; returns the latest id.
         let now = unsafe { FSEventsGetCurrentEventId() };
-        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
-        let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
+        let Ok(cookie_dir) = dunce::canonicalize(cookie_dir) else { return };
+        let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((dunce::canonicalize(r).ok()?, *c))).collect();
         real.sort();
         // Outer roots first (a path sorts before those under it): each takes the cursors of the roots under it.
         let mut groups: Vec<(PathBuf, u64)> = Vec::new();
@@ -506,8 +506,8 @@ mod fsevents {
         let now = || unsafe { FSEventsGetCurrentEventId() };
         let Some(cursor) = cursor else { return Since::Lost { cursor: Some(now()), why: "no earlier cursor" } };
         // Records are kept by the path the caller gave; events come by the real path.
-        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now()), why: "no cookie directory" } };
-        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((std::fs::canonicalize(r).ok()?, r.clone()))).collect();
+        let Ok(cookie_dir) = dunce::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now()), why: "no cookie directory" } };
+        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((dunce::canonicalize(r).ok()?, r.clone()))).collect();
         if real.len() != roots.len() {
             return Since::Lost { cursor: Some(now()), why: "a root is not readable" };
         }

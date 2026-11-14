@@ -314,7 +314,7 @@ impl TextRead {
         names.dedup();
         let mut included: Vec<PathBuf> = files.into_iter().map(|(p, _)| p).collect();
         // The engine's own library programs, which the runner adds to a run (decision 0076's components).
-        included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+        included.extend(ENGINE_FILES.iter().filter_map(|f| dunce::canonicalize(library().join(f)).ok()));
         Ok(TextNames { included, names, phase })
     }
 }
@@ -433,7 +433,7 @@ pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32
 /// The resolution phase 0's own program (`bootstrap.rr`) is read with: the library, then beside the includer.
 fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
     let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let core = dunce::canonicalize(library().join("core.rr")).map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
     let (mut out, mut read_files, mut seen) = (Vec::new(), Vec::new(), Vec::new());
     if t_shape {
@@ -562,7 +562,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
         && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
@@ -573,7 +573,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
     // to drop most of them (`unreached_dropped`).
     let (shared, files) = program_shared(path)?;
-    let own = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own = dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
     let program = lower_files_dropping(path, statements, false)?;
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -589,10 +589,10 @@ pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
 pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
-    let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
@@ -602,7 +602,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
     token_reads::refuse(&statements)?;
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let core = dunce::canonicalize(library().join("core.rr")).map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     let library: Vec<String> = statements
         .iter()
         .filter(|(file, _)| *file != core && *file != key)
@@ -682,7 +682,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
             }
         }
     }
-    let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
+    let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| dunce::canonicalize(library().join(f)).ok()).chain(std::iter::once(own.to_owned())).collect();
     // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
     // `load(…)` asked for no document, and no import was resolved.
@@ -753,7 +753,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let core = dunce::canonicalize(library().join("core.rr")).map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);
     let engine: std::collections::BTreeSet<&String> = statements
@@ -778,7 +778,7 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     }
     // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places. The engine's own
     // library programs (`ENGINE_FILES`, which the runner adds; no rule includes them) may use them.
-    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| dunce::canonicalize(library().join(f)).ok()).collect();
     for (file, statements) in statements.iter().filter(|(file, _)| !own.contains(file)) {
         for (item, line) in statements {
             let names: Vec<&String> = match item {
@@ -891,7 +891,7 @@ pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
 fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     if seen.contains(&path) {
         return Ok(());
     }
@@ -927,7 +927,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 /// in reading order.
 fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
     let mut order = Vec::new();
     g.order(&path.to_string_lossy(), &mut order)?;
@@ -966,7 +966,7 @@ struct Shared(Vec<(PathBuf, std::sync::Arc<Vec<syntax::Statement>>)>);
 
 impl Shared {
     fn iter(&self) -> impl Iterator<Item = (&PathBuf, Vec<&syntax::Statement>)> {
-        let core = library().join("core.rr").canonicalize().ok();
+        let core = dunce::canonicalize(library().join("core.rr")).ok();
         let own = self.0.last().map(|(p, _)| p.clone());
         self.0.iter().map(move |(p, statements)| {
             let included = Some(p) != own.as_ref() && Some(p) != core.as_ref();
@@ -1003,7 +1003,7 @@ fn trace(g: &super::plan::corpus::phase0::Graph, library: &Path, path: &Path, fi
 /// The library candidate an include probed and did not find, when its file is the one beside the includer.
 fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>) {
     let in_library = library.join(name);
-    if in_library.canonicalize().ok().as_deref() != Some(target) {
+    if dunce::canonicalize(&in_library).ok().as_deref() != Some(target) {
         files.push(LibraryFile { path: in_library, sha256: None });
     }
 }
@@ -1014,14 +1014,14 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
-    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+    let t_shape = read(&dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
         .0
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
     if !t_shape {
         visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
     }
-    let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
+    let mut seen = vec![dunce::canonicalize(library().join("core.rr")).map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen, false)?;
     Ok((out, read_files))
 }

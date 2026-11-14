@@ -55,6 +55,8 @@ metal-tests = ["rerail-device-metal/metal-tests", "rerail-facts/metal-tests", "r
 # above them; the engine's tests turn it on. Off in every product build.
 test-hooks = ["rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-w/test-hooks", "rerail-store/test-hooks"]
 [dependencies]
+# `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
+dunce = "=1.0.5"
 # `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
@@ -206,6 +208,7 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "arr
 tempfile = "=3.27.0"
 
 [build-dependencies]
+dunce = "=1.0.5"
 napi-build = "2.2"
 sha2 = "0.11"
 # The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's

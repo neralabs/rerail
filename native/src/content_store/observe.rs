@@ -460,7 +460,7 @@ impl Observer {
             root.resolved.insert(path.clone());
         }
         self.counts.resolved += 1;
-        let c = std::fs::canonicalize(&path).ok()?;
+        let c = dunce::canonicalize(&path).ok()?;
         if self.canon.get(&path) != Some(&c) {
             self.canon.insert(path.clone(), c.clone());
             self.new_canon.push((path, c.clone()));
@@ -505,7 +505,7 @@ impl Observer {
         // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
         // that blob, unread; or read once, and the blob remembered.
         // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
-        let canonical = if self.git.is_empty() { None } else { std::fs::canonicalize(path).ok() };
+        let canonical = if self.git.is_empty() { None } else { dunce::canonicalize(path).ok() };
         let blob = canonical.as_ref().and_then(|c| {
             self.git.iter().find_map(|(_, g)| {
                 let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
@@ -579,11 +579,11 @@ impl Observer {
             match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
                 super::journal::Since::Changed { paths, cursor: next } => {
                     self.forget(&root, &paths, volume, &next);
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default() });
+                    self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default() });
                 }
                 super::journal::Since::Lost { cursor, .. } => {
                     let pending = cursor.map(|c| (volume, c));
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked: Default::default(), resolved: Default::default() });
+                    self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked: Default::default(), resolved: Default::default() });
                 }
             }
         }
@@ -690,7 +690,7 @@ impl Observer {
 
     /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
     pub fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
-        let root = std::fs::canonicalize(self.abs(root)).ok()?;
+        let root = dunce::canonicalize(self.abs(root)).ok()?;
         if let Some((_, g)) = self.git.iter().find(|(under, _)| root.starts_with(under)) {
             return Some(Arc::clone(g));
         }
@@ -1166,7 +1166,7 @@ mod tests {
         };
         let (first, got) = run();
         assert_eq!(first.resolved, 3, "{first}");
-        let real = std::fs::canonicalize(&root).unwrap();
+        let real = dunce::canonicalize(&root).unwrap();
         assert_eq!(got, vec![Some(real.join("pkg/m1.py")), Some(real.join("pkg/m0.py")), Some(real.join("pkg/m2.py"))]);
         std::thread::sleep(std::time::Duration::from_millis(300));
         run();

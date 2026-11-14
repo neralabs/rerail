@@ -5,6 +5,21 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+/// `bootstrap.rr` finds an included file as `cat(lib, "/", name)`, from the library's canonical path, and phase 0
+/// keeps a text's graph by the same string (`phase0::keep_text`). On Windows std's canonical paths are verbatim
+/// (`\\?\D:\…`), in which `/` is no separator, and every `.rr` include failed with "cannot read the file": the
+/// library is made canonical without that prefix (`dunce`), so the joined path reads.
+#[test]
+fn the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it() {
+    let lib = dunce::canonicalize(library()).unwrap();
+    assert!(!lib.to_string_lossy().starts_with(r"\\?\"), "{}", lib.display());
+    for name in ["core.rr", "bootstrap.rr"] {
+        let joined = std::path::PathBuf::from(format!("{}/{name}", lib.display()));
+        assert!(std::fs::read(&joined).is_ok(), "{} is not readable", joined.display());
+        assert_eq!(dunce::canonicalize(joined).unwrap(), dunce::canonicalize(lib.join(name)).unwrap());
+    }
+}
+
 #[test]
 fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
     let quoted = parse(r##".decl x(s:symbol)
@@ -248,14 +263,14 @@ fn rule_syntax_files_pass_check_rr() {
     }
     let mut problems = Vec::new();
     // Phase 0 resolves every file's includes in one run of `bootstrap.rr`, not one run each.
-    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonicalize().unwrap())).collect();
+    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(dunce::canonicalize(f).unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
         let mut program = program(&f).unwrap().0;
-        let core = library().join("core.rr").canonicalize().unwrap();
+        let core = dunce::canonicalize(library().join("core.rr")).unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
@@ -3285,7 +3300,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let path = path.as_path();
         let Ok((statements, _)) = program(path) else { return None };
         let Ok(whole) = lower_files_dropping(path, statements.clone(), false) else { return None };
-        let own = path.canonicalize().unwrap();
+        let own = dunce::canonicalize(path).unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));

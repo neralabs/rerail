@@ -92,7 +92,7 @@ fn make(path: &Path) {
 /// decision, took it out from under the test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-    let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
+    let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())] }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
@@ -161,7 +161,7 @@ impl Drop for Store {
 /// How many of this process's open files are under `dir` (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
 pub fn open_under(dir: &Path) -> usize {
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
         .filter(|&fd| {

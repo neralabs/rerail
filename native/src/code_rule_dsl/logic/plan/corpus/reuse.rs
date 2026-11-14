@@ -46,7 +46,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     }
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());

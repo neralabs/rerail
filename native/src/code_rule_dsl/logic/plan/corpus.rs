@@ -1592,7 +1592,7 @@ impl Collecting {
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
@@ -1824,7 +1824,7 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
 #[cfg(not(any(test, feature = "test-hooks")))]
 fn default_store() -> &'static std::path::PathBuf {
     static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
-        let cwd = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok()).unwrap_or_default();
+        let cwd = std::env::current_dir().ok().and_then(|d| dunce::canonicalize(d).ok()).unwrap_or_default();
         build_store("rerail-stores", Some(&cwd.to_string_lossy()))
     });
     &PATH
@@ -1995,7 +1995,7 @@ fn run_handed(
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
-    let library = std::fs::canonicalize(&library).unwrap_or(library);
+    let library = dunce::canonicalize(&library).unwrap_or(library);
     let before = observe(|o| {
         o.begin();
         o.watch(&[root.to_path_buf(), library]);
@@ -2024,7 +2024,7 @@ fn run_handed(
             })
         });
         if component_seeded
-            && let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
+            && let Ok(components) = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library().join("components.rr")) {
                 phase0::graph(&phase0::Seed::File(components))?;
             }
     }
@@ -3382,7 +3382,7 @@ fn run_observed(
     let recording = matches!(memo, Some(memo::Memo::Stored(_)));
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
-    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
+    let canonical_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
     let stat_index = if recording {
         // An earlier run of this process may have queued the root's stats: read once they are written, before the
         // first wave (decision 0104).

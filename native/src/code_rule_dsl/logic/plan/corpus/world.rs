@@ -82,7 +82,7 @@ pub(super) struct World {
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
     pub(super) fn new(root: &Path, prog: &front::Program) -> World {
-        let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+        let canonical = |p: &Path| dunce::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
         for row in prog.facts.get("env").into_iter().flatten() {

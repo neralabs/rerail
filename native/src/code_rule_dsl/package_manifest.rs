@@ -819,7 +819,7 @@ impl Manifests {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         Self {
-            canonical_root: std::fs::canonicalize(&root).ok(),
+            canonical_root: dunce::canonicalize(&root).ok(),
             root,
             server_graph: false,
             directories: HashMap::new(),
@@ -859,7 +859,7 @@ impl Manifests {
             }
             unknown.push(ancestor);
             let contained = self.canonical_root.as_ref().is_some_and(|root| {
-                std::fs::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
+                dunce::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
             });
             if let Some(manifest) = contained
                 .then(|| manifest_on_disk(ancestor, self.folder(ancestor)))

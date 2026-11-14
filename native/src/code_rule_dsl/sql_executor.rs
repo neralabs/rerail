@@ -363,7 +363,7 @@ impl CodeRuleSqlExecutor {
 
     #[cfg(target_pointer_width = "64")]
     fn bind_corpus_64(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
-        let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
+        let canonical = dunce::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
         let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
             .map_err(error)?
             .ok_or_else(|| error(format!("{root}: no corpus run is recorded for this root")))?;

@@ -378,8 +378,7 @@ pub(super) fn attach_storage(
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = std::path::Path::new(root)
-        .canonicalize()
+    let root = dunce::canonicalize(std::path::Path::new(root))
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

@@ -345,7 +345,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     for (_, statements) in &mut modules {
         statements.retain(|(item, _)| !matches!(item, Item::Clause { heads, .. } if heads.iter().any(|h| given.contains(h.rel.as_str()))));
     }
-    let own = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+    let own = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let Some((_, statements)) = modules.iter_mut().find(|(p, _)| *p == own) else {
         return Err(format!("{}: not among its program's modules", path.display()));
     };

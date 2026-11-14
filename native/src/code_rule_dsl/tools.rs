@@ -360,7 +360,7 @@ pub fn run_policies(
     // Every policy's includes resolved by one run of phase 0 (`bootstrap.rr`) over all of them, each graph kept for
     // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
     let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
-        paths.iter().filter_map(|p| p.canonicalize().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
+        paths.iter().filter_map(|p| dunce::canonicalize(p).ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
     if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
         let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
     }

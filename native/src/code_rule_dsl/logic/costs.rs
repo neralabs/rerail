@@ -77,29 +77,31 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
     Ok(db)
 }
 
-/// The writer's store, once opened.
-static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
+/// One write at a time: the writer's thread and a run's `flush`.
+static WRITING: Mutex<()> = Mutex::new(());
+/// The oldest samples past `KEPT` were dropped, as this process first wrote.
+static PRUNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Writes the samples the executor kept since the last write: one transaction.
+/// Writes the samples the executor kept since the last write: one transaction, on a connection opened for it and
+/// closed after. No handle is held between writes, so the store's folder can be removed while the process lives
+/// (Windows refuses to delete a file a process holds open: a test's home, `rerail uninstall`).
 fn write() {
     let Some(path) = path() else { return };
-    let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let _writing = WRITING.lock().unwrap_or_else(|p| p.into_inner());
     let (samples, dropped) = rerail_accel::score::take_samples();
     let plans = sql_plans::take();
     if samples.is_empty() && plans.is_empty() {
         return;
     }
-    if w.is_none() {
-        *w = open(&path).ok();
-        // Past `KEPT`, the oldest of this machine's samples go.
-        if let Some(db) = w.as_ref() {
-            let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
-        }
-    }
-    let Some(db) = w.as_mut() else {
+    let Ok(mut db) = open(&path) else {
         sql_plans::retry(plans);
         return;
     };
+    // Past `KEPT`, the oldest of this machine's samples go: once a process.
+    if !PRUNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
+    }
+    let db = &mut db;
     let (machine, threads) = (machine(), rerail_accel::exec::threads() as i64);
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
     let r = (|| -> rusqlite::Result<Vec<i64>> {

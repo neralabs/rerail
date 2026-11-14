@@ -32,6 +32,8 @@ metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-lo
 test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "dep:tempfile"]
 
 [dependencies]
+# `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
+dunce = "=1.0.5"
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"

@@ -432,7 +432,7 @@ pub(super) fn key(path: &Path) -> PathBuf {
     if let Some(key) = CANONICAL.lock().get(path) {
         return key.clone();
     }
-    match std::fs::canonicalize(path) {
+    match dunce::canonicalize(path) {
         Ok(key) => {
             CANONICAL.lock().insert(path.to_path_buf(), key.clone());
             key

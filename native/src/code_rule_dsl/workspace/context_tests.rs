@@ -92,7 +92,7 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        Self(dunce::canonicalize(path).unwrap())
     }
 
     fn store(&self) -> PathBuf {

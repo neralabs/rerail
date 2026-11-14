@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());

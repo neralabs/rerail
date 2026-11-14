@@ -22,7 +22,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     let mut seeds = Vec::new();
     for (path, text) in paths.iter().zip(&texts) {
         if includes(text) {
-            seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
+            seeds.push(phase0::Seed::File(dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
@@ -36,7 +36,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
-        let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+        let canonical = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
@@ -104,7 +104,7 @@ fn module_text(
     seen: &mut Vec<std::path::PathBuf>,
     read: &dyn Fn(&std::path::Path) -> Result<String, String>,
 ) -> Result<String, String> {
-    let library = crate::code_rule_dsl::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
+    let library = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
