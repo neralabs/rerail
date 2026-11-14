@@ -5074,3 +5074,8 @@ handoff would need the whole plan's own replacement and its rows left. Open.
 A trial's rows are counted and dropped, then made again by the order that goes on. Over a sample that is most of
 the rows left, that work is done twice. The winner's rows could be kept (a component's relations are sets) and its
 sample's rows taken out of the rows left. Open.
+
+## O170. Statistics' maps move to one flat table (decision 0209)
+
+Every reader of `plan::Stats`' string-keyed maps moves to the flat table of numbered relations and columns
+(0209 §3). Until then the maps are views over it; the planner's tests hold unchanged at each step. Open.
