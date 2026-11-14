@@ -7374,7 +7374,8 @@ impl<'a> Run<'a, '_> {
                     return Err(Error::Plan(format!("{name}: the run returned for a probe's plan, and none not planned has rows")));
                 }
                 let mut wanted = BTreeSet::new();
-                self.model.wants(due.iter().map(|&k| (probes[k].0, Some(probes[k].1))), &mut wanted);
+                let due_bodies: Vec<(Body<'_>, usize)> = due.iter().map(|&k| Ok((vs.body(probes[k].0)?, probes[k].1))).collect::<Result<_>>()?;
+                self.model.wants(due_bodies.iter().map(|(b, ai)| (b, Some(*ai))), &mut wanted);
                 self.model.make_statistics(prog, &wanted)?;
                 for k in due {
                     let (r, ai) = (probes[k].0, probes[k].1);
