@@ -26,7 +26,7 @@ pub mod from_tape;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
-pub use rerail_rr::code_rule_dsl::logic::rr::print;
+pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
@@ -50,7 +50,7 @@ pub mod tape_type {
     use crate::code_rule_dsl::logic::front::Error;
 }
 pub mod token_reads;
-pub use rerail_rr::code_rule_dsl::logic::rr::translate;
+pub use rerail_rr::code_rule_dsl::logic::rr::translate::{self};
 
 // cratify: `tape_tests` is rerail-engine's (it mounts it)
 // cratify: `tests` is rerail-engine's (it mounts it)
