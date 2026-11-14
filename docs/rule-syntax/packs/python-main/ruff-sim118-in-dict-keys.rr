@@ -13,9 +13,8 @@
 SIM118(n) :- kind(n, "comparison_operator"), k9 = count : { sim118_tok_has_4(n) }, k9 <= 3,
     child(n, c10, _), match("(in|not\\s+in)", c10), next_sibling(c10, s11),
     sim118_keys_call(s11).
-SIM118(n) :- sim118_tok_follows_5(n), next_sibling(n, s19), glob("in", s19),
-    next_sibling(s19, s20), sim118_keys_call(s20),
-    ( child(p1, n, _), kind(p1, "for_statement"), !sim118_tok_has_7(p1)
+SIM118(n) :- sim118_tok_follows_5(n), sim118_tok_precedes_6(n, s20), sim118_keys_call(s20),
+    ( child(p1, n, _), kind(p1, "for_statement"), !sim118_tok_has_8(p1)
     ; child(p2, n, _), kind(p2, "for_in_clause")
     ).
 
@@ -81,26 +80,37 @@ sim118_tok_follows_5(n) :- structural_before(n, g14), match("\\s*", g14), child(
 sim118_tok_follows_5(n) :- structural_before(n, g14),
     match("(?s)^(?:(?:.*\\W)?(?:for)\\s*)$", g14).
 
-// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim118_tok_has_6(n: node)
-.stored sim118_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim118_tok_has_6(n) :- child(n, c22, _), glob("async", c22).
-sim118_tok_has_6(n) :- op(n, t23), match("async", t23).
-sim118_tok_has_6(n) :- child(n, c29, _), structural_before(c29, g24),
-    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
-sim118_tok_has_6(n) :- child(n, c29, _), structural_after(c29, g24),
-    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
-sim118_tok_has_6(n) :- node_text(n, g24), !child(n, _, _),
-    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
+// tok_precedes_6(n, m): m is the named node after n, with one token between them that matches "^in$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim118_tok_precedes_6(n: node, m: node)
+.stored sim118_tok_precedes_6 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim118_tok_precedes_6(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("(?s)^\\s*(?:in)\\s*$", g21).
+sim118_tok_precedes_6(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("\\s*", g21), child(p24, n, _), structural_before(m, g22),
+    match("\\s*", g22), node(_, n, _, _, en28), o25 = en28 + strlen(g21),
+    token(p24, _, t23, o25, e26), node(_, m, _, st27, _), st27 = e26 + strlen(g22),
+    match("in", t23).
 
 // tok_has_7(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim118_tok_has_7(n: node)
 .stored sim118_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim118_tok_has_7(n) :- child(n, c2, _), glob("async", c2).
-sim118_tok_has_7(n) :- op(n, t3), match("async", t3).
-sim118_tok_has_7(n) :- child(n, c9, _), structural_before(c9, g4),
+sim118_tok_has_7(n) :- child(n, c30, _), glob("async", c30).
+sim118_tok_has_7(n) :- op(n, t31), match("async", t31).
+sim118_tok_has_7(n) :- child(n, c37, _), structural_before(c37, g32),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g32).
+sim118_tok_has_7(n) :- child(n, c37, _), structural_after(c37, g32),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g32).
+sim118_tok_has_7(n) :- node_text(n, g32), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g32).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_has_8(n: node)
+.stored sim118_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_has_8(n) :- child(n, c2, _), glob("async", c2).
+sim118_tok_has_8(n) :- op(n, t3), match("async", t3).
+sim118_tok_has_8(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).
-sim118_tok_has_7(n) :- child(n, c9, _), structural_after(c9, g4),
+sim118_tok_has_8(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).
-sim118_tok_has_7(n) :- node_text(n, g4), !child(n, _, _),
+sim118_tok_has_8(n) :- node_text(n, g4), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).

@@ -25,8 +25,8 @@ e711_constant_non_singleton(n) :- e711_constant(n), !e711_singleton(n).
 // compared_operand(n): the JSON util `compared-operand`, used where the JSON says `matches: "compared-operand"`
 .decl e711_compared_operand(n: node)
 e711_compared_operand(n) :- child(p1, n, _), kind(p1, "comparison_operator"),
-    ( !e711_tok_follows_2(n), next_sibling(n, s1), glob("==", s1), next_sibling(s1, s2), !e711_constant_non_singleton(s2)
-    ; next_sibling(s3, n), glob("==", s3), next_sibling(s4, s3), !e711_constant_non_singleton(s4)
+    ( !e711_tok_follows_4(n), e711_tok_precedes_5(n, s1), !e711_constant_non_singleton(s1)
+    ; e711_tok_follows_6(n, s2), !e711_constant_non_singleton(s2)
     ).
 
 
@@ -53,8 +53,8 @@ e711_constant_non_singleton_none_comparison_not_equal(n) :- e711_constant_none_c
 .decl e711_compared_operand_none_comparison_not_equal(n: node)
 e711_compared_operand_none_comparison_not_equal(n) :- child(p1, n, _),
     kind(p1, "comparison_operator"),
-    ( !e711_tok_follows_2(n), next_sibling(n, s1), glob("!=", s1), next_sibling(s1, s2), !e711_constant_non_singleton_none_comparison_not_equal(s2)
-    ; next_sibling(s3, n), glob("!=", s3), next_sibling(s4, s3), !e711_constant_non_singleton_none_comparison_not_equal(s4)
+    ( !e711_tok_follows_4(n), e711_tok_precedes_9(n, s1), !e711_constant_non_singleton_none_comparison_not_equal(s1)
+    ; e711_tok_follows_10(n, s2), !e711_constant_non_singleton_none_comparison_not_equal(s2)
     ).
 
 
@@ -305,14 +305,98 @@ e711_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, 
     match("(?s).*..*", t3).
 e711_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
 
-// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl e711_tok_follows_2(n: node)
-.stored e711_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-e711_tok_follows_2(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
-e711_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+// tok_precedes_2(n, m): m is the named node after n, with one token between them that matches "^==$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_precedes_2(n: node, m: node)
+.stored e711_tok_precedes_2 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_precedes_2(n, m) :- next_sibling(n, m), structural_after(n, g11),
+    match("(?s)^\\s*(?:==)\\s*$", g11).
+e711_tok_precedes_2(n, m) :- next_sibling(n, m), structural_after(n, g11),
+    match("\\s*", g11), child(p14, n, _), structural_before(m, g12),
+    match("\\s*", g12), node(_, n, _, _, en18), o15 = en18 + strlen(g11),
+    token(p14, _, t13, o15, e16), node(_, m, _, st17, _), st17 = e16 + strlen(g12),
+    match("==", t13).
+
+// tok_follows_3(n, m): m is the named node before n, with one token between them that matches "^==$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_follows_3(n: node, m: node)
+.stored e711_tok_follows_3 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_follows_3(n, m) :- next_sibling(m, n), structural_before(n, g21),
+    match("(?s)^\\s*(?:==)\\s*$", g21).
+e711_tok_follows_3(n, m) :- next_sibling(m, n), structural_before(n, g21),
+    match("\\s*", g21), child(p24, n, _), structural_after(m, g22), match("\\s*", g22),
+    node(_, n, _, st27, _), o25 = st27 - strlen(g21), token(p24, _, t23, e26, o25),
+    node(_, m, _, _, en28), en28 = e26 - strlen(g22), match("==", t23).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e711_tok_follows_4(n: node)
+.stored e711_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e711_tok_follows_4(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+e711_tok_follows_4(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
     node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
     match("(?s).*..*", t2).
-e711_tok_follows_2(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+e711_tok_follows_4(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// tok_precedes_5(n, m): m is the named node after n, with one token between them that matches "^==$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_precedes_5(n: node, m: node)
+.stored e711_tok_precedes_5 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_precedes_5(n, m) :- next_sibling(n, m), structural_after(n, g10),
+    match("(?s)^\\s*(?:==)\\s*$", g10).
+e711_tok_precedes_5(n, m) :- next_sibling(n, m), structural_after(n, g10),
+    match("\\s*", g10), child(p13, n, _), structural_before(m, g11),
+    match("\\s*", g11), node(_, n, _, _, en17), o14 = en17 + strlen(g10),
+    token(p13, _, t12, o14, e15), node(_, m, _, st16, _), st16 = e15 + strlen(g11),
+    match("==", t12).
+
+// tok_follows_6(n, m): m is the named node before n, with one token between them that matches "^==$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_follows_6(n: node, m: node)
+.stored e711_tok_follows_6 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_follows_6(n, m) :- next_sibling(m, n), structural_before(n, g20),
+    match("(?s)^\\s*(?:==)\\s*$", g20).
+e711_tok_follows_6(n, m) :- next_sibling(m, n), structural_before(n, g20),
+    match("\\s*", g20), child(p23, n, _), structural_after(m, g21), match("\\s*", g21),
+    node(_, n, _, st26, _), o24 = st26 - strlen(g20), token(p23, _, t22, e25, o24),
+    node(_, m, _, _, en27), en27 = e25 - strlen(g21), match("==", t22).
+
+// tok_precedes_7(n, m): m is the named node after n, with one token between them that matches "^!=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_precedes_7(n: node, m: node)
+.stored e711_tok_precedes_7 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_precedes_7(n, m) :- next_sibling(n, m), structural_after(n, g11),
+    match("(?s)^\\s*(?:!=)\\s*$", g11).
+e711_tok_precedes_7(n, m) :- next_sibling(n, m), structural_after(n, g11),
+    match("\\s*", g11), child(p14, n, _), structural_before(m, g12),
+    match("\\s*", g12), node(_, n, _, _, en18), o15 = en18 + strlen(g11),
+    token(p14, _, t13, o15, e16), node(_, m, _, st17, _), st17 = e16 + strlen(g12),
+    match("!=", t13).
+
+// tok_follows_8(n, m): m is the named node before n, with one token between them that matches "^!=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_follows_8(n: node, m: node)
+.stored e711_tok_follows_8 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_follows_8(n, m) :- next_sibling(m, n), structural_before(n, g21),
+    match("(?s)^\\s*(?:!=)\\s*$", g21).
+e711_tok_follows_8(n, m) :- next_sibling(m, n), structural_before(n, g21),
+    match("\\s*", g21), child(p24, n, _), structural_after(m, g22), match("\\s*", g22),
+    node(_, n, _, st27, _), o25 = st27 - strlen(g21), token(p24, _, t23, e26, o25),
+    node(_, m, _, _, en28), en28 = e26 - strlen(g22), match("!=", t23).
+
+// tok_precedes_9(n, m): m is the named node after n, with one token between them that matches "^!=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_precedes_9(n: node, m: node)
+.stored e711_tok_precedes_9 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_precedes_9(n, m) :- next_sibling(n, m), structural_after(n, g10),
+    match("(?s)^\\s*(?:!=)\\s*$", g10).
+e711_tok_precedes_9(n, m) :- next_sibling(n, m), structural_after(n, g10),
+    match("\\s*", g10), child(p13, n, _), structural_before(m, g11),
+    match("\\s*", g11), node(_, n, _, _, en17), o14 = en17 + strlen(g10),
+    token(p13, _, t12, o14, e15), node(_, m, _, st16, _), st16 = e15 + strlen(g11),
+    match("!=", t12).
+
+// tok_follows_10(n, m): m is the named node before n, with one token between them that matches "^!=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl e711_tok_follows_10(n: node, m: node)
+.stored e711_tok_follows_10 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+e711_tok_follows_10(n, m) :- next_sibling(m, n), structural_before(n, g20),
+    match("(?s)^\\s*(?:!=)\\s*$", g20).
+e711_tok_follows_10(n, m) :- next_sibling(m, n), structural_before(n, g20),
+    match("\\s*", g20), child(p23, n, _), structural_after(m, g21), match("\\s*", g21),
+    node(_, n, _, st26, _), o24 = st26 - strlen(g20), token(p23, _, t22, e25, o24),
+    node(_, m, _, _, en27), en27 = e25 - strlen(g21), match("!=", t22).
 
 // alt_2_u0_empty: level -1 of an unrolled recursion, empty
 .decl e711_alt_2_u0_empty(n: node)

@@ -5,7 +5,8 @@ packs/python/upstream/ruff: fixtures/ and fixtures.expected.json, Ruff 0.16.9).
     ENGINE=<rerail-engine> python3 docs/rule-syntax/site/upstream_check.py <upstream dir> [CODE ...]
 
 <upstream dir> holds fixtures/ and fixtures.expected.json (`git archive main packs/python/upstream/ruff`). Each
-rule (every one the expectations name, or the CODEs given) runs alone over the fixtures, as run_main_pack.sh runs
+rule (every one the expectations name, or the CODEs given; all of its generated files, where main splits it) runs
+alone over the fixtures, as run_main_pack.sh runs
 it: the engine's `logic` command, under the caps (capped.sh: 2 minutes, 2 GB), RERAIL_SQL_STRICT=1, the repo's .rr
 library. A finding is (path, line, column), the column from 1 as Ruff counts it. One line per rule:
 
@@ -24,18 +25,19 @@ root = os.path.abspath(os.path.join(here, "..", "..", ".."))
 pack = os.path.join(here, "..", "packs", "python-main")
 
 
-def rule_file(code):
+def rule_files(code):
+    """The generated files of one code: one, or several where main splits a rule (F811's per-case policies)."""
     prefix = f"ruff-{code.lower()}-"
-    names = [n for n in os.listdir(pack) if n.startswith(prefix) and n.endswith(".rr")]
-    return os.path.join(pack, names[0]) if len(names) == 1 else None
+    return sorted(os.path.join(pack, n) for n in os.listdir(pack) if n.startswith(prefix) and n.endswith(".rr"))
 
 
-def run(engine, rr, fixtures):
+def run(engine, rrs, fixtures):
     os.makedirs(os.path.join(root, "tmp"), exist_ok=True)
     d = tempfile.mkdtemp(prefix="upstream-check.", dir=os.path.join(root, "tmp"))
     os.mkdir(os.path.join(d, "r"))
-    with open(rr) as src, open(os.path.join(d, "r", os.path.basename(rr)), "w") as dst:
-        dst.write(src.read())
+    for rr in rrs:
+        with open(rr) as src, open(os.path.join(d, "r", os.path.basename(rr)), "w") as dst:
+            dst.write(src.read())
     env = dict(os.environ, RERAIL_TAPE_CACHE=os.path.join(d, "store.sqlite"),
                RERAIL_RR_LIB=os.environ.get("RERAIL_RR_LIB", os.path.join(root, "docs", "rule-syntax", "lib")))
     summary = subprocess.run([os.path.join(here, "capped.sh"), "120", "2048", os.path.join(d, "log"), engine, "logic",
@@ -67,11 +69,11 @@ def main():
     codes = sys.argv[2:] or expected["source"]["rules"]
     for code in codes:
         want = {(f["path"], f["line"], f["column"]) for f in expected["findings"] if f["rule"] == code}
-        rr = rule_file(code)
-        if rr is None:
-            print(f"{code} failed  no single generated rule ruff-{code.lower()}-*.rr", flush=True)
+        rrs = rule_files(code)
+        if not rrs:
+            print(f"{code} failed  no generated rule ruff-{code.lower()}-*.rr", flush=True)
             continue
-        got, error = run(engine, rr, os.path.join(upstream, "fixtures"))
+        got, error = run(engine, rrs, os.path.join(upstream, "fixtures"))
         if got is None:
             print(f"{code} failed expected={len(want)}  {error}", flush=True)
             continue

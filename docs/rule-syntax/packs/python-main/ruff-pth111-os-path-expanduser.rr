@@ -48,54 +48,74 @@ pth111_ann_string(n, F, S) :-
     ),
     parsed(n, "annotation", r5), within(c6, r5), pth111_alt_13(c6, F, S).
 
-// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pth111_tok_follows_1(n: node)
-.stored pth111_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pth111_tok_follows_1(n) :- next_sibling(s1, n), glob(".", s1).
-pth111_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
-    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
-    match("\\.", t2).
-pth111_tok_follows_1(n) :- structural_before(n, g3),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+// tok_precedes_1(n, m): m is the named node after n, with one token between them that matches "^=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl pth111_tok_precedes_1(n: node, m: node)
+.stored pth111_tok_precedes_1 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+pth111_tok_precedes_1(n, m) :- next_sibling(n, m), structural_after(n, g7),
+    match("(?s)^\\s*(?:=)\\s*$", g7).
+pth111_tok_precedes_1(n, m) :- next_sibling(n, m), structural_after(n, g7), match("\\s*", g7),
+    child(p10, n, _), structural_before(m, g8), match("\\s*", g8),
+    node(_, n, _, _, en14), o11 = en14 + strlen(g7), token(p10, _, t9, o11, e12),
+    node(_, m, _, st13, _), st13 = e12 + strlen(g8), match("=", t9).
 
-// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pth111_tok_precedes_2(n: node)
-.stored pth111_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pth111_tok_precedes_2(n) :- next_sibling(n, s8), glob("=", s8).
-pth111_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
-    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
-    match("=", t9).
-pth111_tok_precedes_2(n) :- structural_after(n, g10),
-    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+// tok_precedes_2(n, m): m is the named node after n, with one token between them that matches "^=$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl pth111_tok_precedes_2(n: node, m: node)
+.stored pth111_tok_precedes_2 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+pth111_tok_precedes_2(n, m) :- next_sibling(n, m), structural_after(n, g4),
+    match("(?s)^\\s*(?:=)\\s*$", g4).
+pth111_tok_precedes_2(n, m) :- next_sibling(n, m), structural_after(n, g4), match("\\s*", g4),
+    child(p7, n, _), structural_before(m, g5), match("\\s*", g5),
+    node(_, n, _, _, en11), o8 = en11 + strlen(g4), token(p7, _, t6, o8, e9),
+    node(_, m, _, st10, _), st10 = e9 + strlen(g5), match("=", t6).
 
 // tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pth111_tok_follows_3(n: node)
 .stored pth111_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pth111_tok_follows_3(n) :- next_sibling(s9, n), glob(".", s9).
-pth111_tok_follows_3(n) :- structural_before(n, g11), match("\\s*", g11), child(p12, n, _),
-    node(_, n, _, st14, _), o13 = st14 - strlen(g11), token(p12, _, t10, _, o13),
-    match("\\.", t10).
-pth111_tok_follows_3(n) :- structural_before(n, g11),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g11).
+pth111_tok_follows_3(n) :- next_sibling(s1, n), glob(".", s1).
+pth111_tok_follows_3(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+pth111_tok_follows_3(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
 
-// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pth111_tok_follows_4(n: node)
-.stored pth111_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pth111_tok_follows_4(n) :- next_sibling(s2, n), glob(".", s2).
-pth111_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
-    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
-    match("\\.", t3).
-pth111_tok_follows_4(n) :- structural_before(n, g4),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth111_tok_precedes_4(n: node)
+.stored pth111_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth111_tok_precedes_4(n) :- next_sibling(n, s8), glob("=", s8).
+pth111_tok_precedes_4(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("=", t9).
+pth111_tok_precedes_4(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
 
 // tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pth111_tok_follows_5(n: node)
 .stored pth111_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pth111_tok_follows_5(n) :- next_sibling(s3, n), glob(".", s3).
-pth111_tok_follows_5(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+pth111_tok_follows_5(n) :- next_sibling(s9, n), glob(".", s9).
+pth111_tok_follows_5(n) :- structural_before(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, st14, _), o13 = st14 - strlen(g11), token(p12, _, t10, _, o13),
+    match("\\.", t10).
+pth111_tok_follows_5(n) :- structural_before(n, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g11).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth111_tok_follows_6(n: node)
+.stored pth111_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth111_tok_follows_6(n) :- next_sibling(s2, n), glob(".", s2).
+pth111_tok_follows_6(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+pth111_tok_follows_6(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth111_tok_follows_7(n: node)
+.stored pth111_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth111_tok_follows_7(n) :- next_sibling(s3, n), glob(".", s3).
+pth111_tok_follows_7(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
     node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
     match("\\.", t4).
-pth111_tok_follows_5(n) :- structural_before(n, g5),
+pth111_tok_follows_7(n) :- structural_before(n, g5),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
@@ -176,13 +196,12 @@ pth111_alt_3(n) :- pth111_alt_1(n).
 .decl pth111_alt_5(n: node, s: loc)
 pth111_alt_5(n, S) :- !pth111_alt_3(n), node(_, n, _, _, _), S = n.
 pth111_alt_5(n, S) :- kind(n, "keyword_argument"), child(n, c1, _), kind(c1, "identifier"),
-    glob("path", c1), next_sibling(c1, s2), glob("=", s2), next_sibling(s2, s3),
-    node(_, s3, _, _, _), S = s3.
+    glob("path", c1), pth111_tok_precedes_2(c1, s3), node(_, s3, _, _, _), S = s3.
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl pth111_alt_9(n: node)
-pth111_alt_9(n) :- pth111_tok_follows_1(n).
-pth111_alt_9(n) :- pth111_tok_precedes_2(n), child(p15, n, _), kind(p15, "keyword_argument").
+pth111_alt_9(n) :- pth111_tok_follows_3(n).
+pth111_alt_9(n) :- pth111_tok_precedes_4(n), child(p15, n, _), kind(p15, "keyword_argument").
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   F, S: metavariables this relation binds for the calling rule
@@ -195,7 +214,7 @@ pth111_alt_10(n, F, S) :- pth111_ann_string(n, F, S).
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 .decl pth111_alt_12(n: node)
 pth111_alt_12(n) :- kind(n, "identifier"), node(_, n, _, _, _), H = n.
-pth111_alt_12(n) :- has(n, c1, "identifier"), !pth111_tok_follows_4(c1), node(_, c1, _, _, _), H = c1.
+pth111_alt_12(n) :- has(n, c1, "identifier"), !pth111_tok_follows_6(c1), node(_, c1, _, _, _), H = c1.
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   F, S: metavariables this relation binds for the calling rule

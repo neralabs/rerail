@@ -22,9 +22,13 @@ PACK_RULES=<main's pack>/rules ENGINE=<rerail-engine> RERAIL_RR_LIB=<engine lib 
 
 The script does three things:
 
-1. It runs `docs/rule-syntax/site/translate_rules.py` over the JSON files. That is `translate.py` (the display
-   translation) followed by `engine_dialect.py` (the engine's dialect).
-2. It copies the overrides over the generated files.
+1. It runs the engine's translator over the JSON files: `rerail-engine translate-json <rule.json>... --out
+   <dir>`. The translator is part of the engine (decision 0175), so `logic`, `run-rr` and `check-rr` also read a
+   JSON rule directly. It is a port of `docs/rule-syntax/site/translate.py` and `engine_dialect.py`, which stay
+   as its reference: the test `json_rules_parity_with_python` holds the two byte-identical on all 537 rules, so a
+   change to the translator goes into both.
+2. It saves each overridden rule's generated text in `generated-before-override/`, for that test, and copies
+   the overrides over the generated files.
 3. It reader-checks every file with `rerail-engine check-rr`.
 
 The verdicts go to `reader-check.txt`, one line per rule: its status and the first line of any error. Old
@@ -42,6 +46,20 @@ test from three places:
   reason);
 - a token the tape leaves out, read from the source between stored children (`structural_before` and
   `structural_after`), tested as whole tokens.
+
+Two shapes read a token in a chain, not only as a test:
+
+- A neighbour step to a token that steps on to its own neighbour (E711's `precedes: {regex: "^==$", precedes:
+  {…}}`) is one step from the node to its named neighbour w, with the token between them: the whole source gap
+  between the two, or a stored token that starts where the node's blank gap ends and ends where w's begins. The
+  inner step's tests are then read at w.
+- A rule whose subject is a token that opens its parent (E722's `{regex: "^except$", inside: {kind:
+  except_clause}, precedes: {regex: "^:$"}}`) is read at the parent: its first stored `token` (and second, for the
+  next token the rule names), or the start of the source before its first stored child. A finding then sits on the
+  parent, which starts where the token does: the token's line and column.
+
+A token in the middle of its parent that a util returns (F632's `is`, read from outside through `inside`) is not
+covered yet: it needs a token as a value (its parent and place), which utils and `inside` steps can carry.
 
 A `layout` gap to the neighbouring token reads the line of the code next to the node from those same gaps. It
 climbs to the parent where the gap reaches the parent's edge, and steps past comments unless the rule says
@@ -149,10 +167,12 @@ Measured on 2026-11-13:
 |---|---|---|---|
 | B011, B028, B905, F523, F823 | 2, 4, 7, 21, 5 | the same | equal |
 | F507, F524 | 25, 9 | the same | equal, after a fix (below) |
-| F601 | 35 | 22 | 13 missing |
-| SIM222 | 59 | 24 | 35 missing |
-| E711, E722, F632, F722, PIE796 | 10, 7, 12, 10, 11 | 0 | none found. E711: a neighbour chain through an anonymous token (`precedes: {regex: "^==$", precedes: …}`) is lowered to `next_sibling`, which sees named nodes only. The translator's token reads cover a neighbour that is only a `regex`, not one with a further step |
-| F811, F821, F841 | | | not run: each has more than one generated file (`ruff-f811-*.rr`); the checker needs one |
+| E711, E722, SIM222 | 10, 7, 59 | the same | equal, after the two token shapes (above); SIM222 found 24 before |
+| F601 | 35 | 22 | 13 missing: keys are compared by `value`, which holds no value for a tuple, a bytes literal or a complex sum (`1 + 0j`), and does not equate numbers across types (`1.0` and `1`, `True` and `1`, `False` and `-0`), as Ruff's `ComparableExpr` does. The fix is in the engine's Python value facts |
+| F632 | 12 | 0 | none found: its subject is the `is` token, mid-comparison, returned by a util (the uncovered token shape above) |
+| F722 | 10 | 0 | none found: it reads the `annotation` grammar's `ERROR` nodes in a string; not yet looked at |
+| PIE796 | 11 | 0 | none found: 5 terms the translator leaves untranslated (`ast(…)`) |
+| F811, F821, F841 | | | no rule: main's Python pack has none of these codes, though its Ruff fixtures name them |
 
 The fix to F507 and F524: `formatArgs` typed a field by `value_type`, which is keyed by the value's text, so in a
 file where `"1"` is also a str (`"{1.arg[1]}"`), field `{1}` read as both an index and a name. A field is now

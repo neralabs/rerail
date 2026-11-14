@@ -249,6 +249,45 @@ def one_of(prog, vs, fmt, values, p, note):
     return f"{fmt.format(x)}, {name}({x})"
 
 
+LITERAL_TOKEN = re.compile(r"[A-Za-z_]+|[^\w\s\\.^$*+?()\[\]{}|]+")
+
+
+def leading_token(prog, rule, v, vs):
+    """A rule whose subject is an anonymous token that opens its parent: `{regex: "^except$", inside: {stopBy:
+    neighbor, kind: except_clause, ..}, precedes: {stopBy: neighbor, regex: "^:$"}}` (E722's bare `except:`). The tape
+    stores the tokens its grammar does not imply, as the parent's `token` children (Python's `except` and `:` of an
+    except clause), and leaves the rest out (RER-131): a stored token is the parent's first, with the next token,
+    where the rule names one, second; a left-out one is read at the start of the source before the parent's first
+    stored child (the parent's whole text where it has none). The subject is then the parent, which starts where the
+    token does, so a finding
+    sits on the token's line and column. A named node the regex matches (`self`) is the rule's other reading, kept
+    as the first alternative. None when the rule is not of this shape (more keys, an unanchored or non-literal
+    regex, a field)."""
+    if set(rule) - {"regex", "inside", "precedes"} or "inside" not in rule:
+        return None
+    lit = lambda rx: rx[1:-1] if isinstance(rx, str) and rx.startswith("^") and rx.endswith("$") \
+        and LITERAL_TOKEN.fullmatch(rx[1:-1]) else None
+    tok, inside, nxt = lit(rule.get("regex")), rule["inside"], rule.get("precedes")
+    if tok is None or not isinstance(inside, dict) or inside.get("stopBy", "neighbor") != "neighbor" \
+            or not isinstance(inside.get("kind"), str) or "field" in inside:
+        return None
+    after = None
+    if nxt is not None:
+        after = lit(nxt.get("regex")) if isinstance(nxt, dict) and set(nxt) - {"stopBy"} == {"regex"} \
+            and nxt.get("stopBy", "neighbor") == "neighbor" else None
+        if after is None:
+            return None
+    named = lower(prog, rule, v, vs, skip=("__lead__",))
+    c, g = vs.fresh("c"), vs.fresh("g")
+    gap = r"(?s)^\s*" + re.escape(tok) + (r"\s*" + re.escape(after) + ".*" if after is not None
+                                           else r"(?:\W.*)?" if tok[-1].isalnum() or tok[-1] == "_" else ".*") + "$"
+    stored = [f"token({v}, 0, {q(tok)}, _, _)"] + ([f"token({v}, 1, {q(after)}, _, _)"] if after is not None else [])
+    token = lower(prog, inside, v, vs, skip=("stopBy",)) + [
+        f"( {', '.join(stored)} ; child({v}, {c}, 0), structural_before({c}, {g}), match({q(gap)}, {g})"
+        f" ; !child({v}, _, _), node_text({v}, {g}), match({q(gap)}, {g}) )"]
+    return [f"( {', '.join(named)} ; {', '.join(token)} )"]
+
+
 def lower(prog, rule, v, vs, skip=()):
     """Literals that hold when node v matches the rule object."""
     lits = []
@@ -260,6 +299,9 @@ def lower(prog, rule, v, vs, skip=()):
     if not isinstance(rule, dict):
         prog.untranslated += 1
         return [f"ast({v}, {compact(rule)})"]
+    lead = leading_token(prog, rule, v, vs) if not skip else None
+    if lead is not None:
+        return lead
     rest = {}
     for k, val in rule.items():
         if k in skip:
@@ -927,6 +969,60 @@ def token_gap_regex(rx, where):
     return "(?s)^(?:" + "|".join(pieces) + ")$"
 
 
+def token_chain(prog, k, sub, v, vs):
+    """A neighbour step to an anonymous token that steps on, the same way, to its neighbour:
+    `precedes: {stopBy: neighbor, regex: "^==$", precedes: {stopBy: neighbor, ...}}` (E711's `x == None`). The tape
+    keeps the named nodes, so the step is read as one from v to its named neighbour w, with the token between them:
+    one the tape leaves out is the whole source gap between v and w (blanks around one token the anchored regex
+    matches); one it stores starts where v's blank gap ends and ends where w's begins. The inner step's tests are
+    then lowered at w. None when the step is not of this shape (the token unanchored, a field, another direction)."""
+    rx = sub.get("regex")
+    inner = sub.get(k)
+    if sub.get("stopBy", "neighbor") != "neighbor" or set(sub) - {"stopBy"} != {"regex", k} \
+            or not isinstance(rx, str) or not isinstance(inner, dict) \
+            or inner.get("stopBy", "neighbor") != "neighbor" or "field" in inner:
+        return None
+    flags = ""
+    m = re.match(r"\(\?([a-zA-Z]+)\)", rx)
+    if m:
+        flags, rx = m.group(1), rx[m.end():]
+    if not (rx.startswith("^") and rx.endswith("$") and not rx.endswith("\\$") and len(rx) > 2):
+        return None
+    body = f"(?{flags}:{rx[1:-1]})" if flags else f"(?:{rx[1:-1]})"
+    w, g, g2, t, p_, o, e, s, x = (vs.fresh(n) for n in ("s", "g", "g", "t", "p", "o", "e", "st", "en"))
+    side, back = ("after", "before") if k == "precedes" else ("before", "after")
+    one = r"(?s)^\s*" + body + r"\s*$"
+    gap = [f"next_sibling({v}, {w})" if k == "precedes" else f"next_sibling({w}, {v})",
+           f"structural_{side}({v}, {g})", f"match({q(one)}, {g})"]
+    if k == "precedes":
+        at = [f"node(_, {v}, _, _, {x})", f"{o} = {x} + strlen({g})", f"token({p_}, _, {t}, {o}, {e})",
+              f"node(_, {w}, _, {s}, _)", f"{s} = {e} + strlen({g2})"]
+    else:
+        at = [f"node(_, {v}, _, {s}, _)", f"{o} = {s} - strlen({g})", f"token({p_}, _, {t}, {e}, {o})",
+              f"node(_, {w}, _, _, {x})", f"{x} = {e} - strlen({g2})"]
+    stored = [f"next_sibling({v}, {w})" if k == "precedes" else f"next_sibling({w}, {v})",
+              f"structural_{side}({v}, {g})", 'match("\\\\s*", ' + g + ")", f"child({p_}, {v}, _)",
+              f"structural_{back}({w}, {g2})", 'match("\\\\s*", ' + g2 + ")"] + at + [f"match({q(whole(caps(sub['regex'])))}, {t})"]
+    # one relation of (v, w), a rule per form, so its stored-token read carries its reason (`.stored`)
+    ren = lambda ls: [re.sub(r"(?<![\w$])" + re.escape(w) + r"\b", "m",
+                             re.sub(r"(?<![\w$])" + re.escape(v) + r"\b", "n", l)) for l in ls]
+    rules = [("{0}(n, m)", ren(gap)), ("{0}(n, m)", ren(stored))]
+    sig = repr(rules)
+    seen = prog.__dict__.setdefault("token_rels", {})
+    if sig not in seen:
+        seen[sig] = f"tok_{k}_{len(seen) + 1}"
+        name = seen[sig]
+        what = "the named node after n" if k == "precedes" else "the named node before n"
+        prog.lib[name] = (f".decl {name}(n: node, m: node)\n.stored {name} \"its token read is of a token the tape "
+                          f"stores between two named siblings; one the tape leaves out is the source gap, in its own "
+                          f"rule\"",
+                          [f"// {name}(n, m): m is {what}, with one token between them that matches "
+                           f"{json.dumps(sub['regex'])}: a token the tape stores, or one it leaves out, read from the "
+                           f"source between the two"],
+                          [(h.format(name), b) for h, b in rules])
+    return [f"{seen[sig]}({v}, {w})"] + lower(prog, inner, w, vs, skip=("field", "stopBy"))
+
+
 def relation(prog, k, sub, v, vs):
     f = sub.get("field")
     stop = sub.get("stopBy", "neighbor")
@@ -948,6 +1044,9 @@ def relation(prog, k, sub, v, vs):
         if f and stop != "neighbor":
             lits.append(f"field(_, {q(f)}, {lo})")
     else:
+        chain = token_chain(prog, k, sub, v, vs)
+        if chain is not None:
+            return chain
         a, b = (v, c) if k == "precedes" else (c, v)
         if stop == "neighbor":
             lits.append(f"next_sibling({a}, {b})")

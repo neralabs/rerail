@@ -241,6 +241,63 @@ fn sym_of(op: &str) -> &str {
 }
 
 /// Literals that hold when node v matches the rule object.
+/// A rule whose subject is an anonymous token that opens its parent (`{regex: "^except$", inside: {stopBy: neighbor,
+/// kind: except_clause, ..}, precedes: {stopBy: neighbor, regex: "^:$"}}`, E722's bare `except:`). A token the tape
+/// stores is the parent's first `token` child, the next one the rule names its second; one the tape leaves out
+/// (RER-131) is read at the start of the source before the parent's first stored child (the parent's whole text
+/// where it has none). The subject is the parent, which starts where the token does, so a finding sits on the
+/// token's line and column. A named node the regex matches is the first alternative. None when the rule is not of
+/// this shape.
+fn leading_token(px: &Patterns, prog: &mut Program, rule: &Obj, v: &str, vs: &mut Vars) -> R<Option<Vec<String>>> {
+    if !rule.keys_within(&["regex", "inside", "precedes"]) || !rule.has("inside") {
+        return Ok(None);
+    }
+    let literal = re(r"^(?:[A-Za-z_]+|[^\w\s\\.^$*+?()\[\]{}|]+)$");
+    let lit = |rx: Option<&Value>| -> Option<String> {
+        let rx = rx?.as_str()?;
+        if !(rx.starts_with('^') && rx.ends_with('$')) || rx.chars().count() < 2 {
+            return None;
+        }
+        let body = super::text::chars_slice(rx, 1, 1);
+        literal.is_match(&body).unwrap_or(false).then_some(body)
+    };
+    let neighbor = |o: &Obj| o.get("stopBy").is_none_or(|s| s.as_str() == Some("neighbor"));
+    let Some(tok) = lit(rule.get("regex")) else { return Ok(None) };
+    let Some(inside) = rule.get("inside").and_then(Value::as_obj) else { return Ok(None) };
+    if !neighbor(inside) || !inside.get("kind").is_some_and(Value::is_str) || inside.has("field") {
+        return Ok(None);
+    }
+    let after = match rule.get("precedes") {
+        None => None,
+        Some(nxt) => {
+            let a = nxt.as_obj().filter(|o| o.without(&["stopBy"]).key_set_is(&["regex"]) && neighbor(o)).and_then(|o| lit(o.get("regex")));
+            match a {
+                Some(a) => Some(a),
+                None => return Ok(None),
+            }
+        }
+    };
+    let named = lower(px, prog, &Value::Obj(rule.clone()), v, vs, &["__lead__"])?;
+    let (c, gv) = (vs.fresh("c"), vs.fresh("g"));
+    let last = tok.chars().last().expect("a token");
+    let tail = match &after {
+        Some(a) => format!(r"\s*{}.*", py_escape(a)),
+        None if last.is_alphanumeric() || last == '_' => r"(?:\W.*)?".to_owned(),
+        None => ".*".to_owned(),
+    };
+    let gap = q(&format!(r"(?s)^\s*{}{tail}$", py_escape(&tok)));
+    let mut stored = vec![format!("token({v}, 0, {}, _, _)", q(&tok))];
+    if let Some(a) = &after {
+        stored.push(format!("token({v}, 1, {}, _, _)", q(a)));
+    }
+    let mut token = lower(px, prog, &Value::Obj(inside.clone()), v, vs, &["stopBy"])?;
+    token.push(format!(
+        "( {} ; child({v}, {c}, 0), structural_before({c}, {gv}), match({gap}, {gv}) ; !child({v}, _, _), node_text({v}, {gv}), match({gap}, {gv}) )",
+        stored.join(", ")
+    ));
+    Ok(Some(vec![format!("( {} ; {} )", named.join(", "), token.join(", "))]))
+}
+
 pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut Vars, skip: &[&str]) -> R<Vec<String>> {
     let mut lits: Vec<String> = Vec::new();
     if let Value::List(rules) = rule {
@@ -256,6 +313,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         prog.untranslated += 1;
         return Ok(vec![format!("ast({v}, {})", compact(rule))]);
     };
+    if skip.is_empty()
+        && let Some(lead) = leading_token(px, prog, ro, v, vs)?
+    {
+        return Ok(lead);
+    }
     let mut rest = Obj::default();
     for (k, val) in ro.iter() {
         if skip.contains(&k) {
@@ -895,6 +957,95 @@ fn token_gap_regex(rx: &str, where_: &str) -> String {
     format!("(?s)^(?:{})$", pieces.join("|"))
 }
 
+/// A neighbour step to an anonymous token that steps on, the same way, to its neighbour
+/// (`precedes: {stopBy: neighbor, regex: "^==$", precedes: {..}}`, E711's `x == None`): read as a step from v to its
+/// named neighbour w with the token between them. A token the tape leaves out is the whole source gap between v and
+/// w (blanks around one token the anchored regex matches); one it stores starts where v's blank gap ends and ends
+/// where w's begins. The inner step's tests are lowered at w. None when the step is not of this shape.
+fn token_chain(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs: &mut Vars) -> R<Option<Vec<String>>> {
+    let neighbor = |o: &Obj| o.get("stopBy").is_none_or(|s| s.as_str() == Some("neighbor"));
+    let shape = sub_.without(&["stopBy"]).key_set_is(&["regex", k]);
+    let (Some(rx_full), Some(inner)) = (sub_.get("regex").and_then(Value::as_str), sub_.get(k).and_then(Value::as_obj)) else {
+        return Ok(None);
+    };
+    if !neighbor(sub_) || !shape || !neighbor(inner) || inner.has("field") {
+        return Ok(None);
+    }
+    let mut flags = String::new();
+    let mut rx = rx_full.to_owned();
+    if let Some(c) = super::pyre::find(&re(r"^\(\?([a-zA-Z]+)\)"), &rx.clone()) {
+        flags = g(&c, 1).to_owned();
+        rx = rx[c.get(0).expect("group 0").end()..].to_owned();
+    }
+    if !(rx.starts_with('^') && rx.ends_with('$') && !rx.ends_with("\\$") && rx.chars().count() > 2) {
+        return Ok(None);
+    }
+    let inside = super::text::chars_slice(&rx, 1, 1);
+    let body = if flags.is_empty() { format!("(?:{inside})") } else { format!("(?{flags}:{inside})") };
+    let [w, gv, g2, t, p_, o, e, s, x] = ["s", "g", "g", "t", "p", "o", "e", "st", "en"].map(|n| vs.fresh(n));
+    let (side, back) = if k == "precedes" { ("after", "before") } else { ("before", "after") };
+    let one = format!(r"(?s)^\s*{body}\s*$");
+    let sib = if k == "precedes" { format!("next_sibling({v}, {w})") } else { format!("next_sibling({w}, {v})") };
+    let gap = [sib.clone(), format!("structural_{side}({v}, {gv})"), format!("match({}, {gv})", q(&one))];
+    let at = if k == "precedes" {
+        [
+            format!("node(_, {v}, _, _, {x})"),
+            format!("{o} = {x} + strlen({gv})"),
+            format!("token({p_}, _, {t}, {o}, {e})"),
+            format!("node(_, {w}, _, {s}, _)"),
+            format!("{s} = {e} + strlen({g2})"),
+        ]
+    } else {
+        [
+            format!("node(_, {v}, _, {s}, _)"),
+            format!("{o} = {s} - strlen({gv})"),
+            format!("token({p_}, _, {t}, {e}, {o})"),
+            format!("node(_, {w}, _, _, {x})"),
+            format!("{x} = {e} - strlen({g2})"),
+        ]
+    };
+    let mut stored = vec![
+        sib,
+        format!("structural_{side}({v}, {gv})"),
+        format!("match(\"\\\\s*\", {gv})"),
+        format!("child({p_}, {v}, _)"),
+        format!("structural_{back}({w}, {g2})"),
+        format!("match(\"\\\\s*\", {g2})"),
+    ];
+    stored.extend(at);
+    stored.push(format!("match({}, {t})", q(&whole(px, &caps(rx_full)))));
+    // one relation of (v, w), a rule per form, so its stored-token read carries its reason (`.stored`)
+    let (rv, rw) = (re(&format!(r"(?<![\w$]){}\b", esc(v))), re(&format!(r"(?<![\w$]){}\b", esc(&w))));
+    let ren = |ls: &[String]| -> Vec<String> {
+        ls.iter().map(|l| sub(&rw, &sub(&rv, l, |_| "n".to_owned()), |_| "m".to_owned())).collect()
+    };
+    let rules = [ren(&gap), ren(&stored)];
+    let sig = format!("(n, m)\u{2}{}", rules.iter().map(|r| r.join("\u{1}")).collect::<Vec<_>>().join("\u{2}"));
+    let name = match prog.token_rels.iter().find(|(s, _)| *s == sig) {
+        Some((_, n)) => n.clone(),
+        None => {
+            let name = format!("tok_{k}_{}", prog.token_rels.len() + 1);
+            prog.token_rels.push((sig, name.clone()));
+            let what = if k == "precedes" { "the named node after n" } else { "the named node before n" };
+            prog.lib.insert(
+                name.clone(),
+                (
+                    format!(".decl {name}(n: node, m: node)\n.stored {name} \"its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule\""),
+                    vec![format!(
+                        "// {name}(n, m): m is {what}, with one token between them that matches {}: a token the tape stores, or one it leaves out, read from the source between the two",
+                        dumps(&Value::Str(rx_full.to_owned()), true, ", ", ": ", false)
+                    )],
+                    rules.into_iter().map(|b| (format!("{name}(n, m)"), b)).collect(),
+                ),
+            );
+            name
+        }
+    };
+    let mut lits = vec![format!("{name}({v}, {w})")];
+    lits.extend(lower(px, prog, &Value::Obj(inner.clone()), &w, vs, &["field", "stopBy"])?);
+    Ok(Some(lits))
+}
+
 fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs: &mut Vars) -> R<Vec<String>> {
     let f = sub_.get("field").cloned();
     let f_truthy = truthy(f.as_ref());
@@ -924,6 +1075,9 @@ fn relation(px: &Patterns, prog: &mut Program, k: &str, sub_: &Obj, v: &str, vs:
             lits.push(format!("field(_, {}, {lo})", qf()));
         }
     } else {
+        if let Some(chain) = token_chain(px, prog, k, sub_, v, vs)? {
+            return Ok(chain);
+        }
         let (a, b) = if k == "precedes" { (v.to_owned(), c.clone()) } else { (c.clone(), v.to_owned()) };
         if is("neighbor") {
             lits.push(format!("next_sibling({a}, {b})"));
