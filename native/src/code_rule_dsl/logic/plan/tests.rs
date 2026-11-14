@@ -1114,6 +1114,9 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let mut got = Vec::new();
     let mut native = 0;
+    // Each mode derives from scratch: kept across runs (decision 0077 §4), the second run's strata were the first's,
+    // and the native engine solved none.
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
@@ -1930,11 +1933,11 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
     // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
     model.ndv.insert(("delta",1),1.0);
-    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(10),526)]));
-    model.stats.dfreq.insert(("restrict",2),HashMap::from([(Constant::Int(10),450)]));
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(10),526)])));
+    model.stats.dfreq.insert(("restrict",2),std::sync::Arc::new(HashMap::from([(Constant::Int(10),450)])));
     let ((overlap,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
-    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(11),526)]));
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(11),526)])));
     assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
     let ((disjoint,work,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
@@ -1971,7 +1974,7 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     }
     Arc::make_mut(&mut model.stats.kfreq).insert("1".into(),2063);
     Arc::make_mut(&mut model.stats.kfreq).insert("2".into(),2181);
-    model.stats.dfreq.insert(("child",2),HashMap::from([(Constant::Int(0),60_000)]));
+    model.stats.dfreq.insert(("child",2),std::sync::Arc::new(HashMap::from([(Constant::Int(0),60_000)])));
     // The stated rule (the parse may give others first).
     let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let made = body::alone(rule).unwrap();
@@ -2018,8 +2021,8 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         }
     }
     let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
-    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
-    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
+    model.stats.dfreq.insert(("pv".to_owned(), 1), std::sync::Arc::new(values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)])));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), std::sync::Arc::new(values(&[(193, 570), (1, 100), (2, 25)])));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
     let ((order, _, _), _) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
@@ -2305,7 +2308,7 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     model.stats.card.insert("a",210.0); watch.record(0,0,&model,"a");
     assert!(watch.take(0),"small changes accumulate against the last published size");
     for key in [1,2] {
-        model.stats.dfreq.insert(("a",0),HashMap::from([(Constant::Int(key),210)]));
+        model.stats.dfreq.insert(("a",0),std::sync::Arc::new(HashMap::from([(Constant::Int(key),210)])));
         watch.record(0,1,&model,"a");
         assert!(watch.take(0),"new key domains publish even at identical row counts");
     }

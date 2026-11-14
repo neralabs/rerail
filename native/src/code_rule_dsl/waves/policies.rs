@@ -834,7 +834,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
     let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect();
     let demand = Program { decls, facts, rules, inputs, outputs: vec![DEMANDED.to_owned()], ..Program::default() };
-    front::strata(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
+    front::components_of(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))
 }
 
