@@ -195,13 +195,41 @@ Measured after, profiling build: 10 trials of four concurrent strict runs over o
 temporal), cold then warm: all 80 runs give their solo findings (1629, 494, 1057, 1063), none hangs (before: a hang in
 about every other warm trial). The replay that failed on a deleted granule gives 494.
 
+## The fifth step: the memo guarded, the collector waits, the default measured
+
+1. **The memo's foreign id came back** once in a concurrent cold run (`symbol 4291 is no atom of this process's (it
+   holds 2765)`). A symbol id is a bare integer through the engine, so a value cannot say which numbering it is in.
+   Two guards make a wrong mapping an error, never a silent wrong string: where an entry is made, each symbol must be
+   an atom of the process's table (a value past it came from a read that gave store ids unmapped); and an entry
+   carries the table it was made under, which the writer maps it with or refuses it. In the recurrence the first check
+   passed and the writer's table was smaller: the run's and the writer's tables differed. The store's identity is made
+   with `INSERT OR IGNORE`, so a second table by identity is unlikely; the cause is not found. Not seen since in 87
+   concurrent runs. The fork hook takes `RERAIL_TEST_FORK_FROM=<store>` (real strings, the ones the store lacks, in
+   one write transaction): a fork can meet strings the process gives ids to later.
+2. **The store test that failed under load** failed in the collector, not a writer: after its pass committed, the
+   page return (`incremental_vacuum`) took the write lock in one attempt. A busy store now leaves the pages to the
+   next pass. `begin` retries a write's `BEGIN` to the deadline, as every store write waits (except inside a retry,
+   `immediate_transaction_once`, or `NoBusyWait`). Four suites at once, three times: 12 of 12 pass (before: 2 to 4 of
+   8 failed).
+3. **The default.** The full PostHog run (`len-_py.rr`, 29,771 files), solo, strict, profiling build:
+
+   | | cold | warm |
+   |---|---|---|
+   | off | 117.3 s, 4.31 T instructions, 4.4 GB | 8.3 to 9.5 s, 0.14 T (twice); 35.8 s, 1.26 T (once) |
+   | on | 117.5 s, 4.32 T, 4.6 GB | 17.7 to 18.8 s, 0.97 to 1.01 T (three times) |
+
+   The findings are the same in every run (27,884 violations; the violation and P files sorted equal). Cold costs the
+   same. Warm, the provisional runs never take the path the off runs mostly take, and parse and store every file's
+   tape again (tree-sitter and zstd in a sample). The default stays off until that is found.
+
 ## Departures and open points
 
-- The memo's foreign id (`the memo's entries: symbol 2767 is no atom of this process's (it holds 2760)`), seen once,
-  in a concurrent trial before the third step: a forked process's entry held, in a symbol column, a value past its
-  own atoms, so not one of its ids (likely a store id carried in from a read). Not seen since, in the hook sweeps
-  and the 80 concurrent runs above. The mapping takes any value past the fork point as the process's own: a store id
-  below the process's atom count would be mapped to the wrong string without an error. Not reproduced; open.
+- A warm run with provisional ids parses every file again; one off does so sometimes (once in three). In both, the
+  profile names 26,271 tape cache misses of 29,773, and the writer stores 26,271 tapes the store holds already (one
+  grammar version and format, 27,411 sources with tapes). A profiled run takes the slow path either way.
+- A cold run that forks in its first ids (`held 1`, another process storing 12 atoms meanwhile) failed phase 0 twice in
+  170 concurrent runs: `no statistics for p0_file_t_shape.c0`. Not reproduced on demand.
+- The memo's foreign id: guarded (above); its cause, a second atom table of one store in a process, not found.
 - A forked process's memo misses every entry whose relation has no registered symbol columns: a cost of the fork,
   not of correctness.
 - The kept statistics' sketches (estimated distinct counts) and the retained part's statistics by constant
