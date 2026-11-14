@@ -3090,6 +3090,21 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
     }
+    /// Document by document, with no search for each row's document. (A merge had left this in `impl Viewed`,
+    /// where the trait's per-row scan, a document search for each row, shadowed it.)
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        let offsets = self.batch.offsets(self.view);
+        let mut out = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            for i in 0..offsets[doc + 1] - base {
+                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+                    out.push((base + i) as u32);
+                }
+            }
+        }
+        out
+    }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
         for (o, &c) in out.iter_mut().zip(columns) {
@@ -3148,20 +3163,6 @@ impl Viewed {
     fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         self.value_at(p, i, column)
-    }
-    /// Document by document, with no search for each row's document.
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
-        let offsets = self.batch.offsets(self.view);
-        let mut out = Vec::new();
-        for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = offsets[doc];
-            for i in 0..offsets[doc + 1] - base {
-                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
-                    out.push((base + i) as u32);
-                }
-            }
-        }
-        out
     }
 }
 
