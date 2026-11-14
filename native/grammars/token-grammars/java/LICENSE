@@ -1,0 +1,3 @@
+grammar.json is tree-sitter-java 0.23.5's (src/grammar.json, the crate the engine links), under
+the MIT license its crate declares. The crate ships no license text of its own; the upstream
+repository is https://github.com/tree-sitter/tree-sitter-java.

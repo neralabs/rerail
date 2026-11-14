@@ -1294,6 +1294,9 @@ mod language {
             #[allow(unused_imports)]
             use std::borrow::Cow;
         }
+        // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod csharp;
+        pub mod java;
         pub use rerail_lang_json::code_rule_dsl::language::adapter::json;
         #[cfg(test)]
         pub mod kit;
@@ -4724,7 +4727,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, ecma::Ecma, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, csharp::Csharp, ecma::Ecma, java::Java, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4743,6 +4746,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
     language::register_base(Family::Json, &Pack::<Json>::NEW);
+    register(Family::Java, &Pack::<Java>::NEW);
+    language::register_base(Family::Java, &Pack::<Java>::NEW);
+    register(Family::Csharp, &Pack::<Csharp>::NEW);
+    language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
