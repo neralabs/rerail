@@ -888,19 +888,7 @@ fn binds_slot(step: &Step, x: usize) -> bool {
 
 /// Whether `step` reads slot `x`.
 fn mentions(step: &Step, x: usize) -> bool {
-    let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
-    match step {
-        Step::Unused { .. } => false,
-        Step::Atom { keys, .. } | Step::Scalar { keys, .. } | Step::StrJoin { keys, .. } => keys.iter().any(|(_, key)| k(key)),
-        Step::Cat { a, b, .. } => k(a) || k(b),
-        Step::Split { whole, ka, kb, .. } => k(whole) || k(ka) || k(kb),
-        Step::Eq { a, b } | Step::Ne { a, b } | Step::Lt { a, b, .. } | Step::Doc { a, b, .. } => k(a) || k(b),
-        Step::Let { b, .. } => k(b),
-        Step::Func { args, .. } => args.iter().any(k),
-        Step::DocOf { out, n, bind } => k(n) || (!*bind && *out == x),
-        Step::Test { s, p, .. } => k(s) || k(p),
-        Step::In { a, .. } => k(a),
-    }
+    step.mentions(x)
 }
 
 /// The literal text tests the device runs of any texts (`mj::TEXTOP`): `equals`, `prefix`, `suffix`.

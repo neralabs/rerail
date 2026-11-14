@@ -1114,6 +1114,9 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let mut got = Vec::new();
     let mut native = 0;
+    // Each mode derives from scratch: kept across runs (decision 0077 §4), the second run's strata were the first's,
+    // and the native engine solved none.
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
@@ -1867,7 +1870,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     model.stats.nodes = 450_000.0;
     // Live counts, as a wave leaves them: rows, then distinct values by column.
     for (rel, rows, ndv) in [
@@ -1897,16 +1900,16 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv, fan) in [
         ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
         ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
         ("restrict",450.0,vec![450.0,450.0,4.0],vec![1.0,1.0,140.0]),
     ] {
-        model.stats.card.insert(rel.into(), rows);
+        model.stats.card.insert(rel, rows);
         for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
-            model.ndv.insert((rel.into(),c),ndv);
-            model.stats.fan.insert((rel.into(),c),fan);
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
         }
     }
     model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
@@ -1918,23 +1921,23 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
 
     // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
     let _plans=KeepPlans::start(None);
-    model.ndv.insert(("delta".into(),1),1.0);
+    model.ndv.insert(("delta",1),1.0);
     let ((before,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     let before:Vec<_>=before.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(before,["delta","expand","restrict"],"the initial narrow-domain estimate makes expansion cheaper");
-    model.ndv.insert(("delta".into(),1),173.0);
+    model.ndv.insert(("delta",1),173.0);
     let ((after,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     let after:Vec<_>=after.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(after,["delta","restrict","expand"],"a size-only cache must not keep the obsolete order");
 
     // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
     // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
-    model.ndv.insert(("delta".into(),1),1.0);
-    model.stats.dfreq.insert(("delta".into(),1),HashMap::from([(Constant::Int(10),526)]));
-    model.stats.dfreq.insert(("restrict".into(),2),HashMap::from([(Constant::Int(10),450)]));
+    model.ndv.insert(("delta",1),1.0);
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(10),526)])));
+    model.stats.dfreq.insert(("restrict",2),std::sync::Arc::new(HashMap::from([(Constant::Int(10),450)])));
     let ((overlap,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
-    model.stats.dfreq.insert(("delta".into(),1),HashMap::from([(Constant::Int(11),526)]));
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(11),526)])));
     assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
     let ((disjoint,work,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
@@ -1942,7 +1945,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     assert!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),None).is_empty(),"a later predicate is not an already-applied demand");
 
     // A partial SQL constant memo does not prove absence. Complete native postings do.
-    model.stats.dfreq.remove(&("restrict".into(),2));
+    model.stats.dfreq.remove(&("restrict",2));
     let col=model.col("restrict",2);
     model.stats.col.insert(("restrict".into(),col.clone()),[450,2,0,0]);
     model.stats.memo.insert("restrict".into(),HashMap::from([((col.clone(),Constant::Int(10)),225)]));
@@ -1957,21 +1960,21 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     let p = parse(".decl kind(n:number,k:number)\n.decl scope(n:number,f:number)\n.decl child(p:number,c:number,i:number)\n.input kind\n.input scope\n.input child\n.decl result(f:number,r:number)\nresult(f,r) :- kind(rs,1), child(rs,r,0), scope(rs,f), kind(f,2).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv, fan) in [
         ("kind",300_000.0,vec![300_000.0,100.0],vec![1.0,6000.0]),
         ("scope",160_836.0,vec![160_836.0,2181.0],vec![1.0,100.0]),
         ("child",180_000.0,vec![60_000.0,180_000.0,5.0],vec![3.0,1.0,60_000.0]),
     ] {
-        model.stats.card.insert(rel.into(), rows);
+        model.stats.card.insert(rel, rows);
         for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
-            model.ndv.insert((rel.into(),c),ndv);
-            model.stats.fan.insert((rel.into(),c),fan);
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
         }
     }
     Arc::make_mut(&mut model.stats.kfreq).insert("1".into(),2063);
     Arc::make_mut(&mut model.stats.kfreq).insert("2".into(),2181);
-    model.stats.dfreq.insert(("child".into(),2),HashMap::from([(Constant::Int(0),60_000)]));
+    model.stats.dfreq.insert(("child",2),std::sync::Arc::new(HashMap::from([(Constant::Int(0),60_000)])));
     // The stated rule (the parse may give others first).
     let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let made = body::alone(rule).unwrap();
@@ -2002,7 +2005,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     model.stats.nodes = 450_000.0;
     // Live counts, as the replay's step left them: rows, then by column distinct values and skew-weighted fanout.
     for (rel, rows, cols) in [
@@ -2018,8 +2021,8 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         }
     }
     let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
-    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
-    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
+    model.stats.dfreq.insert(("pv".to_owned(), 1), std::sync::Arc::new(values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)])));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), std::sync::Arc::new(values(&[(193, 570), (1, 100), (2, 25)])));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
     let ((order, _, _), _) = model.plan_rule_explained(&p, &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
@@ -2040,8 +2043,8 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     .unwrap();
     let db = Connection::open_in_memory().unwrap();
     let mut stats = Stats::empty(&p);
-    stats.card.insert("p".into(), 14_000.0);
-    stats.card.insert("q".into(), 14_000.0);
+    stats.card.insert("p", 14_000.0);
+    stats.card.insert("q", 14_000.0);
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(stats);
@@ -2128,7 +2131,7 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     }
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
         model.stats.card.insert(rel.to_owned(), rows);
     }
@@ -2144,16 +2147,16 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let p = parse(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed__plus(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed__plus(s,1).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed__plus",7000.0,vec![7000.0,20.0])] {
-        model.stats.card.insert(rel.into(),rows);
+        model.stats.card.insert(rel,rows);
         for (c,n) in ndv.into_iter().enumerate() {
-            model.ndv.insert((rel.into(),c),n);
-            model.stats.fan.insert((rel.into(),c),rows/n);
+            model.ndv.insert((rel,c),n);
+            model.stats.fan.insert((rel,c),rows/n);
         }
     }
     // Walk is highly skewed. Distinct changed scopes are key probes, not random walk rows.
-    model.stats.fan.insert(("walk".into(),2),40000.0);
+    model.stats.fan.insert(("walk",2),40000.0);
     model.stats.nodes=300000.0;
     let r=&p.rules[0];
     let _plans=KeepPlans::start(None);
@@ -2170,7 +2173,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     assert!(order.iter().position(|s|s.at==0).unwrap()>0);
     assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
     // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
-    model.stats.delta_rows.insert("walk".into(),1.0);
+    model.stats.delta_rows.insert("walk",1.0);
     let ((small,_,_),_)=model.plan_rule_live(&p, &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
     assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
 
@@ -2185,13 +2188,13 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     let p = parse(".decl e(x:number)\n.decl big(y:number)\n.decl link(x:number,y:number)\n.decl out(x:number,y:number)\nout(x,y) :- e(x), big(y), link(x,y).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     // `rel_base`'s sizes: `rr_ast_1_1` empty (no rows, so no fanout), `pkg` 40 rows, `docof` 90,100 keyed by its node.
     for (rel, rows, ndv) in [("e", 0.0, vec![1.0]), ("big", 40.0, vec![40.0]), ("link", 90_100.0, vec![90_100.0, 40.0])] {
-        model.stats.card.insert(rel.into(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
-            model.ndv.insert((rel.into(), c), n);
-            model.stats.fan.insert((rel.into(), c), rows / n);
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
         }
     }
     let r = &p.rules[0];
@@ -2215,13 +2218,13 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     let size = |model: &mut Model, roles: f64, fragments: i64| {
         for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", roles, vec![roles, 4.0])] {
-            model.stats.card.insert(rel.into(), rows);
+            model.stats.card.insert(rel, rows);
             for (c, n) in ndv.into_iter().enumerate() {
-                model.ndv.insert((rel.into(), c), n);
-                model.stats.fan.insert((rel.into(), c), (rows / n).max(1.0));
+                model.ndv.insert((rel, c), n);
+                model.stats.fan.insert((rel, c), (rows / n).max(1.0));
             }
         }
         model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
@@ -2251,12 +2254,12 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
     for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", 0.0, vec![0.0, 0.0])] {
-        model.stats.card.insert(rel.into(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
-            model.ndv.insert((rel.into(), c), n);
-            model.stats.fan.insert((rel.into(), c), 1.0);
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), 1.0);
         }
     }
     model.stats.nodes = 300_000.0;
@@ -2269,7 +2272,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
     let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
@@ -2279,10 +2282,10 @@ fn live_statistics_invalidate_only_changed_distribution_slots() {
 #[test]
 fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() {
     let p=parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl filtered(n:number,k:number)\nfiltered(n,k) :- raw(1,n,k).\n.decl kinds(k:number)\nkinds(k) :- raw(_,_,k).\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Arc::new(p.rules.iter().map(|r|r.head.rel.to_string()).collect::<HashSet<String>>())};
-    model.stats.card.insert("raw".into(),7000.0);
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Arc::new(p.rules.iter().map(|r|r.head.rel.to_string()).collect::<HashSet<String>>())};
+    model.stats.card.insert("raw",7000.0);
     for (c,n) in [10.0,7000.0,20.0].into_iter().enumerate() {
-        model.ndv.insert(("raw".into(),c),n); model.stats.fan.insert(("raw".into(),c),7000.0/n);
+        model.ndv.insert(("raw",c),n); model.stats.fan.insert(("raw",c),7000.0/n);
     }
     model.stats.memo.insert("raw".into(),HashMap::from([(("c0".into(),Constant::Int(1)),100),(("c2".into(),Constant::Int(9)),12)]));
     for r in &p.rules { model.view_stats(&r.head.rel,&r.head,r.body[0].atom().unwrap()); }
@@ -2294,25 +2297,25 @@ fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() 
 #[test]
 fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     let p=parse(".decl a(x:number,y:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x,_), b(x).\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
     let made=body::made(&p.rules).unwrap();
     let mut watch=replanning::Watch::new(&BTreeMap::from([("a".into(),0)]),&[(body::nth(&made,0),0)]);
     watch.delta(0,5);
-    model.stats.card.insert("a".into(),100.0); watch.record(0,0,&model,"a"); watch.record(0,1,&model,"a");
+    model.stats.card.insert("a",100.0); watch.record(0,0,&model,"a"); watch.record(0,1,&model,"a");
     assert!(watch.take(0));
-    model.stats.card.insert("a".into(),150.0); watch.record(0,0,&model,"a");
+    model.stats.card.insert("a",150.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0),"small drift keeps the priced signature");
-    model.stats.card.insert("a".into(),210.0); watch.record(0,0,&model,"a");
+    model.stats.card.insert("a",210.0); watch.record(0,0,&model,"a");
     assert!(watch.take(0),"small changes accumulate against the last published size");
     for key in [1,2] {
-        model.stats.dfreq.insert(("a".into(),0),HashMap::from([(Constant::Int(key),210)]));
+        model.stats.dfreq.insert(("a",0),std::sync::Arc::new(HashMap::from([(Constant::Int(key),210)])));
         watch.record(0,1,&model,"a");
         assert!(watch.take(0),"new key domains publish even at identical row counts");
     }
-    model.stats.fan.insert(("a".into(),1),999.0); watch.record(0,2,&model,"a");
+    model.stats.fan.insert(("a",1),999.0); watch.record(0,2,&model,"a");
     assert!(!watch.take(0),"an unused wildcard column has no dependent plan");
     watch.delta(0,0);
-    model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
+    model.stats.card.insert("a",1000.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
 }
 
@@ -2345,15 +2348,15 @@ fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
 fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
     let p = parse(".decl parents(p:number)\n.input parents\n.decl child(p:number,c:number,idx:number)\n.input child\n.decl out(c:number)\nout(c) :- parents(p), child(p,c,0).\n").unwrap();
     let mut model = Model { shapes: Default::default(), docs_by_shift:false, analysis:Default::default(), input_set:Default::default(),
-        stats:Stats::empty(&p), ndv:HashMap::new(), docof:Default::default(), view_src:Default::default(),
+        stats:Stats::empty(&p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(),
         inputs:Inputs::file().into(), derived:Default::default() };
-    model.stats.card.insert("parents".into(),100.0);
-    model.ndv.insert(("parents".into(),0),100.0);
-    model.stats.card.insert("child".into(),10000.0);
-    model.ndv.insert(("child".into(),0),100.0);
-    model.ndv.insert(("child".into(),1),10000.0);
-    model.ndv.insert(("child".into(),2),100.0);
-    model.stats.fan.insert(("child".into(),0),100.0);
+    model.stats.card.insert("parents",100.0);
+    model.ndv.insert(("parents",0),100.0);
+    model.stats.card.insert("child",10000.0);
+    model.ndv.insert(("child",0),100.0);
+    model.ndv.insert(("child",1),10000.0);
+    model.ndv.insert(("child",2),100.0);
+    model.stats.fan.insert(("child",0),100.0);
     model.stats.memo.insert("child".into(),HashMap::from([(("idx".into(),Constant::Int(0)),9000)]));
     let (order,work,rows) = model.plan_rule(&p, &body::nth(&body::alone(&p.rules[0]).unwrap(), 0),None).unwrap();
     assert_eq!(p.rules[0].body[order[0].at].atom().unwrap().rel,"parents");
@@ -2447,12 +2450,12 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let model_for = |p: &Program, sized: &[(&str, f64, Vec<f64>)]| {
         let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
         let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: std::sync::Arc::new(p.shapes.clone()), docs_by_shift:false, analysis:Default::default(), input_set:Default::default(), stats:Stats::empty(p), ndv:HashMap::new(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.into() };
+        let mut model = Model { shapes: std::sync::Arc::new(p.shapes.clone()), docs_by_shift:false, analysis:Default::default(), input_set:Default::default(), stats:Stats::empty(p), ndv: Default::default(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.into() };
         for (rel, rows, ndv) in sized {
-            model.stats.card.insert((*rel).into(), *rows);
+            model.stats.card.insert(*rel, *rows);
             for (c, n) in ndv.iter().enumerate() {
-                model.ndv.insert(((*rel).into(), c), *n);
-                model.stats.fan.insert(((*rel).into(), c), rows / n);
+                model.ndv.insert((*rel, c), *n);
+                model.stats.fan.insert((*rel, c), rows / n);
             }
         }
         model.stats.nodes = 300000.0;
@@ -2534,8 +2537,8 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     .unwrap();
     let db = Connection::open_in_memory().unwrap();
     let mut stats = Stats::empty(&p);
-    stats.card.insert("p".into(), 10.0);
-    stats.card.insert("q".into(), 14_000.0);
+    stats.card.insert("p", 10.0);
+    stats.card.insert("q", 14_000.0);
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(stats);

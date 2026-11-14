@@ -46,6 +46,9 @@ pub(super) const GROWTH: f64 = 2.0;
 #[derive(Clone)]
 pub(super) struct Chosen {
     pub(super) program: Option<Arc<Program>>,
+    /// The rewritten program's version (t36 item 6, step 4), which the run reads its rules from: the passes' overlay
+    /// of the program's, or the stored image. `None` where the program was not rewritten, or is kept as text alone.
+    pub(super) version: Option<super::body::Placed>,
     /// The relations inlined (`keeps::choose`) and demanded (`demand::split_negations`), for the profile.
     pub(super) inlined: Vec<String>,
     pub(super) demanded: Vec<String>,
@@ -372,15 +375,20 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
         rows.sort();
         rows.into_iter().map(|(_, s)| s).collect()
     };
-    let program = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
+    let (program, version) = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            let digest = unhex(&digest)?;
-            Some(Arc::new(program_text::read_stored(texts.get(&digest)?, lists).ok()?))
+            let stored = texts.get(&unhex(&digest)?)?;
+            // A program kept as its image is read as it is: the image is the program's version, its rules in order.
+            let version = match stored {
+                program_text::Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok().map(super::body::Placed::whole),
+                program_text::Stored::Text(_) => None,
+            };
+            (Some(Arc::new(program_text::read_stored(stored, lists).ok()?)), version)
         }
         Some(_) => return None,
-        None => None,
+        None => (None, None),
     };
-    Some(Chosen { program, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
+    Some(Chosen { program, version, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {

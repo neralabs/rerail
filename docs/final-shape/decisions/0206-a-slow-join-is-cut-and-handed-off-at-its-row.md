@@ -1,7 +1,7 @@
 # 0206: A join is cut at its budget and handed off at the row it reached
 
 Status: built (2026-11-14). The engine's cut and resume (`native/setfix.rs`), the driver's checks, handoff and
-handback (`Run::drive`). Open: whole plans are not cut (O168).
+handback (`Run::drive`). Whole plans are cut too (O168, closed the same day).
 
 ## Intro
 
@@ -140,7 +140,24 @@ Now the chunk stops at the row the cut stopped at. A cut before any first-step r
 (`seen0`). Test: `a_fused_first_step_cut_leaves_the_rows_after_its_row` (`setfix::cut_tests`). It fails without the
 fix (left 1, done 599).
 
-## Open
+## Whole plans (O168, closed 2026-11-14)
 
-- **O168, whole plans are not cut.** A probe run as its whole plan (its delta is all of its relation, in the first
-  wave) has no budget. The driver plans whole plans apart, and its handoff would need that plan's own replacement.
+A probe whose delta is all of its relation (a component's first wave) runs its whole plan, which reads the
+relation's rows rather than a delta. It now has the probe's budget too.
+
+- **The engine.** A cut in a whole plan says so (`CutReport::whole`), and the wave goes on with the whole plan.
+  Trials of a whole cut run its whole body.
+- **The driver.** It keeps each probe's whole order (`wholes`), set where it plans a whole plan. A cut whole plan
+  is checked, trialled and handed off as a seed is: it leads with its first atom and reads no delta. It is planned
+  again as a whole plan (`Reprobe::Whole`).
+- **Its work.** The engine's step counts are the delta body's, so a whole plan's work is taken from its cut.
+
+**Test** (`setfix::cut_tests`): a whole plan is cut in its first wave, trialled, and handed to another whole order.
+The fixpoint is the unlimited run's.
+
+## Correction (2026-11-14, decision 0216)
+
+A line's recorded work held its last order's work only, not the orders it handed off. The handoff run above
+(`RERAIL_JOIN_SLOW=0.5`) is understated by the replaced order's work. With every order counted, the default run of
+decision 0207 did 0.70 M rows (not 0.37 M), still 2.5× under the 1.73 M of no cuts. With decision 0216's price of a
+kind check, the line starts in its best order and does 0.39 M.

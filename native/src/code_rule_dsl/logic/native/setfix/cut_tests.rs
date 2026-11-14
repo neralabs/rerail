@@ -81,6 +81,53 @@ fn a_probe_cut_at_its_budget_hands_its_rows_left_to_another_order() {
     closure::semi_naive_here(false);
 }
 
+/// O168 and O169: a probe's whole plan (its delta is all its relation, in the first wave) is cut at its budget too,
+/// and goes on as its whole plan. Trials over the rows it left run the whole body; the first to finish keeps its
+/// rows for the wave, and its sample leaves the rows left. Handed to another whole order, the fixpoint is the
+/// unlimited run's.
+#[test]
+fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
+    closure::semi_naive_here(true);
+    let edges: Vec<String> = (0..300).flat_map(|i| [format!("({i}, {})", i + 1), format!("({i}, {})", (i * 7) % 300)]).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node SELECT DISTINCT c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    let delta = format!("pos d0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let whole = format!("pos c0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let other = format!("pos {input} v1 v2\npos c0 v0 v1\npos {node} v2\nhead v0 v2");
+    let spec = format!("name wcut\nrel path ii\njoin 0 0 {} {}", hex(&delta), hex(&whole));
+    let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };
+    let unlimited = {
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "wcut", 0).unwrap().split_whitespace().last(), Some("1"));
+        close(&db, "wcut").unwrap();
+        rows(&db)
+    };
+    let db = connection();
+    setup(&db);
+    open(&db, &spec).unwrap();
+    set_budgets(&db, "wcut", &[(0, Some(300))]).unwrap();
+    assert_eq!(run(&db, "wcut", 1).unwrap().split_whitespace().last(), Some("5"));
+    let cut = take_cut(&db, "wcut").unwrap().expect("a cut");
+    assert!(cut.whole && cut.led && cut.left > 64, "{cut:?}");
+    let other_spec = JoinSpec::parse(&other).unwrap();
+    let own = trial(&db, "wcut", 0, None, None, 32, u64::MAX / 2).unwrap().expect("its whole body");
+    let swapped = trial(&db, "wcut", 0, Some(&other_spec), None, 32, u64::MAX / 2).unwrap().expect("placed");
+    assert_eq!(own.made, swapped.made, "{own:?} {swapped:?}");
+    let kept = keep_trial_rows(&db, "wcut").unwrap();
+    assert_eq!(kept, own.made, "the first finished trial's rows");
+    assert_eq!(keep_trial_rows(&db, "wcut").unwrap(), 0, "kept once");
+    reprobe_spec(&db, "wcut", 0, &Reprobe::Whole(std::sync::Arc::new(other_spec))).unwrap();
+    assert_eq!(run(&db, "wcut", 0).unwrap().split_whitespace().last(), Some("1"));
+    close(&db, "wcut").unwrap();
+    assert_eq!(rows(&db), unlimited, "the fixpoint is the unlimited run's");
+    closure::semi_naive_here(false);
+}
+
 /// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
 /// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
 /// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.

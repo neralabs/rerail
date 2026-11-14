@@ -60,6 +60,9 @@ pub struct Program {
     pub arena: Vec<Entry>,
     /// The guest captures a `host` rule reads (`host_reads`), compared by text across documents.
     pub host_reads: BTreeSet<String>,
+    /// The embedding the clause being lowered reads (`ast.embedded`, or an `embedded` term in it): its `host` is the
+    /// file node a program node stands for (`embedded.rs`, decision 0222).
+    pub embedded: Option<String>,
 }
 
 impl Program {
@@ -69,7 +72,7 @@ impl Program {
 
     /// The relation of the util `name` where it is called or defined: the clause's own, if it has one.
     pub fn util_rel(&self, name: &str) -> String {
-        self.scope.get(name).cloned().unwrap_or_else(|| super::lower::snake(name))
+        self.scope.get(name).cloned().unwrap_or_else(|| super::lower::util_name(name))
     }
 
     pub fn helper(&mut self, base: &str, note: &str) -> String {

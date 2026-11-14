@@ -207,8 +207,19 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
-/// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
+/// queued under (`write_back::Key`), where only it stores the text.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Stored already (decision 0223): named now, and only its pin queued (a lock, as `stored_source` takes it). The
+    // writer is for what a queued write stores: the lookup there was a write a warm run made.
+    if let Some(id) = stored_source(cache, &text).ok().flatten() {
+        late.lock().expect("the late sources").push(id);
+        return;
+    }
+    // Not stored, and nothing queued stores it: the writer would find nothing either.
+    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
+        return;
+    }
     let late = std::sync::Arc::clone(late);
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None,
@@ -605,10 +616,16 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
     let mut out = Vec::new();
     let mut used = Vec::new();
     for (i, digest, part) in wanted {
-        let Some(frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
+        let Some(admitted) = frames.remove(&part) else { continue };
+        // Marked used only once it ages (decision 0223): a mark that moves no part nearer or further from being
+        // forgotten is no write, and a warm run makes none.
+        let ages = admitted.ages(MEMO_RUNS);
+        let Some(frame) = Frame::of(admitted, Some(program.syms.clone())) else { continue };
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
-            used.push(part);
+            if ages {
+                used.push(part);
+            }
             out.push((i, Found::Frame(frame)));
         }
     }
@@ -691,6 +708,10 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
+    if held.is_empty() {
+        return Ok(());
+    }
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();

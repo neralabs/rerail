@@ -122,7 +122,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     let mut model = make_plan(prog, db, inputs)?;
     // The program's rules, read by the planner by their handles (t36 item 2).
     let vs = super::body::Versions::of(prog)?;
-    let (sccs, _) = strata(prog)?;
+    let sccs = components_of(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     // The same, by key: a stratum's rules are read by their handles.
     let mut keys_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();

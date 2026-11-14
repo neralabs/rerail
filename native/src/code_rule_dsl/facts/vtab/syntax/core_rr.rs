@@ -557,7 +557,7 @@ pub(super) struct CoreRows {
     pub(super) long_text_any: bool,
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
-    pub(super) text_nodes: Option<(BTreeSet<String>, BTreeSet<String>)>,
+    pub(super) text_nodes: Option<super::TextNodes>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -644,10 +644,18 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
-    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, or in a field read.
+    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, in a field read, a child of a kind read,
+    /// or with a text a rule compares it with.
     fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32, kind: &str) -> bool {
-        self.text_nodes.as_ref().is_none_or(|(kinds, fields)| {
-            kinds.contains(kind) || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| fields.contains(name))
+        self.text_nodes.as_ref().is_none_or(|t| {
+            t.kinds.contains(kind)
+                || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| t.fields.contains(name))
+                || !(t.parents.is_empty() && t.parent_fields.is_empty())
+                    && f.parent(id).is_some_and(|p| {
+                        t.parents.contains(dialect.name(f, p))
+                            || dialect.catalog.field_name(f.field[p as usize]).is_some_and(|name| t.parent_fields.contains(name))
+                    })
+                || !t.values.is_empty() && t.values.contains(f.text(id))
         })
     }
 
