@@ -1,6 +1,6 @@
 # 0197: Warm mode: a truly warm run writes nothing, and any write fails it
 
-Status: built (2026-11-14); its first findings below, two fixed and the rest open. Follows decision 0183 (a warm
+Status: built (2026-11-14). A warm batch over a corpus that is its own repository now writes nothing; what a warm run with the cutoff off still writes is collection's bookkeeping, open below. Follows decision 0183 (a warm
 batch recomputes nothing) and uses 0104's statement trace (`RERAIL_SQL_STRICT`).
 
 ## Intro
@@ -49,32 +49,63 @@ every run. Every write came from setup around the run, not from evaluation:
 |---|---|---|
 | The store's schema check applied all 124 `CREATE` statements of `SCHEMA` to a scratch in-memory database, once a process, to learn the object names it expects | 124 | **Fixed**: the names are read from `SCHEMA`'s text (`schema_objects`). The test `schema_objects_are_what_schema_creates` applies the schema and compares the two. |
 | The observer bumped a stored `epoch` counter on every open, to rotate which 1/64 of trusted files it hashes again | 1 | **Fixed**: the epoch is the second the process opened in. Consecutive processes still take consecutive slices. Lost: the counter's guarantee that 64 processes in a row cover every file once. Two processes in the same second check the same slice. |
-| The observer moves and stores each watched root's journal cursor on every run, though the journal names nothing changed under it | 13 | Open (below) |
-| One canonical path form (`docs/rule-syntax/lib/python`) is written again on every run | 1 | Open |
+| The observer moved and stored each watched root's journal cursor on every run, though the journal named nothing under it | 13 | **Fixed** (below) |
+| One canonical path form written again | 1 | Not seen again after the store's first warm run; `the observer resolved a canonical form it did not hold` names it if it returns |
+
+### Second pass: the cutoff off
 
 With the cutoff off (`run-rr` with `{"reuse": false}`), a warm run plans and evaluates, and maintains from what the
-last run kept. Its deltas were all empty. It still writes:
+last run kept. Its deltas were all empty, the cross-file part ran none of its 45 strata, and its outputs matched a run
+without a store (`dl10`, `layer-violations.rr`, 8 `internal_import` rows). These were found and fixed:
 
-- the run's lifecycle in the store: its manifest, its hold on its plans and the release, a source's pins, the
-  combined program's pins and its text, the run's atoms;
-- empty jobs: `frames, 0 bytes`, `the memo's entries, 0 bytes`, `the pending atoms`, `a wait for the writer`;
-- `the tree counts` (three, 44 bytes each), `the files' stats`;
-- the cost model's samples (`~/.cache/rerail/costs.sqlite`: one insert and a trim);
-- the observer's journal cursors, as above.
+| Found | Fix |
+|---|---|
+| A chunk of memo hits alone built no document, yet its local program was planned and run over a projection of nothing (15 components, ~12 strata), its tree counts measured from it and written (3 jobs), and a cost sample written to `~/.cache/rerail/costs.sqlite` | A chunk with no built document is skipped as one with no sources. |
+| `the memo's entries` queued with no entry | Not queued. |
+| `the files' stats` queued with no file | Not queued. |
+| A known file read in the waves (where the store is not asked) has its content named by its digest, so the stat the index already held was recorded again (4 files of `dl10`, every run) | Not recorded. A known file found to be another stored source (a stat that lied) still is. |
+| The observer recorded again an answer it already held and trusted (a clean Git file named by its blob, every run) | `remember` keeps an unchanged, trusted answer as it is. |
+
+### The journal cursor
+
+The cursor is stored only when the journal names a path under the root. When it names nothing, memory's cursor moves
+on, for this process's later asks, and the store's stays where it was. The next process replays from there, which
+gives a superset of the changes, so no change is missed.
+
+Two measurements decided it:
+
+- **An old cursor is not slow to replay.** A warm batch was run over copies of one store, one with its cursors set
+  2 million events back (about two hours of this machine). The journal's asks took 0.23 to 1.14 s over 13 either way,
+  at load 50 to 95. Each ask's time is the wait for its cookie's event, not the replay's length.
+- **Keeping the cursor wherever nothing was forgotten was wrong.** A root whose subtree churns (the work tree, with
+  the run's outputs and store in it) then named every path changed since, growing each run: 971 paths in one ask. `forget`
+  matches each against every answer kept, and the warm batch went from 8 to 53 G instructions. Where paths are named,
+  the cursor moves as before.
+
+### What the harness was
+
+`dl1` sat inside this repository's work tree, so Git's discovery read the work tree's `.git`, and the observer watched
+the whole work tree. Its replay then named the harness's own writes: the store, the outputs, the logs. A corpus that
+is its own repository (`dl1g`, `dl1` with `git init`) is what a real corpus is. Over it the warm batch writes nothing,
+and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1`.
 
 ## Open
 
-- **The journal cursor.** Storing the cursor only when the journal names a change under the root would make a warm
-  run write nothing. The next run would then replay the journal from an older cursor. That is correct, since the
-  replay is a superset, but it costs more, and on a volume where builds write all day the replay grows until
-  something else writes. The other option is to move the cursor only with a write the run makes anyway. Neither
-  is measured. The roots are also wider than the run's reads: the work tree itself is watched, so its output
-  directories and the store's own files show up as changes.
-- **The canonical form written again.** The kept form is not found and is resolved again each run, though it is
-  unchanged.
-- **Empty jobs.** A queued job with nothing to write still opens a write transaction. Not queueing it is the fix.
-- **The run's lifecycle writes** (manifest, holds, pins). These are collection's generations, made per run. If a
-  warm run should leave the store byte for byte as it was, a run that changed nothing would keep its last
-  manifest and hold nothing new. That is collection's design (0053) to settle.
-- **The cost samples** are training data for the planner's cost model. A warm run that plans adds a sample. In
-  warm mode that counts as a write, as it should, but whether a warm run should sample at all is open.
+- **Collection's bookkeeping, with the cutoff off.** A warm run that plans still writes:
+  - its manifest, identical to its root's newest: an identical manifest only moves its `last_run`, the recency by which
+    collection protects a root's last two;
+  - its hold on its plans and the hold's release, a source's pins, and the combined program's pins and their release:
+    leases against a collection pass in another process while the run reads;
+  - the frames' used marks (`frames`, `the frames' parts used`), by which relations unused for `RUNS` runs are
+    forgotten;
+  - the run's atoms, if any were made (`flush_atoms`, `the pending atoms`), and the writer waits.
+
+  The warm batch with the cutoff applied writes none of these, and collection still keeps what it needs, so skipping
+  them when they would change nothing is consistent with that path. Not bumping recency only costs a recomputation
+  later, never a wrong result. Dropping the hold and pins changes how a run is guarded against another process's
+  collection (decision 0053), so it is left for that design.
+- **`forget` is quadratic**: each named path is matched against every answer kept, so a root that churns costs paths ×
+  answers on every ask. A sorted map would make it a range per path.
+- **Choosing the widest stored root** for a path (`watch_above`) means one ask covers many reads, so there are fewer
+  cookie waits. But a read near the top (a work tree's `.git`) makes the whole tree a root. The deepest root would name
+  less, at the cost of more asks. Not measured.

@@ -838,7 +838,7 @@ pub fn strict() -> bool {
 ///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
 ///
 /// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
-/// every fault and goes on, each kind's first with its stack, and ends the process with status 3 if there was
+/// every fault and goes on, each distinct one once with its stack, and ends the process with status 3 if there was
 /// one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
 /// out (`reuse::NOT_OUTPUTS`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -908,8 +908,9 @@ pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
     }
     #[cfg(windows)]
     let _ = first;
-    // Each kind's first with its stack; each distinct one once.
-    if first_of_kind {
+    // Each distinct one once, with its stack (the first 60; then without).
+    static STACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if n == 1 && (first_of_kind || STACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 60) {
         eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
     } else if n == 1 {
         eprintln!("rerail: RERAIL_WARM: {kind}: {detail} (thread {thread}, span {})", current());

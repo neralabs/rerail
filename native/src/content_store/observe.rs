@@ -388,6 +388,16 @@ impl Observer {
         if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
             root.checked.insert(path.to_owned());
         }
+        // The same answer, already trusted, is kept as it is: recording it again writes the store for nothing (a clean
+        // Git file named by its blob was recorded on every run, `RERAIL_WARM`).
+        if let Some(e) = self.entries.get(path)
+            && e.kind == entry.kind
+            && e.digest == entry.digest
+            && e.holds(&entry.stat)
+            && e.listing.as_deref().map(|l| l.as_slice()) == entry.listing.as_deref().map(|l| l.as_slice())
+        {
+            return;
+        }
         self.entries.insert(path.to_owned(), entry);
         self.dirty.push(path.to_owned());
     }
@@ -452,6 +462,9 @@ impl Observer {
         self.counts.resolved += 1;
         let c = std::fs::canonicalize(&path).ok()?;
         if self.canon.get(&path) != Some(&c) {
+            super::hazards::warm_fault("the observer resolved a canonical form it did not hold", || {
+                format!("{} -> {} (held {:?}; {} forms held, store {})", path.display(), c.display(), self.canon.get(&path), self.canon.len(), self.db.is_some())
+            });
             self.canon.insert(path.clone(), c.clone());
             self.new_canon.push((path, c.clone()));
         }
@@ -650,8 +663,19 @@ impl Observer {
             if let Some(v) = volume {
                 k.meta.insert(cursor_key(root, v), rusqlite::types::Value::Text(cursor.to_owned()));
             }
+            // Nothing named, nothing written: the store's cursor stays where it was (memory's moves on, for this
+            // process's later asks), and the next process replays from there, a superset of what changed since: no
+            // change is missed. A warm run then writes no cursor (`RERAIL_WARM`), where it wrote one for every root it
+            // asked, every run. Replaying from a cursor 2M events old measured no slower than from a fresh one (each
+            // ask's time is the wait for its cookie's event, 0.0-0.7 s at load 50-95). A root the journal names paths
+            // under keeps its cursor moving: a replay from a kept cursor names every path changed since, and matching
+            // them against every answer kept grew each run (971 paths named in the work tree's root, 8 -> 53 G
+            // instructions a warm batch, when the cursor stayed whenever nothing was forgotten).
+            if paths.is_empty() {
+                return;
+            }
             let (gone, listings, at) = (gone.clone(), listings.clone(), volume.map(|v| (cursor_key(root, v), cursor.to_owned())));
-            super::hazards::warm_fault("the observer moved a root's journal cursor", || {
+            super::hazards::warm_fault("the observer forgot answers the journal named changed", || {
                 format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), paths.len(), paths.iter().take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
             });
             k.writer.send(move |db| {

@@ -3620,8 +3620,14 @@ fn run_observed(
             };
             for ((i, c), d) in rest.iter().zip(&contents).zip(&digests) {
                 digest[*i] = Some(*d);
+                // A file the index knew by this stat, read in the waves where the store is not asked, has its content
+                // named by its digest (`Unstored`): recording it again wrote the same stat on every warm run
+                // (`RERAIL_WARM`). It is trusted as the index's source, as a known file the memo finds is, unread. A
+                // known file found to be another stored source (a stat that lied) is recorded.
+                let known_unstored = known[*i].is_some() && matches!(c, Some(memo::Content::Unstored(_)));
                 if let (Some(stat), Some(c)) = (stats[*i], c)
                     && !matches!(c, memo::Content::Held(_))
+                    && !known_unstored
                     && known[*i].map(memo::Content::Stored) != Some(*c)
                 {
                     stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, *c));
@@ -3949,7 +3955,13 @@ fn run_observed(
         let (d, path, module) = &docs.asked[i];
         match outcome {
             Ok(entry) => Ok(Some((content, Ok(entry)))),
-            Err(u) => build_doc(d, path, module.clone(), u).map(|(c, doc)| Some((c, Err(doc)))),
+            Err(u) => {
+                // A memo miss: the document's file-local part is evaluated again (`RERAIL_WARM`).
+                if memoised {
+                    crate::code_rule_dsl::logic::profile::warm_fault("a document missed the memo", || path.clone());
+                }
+                build_doc(d, path, module.clone(), u).map(|(c, doc)| Some((c, Err(doc))))
+            }
         }
     };
     let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
@@ -4471,11 +4483,18 @@ fn run_observed(
                 }
             }
         }
-        if sources.is_empty() {
+        // A chunk of memo hits alone builds no document: its sources are a projection of nothing, and its local program
+        // run over them derives nothing a hit does not already hold (`RERAIL_WARM` found it planned and run, its tree
+        // counts measured and written, on every warm run).
+        if sources.is_empty() || chunk_docs.is_empty() {
             phase("local", statements.count());
             statements.enter("wait");
             return Ok(());
         }
+        // A warm run's documents are all memo hits: a chunk evaluated is a file-local part computed again (`RERAIL_WARM`).
+        crate::code_rule_dsl::logic::profile::warm_fault("a chunk's file-local part evaluated", || {
+            format!("{} documents, {chunk_nodes_built} nodes: {}", chunk_docs.len(), chunk_docs.iter().take(4).map(|(_, p, ..)| p.as_str()).collect::<Vec<_>>().join(", "))
+        });
         nodes += chunk_nodes_built;
         chunks += 1;
         let mut stats = t_stats.clone();
@@ -5600,7 +5619,8 @@ fn run_observed(
     let mut run_sources = worker_cpu.2.clone();
     run_sources.extend(own_sources.iter().copied());
     run_sources.extend(program_sources.iter().copied());
-    if recording {
+    // A run that read no file anew (every one known by its stat) has no stat to record.
+    if recording && !worker_cpu.3.is_empty() {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         // Behind the run (decision 0104): a new content's source is written by then, by the tape's write queued before.
         let (root, read) = (canonical_root.clone(), worker_cpu.3.clone());
