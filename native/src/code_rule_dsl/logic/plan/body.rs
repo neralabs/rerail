@@ -432,23 +432,35 @@ pub struct Versions(Vec<(usize, usize, Placed)>);
 pub struct Placed {
     pub v: Arc<Version>,
     ids: Option<Arc<[RuleId]>>,
+    /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
+    pub whole: bool,
 }
 
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false })
+    }
+    /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
+    /// fields (`About`), which the passes read beside the rules. A program with maintenance's parts (`again`,
+    /// `together`, `shapes`: a session's maintained program) has no image; it is made of its rules alone, and
+    /// `whole` says so.
+    pub fn of_program(prog: &Program) -> Result<Placed> {
+        match Builder::of_program(prog) {
+            Ok(b) => Ok(Placed { v: b.finish().map_err(Error::Plan)?.0, ids: None, whole: true }),
+            Err(_) => Placed::made(&prog.rules),
+        }
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None }
+        Placed { v, ids: None, whole: true }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
-    pub fn new(v: Arc<Version>, ids: Vec<RuleId>) -> Placed {
-        Placed { v, ids: Some(ids.into()) }
+    pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
+        Placed { v, ids: Some(ids.into()), whole }
     }
     /// `rules` added to `parent` (an overlay that removes nothing), in order.
-    pub fn over(parent: &Arc<Version>, rules: &[Rule]) -> Result<Placed> {
+    pub fn over(parent: &Arc<Version>, parent_whole: bool, rules: &[Rule]) -> Result<Placed> {
         let mut b = Builder::on(parent);
         let mut ids = Vec::with_capacity(rules.len());
         for r in rules {
@@ -458,7 +470,11 @@ impl Placed {
         if let Some(order) = super::keeps::inline::renumbered(parent, &[], &ids, made) {
             ids.iter_mut().for_each(|id| *id = order[id]);
         }
-        Ok(Placed::new(v, ids))
+        Ok(Placed::new(v, ids, parent_whole))
+    }
+    /// How many rules the program has.
+    pub fn len(&self) -> usize {
+        self.ids.as_ref().map_or(self.v.size(), |ids| ids.len())
     }
     /// The id of the program's rule `k`.
     pub fn id(&self, k: usize) -> RuleId {
@@ -525,7 +541,7 @@ impl Versions {
         // A maintained form's rules are an overlay of the run's version (decision 0173 §7, t36 item 6 step 6): the
         // rules it adds over the program's atoms and relations, not a program image of their own.
         let v = match self.0.first() {
-            Some((_, _, run)) => Placed::over(&run.v, rules)?,
+            Some((_, _, run)) => Placed::over(&run.v, run.whole, rules)?,
             None => Placed::made(rules)?,
         };
         self.0.push((start, start + std::mem::size_of_val(rules), v));

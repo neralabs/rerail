@@ -244,14 +244,35 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     are overlays of the program's version, the run reads the last one as it is, a kept choice holds its version, and
     a maintained form's rules are an overlay of the run's version. What still reads or writes trees, and why it goes
     with item 7 rather than here:
-    - The passes' readings of the program: `refusals`, `bounds`, `factorizable`, the split's candidates, guards and
-      types, and its strata check (`front::unstratified`). Each reads the rules and the program's other fields
-      (outputs, natives, lattice, decls, `together`). The run's version is made of the rules alone (`body::made`),
-      with no `About`, so the version's own strata (`program_image::analyses::strata`) cannot read it. Under item 7
-      the run's version is the program's image (decision 0173 §5), `About` and all, and these read it whole; reading
-      only their rules from the version now would leave each half on the tree.
+    - The passes' readings of the program: done below (the readings, 2026-11-14).
     - The maintained form's rules are written as trees (`maintain::rewrite_with`, over a one-stratum program cut from
       the base) and encoded into the overlay once. The rewrite is also the session's (E3, `retain::Cut::program`),
       which item 7 makes an overlay; it moves to `RuleBuilder` edits there, as `normalize` and `stated_apart` did
       (0173 stage 2, step 3). The `Forms` arena keeps the form's tree for the run's tree readers until then.
     - Each pass still decodes its result once for the rest of the run.
+  - Item 6, the readings (2026-11-14): the passes read the program's version whole, not the tree.
+    - The run's version is the program's image (`Placed::of_program`: `Builder::of_program`, its declarations and
+      `About` too), marked `whole`. A program with `again`, `together` or shapes (a maintained one) is still a version
+      of its rules alone (`Placed::made`), not `whole`; `choose` and `split_negations` give nothing for it, with a
+      decision line saying so; no targeted test or dl1 run changed. Making the whole image cost about 9 ms of CPU a dl1
+      batch.
+    - `plan::fields::Fields` reads the program's other fields from a whole version: outputs, inputs, qualifiers,
+      demand, gates, answers, natives, lattice, nullary, facts, arity. `About` holds the qualifiers, demand and gate
+      keys for it.
+    - `keeps::choose`: the strata (`program_image::analyses::strata`), `refusals`, `bounds`, the need, the estimates
+      (a relation's width from its declaration in the version) and `factorizable` (its parts planned as overlays)
+      read the version.
+    - `demand::split_negations`: the candidates and each round's guards, splits and types (`demand::over`) read the
+      version's rules by their handles, each variable by its name. The split's overlay declares each `pre_<i>` and
+      `demand_<r>` and the flags, so it stays whole, and its strata are checked over it
+      (`program_image::analyses::unstratified`, every failing component, as `front::unstratified`).
+    - Checked while porting: each reading equalled the tree's (the strata as sets, the refusals, the rules by head,
+      the bounds, the factors; the candidates, the refusals, the splits, the declarations and flags, the failing
+      components, and every declaration of the decoded split in its overlay). This was checked over the planner's,
+      keeps, inline, demand, negation, choices, cone, phase0, session and corpus tests and dl1, where 96 relations
+      are demanded. The checks and the tree forms are gone; `keeps::factors` stays for `typing::file_local`.
+    - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 44.1 G, warm 1.7 G
+      (load about 65).
+    - What reads trees in the passes now: nothing. They still take the tree too (`prog`): `choose` hands it to the
+      planner's `plan_rule`, and both passes give a decoded program for the rest of the run (item 7). The maintained
+      form's rewrite is item 7's (above).

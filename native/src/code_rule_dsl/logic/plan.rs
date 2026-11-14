@@ -7729,7 +7729,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let mut inlined_names = Vec::new();
             let chose = super::profile::span(|| "inline or store".into());
             // The program's version, made once: each pass edits the one before as an overlay.
-            let base = if corpus { Some(body::Placed::made(&prog.rules)?) } else { None };
+            let base = if corpus { Some(body::Placed::of_program(prog)?) } else { None };
             let choice = match &base {
                 Some(base) => keeps::choose(prog, base, &mut model).map_err(Error::Plan)?,
                 None => None,
@@ -9582,6 +9582,7 @@ fn decoded_outputs(
 }
 
 pub mod emit;
+pub mod fields;
 pub mod acyclic;
 pub mod estimates;
 pub mod sql_kernel;

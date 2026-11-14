@@ -80,6 +80,12 @@ pub struct About {
     pub gates: usize,
     /// The relations of no columns (`Program::nullary`), by relation id.
     pub nullary: Vec<RelId>,
+    /// Each relation's qualifiers (`Program::qualifiers`): (the relation's name, the word), sorted.
+    pub qualifiers: Vec<(AtomId, AtomId)>,
+    /// The demanded relations (`Program::demand`), by name, sorted.
+    pub demand: Vec<AtomId>,
+    /// The gates' relations (`Program::gates`' keys), by name, sorted.
+    pub gate_keys: Vec<AtomId>,
 }
 
 impl About {
@@ -128,7 +134,12 @@ impl About {
                     }
                     "nullary" => about.nullary.extend(r(1)),
                     "lattice_merge" => merges.extend(r(1).zip(row.get(2).copied().and_then(atom))),
-                    "gate" => about.gates += 1,
+                    "gate" => {
+                        about.gates += 1;
+                        about.gate_keys.extend(row.get(2).copied().and_then(atom));
+                    }
+                    "qualifier" => about.qualifiers.extend(row.get(1).copied().and_then(atom).zip(row.get(2).copied().and_then(atom))),
+                    "demand" => about.demand.extend(row.get(2).copied().and_then(atom)),
                     _ => {}
                 }
             }
@@ -149,6 +160,10 @@ impl About {
         about.natives.sort_unstable_by_key(|n| n.rel);
         about.lattice.sort_unstable_by_key(|l| l.rel);
         about.nullary.sort_unstable();
+        about.qualifiers.sort_unstable();
+        about.qualifiers.dedup();
+        about.demand.sort_unstable();
+        about.gate_keys.sort_unstable();
         about
     }
 
@@ -157,6 +172,10 @@ impl About {
     }
     pub fn lattice_of(&self, rel: RelId) -> Option<AtomId> {
         self.lattice_decl(rel).map(|l| l.lattice)
+    }
+    /// Whether relation `rel` (by name) has qualifier `word` (`Program::qualified`).
+    pub fn qualified(&self, rel: AtomId, word: AtomId) -> bool {
+        self.qualifiers.binary_search(&(rel, word)).is_ok()
     }
     pub fn lattice_decl(&self, rel: RelId) -> Option<&LatticeRef> {
         self.lattice.binary_search_by_key(&rel, |l| l.rel).ok().map(|k| &self.lattice[k])
