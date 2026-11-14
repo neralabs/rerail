@@ -370,7 +370,8 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
  * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
  * Passive, and free of SQLite, so hosts that cannot load the binding (OMP runs on Bun) ask this
- * first. A one-shot hook asks it only where it cannot read the database itself (`hookRerailStarted`).
+ * first. A one-shot hook asks it unless the database and the folders on disk show the daemon would say stopped
+ * (`hookRerailStarted`).
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
   try {

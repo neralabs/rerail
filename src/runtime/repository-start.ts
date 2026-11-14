@@ -3,15 +3,15 @@ import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
-import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { gitSearchEnds, repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   createCheckoutResolver,
-  lookupAnsweredCheckout,
   lookupCheckout,
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
+  statusWithoutRemote,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -83,22 +83,22 @@ export function workspaceSetUp(workspace: string, databasePath = defaultRerailDa
  * (the status line, `/rerail`): undefined where the database cannot be opened or has no schema yet.
  */
 export function readOnlyStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
-  return startStateFoundBy(lookupCheckout, workspace, databasePath);
+  if (!existsSync(databasePath)) return stateOf(STOPPED);
+  return readOnly(databasePath, database =>
+    hasStartTables(database) ? stateOf(checkoutStatus(database, lookupCheckout(database, workspace))) : undefined);
 }
 
 /**
- * {@link readOnlyStartState} for a one-shot hook, which has a live daemon to ask where this process cannot find the
- * checkout: it throws where Git is not installed here or gave no answer, both of which `readOnlyStartState` reads as a
- * folder Rerail never recorded, so stopped.
+ * Whether the daemon would read `workspace` as stopped (`startStateReader`), told without running Git: true only where
+ * the database reads stopped, without the checkout's remote, at each place Git's search can end there
+ * (`gitSearchEnds`). False wherever that is not certain, so the caller asks the daemon: a search the filesystem leaves
+ * open, a checkout only its remote could place, one that reads started, or a database this process cannot open. SQLite's
+ * error for a database it opened and cannot read, one without the start tables among them, is thrown.
  */
-export function answeredStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
-  return startStateFoundBy(lookupAnsweredCheckout, workspace, databasePath);
-}
-
-function startStateFoundBy(lookup: typeof lookupCheckout, workspace: string, databasePath: string): RepositoryStartState | undefined {
-  if (!existsSync(databasePath)) return stateOf(STOPPED);
-  return readOnly(databasePath, database =>
-    hasStartTables(database) ? stateOf(checkoutStatus(database, lookup(database, workspace))) : undefined);
+export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
+  const ends = gitSearchEnds(workspace);
+  return ends !== undefined
+    && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false)) === true;
 }
 
 /** `read` over a read-only connection; undefined when the database cannot be opened or read. */

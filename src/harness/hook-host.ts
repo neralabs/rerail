@@ -2,11 +2,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
-import { GitUnavailableError } from "../engine/git.js";
-import { GitDidNotAnswerError } from "../engine/catalog/repository-identity.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
-import { answeredStartState, isRerailStarted } from "../runtime/repository-start.js";
+import { isRerailStarted, stoppedWithoutGit } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
@@ -31,7 +29,7 @@ import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { rerailRunsIn, type RepositoryStartState } from "../engine/catalog/repository-model.js";
+import { rerailRunsIn } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
@@ -63,52 +61,16 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 }
 
 /**
- * The `GIT_*` variables that cannot change where Git finds a checkout or which remote it names: the two every Git
- * process Rerail starts sets itself, and those that only choose how Git deals with a person (prompts, editors, pagers,
- * SSH) or who a commit names. Coding agents and editors set several of them for the commands they run.
+ * Whether this process can tell, without Git, that the daemon would read `workspace` as stopped (`stoppedWithoutGit`).
+ * A database SQLite cannot read (SQLite's error, or Drizzle's query error carrying it) leaves the answer to the daemon,
+ * which reads its own connection; any other failure is a fault of this read and is thrown.
  */
-const LOOKUP_NEUTRAL_GIT_VARIABLES = new Set([
-  "GIT_OPTIONAL_LOCKS", "GIT_NO_LAZY_FETCH", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
-  "GIT_PAGER", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-  "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-]);
-
-/**
- * Whether the coding agent's environment, which Git started here inherits, holds a `GIT_*` variable that can move Git's
- * answer away from the daemon's: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, a config file of its own or
- * none (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`; those files hold `safe.directory` and
- * `url.*.insteadOf`), or one a later Git adds. The daemon's Git has the environment of whatever started it, which need
- * not be this agent's. Names are compared in upper case, as Windows reads them.
- */
-function gitEnvironmentMovesLookup(environment: NodeJS.ProcessEnv): boolean {
-  return Object.keys(environment).some(name => {
-    const upper = name.toUpperCase();
-    return upper.startsWith("GIT_") && !LOOKUP_NEUTRAL_GIT_VARIABLES.has(upper);
-  });
-}
-
-/**
- * Whether `error`, from this process's own read of the start state, is one a live daemon answers past: no Git here, a
- * Git that gave no answer, or a database SQLite could not read (SQLite's error, or Drizzle's query error carrying it).
- */
-function daemonAnswersPast(error: unknown): boolean {
-  const cause = error instanceof Error && error.cause !== undefined ? error.cause : error;
-  return error instanceof GitUnavailableError || error instanceof GitDidNotAnswerError || cause instanceof Database.SqliteError;
-}
-
-/**
- * The start state of the checkout `workspace` is in, as this process reads it from the database; undefined where it
- * cannot be sure to read what the daemon reads: the agent's environment can move Git's lookup, Git is not installed
- * here or gave no answer (the daemon keeps the locations its Git found), a SQLite binding this Node does not load, a
- * database it cannot open or read, or one whose creator has not committed the schema yet. Any other failure is a fault
- * of this read and is thrown, so it shows rather than sending every hook back to the daemon.
- */
-function localStartState(workspace: string): RepositoryStartState | undefined {
-  if (gitEnvironmentMovesLookup(process.env)) return undefined;
+function knownStopped(workspace: string): boolean {
   try {
-    return answeredStartState(workspace);
+    return stoppedWithoutGit(workspace);
   } catch (error) {
-    if (daemonAnswersPast(error)) return undefined;
+    const cause = error instanceof Error && error.cause !== undefined ? error.cause : error;
+    if (cause instanceof Database.SqliteError) return false;
     throw error;
   }
 }
@@ -119,20 +81,19 @@ function daemonRecorded(): boolean {
 }
 
 /**
- * The check one-shot hooks make before anything else. With no daemon recorded, or an explicit database path (tests,
- * embedded hosts), the hook reads the database directly (`isRerailStarted`): there is no daemon to wait for or to ask,
- * so its Git runs once. Otherwise the hook reads the start state from the database itself, so in a checkout where
- * Rerail is stopped or was never started it answers without a request to the daemon, however busy the daemon is, and
- * never starts one. Only where this process cannot read the state as the daemon would does a live daemon answer, from
- * its own environment, the Git locations it keeps and its open database; when none answers, the database is read again
- * (`isRerailStarted`), and its failure is the hook's.
+ * The check one-shot hooks make before anything else. Where a daemon is recorded and the database and the filesystem
+ * alone show that it would answer stopped (`stoppedWithoutGit`), the hook answers stopped itself: no Git runs and no
+ * request goes to the daemon, however busy it is. Anywhere else a running daemon answers, from its own environment and
+ * open database; without one, the hook reads the database itself, which never starts a daemon. With no daemon recorded,
+ * or an explicit database path (tests, embedded hosts), the database is read directly.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
-  if (databasePath !== undefined || !daemonRecorded()) return isRerailStarted(workspace, databasePath);
-  const local = localStartState(workspace);
-  if (local !== undefined) return rerailRunsIn(local);
-  const answered = await readRepositoryState(workspace, host);
-  return answered === null ? isRerailStarted(workspace) : rerailRunsIn(answered);
+  if (databasePath === undefined && daemonRecorded()) {
+    if (knownStopped(workspace)) return false;
+    const answered = await readRepositoryState(workspace, host);
+    if (answered !== null) return rerailRunsIn(answered);
+  }
+  return isRerailStarted(workspace, databasePath);
 }
 
 export interface HookOptions {

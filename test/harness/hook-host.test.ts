@@ -1,17 +1,25 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
-import { encodeRerailEventResult, type EngineEndpoint, workspaceStartState } from "../../src/runtime/index.js";
+import { type AdapterDelivery, defaultRerailDatabasePath, openRerailDatabase, recordCheckout, sessionStartNote } from "../../src/engine/index.js";
+import {
+  encodeRerailEventResult,
+  type EngineEndpoint,
+  setCheckoutStarted,
+  setRepositoryStarted,
+  startStateReader,
+  stopRerail,
+  workspaceStartState,
+} from "../../src/runtime/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -460,20 +468,28 @@ describe("hook host durable state", () => {
 });
 
 /**
- * A daemon recorded in the Rerail home `home` that answers as a live one does and counts every request it gets. On
- * Windows a recorded daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`), so it holds one.
+ * A daemon recorded in the Rerail home `home` that answers as a live one does and counts every request it gets: a
+ * repository's start state is `repositoryState`, or what it gives for the folder asked about. On Windows a recorded
+ * daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`), so it holds one.
  */
-async function countingDaemon(home: string, repositoryState = "stopped"): Promise<{ requests: string[]; close: () => Promise<void> }> {
+async function countingDaemon(
+  home: string,
+  repositoryState: string | ((repository: string) => string) = "stopped",
+): Promise<{ requests: string[]; close: () => Promise<void> }> {
   const requests: string[] = [];
-  const answers: Record<string, unknown> = {
-    "/healthz": { status: "ok", pid: process.pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } },
-    "/api/presentation": { presence: "compact", repositoryState },
+  const answers: Record<string, (url: URL) => unknown> = {
+    "/healthz": () => ({ status: "ok", pid: process.pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } }),
+    "/api/presentation": url => ({
+      presence: "compact",
+      repositoryState: typeof repositoryState === "string" ? repositoryState : repositoryState(url.searchParams.get("repository") ?? ""),
+    }),
   };
   const server = createServer((request, response) => {
-    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    requests.push(path);
-    response.writeHead(Object.hasOwn(answers, path) ? 200 : 404, { "content-type": "application/json" });
-    response.end(JSON.stringify(answers[path] ?? { error: "not-found" }));
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    requests.push(url.pathname);
+    const answer = Object.hasOwn(answers, url.pathname) ? answers[url.pathname] : undefined;
+    response.writeHead(answer === undefined ? 404 : 200, { "content-type": "application/json" });
+    response.end(JSON.stringify(answer === undefined ? { error: "not-found" } : answer(url)));
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const { port } = server.address() as AddressInfo;
@@ -512,27 +528,10 @@ const hooksWhereRerailIsOff: Array<{ host: string; event: string; run: (cwd: str
   },
 ];
 
-/** What coding agents and editors set for the commands they run, Git's included; none of it moves where Git looks. */
-const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" };
-
-/**
- * A coding agent's environment with no `GIT_*` variable but `AGENT_GIT_ENVIRONMENT`'s. Any other sends the hook's start
- * check to the daemon: the test setup's `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`, and whatever the shell running
- * the tests sets (a Git hook sets `GIT_DIR`). Git then reads the test home's `.gitconfig`, the file `GIT_CONFIG_GLOBAL`
- * named, and the machine's system file, which none of these cases depends on.
- */
-function stubAgentGitEnvironment(): void {
-  for (const name of Object.keys(process.env)) {
-    if (name.toUpperCase().startsWith("GIT_")) vi.stubEnv(name, undefined);
-  }
-  for (const [name, value] of Object.entries(AGENT_GIT_ENVIRONMENT)) vi.stubEnv(name, value);
-}
-
 describe("hooks where Rerail does not run", () => {
   beforeEach(() => {
     // The hook takes CLAUDE_PROJECT_DIR over the event's folder; a test run from inside a Claude Code session has one.
     vi.stubEnv("CLAUDE_PROJECT_DIR", undefined);
-    stubAgentGitEnvironment();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -551,9 +550,9 @@ describe("hooks where Rerail does not run", () => {
     }
   });
 
-  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder Rerail was never started in without a request to the daemon", async ({ run }) => {
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder outside Git that Rerail was never started in without a request to the daemon", async ({ run }) => {
     const root = await temporaryDirectory({ started: false });
-    // Rerail runs in another repository on the machine, so the database is there.
+    // Rerail runs in another folder on the machine, so the database is there.
     const elsewhere = join(root, "elsewhere");
     const never = join(root, "never");
     await mkdir(elsewhere);
@@ -601,25 +600,12 @@ function startedApp(root: string): string {
   return app;
 }
 
-/** A new clone at `<root>/clone` of `startedApp`'s repository, which Rerail finds by its remote alone. */
-function newClone(root: string): string {
-  const clone = gitRepository(join(root, "clone"));
+/** A new clone at `path` of `startedApp`'s repository, which Rerail finds by its remote alone. */
+function newClone(path: string): string {
+  const clone = gitRepository(path);
   git(clone, "remote", "add", "origin", REMOTE);
   return clone;
 }
-
-/**
- * Folders of a started repository at `<root>/app` that Rerail finds without a row of their own, each through a Git read:
- * the top level `rev-parse` gives, the clone id in the common Git folder it names, or the remote `ls-remote` gives.
- */
-const foldersFoundThroughGit = [
-  { shape: "a folder inside the checkout", silent: ["rev-parse"], make: (app: string) => { mkdirSync(join(app, "src")); return join(app, "src"); } },
-  {
-    shape: "a linked worktree Rerail never recorded", silent: ["rev-parse"],
-    make: (app: string, root: string) => { git(app, "worktree", "add", "-q", join(root, "worktree")); return join(root, "worktree"); },
-  },
-  { shape: "a new clone of the repository", silent: ["ls-remote", "remote"], make: (_app: string, root: string) => newClone(root) },
-];
 
 /** A Git config file at `path` that gives every address under https://example.invalid/ another, as a mirror setting does. */
 function remoteRewrite(path: string): string {
@@ -631,19 +617,35 @@ function remoteRewrite(path: string): string {
 function cloneWithRewrite(file: string): (root: string) => { workspace: string; value: string } {
   return root => {
     startedApp(root);
-    return { workspace: newClone(root), value: remoteRewrite(join(root, file)) };
+    return { workspace: newClone(join(root, "clone")), value: remoteRewrite(join(root, file)) };
   };
 }
 
 /**
- * A person's own Git settings, each set in the coding agent's environment and not in the daemon's, with a folder of a
- * started repository that this process's Git then reads otherwise: a ceiling at the checkout's top hides the checkout
- * from a folder inside it; a global or system file that rewrites the remote gives a new clone another address; and
- * leaving out the system file the daemon's Git reads leaves the clone the address the repository was not recorded under.
- * A test cannot write the machine's system file, so `GIT_CONFIG_SYSTEM` stands in for it while the repository is
- * recorded.
+ * A started repository recorded while `variable` names a folder whose Git config file `file` rewrites the remote, and a
+ * new clone of it; the agent's value names an empty folder. Git reads the files under `HOME` only while
+ * `XDG_CONFIG_HOME` names none.
  */
-const personalGitSettings: Array<{ variable: string; arrange: (root: string) => { workspace: string; value: string } }> = [
+function personalFileRewrite(root: string, variable: string, file: string): { workspace: string; value: string } {
+  vi.stubEnv("XDG_CONFIG_HOME", undefined);
+  const person = join(root, "person");
+  mkdirSync(dirname(join(person, file)), { recursive: true });
+  mkdirSync(join(root, "agent"));
+  remoteRewrite(join(person, file));
+  vi.stubEnv(variable, person);
+  startedApp(root);
+  return { workspace: newClone(join(root, "clone")), value: join(root, "agent") };
+}
+
+/**
+ * Settings of a person's own Git that the coding agent's environment may set otherwise than the daemon's, each with a
+ * folder of a started repository that this process's Git then reads as stopped: a ceiling at the checkout's top hides
+ * the checkout from a folder inside it; a config file that rewrites the remote while the repository is recorded, named
+ * by `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` or found under `XDG_CONFIG_HOME` or `HOME`, gives a new clone another
+ * address, and leaving out the system file does the same; `GIT_DIR` sends Git to another repository. A test cannot write
+ * the machine's system file, so `GIT_CONFIG_SYSTEM` stands in for it while the repository is recorded.
+ */
+const agentGitSettings: Array<{ variable: string; arrange: (root: string) => { workspace: string; value: string } }> = [
   {
     variable: "GIT_CEILING_DIRECTORIES",
     arrange: root => {
@@ -660,185 +662,249 @@ const personalGitSettings: Array<{ variable: string; arrange: (root: string) => 
       vi.stubEnv("GIT_CONFIG_SYSTEM", remoteRewrite(join(root, "system.gitconfig")));
       startedApp(root);
       vi.stubEnv("GIT_CONFIG_SYSTEM", undefined);
-      return { workspace: newClone(root), value: "1" };
+      return { workspace: newClone(join(root, "clone")), value: "1" };
+    },
+  },
+  { variable: "XDG_CONFIG_HOME", arrange: root => personalFileRewrite(root, "XDG_CONFIG_HOME", join("git", "config")) },
+  { variable: "HOME", arrange: root => personalFileRewrite(root, "HOME", ".gitconfig") },
+  {
+    variable: "GIT_DIR",
+    arrange: root => {
+      const app = startedApp(root);
+      mkdirSync(join(app, "src"));
+      return { workspace: join(app, "src"), value: join(gitRepository(join(root, "other")), ".git") };
     },
   },
 ];
 
-/** How spawnSync reports a Git that gave no answer: one it ended past runGit's 10 s, and one another process ended on Windows. */
-const UNANSWERED_GIT = {
-  "timed out": { status: null, stdout: "", stderr: "", error: Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }) },
-  "ended by another process on Windows": { status: 1, stdout: "", stderr: "" },
-};
-
-/** Each folder found through Git, with each way Git gives no answer. */
-const unansweredFolders = foldersFoundThroughGit.flatMap(folder =>
-  (Object.keys(UNANSWERED_GIT) as Array<keyof typeof UNANSWERED_GIT>).map(how => ({ ...folder, how })));
-
-/**
- * The hook host over a Git that starts and gives no answer to each command named in `silent`, reported as `unanswered`
- * (by default a Git spawnSync ended past runGit's 10 s: no status and an error), where `gitText` gives nothing. Each
- * command `runGit` is given goes onto `ran`, with the time limit it is given (undefined: runGit's own 10 s).
- */
-async function hookHostWithSilentGit(
-  silent: readonly string[],
-  unanswered: (typeof UNANSWERED_GIT)[keyof typeof UNANSWERED_GIT] = UNANSWERED_GIT["timed out"],
-  ran: Array<{ command: string; limit: number | undefined }> = [],
-): Promise<typeof import("../../src/harness/hook-host.js")> {
+/** The hook host over this machine's Git, with the first word of each command Rerail starts Git with going onto `ran`. */
+async function hookHostCountingGit(ran: string[]): Promise<typeof import("../../src/harness/hook-host.js")> {
   vi.resetModules();
   vi.doMock("../../src/engine/git.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
-    const answers = (args: readonly string[]): boolean => !silent.includes(args[0] ?? "");
     return {
       ...actual,
       runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => {
-        ran.push({ command: args[0] ?? "", limit: options?.timeout });
-        return answers(args) ? actual.runGit(cwd, args, options) : unanswered;
+        ran.push(args[0] ?? "");
+        return actual.runGit(cwd, args, options);
       },
-      gitText: (cwd: string, args: readonly string[]) => answers(args) ? actual.gitText(cwd, args) : undefined,
+      gitText: (cwd: string, args: readonly string[]) => {
+        ran.push(args[0] ?? "");
+        return actual.gitText(cwd, args);
+      },
     };
   });
   return await import("../../src/harness/hook-host.js");
 }
 
+/** A Git repository at `<root>/app`, started and then stopped in its checkout, as `rerail stop` leaves it. */
+function stoppedApp(root: string): string {
+  const app = gitRepository(join(root, "app"));
+  startTestRepository(app);
+  stopTestRepository(app);
+  return app;
+}
+
+/**
+ * Folders of which the database alone cannot show that the daemon reads them stopped, each with the daemon's answer the
+ * hook then takes. The daemon's answer differs from the database's, so the hook's answer shows which one gave it.
+ */
+const foldersTheDaemonDecides = [
+  { folder: "a started checkout", daemonSays: "stopped", started: false, make: (root: string) => startedApp(root) },
+  {
+    folder: "a repository never started", daemonSays: "started", started: true,
+    make: (root: string) => { startedApp(root); return gitRepository(join(root, "never")); },
+  },
+  {
+    folder: "a new clone of a started repository", daemonSays: "stopped", started: false,
+    make: (root: string) => { startedApp(root); return newClone(join(root, "clone")); },
+  },
+];
+
 const corruptDatabase = (): Error => new Database.SqliteError("database disk image is malformed", "SQLITE_CORRUPT");
 
 /**
  * Failures of the hook's own read of the start state: a database SQLite cannot read, which a live daemon with its own
- * open database answers past, and a fault of the read itself, which is the hook's.
+ * connection answers past, and a fault of the read itself, which is the hook's.
  */
 const readFailures = [
-  { what: "SQLite cannot read the database", error: corruptDatabase(), asked: true, outcome: "asks a live daemon" },
+  { what: "SQLite cannot read the database", error: corruptDatabase(), asked: true, outcome: "asks the daemon" },
   {
     what: "a Drizzle query fails on SQLite's error", error: new DrizzleQueryError("select 1", [], corruptDatabase()), asked: true,
-    outcome: "asks a live daemon",
+    outcome: "asks the daemon",
   },
   { what: "the read itself fails", error: new TypeError("Cannot read properties of undefined"), asked: false, outcome: "throws, asking no daemon" },
 ];
 
+/** `change` over the Rerail database, open for writing. */
+function inDatabase<T>(change: (database: ReturnType<typeof openRerailDatabase>) => T): T {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    return change(database);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** What the daemon answers for `folder` (`startStateReader`, as its presentation store reads it per request). */
+function daemonReads(folder: string): string {
+  const database = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
+  try {
+    return startStateReader(database)(folder);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** A link at `path` to the folder `target`: a junction on Windows, which needs no privilege there. */
+function folderLink(target: string, path: string): void {
+  symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+}
+
+/**
+ * A Git folder at `<app>/<name>/.git` Git passes over, as it lacks `part` (its HEAD, `objects` or `refs`), holding the
+ * clone id of `stopped`, a repository stopped as a whole: Git looks further up and finds `app`.
+ */
+function passedOverGitFolder(app: string, name: string, part: "HEAD" | "objects" | "refs", stopped: string): string {
+  const folder = join(app, name);
+  const gitFolder = join(folder, ".git");
+  mkdirSync(gitFolder, { recursive: true });
+  if (part !== "HEAD") writeFileSync(join(gitFolder, "HEAD"), "ref: refs/heads/main\n");
+  for (const kept of ["objects", "refs"]) if (kept !== part) mkdirSync(join(gitFolder, kept));
+  copyFileSync(join(stopped, ".git", "rerail-repository-id"), join(gitFolder, "rerail-repository-id"));
+  return folder;
+}
+
+const silently = { lane: "terminal" as const, say: (): void => undefined };
+
+/**
+ * Checkouts as people keep them, and the odd shapes Git's search meets, under `root`, each folder named. A is started as
+ * a whole; B started, then stopped in its checkout (`rerail stop`); C and E stopped as a whole; D and F are clones nested
+ * in B and A; a repository is never started, and two folders are outside Git.
+ */
+function generatedTrees(root: string): Array<[string, string]> {
+  // A: folders, a linked worktree inside it and one beside it, and F, a clone inside A stopped in its checkout.
+  const a = startedApp(root);
+  mkdirSync(join(a, "src"));
+  git(a, "worktree", "add", "-q", join(a, ".wt", "inner"));
+  git(a, "worktree", "add", "-q", join(root, "a-beside"));
+  const f = gitRepository(join(a, "nested-stopped"));
+  startTestRepository(f);
+  stopTestRepository(f);
+  mkdirSync(join(f, "src"));
+  // B: worktrees of its own inside it and beside it, one stopped and one started by themselves, then B stopped; inside
+  // it, a new clone of A, a worktree of A, and D, a clone started.
+  const b = gitRepository(join(root, "b"));
+  startTestRepository(b);
+  mkdirSync(join(b, "src", "deep"), { recursive: true });
+  git(b, "worktree", "add", "-q", join(b, ".wt", "inner"));
+  for (const name of ["b-beside", "b-beside-stopped", "b-own-started"]) git(b, "worktree", "add", "-q", join(root, name));
+  stopTestRepository(join(root, "b-beside-stopped"));
+  inDatabase(database => setCheckoutStarted(database, recordCheckout(database, join(root, "b-own-started")), true));
+  stopTestRepository(b);
+  newClone(join(b, "fresh-clone"));
+  git(a, "worktree", "add", "-q", join(b, "a-worktree"));
+  const d = gitRepository(join(b, "nested-started"));
+  startTestRepository(d);
+  mkdirSync(join(d, "src"));
+  // C, with a worktree beside it, and E, both stopped as a whole; E's config then puts its checkout at a worktree of B
+  // started by itself.
+  const c = gitRepository(join(root, "c"));
+  startTestRepository(c);
+  mkdirSync(join(c, "src"));
+  git(c, "worktree", "add", "-q", join(root, "c-beside"));
+  stopRerail(c, silently, { repository: true });
+  const e = gitRepository(join(root, "e"));
+  startTestRepository(e);
+  stopRerail(e, silently, { repository: true });
+  mkdirSync(join(e, "src"));
+  git(e, "config", "core.worktree", realpathSync.native(join(root, "b-own-started")));
+  // Inside A, Git folders Git passes over that hold C's clone id. Inside B, a bare repository whose config puts its
+  // checkout at A, and a folder recorded as outside Git (recorded while a ceiling hid B), then started.
+  const passedOver = (["HEAD", "objects", "refs"] as const).map(part => passedOverGitFolder(a, `no-${part}`, part, c));
+  git(b, "init", "-q", "--bare", "mirror.git");
+  git(join(b, "mirror.git"), "config", "core.bare", "false");
+  git(join(b, "mirror.git"), "config", "core.worktree", realpathSync.native(a));
+  const own = join(b, "own-folder");
+  mkdirSync(own);
+  vi.stubEnv("GIT_CEILING_DIRECTORIES", realpathSync.native(b));
+  const ownRepository = inDatabase(database => recordCheckout(database, own).repositoryKey);
+  vi.stubEnv("GIT_CEILING_DIRECTORIES", undefined);
+  inDatabase(database => setRepositoryStarted(database, ownRepository, true));
+  // A repository never started, folders outside Git, and links from each of A and B into the other.
+  mkdirSync(join(gitRepository(join(root, "never")), "src"));
+  mkdirSync(join(root, "plain"));
+  mkdirSync(join(root, "plain-started", "sub"), { recursive: true });
+  startTestRepository(join(root, "plain-started"));
+  folderLink(join(b, "src"), join(a, "link-into-b"));
+  folderLink(join(a, "src"), join(b, "link-into-a"));
+  const folders: Array<[string, string]> = [
+    ["app", a], ["app/src", join(a, "src")], ["app/.wt/inner", join(a, ".wt", "inner")], ["a-beside", join(root, "a-beside")],
+    ["app/nested-stopped", f], ["app/nested-stopped/src", join(f, "src")], ["app/link-into-b", join(a, "link-into-b")],
+    ...passedOver.map((folder): [string, string] => [`app/${basename(folder)}`, folder]),
+    ["b", b], ["b/src", join(b, "src")], ["b/src/deep", join(b, "src", "deep")], ["b/.wt/inner", join(b, ".wt", "inner")],
+    ["b-beside", join(root, "b-beside")], ["b-beside-stopped", join(root, "b-beside-stopped")], ["b-own-started", join(root, "b-own-started")],
+    ["b/fresh-clone", join(b, "fresh-clone")], ["b/a-worktree", join(b, "a-worktree")], ["b/nested-started", d],
+    ["b/nested-started/src", join(d, "src")], ["b/link-into-a", join(b, "link-into-a")], ["b/mirror.git/objects", join(b, "mirror.git", "objects")],
+    ["b/own-folder", own], ["c", c], ["c/src", join(c, "src")], ["c-beside", join(root, "c-beside")], ["e", e], ["e/src", join(e, "src")],
+    ["never", join(root, "never")], ["never/src", join(root, "never", "src")], ["plain", join(root, "plain")],
+    ["plain-started", join(root, "plain-started")], ["plain-started/sub", join(root, "plain-started", "sub")],
+  ];
+  // On Windows a folder named in another letter case is the same folder.
+  if (process.platform === "win32") folders.push(["B/SRC", join(root.toUpperCase(), "B", "SRC")], ["APP", join(root.toUpperCase(), "APP")]);
+  return folders;
+}
+
 describe("the hook start check", () => {
-  beforeEach(() => {
-    stubAgentGitEnvironment();
-  });
   afterEach(() => {
+    vi.doUnmock("../../src/engine/git.js");
+    vi.doUnmock("../../src/runtime/repository-start.js");
+    vi.resetModules();
     vi.unstubAllEnvs();
   });
 
-  it("reads the database, and asks a live daemon only where this process cannot read it", async () => {
+  it("answers stopped itself where the database shows the daemon would, running no Git and asking nothing", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    mkdirSync(join(app, "src"));
+    // A daemon that would say started: an answer of stopped is the hook's own.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    const ran: string[] = [];
+    try {
+      const host = await hookHostCountingGit(ran);
+      expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), git: ran, requests: daemon.requests })
+        .toEqual({ started: false, git: [], requests: [] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.each(foldersTheDaemonDecides)("leaves $folder to the daemon", async ({ make, daemonSays, started }) => {
+    const root = await temporaryDirectory({ started: false });
+    const workspace = make(root);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonSays);
+    try {
+      expect({ started: await hookRerailStarted("claude-code", workspace), requests: daemon.requests })
+        .toEqual({ started, requests: ["/api/presentation"] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("asks the daemon where this process cannot open the database, and with no daemon recorded its failure is the hook's", async () => {
     const root = await temporaryDirectory({ started: false });
     const home = process.env.RERAIL_HOME!;
-    startTestRepository(root);
-    // The database says started; the daemon, which would say stopped, is not asked.
-    const daemon = await countingDaemon(home, "stopped");
+    const app = stoppedApp(root);
+    const daemon = await countingDaemon(home, "started");
     try {
-      expect(await hookRerailStarted("claude-code", root)).toBe(true);
-      expect(daemon.requests).toEqual([]);
-      // A database this process cannot read: the live daemon answers.
       await writeFile(join(home, "rerail.sqlite"), "not a database");
-      expect(await hookRerailStarted("claude-code", root)).toBe(false);
-      expect(daemon.requests).toEqual(["/api/presentation"]);
+      expect({ started: await hookRerailStarted("claude-code", app), requests: daemon.requests })
+        .toEqual({ started: true, requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }
-    // No daemon recorded: the hook reads the database directly, and its failure is the hook's.
     await rm(join(home, "daemon.json"));
-    await expect(hookRerailStarted("claude-code", root)).rejects.toThrow("not a database");
-  });
-
-  it("runs Git once where no daemon is recorded, though Git gives no answer", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
-    const ran: Array<{ command: string; limit: number | undefined }> = [];
-    const silenced = await hookHostWithSilentGit(["rev-parse"], UNANSWERED_GIT["timed out"], ran);
-    try {
-      // The checkout's own top is found by its path, with or without Git's answer.
-      expect({ started: await silenced.hookRerailStarted("claude-code", app), gitRuns: ran.map(run => run.command) })
-        .toEqual({ started: true, gitRuns: ["rev-parse"] });
-    } finally {
-      vi.doUnmock("../../src/engine/git.js");
-      vi.resetModules();
-    }
-  });
-
-  it("gives each of its own Git reads 2 s, where a live daemon is recorded", async () => {
-    const root = await temporaryDirectory({ started: false });
-    startedApp(root);
-    const workspace = newClone(root);
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    const ran: Array<{ command: string; limit: number | undefined }> = [];
-    const recorded = await hookHostWithSilentGit([], UNANSWERED_GIT["timed out"], ran);
-    try {
-      // `rev-parse` finds the clone, and `ls-remote` its remote, which names the started repository.
-      expect({ started: await recorded.hookRerailStarted("claude-code", workspace), ran, requests: daemon.requests }).toEqual({
-        started: true, ran: [{ command: "rev-parse", limit: 2_000 }, { command: "ls-remote", limit: 2_000 }], requests: [],
-      });
-    } finally {
-      vi.doUnmock("../../src/engine/git.js");
-      vi.resetModules();
-      await daemon.close();
-    }
-  });
-
-  it("asks a live daemon where this process finds no Git to resolve the checkout with", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const elsewhere = join(root, "elsewhere");
-    await mkdir(elsewhere);
-    startTestRepository(elsewhere);
-    // The daemon, with a Git of its own, reads the checkout as started; this process would read it as unknown.
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    vi.resetModules();
-    vi.doMock("../../src/engine/git.js", async () => {
-      const git = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
-      // As where no Git is installed: every way of reaching it fails.
-      const missing = (): never => { throw new git.GitUnavailableError([]); };
-      return { ...git, gitExecutable: missing, runGit: missing, gitText: missing };
-    });
-    try {
-      const { hookRerailStarted } = await import("../../src/harness/hook-host.js");
-      expect(await hookRerailStarted("claude-code", root)).toBe(true);
-      expect(daemon.requests).toEqual(["/api/presentation"]);
-    } finally {
-      vi.doUnmock("../../src/engine/git.js");
-      vi.resetModules();
-      await daemon.close();
-    }
-  });
-
-  it.each(unansweredFolders)("asks a live daemon where this process's Git gives no answer ($how), in $shape", async ({ silent, make, how }) => {
-    const root = await temporaryDirectory({ started: false });
-    const workspace = make(startedApp(root), root);
-    // The daemon keeps each folder's Git location for its life, and reads the folder as started.
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    try {
-      // Git answering, the hook finds the folder started itself.
-      expect(await hookRerailStarted("claude-code", workspace)).toBe(true);
-      expect(daemon.requests).toEqual([]);
-      const silenced = await hookHostWithSilentGit(silent, UNANSWERED_GIT[how]);
-      expect({ started: await silenced.hookRerailStarted("claude-code", workspace), requests: daemon.requests })
-        .toEqual({ started: true, requests: ["/api/presentation"] });
-    } finally {
-      vi.doUnmock("../../src/engine/git.js");
-      vi.resetModules();
-      await daemon.close();
-    }
-  });
-
-  it("asks a live daemon where the coding agent's environment sends Git to another repository", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = gitRepository(join(root, "app"));
-    const other = gitRepository(join(root, "other"));
-    startTestRepository(app);
-    await mkdir(join(app, "src"));
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
-    // The agent's Git, and this process's, would read `other` for every folder.
-    vi.stubEnv("GIT_DIR", join(other, ".git"));
-    try {
-      expect({ started: await hookRerailStarted("claude-code", join(app, "src")), requests: daemon.requests })
-        .toEqual({ started: true, requests: ["/api/presentation"] });
-    } finally {
-      vi.unstubAllEnvs();
-      await daemon.close();
-    }
+    await expect(hookRerailStarted("claude-code", app)).rejects.toThrow("not a database");
   });
 
   it.each(readFailures)("$what: $outcome", async ({ error, asked }) => {
@@ -847,7 +913,7 @@ describe("the hook start check", () => {
     vi.resetModules();
     vi.doMock("../../src/runtime/repository-start.js", async () => ({
       ...await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js"),
-      answeredStartState: (): never => { throw error; },
+      stoppedWithoutGit: (): never => { throw error; },
     }));
     try {
       const host = await import("../../src/harness/hook-host.js");
@@ -855,25 +921,61 @@ describe("the hook start check", () => {
       await (asked ? expect(started).resolves.toBe(true) : expect(started).rejects.toBe(error));
       expect(daemon.requests).toEqual(asked ? ["/api/presentation"] : []);
     } finally {
-      vi.doUnmock("../../src/runtime/repository-start.js");
-      vi.resetModules();
       await daemon.close();
     }
   });
 
-  it.each(personalGitSettings)("asks a live daemon where the coding agent's environment sets $variable", async ({ variable, arrange }) => {
+  it("reads as main does where no daemon is recorded: through its own Git, once", async () => {
     const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const ran: string[] = [];
+    const host = await hookHostCountingGit(ran);
+    expect({ started: await host.hookRerailStarted("claude-code", app), git: ran }).toEqual({ started: false, git: ["rev-parse"] });
+  });
+
+  it.each(agentGitSettings)("asks the daemon where the coding agent's $variable would have this process's Git read a started folder as stopped", async ({ variable, arrange }) => {
+    const root = await temporaryDirectory({ started: false });
+    // A person's environment sets neither of the two the test setup sets; each case sets only its own.
+    vi.stubEnv("GIT_CONFIG_GLOBAL", undefined);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", undefined);
     const { workspace, value } = arrange(root);
-    // The daemon's Git, started from another environment, reads the folder as started.
+    // The daemon reads the folder from its own environment, as started.
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
     vi.stubEnv(variable, value);
     try {
-      // This process's own read of the database, with the variable set, finds the folder stopped.
       expect(workspaceStartState(workspace)).toBe("stopped");
       expect({ started: await hookRerailStarted("claude-code", workspace), requests: daemon.requests })
         .toEqual({ started: true, requests: ["/api/presentation"] });
     } finally {
       await daemon.close();
     }
+  });
+
+  it("never answers stopped itself where the daemon reads otherwise, in any folder of these trees", { timeout: 120_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const folders = generatedTrees(root);
+    // A daemon asked about a folder's real path, as the hook sends it, answers as a live one reads it.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonReads);
+    const wrong: string[] = [];
+    const askedThoughStopped: string[] = [];
+    try {
+      // Then again with a daemon whose Git stops right above each folder: a ceiling, as for a person whose
+      // `safe.directory` refuses the checkout or whose folder is on another filesystem.
+      for (const ceiling of [false, true]) {
+        for (const [name, path] of folders) {
+          const real = realpathSync.native(path);
+          vi.stubEnv("GIT_CEILING_DIRECTORIES", ceiling ? dirname(real) : undefined);
+          const reads = daemonReads(real);
+          const asked = daemon.requests.length;
+          const started = await hookRerailStarted("claude-code", path);
+          const answeredItself = daemon.requests.length === asked;
+          if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) wrong.push(`${name}${ceiling ? " (ceiling)" : ""}: ${reads}`);
+          if (!answeredItself && reads === "stopped" && !ceiling) askedThoughStopped.push(name);
+        }
+      }
+    } finally {
+      await daemon.close();
+    }
+    expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: ["b/own-folder", "never", "never/src"] });
   });
 });

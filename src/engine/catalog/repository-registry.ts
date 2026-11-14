@@ -12,16 +12,13 @@ import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
-  answeredIdentityLocation,
   normalizeRemoteAddress,
-  readAnsweredRemoteAddress,
   readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
   worktreeRegistry,
-  type RemoteAddress,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
@@ -54,9 +51,9 @@ function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow |
 }
 
 /** The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. */
-function remoteKeyOf(root: string, readAddress: (root: string) => RemoteAddress | undefined = readRemoteAddress): RepositoryKey | undefined {
+function remoteKeyOf(root: string): RepositoryKey | undefined {
   try {
-    const remote = readAddress(root);
+    const remote = readRemoteAddress(root);
     return remote === undefined ? undefined : normalizeRemoteAddress(remote.url);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
@@ -196,37 +193,35 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace), remoteKeysReadBy(readRemoteAddress));
+  return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
+}
+
+function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
+  const cloneId = readCloneIdAt(location.identityPath) ?? null;
+  const checkoutPath = physicalPath(location.workspaceRoot);
+  const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId) ?? remoteRepository(db, location, checkoutPath, remoteKeys);
+  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
 }
 
 /**
- * {@link lookupCheckout} for a reader with another answer to turn to, such as a one-shot hook with a live daemon: from
- * Git's own answers only. It throws GitUnavailableError where Git is not installed and GitDidNotAnswerError where Git
- * gave no answer for the folder or its remote; `lookupCheckout` reads either as a folder Rerail never recorded.
+ * The repository {@link lookupAt} finds before it reads the remote: the one of the row recorded at `checkoutPath`, else
+ * of a recorded checkout of the same clone, else the one keyed by the clone id.
  */
-export function lookupAnsweredCheckout(db: Reader, workspace: string): CheckoutContext | undefined {
-  return lookupAt(db, answeredIdentityLocation(workspace), remoteKeysReadBy(readAnsweredRemoteAddress));
+function repositoryWithoutRemote(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
+  return recordedRepositoryAt(db, checkoutPath, cloneId) ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
 }
 
-/** A checkout's remote key, by its physical path and its top folder. */
-type RemoteKeys = (checkoutPath: string, root: string) => RepositoryKey | undefined;
-
-/** Remote keys read through `readAddress`, each kept by checkout path for as long as the lookup or resolver holds them. */
-function remoteKeysReadBy(readAddress: (root: string) => RemoteAddress | undefined): RemoteKeys {
-  const keys = new Map<string, RepositoryKey | undefined>();
-  return (checkoutPath, root) => {
-    if (!keys.has(checkoutPath)) keys.set(checkoutPath, remoteKeyOf(root, readAddress));
-    return keys.get(checkoutPath);
-  };
-}
-
-function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: RemoteKeys): CheckoutContext | undefined {
+/**
+ * {@link checkoutStatus} of the checkout at `location` as {@link lookupCheckout} finds it there, read from the database
+ * and the clone id file alone, without Git. Undefined where only the checkout's remote, which Git reads, could still name
+ * its repository; a folder outside Git has no remote, so there it is never undefined.
+ */
+export function statusWithoutRemote(db: Reader, location: RepositoryIdentityLocation): RepositoryStatus | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
-    ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
-    ?? remoteRepository(db, location, checkoutPath, remoteKeys);
-  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
+  const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId);
+  if (repositoryKey === undefined && location.git) return undefined;
+  return checkoutStatus(db, repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId));
 }
 
 /** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
@@ -241,10 +236,11 @@ function remoteRepository(
   db: Reader,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
-  remoteKeys: RemoteKeys,
+  remoteKeys: Map<string, RepositoryKey | undefined>,
 ): RepositoryKey | undefined {
   if (!location.git) return undefined;
-  const remoteKey = remoteKeys(checkoutPath, location.workspaceRoot);
+  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location.workspaceRoot));
+  const remoteKey = remoteKeys.get(checkoutPath);
   return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
 
@@ -255,7 +251,7 @@ function remoteRepository(
  */
 export function createCheckoutResolver(db: Reader): (workspace: string) => CheckoutContext | undefined {
   const locations = new Map<string, RepositoryIdentityLocation>();
-  const remoteKeys = remoteKeysReadBy(readRemoteAddress);
+  const remoteKeys = new Map<string, RepositoryKey | undefined>();
   return workspace => {
     try {
       gitExecutable();

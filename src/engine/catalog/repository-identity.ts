@@ -10,12 +10,15 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { physicalPath } from "./checkout-control.js";
+import { physicalPath, storedPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -47,7 +50,7 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
   try {
-    return runGit(requested, LOCATE_ARGUMENTS);
+    return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
@@ -59,7 +62,158 @@ function gitLocation(requested: string, stdout: string): RepositoryIdentityLocat
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
+  return checkoutLocation(top, commonDirectory, gitDirectory);
+}
+
+function checkoutLocation(top: string, commonDirectory: string, gitDirectory: string): RepositoryIdentityLocation {
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+}
+
+/**
+ * Where Git's own search for the checkout of `workspace` can end, read from the filesystem alone: no Git runs and no
+ * environment variable is read. Git looks in the folder and in each one above it for a `.git` and stops at the first one
+ * it takes, so the search ends at that folder's checkout, or outside Git where something that folder does not hold
+ * refuses the checkout (`safe.directory`, a ceiling, a filesystem boundary, `core.bare`); with no `.git` above, it ends
+ * outside Git. Each end is the location {@link repositoryIdentityLocation} gives there, for the folder's real path, which
+ * is what a hook asks the daemon about. Undefined where the filesystem leaves the end open: a folder with no real path, a
+ * `.git` Git would pass over or refuse, a Git folder on the way (inside `.git`, a bare repository), or a `core.worktree`
+ * that puts the checkout elsewhere.
+ */
+export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] | undefined {
+  const requested = realFolder(workspace);
+  if (requested === undefined) return undefined;
+  const top = nearestGitTop(requested);
+  if (top === "open") return undefined;
+  return top === undefined ? [nonGitLocation(requested)] : [top, nonGitLocation(requested)];
+}
+
+/** `workspace` as a hook asks the daemon about it, its real path spelled as stored; undefined where it has none. */
+function realFolder(workspace: string): string | undefined {
+  try {
+    return existsSync(workspace) ? storedPath(workspace) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The checkout Git's search from `start` up finds: undefined where it finds none, "open" where the filesystem leaves it open. */
+function nearestGitTop(start: string): RepositoryIdentityLocation | "open" | undefined {
+  for (let folder = start; ; folder = dirname(folder)) {
+    const step = dotGitIn(folder);
+    if (step.kind === "taken") return checkoutLocation(folder, step.commonDirectory, step.gitDirectory);
+    // A folder that is a Git folder itself (inside `.git`, a bare repository) ends Git's search with no checkout.
+    if (step.kind === "open" || existsSync(join(folder, "HEAD"))) return "open";
+    if (dirname(folder) === folder) return undefined;
+  }
+}
+
+/** What a `.git` gives Git's search in one folder: nothing, a Git folder Git takes, or one the filesystem cannot settle. */
+type DotGit = { readonly kind: "none" | "open" } | { readonly kind: "taken"; readonly gitDirectory: string; readonly commonDirectory: string };
+
+const NO_DOT_GIT: DotGit = { kind: "none" };
+const OPEN_DOT_GIT: DotGit = { kind: "open" };
+
+/** The `.git` in `folder`: the `.git` folder itself, or the folder a `gitdir:` file names, when Git takes it. */
+function dotGitIn(folder: string): DotGit {
+  const dotGit = join(folder, ".git");
+  const kind = entryKind(dotGit);
+  if (kind === "none") return NO_DOT_GIT;
+  const gitDirectory = kind === "folder" ? dotGit : kind === "file" ? gitfileTarget(dotGit) : undefined;
+  return gitDirectory === undefined ? OPEN_DOT_GIT : takenGitDirectory(gitDirectory);
+}
+
+/** `path` followed through links, as Git's `stat` follows them: missing, a folder, a file, or anything else. */
+function entryKind(path: string): "none" | "folder" | "file" | "other" {
+  let stats: Stats | undefined;
+  try {
+    stats = statSync(path, { throwIfNoEntry: false });
+  } catch {
+    return "other";
+  }
+  if (stats === undefined) return "none";
+  if (stats.isDirectory()) return "folder";
+  return stats.isFile() ? "file" : "other";
+}
+
+/** A `gitdir:` file as Git reads it: the whole file, its line ends trimmed. */
+const GITFILE = /^gitdir: (.+?)[\r\n]*$/;
+
+/** The folder a `gitdir:` file names, relative to the file's own folder; undefined where Git refuses the file. */
+function gitfileTarget(file: string): string | undefined {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const named = GITFILE.exec(text)?.[1];
+  return named === undefined ? undefined : resolve(dirname(file), named);
+}
+
+/**
+ * `gitDirectory` and its common folder where Git takes it as the Git folder of the checkout its `.git` is in: a HEAD Git
+ * reads and `objects` and `refs` in the common folder (Git's `is_git_directory`), and no `core.worktree` in the
+ * repository's own config. Otherwise open: Git passes over such a `.git` folder and refuses such a file.
+ */
+function takenGitDirectory(gitDirectory: string): DotGit {
+  const commonDirectory = commonDirectoryOf(gitDirectory);
+  return commonDirectory !== undefined && isGitDirectory(gitDirectory, commonDirectory) && !setsWorktree(gitDirectory, commonDirectory)
+    ? { kind: "taken", gitDirectory, commonDirectory }
+    : OPEN_DOT_GIT;
+}
+
+/** Git's `is_git_directory`: a HEAD Git reads in `gitDirectory`, and `objects` and `refs` in its common folder. */
+function isGitDirectory(gitDirectory: string, commonDirectory: string): boolean {
+  return headGitReads(join(gitDirectory, "HEAD")) && isFolder(join(commonDirectory, "objects")) && isFolder(join(commonDirectory, "refs"));
+}
+
+/** The common folder Git reads for `gitDirectory`: the one its `commondir` file names, else itself; undefined where Git cannot read that file. */
+function commonDirectoryOf(gitDirectory: string): string | undefined {
+  const file = join(gitDirectory, "commondir");
+  if (!existsSync(file)) return gitDirectory;
+  try {
+    const named = readFileSync(file, "utf8").replace(/[\r\n]+$/, "");
+    return named === "" ? undefined : resolve(gitDirectory, named);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A HEAD file Git reads: a ref under `refs/` (spaces as Git's `isspace` allows after `ref:`) or a commit id. */
+const HEAD_TEXT = /^(?:ref:[ \t\n\r]*refs\/|[0-9a-fA-F]{40})/;
+
+/** Whether Git reads `head` as a HEAD (`validate_headref`): a link into `refs/`, or a file {@link HEAD_TEXT} matches. */
+function headGitReads(head: string): boolean {
+  try {
+    if (lstatSync(head).isSymbolicLink()) return readlinkSync(head).startsWith("refs/");
+    return HEAD_TEXT.test(readFileSync(head, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** A `worktree` key anywhere in a config file; a commented-out one counts too, which only sends more folders to Git. */
+const WORKTREE_KEY = /\bworktree\s*=/i;
+
+/** Whether the repository's own config (`config`, and a linked worktree's `config.worktree`) sets `core.worktree`. */
+function setsWorktree(gitDirectory: string, commonDirectory: string): boolean {
+  return [join(commonDirectory, "config"), join(gitDirectory, "config.worktree")].some(file => WORKTREE_KEY.test(textOf(file)));
+}
+
+function textOf(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 /** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
@@ -242,88 +396,22 @@ export interface RemoteAddress {
 
 /** The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
-  return remoteAddress(root, gitText);
-}
-
-/** {@link readRemoteAddress} from Git's own answers only: throws GitDidNotAnswerError where a read gave none. */
-export function readAnsweredRemoteAddress(root: string): RemoteAddress | undefined {
-  return remoteAddress(root, answeredGitText);
-}
-
-/** A Git read's trimmed output, or undefined where Git refused it. */
-type GitTextRead = (cwd: string, args: readonly string[]) => string | undefined;
-
-function remoteAddress(root: string, read: GitTextRead): RemoteAddress | undefined {
-  const origin = originUrl(root, read);
-  return origin === undefined ? soleRemote(root, read) : { name: "origin", url: origin };
+  const origin = originUrl(root);
+  return origin === undefined ? soleRemote(root) : { name: "origin", url: origin };
 }
 
 /** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
-function originUrl(root: string, read: GitTextRead): string | undefined {
-  const origin = read(root, ["ls-remote", "--get-url", "origin"]);
+function originUrl(root: string): string | undefined {
+  const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
   return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
 }
 
-function soleRemote(root: string, read: GitTextRead): RemoteAddress | undefined {
-  const names = (read(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
+function soleRemote(root: string): RemoteAddress | undefined {
+  const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
   if (names.length !== 1) return undefined;
   const [name] = names as [string];
-  const url = read(root, ["remote", "get-url", "--", name]);
+  const url = gitText(root, ["remote", "get-url", "--", name]);
   return url === undefined || url === "" ? undefined : { name, url };
-}
-
-type GitRun = ReturnType<typeof runGit>;
-
-/**
- * Git started and gave no answer: it could not start, ran past its time limit or was ended, or ended with a status
- * none of these reads ends with on its own, as a process Windows could not initialise does. Git's own refusal, such as
- * exit 128 for a folder outside Git, is an answer.
- */
-export class GitDidNotAnswerError extends Error {
-  constructor(folder: string, result: GitRun) {
-    super(`Git gave no answer in ${folder}: ${result.error?.message ?? `exit status ${String(result.status)}`}`);
-    this.name = "GitDidNotAnswerError";
-  }
-}
-
-/**
- * The exit statuses the reads that answer for a hook end with on their own (`rev-parse`, `ls-remote --get-url`,
- * `remote`, `remote get-url`): 0, 2 for a remote that does not exist, 128 where Git refuses (a folder outside Git) and
- * 129 for a usage it does not take. None exits 1 on its own, and on Windows a Git another process ends (`taskkill /F`,
- * `Stop-Process`) reports exactly that, status 1 with no signal, where Linux and macOS report the signal.
- */
-const OWN_GIT_EXITS: ReadonlySet<number> = new Set([0, 2, 128, 129]);
-
-/** Whether Git ended on its own: an exit status these reads end with ({@link OWN_GIT_EXITS}), and no error starting or stopping it. */
-function gitAnswered(result: GitRun): boolean {
-  return result.error === undefined && result.status !== null && OWN_GIT_EXITS.has(result.status);
-}
-
-/**
- * How long a reader with another answer to turn to waits for each of its Git reads: 2 s, as long as a hook waits for the
- * daemon's answer, where `runGit` waits 10 s. A Git that hangs then costs the hook 2 s before it asks the daemon.
- */
-const ANSWER_WAIT_MS = 2_000;
-
-/** `gitText` that throws GitDidNotAnswerError where Git gave no answer, where `gitText` gives undefined. */
-function answeredGitText(cwd: string, args: readonly string[]): string | undefined {
-  const result = runGit(cwd, args, { timeout: ANSWER_WAIT_MS });
-  if (!gitAnswered(result)) throw new GitDidNotAnswerError(cwd, result);
-  return result.status === 0 ? result.stdout.trim() : undefined;
-}
-
-const LOCATE_ARGUMENTS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
-
-/**
- * {@link repositoryIdentityLocation} for a reader with another answer to turn to: Git's own answers only, given within
- * {@link ANSWER_WAIT_MS}. It throws GitUnavailableError where Git is not installed and GitDidNotAnswerError where Git
- * gave no answer, both of which `repositoryIdentityLocation` reads as a folder outside Git.
- */
-export function answeredIdentityLocation(workspace: string): RepositoryIdentityLocation {
-  const requested = resolve(workspace);
-  const result = runGit(requested, LOCATE_ARGUMENTS, { timeout: ANSWER_WAIT_MS });
-  if (!gitAnswered(result)) throw new GitDidNotAnswerError(requested, result);
-  return result.status === 0 ? gitLocation(requested, result.stdout) : nonGitLocation(requested);
 }
 
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
