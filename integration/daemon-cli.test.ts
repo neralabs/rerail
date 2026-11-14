@@ -1,14 +1,16 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { closeSync, existsSync, openSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
 import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
+import { selfSignedCertificate } from "../test/support/self-signed-certificate.js";
 
 describe("Rerail daemon CLI", () => {
   test("starts in dev mode, exposes health, and stops through the CLI", async () => {
@@ -104,6 +106,169 @@ describe("Rerail daemon CLI", () => {
     }
   }, 15_000);
 
+  // A TLS key other users can read keeps the daemon from other machines, never from this one: hooks reach it on
+  // loopback and keep recording, and the start, the log and the state file say why and how to fix the key. A start
+  // that asked for other machines fails all the same, so a script or a remote client never takes it for started as
+  // asked; one that asked for none succeeds.
+  test("serves this computer alone, saying why, when other users can read its TLS key", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const keyFile = join(root, "key.pem");
+    try {
+      const { cert, key } = selfSignedCertificate();
+      await writeFile(join(root, "cert.pem"), cert);
+      await writeFile(keyFile, key);
+      const exposed = await letOthersRead(keyFile, 0o644);
+      const tls = ["--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
+      const started = await rerail(cli, ["daemon", "start", "--dev", "--port", "0", "--host", "0.0.0.0", "--allow-remote", ...tls], env);
+      expect(started.code).toBe(1);
+      expect(started.stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\//u);
+      const state = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown };
+      const why = String(state.remoteRefused);
+      expect(why).toMatch(new RegExp(`^${exposed}$`, "u"));
+      const notice = `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`;
+      const refusal = `rerail: other machines cannot reach this daemon, though this start asked for them, until its TLS key is fixed: ${why}`;
+      expect(started.stdout).toContain(notice);
+      expect(started.stderr).toContain(refusal);
+      const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
+      expect(health.status).toBe(200);
+      expect(await readFile(join(root, "daemon.log"), "utf8")).toContain(`until its TLS key is fixed: ${why}`);
+      // Found running, it fails again for a start that asks for other machines, and serves one that asks for none.
+      const again = await rerail(cli, ["daemon", "start", "--public-host", "rerail.example", ...tls], env);
+      expect(again).toMatchObject({ code: 1, stdout: expect.stringContaining("The Rerail daemon is already running.") });
+      expect(again.stderr).toContain(refusal);
+      expect(await rerail(cli, ["daemon", "start"], env)).toMatchObject({ code: 0, stdout: expect.stringContaining(notice), stderr: expect.not.stringContaining("other machines cannot reach") });
+      expect((await rerail(cli, ["status"], env)).stdout).toContain(notice);
+      // A TLS start on loopback asks for no other machine: with the same key it serves this computer alone and succeeds.
+      expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
+      expect(await rerail(cli, ["daemon", "start", "--dev", "--port", "0", ...tls], env)).toMatchObject({ code: 0, stdout: expect.stringContaining(notice), stderr: expect.not.stringContaining("other machines cannot reach") });
+    } finally {
+      await rerail(cli, ["daemon", "stop"], env);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  // A restart at the heap ceiling launches the next daemon with this process's arguments (`process.argv`). A daemon that
+  // serves this computer alone comes back as that daemon, saying why in its state file and in daemon.log, never with the
+  // arguments that asked for other machines, which would reach them once the key is fixed though no one started it so.
+  test("comes back from a heap-ceiling restart on loopback, still saying why, once its TLS key is fixed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const keyFile = join(root, "key.pem");
+    const stateFile = join(root, "daemon.json");
+    const relaunchFile = join(root, "relaunch.json");
+    const log = join(root, "daemon.log");
+    const reasonLines = async (why: string): Promise<number> =>
+      (await readFile(log, "utf8")).split(`rerail daemon: This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`).length - 1;
+    try {
+      const { cert, key } = selfSignedCertificate();
+      await writeFile(join(root, "cert.pem"), cert);
+      await writeFile(keyFile, key);
+      await letOthersRead(keyFile, 0o644);
+      // The daemon process as its entry point runs it, then the arguments a restart would relaunch it with.
+      const script = join(root, "daemon.mjs");
+      await writeFile(script, [
+        `const { serveRerailDaemon } = await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "dist", "daemon", "daemon.js")).href)});`,
+        "await serveRerailDaemon(process.argv.slice(2));",
+        `(await import("node:fs")).writeFileSync(${JSON.stringify(relaunchFile)}, JSON.stringify(process.argv.slice(2)));`,
+      ].join("\n"));
+      const local = ["--dev", "--port", "0", "--state-file", stateFile];
+      const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
+      launchLogged([script, ...local, ...remote], env, log);
+      const relaunch = await vi.waitFor(async () => JSON.parse(await readFile(relaunchFile, "utf8")) as string[], { timeout: 30_000, interval: 100 });
+      const why = String((JSON.parse(await readFile(stateFile, "utf8")) as { remoteRefused?: unknown }).remoteRefused);
+      expect(relaunch).toEqual([...local, "--remote-refused", why]);
+      expect(await reasonLines(why)).toBe(1);
+      expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
+      // Launched with those arguments once the key is private, the next daemon still serves this computer alone, and
+      // daemon.log says why once more, for this start.
+      await makePrivate(keyFile);
+      launchLogged([join(process.cwd(), ENTRY_POINTS.daemon), ...relaunch], env, log);
+      const state = await vi.waitFor(
+        async () => JSON.parse(await readFile(stateFile, "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(state).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/u), remoteRefused: why });
+      expect(await reasonLines(why)).toBe(2);
+      const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
+      expect(health.status).toBe(200);
+    } finally {
+      await rerail(cli, ["daemon", "stop"], env);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  // A --tls-key that names no file this account can read is a mistake in the command, not a key others can read: the
+  // start fails with the reason main gives, naming the key, and no daemon runs, on this computer or for others.
+  test("refuses to start when --tls-key names no file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const certFile = join(root, "cert.pem");
+    const unread = (keyFile: string): [string, string] => [keyFile, `Could not read who may read ${literal(keyFile)}: `];
+    try {
+      await writeFile(certFile, selfSignedCertificate().cert);
+      const folder = join(root, "keys");
+      await mkdir(folder);
+      const lockedOut = join(root, "key.pem");
+      await writeFile(lockedOut, selfSignedCertificate().key);
+      // A misspelled name and a path through a file; then paths others can read where this account reads no key: a
+      // folder, the certificate (as when --tls-cert and --tls-key are swapped), and a key this account may not read.
+      const keys: [string, string][] = [
+        unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")),
+        [folder, await letOthersRead(folder, 0o755)], [certFile, await letOthersRead(certFile, 0o644)],
+      ];
+      if (process.platform === "win32") keys.push(unread(await keyGetAclCannotRead(root)));
+      const lockedOutRefusal = await lockOut(lockedOut);
+      // Root, and a Windows account whose backup privilege is on (as over ssh, Node opening files for backup), still
+      // read that key: for them it is a key this account reads, which serves this computer alone.
+      if (!(await readFile(lockedOut).then(() => true, () => false))) keys.push([lockedOut, lockedOutRefusal]);
+      for (const [keyFile, refusal] of keys) {
+        const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", certFile, "--tls-key", keyFile];
+        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(refusal, "u")) });
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // A --tls-cert the https start would refuse is a mistake in the command too. Beside a key others can read, the
+  // loopback daemon would serve no certificate, yet the start fails with the message that certificate gets beside a
+  // private key, as on main, so the mistake shows now and not once the key is fixed; no daemon runs.
+  test("refuses to start when --tls-cert names no certificate for a key others can read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const keyFile = join(root, "key.pem");
+    const misspelled = join(root, "certt.pem");
+    try {
+      await writeFile(keyFile, selfSignedCertificate().key);
+      await writeFile(join(root, "other.pem"), selfSignedCertificate().cert);
+      await letOthersRead(keyFile, 0o644);
+      const notFound = `ENOENT: no such file or directory, open '${literal(misspelled)}'`;
+      // A misspelled certificate, on loopback and for other machines; the key given as the certificate too; another
+      // key's certificate.
+      const starts: [string[], string][] = [
+        [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
+        [["--tls-cert", keyFile], "The TLS certificate is not a PEM X\\.509 certificate: "],
+        [["--tls-cert", join(root, "other.pem")], "error:\\w+:x509 certificate routines::key values mismatch"],
+      ];
+      for (const [options, message] of starts) {
+        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...options, "--tls-key", keyFile], { env });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`rerail daemon: ${message}`, "u")) });
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test("reads the start state from the database --database names, not the home's default", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
     try {
@@ -129,3 +294,72 @@ describe("Rerail daemon CLI", () => {
     }
   }, 15_000);
 });
+
+/** Runs the built CLI with `args`, resolving with its exit code and output whatever the code. */
+async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string; stderr: string }>();
+  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout, stderr) => resolve({ code: child.exitCode, stdout, stderr }));
+  return await promise;
+}
+
+/** Starts Node with `args`, its stdout and stderr appended to `logFile`, as a daemon's go to daemon.log. */
+function launchLogged(args: readonly string[], env: NodeJS.ProcessEnv, logFile: string): void {
+  const log = openSync(logFile, "a");
+  try {
+    spawn(process.execPath, [...args], { env, stdio: ["ignore", log, log] });
+  } finally {
+    closeSync(log);
+  }
+}
+
+/** `text` as a regular expression source that matches it alone. */
+function literal(text: string): string {
+  return text.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+}
+
+/**
+ * Lets other accounts read `keyFile`: `mode`, or on Windows, which has no mode bits, read granted to BUILTIN\Users, as
+ * a key under C:\certs inherits. Returns, as a regular expression source, the whole of the daemon's refusal of it, the
+ * command that fixes it included.
+ */
+async function letOthersRead(keyFile: string, mode: number): Promise<string> {
+  const path = literal(keyFile);
+  const owner = "; a TLS private key must be readable by its owner only: ";
+  if (process.platform !== "win32") {
+    await chmod(keyFile, mode);
+    return `${path} is open to other users \\(mode ${mode.toString(8).padStart(4, "0")}\\)${owner}chmod 600 "${path}"`;
+  }
+  await promisify(execFile)("icacls", [keyFile, "/grant", "*S-1-5-32-545:R"], { windowsHide: true });
+  // Its folder's ACL may let other accounts read it as well, as Authenticated Users may outside the profile.
+  const fix = `icacls "${path}" /inheritance:r /grant:r "${literal(userInfo().username)}:R"`;
+  return `${path} can be read by other accounts \\((?:[^)]*, )?BU(?:, [^)]*)?\\)${owner}${fix}`;
+}
+
+/**
+ * Lets other accounts read `keyFile` and denies this account reading it: mode 0044, or on Windows read granted to
+ * BUILTIN\Users and reading its data denied to this account, whose ACL it can still read. Returns the daemon's refusal
+ * of it as `letOthersRead` does.
+ */
+async function lockOut(keyFile: string): Promise<string> {
+  const refusal = await letOthersRead(keyFile, 0o044);
+  if (process.platform === "win32") await promisify(execFile)("icacls", [keyFile, "/deny", `${userInfo().username}:(RD)`], { windowsHide: true });
+  return refusal;
+}
+
+/** Makes `keyFile` its owner's alone, as the daemon's printed fix does: mode 0600, or on Windows read for this account alone. */
+async function makePrivate(keyFile: string): Promise<void> {
+  if (process.platform !== "win32") return await chmod(keyFile, 0o600);
+  await promisify(execFile)("icacls", [keyFile, "/inheritance:r", "/grant:r", `${userInfo().username}:R`], { windowsHide: true });
+}
+
+/**
+ * Windows: a private key this account reads and other accounts may read, whose ACL `Get-Acl` cannot read. It sits in an
+ * NTFS alternate data stream (`key.pem:tls`), which Node stats as a file and reads, and whose path `Get-Acl` refuses
+ * ("The given path's format is not supported"). Returns its path.
+ */
+async function keyGetAclCannotRead(folder: string): Promise<string> {
+  const file = join(folder, "stream.pem");
+  await writeFile(`${file}:tls`, selfSignedCertificate().key);
+  await letOthersRead(file, 0o644);
+  return `${file}:tls`;
+}

@@ -502,7 +502,10 @@ preimages and held steers.
   ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
   stderr and never fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
-  and the `icacls` command that fixes it, and refuses a key whose ACL it cannot read.
+  and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
+  on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it
+  cannot read (`Get-Acl` fails), a folder, a file whose ACL keeps this account from reading it, or a file that holds no
+  private key stops the start, and so does a `--tls-cert` that names no certificate for the key.
 
 </details>
 

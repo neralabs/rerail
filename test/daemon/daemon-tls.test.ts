@@ -1,19 +1,24 @@
+import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { runRerailMcpBridge } from "../../src/api/index.js";
 import {
   DAEMON_TRANSPORT_FLAGS,
   DAEMON_TRANSPORT_OPTIONS,
   loadDaemonTls,
+  loopbackArguments,
   parseArguments,
   parseDaemonTransport,
   RerailDaemon,
+  serveRerailDaemon,
+  TlsKeyExposedError,
 } from "../../src/daemon/daemon.js";
 import { DAEMON_STATE_FILE, daemonFetch, probeDaemon, readDaemonState, type DaemonState } from "../../src/runtime/index.js";
 import { selfSignedCertificate } from "../support/self-signed-certificate.js";
@@ -54,6 +59,23 @@ describe("daemon transport arguments", () => {
     expect(refusal("win32")).not.toContain("chmod");
     expect(refusal("win32")).toContain("icacls key.pem /inheritance:r /grant:r");
     expect(refusal("linux")).toContain("chmod 600 key.pem");
+  });
+
+  it("leaves out only what reaches other machines when the daemon serves this computer alone", () => {
+    const remote = [
+      "--state-file", "daemon.json", "--host", "0.0.0.0", "--allow-remote", "--public-host", "rerail.example",
+      "--tls-cert", "cert.pem", "--tls-key", "key.pem", "--port", "4737", "--dev", "--workspace-root", "repo",
+    ];
+    expect(loopbackArguments(remote)).toEqual(["--state-file", "daemon.json", "--port", "4737", "--dev", "--workspace-root", "repo"]);
+    expect(loopbackArguments(["--insecure-http", "--host", "::"])).toEqual([]);
+    // Every transport flag and option the daemon reads, so one added later cannot ride into the loopback restart.
+    const transport = [...DAEMON_TRANSPORT_FLAGS, ...DAEMON_TRANSPORT_OPTIONS.flatMap(option => [option, "value"])];
+    expect(loopbackArguments(["--dev", ...transport, "--port", "4737"])).toEqual(["--dev", "--port", "4737"]);
+  });
+
+  it("says why it serves this computer alone only from its own loopback restart, never from what a caller passes", () => {
+    // A caller that could set it would record a daemon other machines reach as one they cannot.
+    expectTypeOf<NonNullable<Parameters<typeof serveRerailDaemon>[1]>>().not.toHaveProperty("remoteRefused");
   });
 });
 
@@ -118,6 +140,95 @@ describe("TLS daemon", () => {
       throw new Error("Get-Acl failed");
     } } };
     await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
+    // Only a key others can read is answered by serving this computer alone. One whose readers could not be read, a
+    // missing one too, is a mistake in the command and stops the start.
+    await expect(loadDaemonTls(files, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+    await expect(loadDaemonTls(files, unread)).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    const missing = { ...files, keyFile: join(root, "keyy.pem") };
+    await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.toThrow(`Could not read who may read ${missing.keyFile}: ENOENT`);
+    await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    // So is a folder others can read: it is refused for that, but this account reads no key there.
+    const folder = { ...files, keyFile: root };
+    await expect(loadDaemonTls(folder, shared)).rejects.toThrow(`${root} can be read by other accounts (BU)`);
+    await expect(loadDaemonTls(folder, shared)).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+  });
+
+  it("stops the start, as main does, for a file others can read that holds no private key", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const certFile = join(root, "cert.pem");
+    await writeFile(certFile, selfSignedCertificate().cert);
+    const text = join(root, "key.txt");
+    await writeFile(text, "not a key\n");
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // The certificate, as when --tls-cert and --tls-key are swapped, and a file of text: this account reads each, and
+    // neither is a key it could serve with once the key is fixed.
+    for (const keyFile of [certFile, text]) {
+      const refused = loadDaemonTls({ certFile, keyFile }, shared);
+      await expect(refused).rejects.toThrow(`${keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("stops the start at once for a FIFO others can read, never waiting for a writer", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const fifo = join(root, "key.pem");
+    await promisify(execFile)("mkfifo", ["-m", "0644", fifo]);
+    const refused = loadDaemonTls({ certFile: join(root, "cert.pem"), keyFile: fifo });
+    await expect(refused).rejects.toThrow(`${fifo} is open to other users (mode 0644)`);
+    await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+  }, 5_000);
+
+  it("stops the start, with the error a private key gets, for a certificate that would not serve with a key others can read", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const keyFile = join(root, "key.pem");
+    await writeFile(keyFile, key);
+    await writeFile(join(root, "cert.pem"), cert);
+    await writeFile(join(root, "text.pem"), "not a certificate\n");
+    await writeFile(join(root, "other.pem"), selfSignedCertificate().cert);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // What reading it gives, as a start with a private key reads it.
+    const readError = async (path: string): Promise<string> => await readFile(path, "utf8").then(() => "read", (error: Error) => error.message);
+    // A misspelled path and a folder fail to read; a file of text and the key itself hold no certificate; another key's
+    // certificate is not this key's. Each is a mistake in the command, which the start names once the key is private.
+    const certificates: [string, string][] = [
+      [join(root, "certt.pem"), await readError(join(root, "certt.pem"))], [root, await readError(root)],
+      [join(root, "text.pem"), "The TLS certificate is not a PEM X.509 certificate: "],
+      [keyFile, "The TLS certificate is not a PEM X.509 certificate: "], [join(root, "other.pem"), "key values mismatch"],
+    ];
+    for (const [certFile, error] of certificates) {
+      const refused = loadDaemonTls({ certFile, keyFile }, shared);
+      await expect(refused).rejects.toThrow(error);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    }
+    // The certificate it would serve with once the key is private: meanwhile it serves this computer alone.
+    await expect(loadDaemonTls({ certFile: join(root, "cert.pem"), keyFile }, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+  });
+
+  it.skipIf(process.platform === "win32")("stops the start at once for a FIFO certificate beside a key others can read", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const keyFile = join(root, "key.pem");
+    await writeFile(keyFile, selfSignedCertificate().key);
+    await chmod(keyFile, 0o644);
+    const fifo = join(root, "cert.pem");
+    await promisify(execFile)("mkfifo", ["-m", "0644", fifo]);
+    // Its read would wait for a writer: it is never read, and the start gets the key's refusal, as it does on main.
+    const refused = loadDaemonTls({ certFile: fifo, keyFile });
+    await expect(refused).rejects.toThrow(`${keyFile} is open to other users (mode 0644)`);
+    await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+  }, 5_000);
+
+  it("records in its state file why it serves this computer alone, for rerail status to say", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    process.env.RERAIL_HOME = home;
+    const remoteRefused = `${join(root, "key.pem")} can be read by other accounts (BU)`;
+    daemons.push(await RerailDaemon.start({
+      version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, port: 0,
+      nativeHealth: () => ({ ok: true, kernelVersion: "1" }), stateFile: join(home, DAEMON_STATE_FILE), remoteRefused,
+    }));
+    expect(await readDaemonState(join(home, DAEMON_STATE_FILE))).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/u), remoteRefused });
   });
 
   it("names a refused key's path in its fix as it is, a `$&` in it too", async () => {

@@ -1,8 +1,9 @@
-import { randomBytes, X509Certificate } from "node:crypto";
+import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import { createSecureContext } from "node:tls";
 import type { AddressInfo, Server as NetServer } from "node:net";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir, userInfo } from "node:os";
@@ -107,6 +108,12 @@ export interface RerailDaemonOptions {
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
   tls?: DaemonTlsMaterial;
+  /**
+   * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
+   * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
+   * machines. The state file records it, for `rerail status` to say.
+   */
+  remoteRefused?: string;
   /**
    * Called when a Rerail process asks the daemon to stop (`POST /native/shutdown`, which `rerail daemon stop` sends on
    * Windows, where no signal reaches a handler). Omitted, the daemon serves no such request.
@@ -571,6 +578,7 @@ export class RerailDaemon {
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
+      ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
     };
   }
 
@@ -771,11 +779,24 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
+ * A TLS private key file this account reads, which parses as a key, that the daemon may not serve with because other
+ * accounts can read it too. Its message names the key and the command that makes it its owner's alone.
+ */
+export class TlsKeyExposedError extends Error {
+  override readonly name = "TlsKeyExposedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
+ * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
+ * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one that holds
+ * no key such as the certificate, one whose readers cannot be read), and a certificate that would not serve with the
+ * key, is a mistake in the command and stops the start. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -788,10 +809,43 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
-    throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
+    const refusal = `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`;
+    const key = await readPrivateKey(tls.keyFile);
+    throw key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
+}
+
+/**
+ * What `path` holds, read once, when it is a regular file this account reads that parses as a private key; undefined
+ * otherwise. A folder or FIFO is never read (a FIFO's read waits for a writer); a certificate or any other file is no key.
+ */
+async function readPrivateKey(path: string): Promise<Buffer | undefined> {
+  try {
+    if (!(await stat(path)).isFile()) return undefined;
+    const key = await readFile(path);
+    createPrivateKey(key);
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
+ * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
+ * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
+ * start throws for it beside a private key. A path that is no file or folder, a FIFO say, is never read (a FIFO's read
+ * waits for a writer) and serves nothing.
+ */
+async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+  const found = await stat(certFile).catch(() => undefined);
+  if (found !== undefined && !found.isFile() && !found.isDirectory()) return false;
+  const cert = await readFile(certFile, "utf8");
+  certificateFingerprint(cert);
+  createSecureContext({ cert, key });
+  return true;
 }
 
 /** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
@@ -839,10 +893,87 @@ async function packageVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }
 
-/** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+/**
+ * What `runRerailDaemon` starts the daemon with: what the process entry point (`src/cli/daemon-entry.ts`) supplies from
+ * the layers above the daemon, and why it serves this computer alone, which only `serveRerailDaemon`'s loopback restart
+ * sets.
+ */
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
 
-export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+/**
+ * The daemon flags and options (each followed by its value) that make it reachable from other machines: where it binds
+ * and answers, and every transport one (`DAEMON_TRANSPORT_FLAGS`, `DAEMON_TRANSPORT_OPTIONS`), so one added there is
+ * left out of a loopback daemon's arguments too.
+ */
+const REMOTE_FLAGS: readonly string[] = ["--allow-remote", ...DAEMON_TRANSPORT_FLAGS];
+const REMOTE_OPTIONS: readonly string[] = ["--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS];
+
+/** `argv` without the flags and options that make a daemon reachable from other machines: a loopback daemon's. */
+export function loopbackArguments(argv: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index] ?? "";
+    if (REMOTE_OPTIONS.includes(argument)) index += 1;
+    else if (!REMOTE_FLAGS.includes(argument)) kept.push(argument);
+  }
+  return kept;
+}
+
+/** What daemon.log, `rerail daemon start` and `rerail status` say of a daemon that serves this computer alone. */
+export function loopbackOnlyNotice(reason: string): string {
+  return `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${reason}`;
+}
+
+/** The daemon argument that names why a daemon serves this computer alone, as its loopback restart leaves it. */
+const REMOTE_REFUSED = "--remote-refused";
+
+/** The arguments of a daemon that serves this computer alone for `reason`: `argv`'s loopback ones, then why. */
+export function loopbackCommandLine(argv: readonly string[], reason: string): string[] {
+  return [...loopbackArguments(argv), REMOTE_REFUSED, reason];
+}
+
+/** Why a daemon started with `argv` serves this computer alone (`--remote-refused <why>`), and its other arguments. */
+export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason: string } | undefined {
+  const at = argv.indexOf(REMOTE_REFUSED);
+  const reason = at === -1 ? undefined : argv[at + 1];
+  return reason === undefined ? undefined : { argv: [...argv.slice(0, at), ...argv.slice(at + 2)], reason };
+}
+
+/**
+ * The daemon process: `runRerailDaemon`, except that a TLS key it may not serve with (`TlsKeyExposedError`), which keeps
+ * it from serving https and from other machines, no longer keeps it from this one. The daemon starts again without the
+ * options that reach other machines (`serveLoopback`): on loopback, over http, as a daemon started with no options is,
+ * so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status` say
+ * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
+ * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
+ * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
+ */
+export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
+  const relaunched = remoteRefusal(argv);
+  if (relaunched !== undefined) return await serveLoopback(relaunched.argv, relaunched.reason, services);
+  try {
+    await runRerailDaemon(argv, services);
+  } catch (error) {
+    if (!(error instanceof TlsKeyExposedError)) throw error;
+    await serveLoopback(argv, error.message, services);
+  }
+}
+
+/**
+ * Runs the daemon for this computer alone, for `reason`: with `argv` less what reaches other machines
+ * (`loopbackArguments`), saying why on stderr, which is daemon.log, once for each start. The process takes the arguments
+ * of such a daemon (`loopbackCommandLine`) as if it had been started with them, as the hook launcher runs a hook: a
+ * restart at the heap ceiling relaunches the daemon with this process's arguments (`runRerailDaemon`), so the next
+ * daemon serves this computer alone too, saying why, even once the key is fixed, until someone starts it again.
+ */
+async function serveLoopback(argv: readonly string[], reason: string, services: Omit<RerailDaemonServices, "remoteRefused">): Promise<void> {
+  process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(reason)}\n`);
+  process.argv.splice(2, process.argv.length - 2, ...loopbackCommandLine(argv, reason));
+  await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: reason });
+}
+
+async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
