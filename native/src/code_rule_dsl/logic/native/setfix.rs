@@ -188,6 +188,11 @@ fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     Ok(s)
 }
 
+/// The symbol of `text` in `conn`'s symbols, where it has one (a rule's text constant as its column holds it).
+pub fn symbol_id(conn: impl Scoped, text: &str) -> Result<Option<i64>> {
+    Ok(symbols(conn)?.read().unwrap().get(text))
+}
+
 /// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
 pub fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
     let shared = symbols(conn)?;

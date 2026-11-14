@@ -257,3 +257,52 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let by_heavy = last(&model);
     assert!((by_heavy / cube - 1.0).abs() < 0.01, "{by_heavy} against {cube}");
 }
+
+/// O173: a key value's work for an order, from pair counts (`KeyModel`), is the work of running the order on it: each
+/// step's bindings, a filter's share taken at the key value, not over the relation. Two functions of one size with
+/// few and many calls have unlike work; one column's counts give them the same.
+#[test]
+fn a_key_values_work_from_pair_counts_is_its_run() {
+    use crate::code_rule_dsl::logic::front::Literal;
+    use crate::code_rule_dsl::logic::plan::{KeyModel, Step};
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), k(j, 3).\n.output h\n").unwrap();
+    let rule = &p.rules[0];
+    // Two functions of 40 nodes each: function 1 holds 2 calls (kind 1), function 2 holds 30; each has returns
+    // (kind 2) and identifiers (kind 3).
+    let mut r_rows: Vec<(i64, i64)> = Vec::new();
+    let mut kind: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    for (f, calls) in [(1i64, 2usize), (2, 30)] {
+        for i in 0..40usize {
+            let n = f * 1000 + i as i64;
+            r_rows.push((f, n));
+            kind.insert(n, if i < calls { 1 } else if i < calls + 3 { 2 } else { 3 });
+        }
+    }
+    let count = |f: i64, t: Option<i64>| r_rows.iter().filter(|&&(g, n)| g == f && t.is_none_or(|t| kind[&n] == t)).count() as f64;
+    let raw = |_| -> std::collections::HashMap<i64, f64> { [1, 2].into_iter().map(|f| (f, count(f, None))).collect() };
+    let pass = |t: i64| -> std::collections::HashMap<i64, f64> { [1, 2].into_iter().map(|f| (f, count(f, Some(t)))).collect() };
+    // Body: 0 r(f,n), 1 k(n,1), 2 r(f,m), 3 k(m,2), 4 r(f,j), 5 k(j,3); the lead is 3.
+    let model = KeyModel {
+        raw: [(0, raw(0)), (2, raw(2)), (4, raw(4))].into_iter().collect(),
+        pass: [((0, 1), pass(1)), ((4, 5), pass(3))].into_iter().collect(),
+    };
+    let order: Vec<Step> = [3, 2, 0, 1, 4, 5].into_iter().map(|at| Step { at, mode: None }).collect();
+    let key = match &rule.body[0] { Literal::Atom(a) => a.args[0].clone(), _ => unreachable!() };
+    // The order run by hand on one return of function `f`: the bindings before each step after the lead, summed.
+    let run = |f: i64| -> f64 {
+        let nodes: Vec<i64> = r_rows.iter().filter(|r| r.0 == f).map(|r| r.1).collect();
+        let mut work = 0.0;
+        work += 1.0; // r(f, m): binds f
+        work += 1.0; // r(f, n)
+        work += nodes.len() as f64; // k(n, 1)
+        let calls = nodes.iter().filter(|n| kind[n] == 1).count() as f64;
+        work += calls; // r(f, j)
+        work += calls * nodes.len() as f64; // k(j, 3)
+        work
+    };
+    for f in [1, 2] {
+        let got = model.work(rule, 3, &key, &order, f);
+        assert_eq!(got, run(f), "function {f}");
+    }
+    assert!(model.work(rule, 3, &key, &order, 2) > 8.0 * model.work(rule, 3, &key, &order, 1));
+}

@@ -88,7 +88,7 @@ The sample was already representative by size here. Its two heavy rows hold 117 
 
 ## Open
 
-- **O173.** The trial estimate is still under the line's work on `call_ret`. The gap is per-row work that the
+- **O173** (closed by decision 0226). The trial estimate is still under the line's work on `call_ret`. The gap is per-row work that the
   key's size does not explain: the returns a function reaches, not its size, as 0216 §3 found for pricing. Pair
   statistics (0203 §3) are the measure that would see it.
 - The in-place path runs only where the batch goes to the GPU: from 1 M rows (`gpu_pays`). The fixture's batch is

@@ -5117,3 +5117,6 @@ line's work per row, even when each part is estimated by ratio to its rows' size
 representative by size, so the gap is per-row work the key's size does not explain: the returns a function
 reaches (decision 0216 §3). Open: a size that sees that correlation, from exact pair statistics (0203 §3), or a
 larger heavy share under a larger cap; neither is tuned.
+
+Closed (2026-11-14, decision 0226): each order is estimated by its work at a row's key, from pair counts with
+the filters on the key's atoms: 0.97 of the line's work on `call_ret`.
