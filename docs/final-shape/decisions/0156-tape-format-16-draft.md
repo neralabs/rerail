@@ -549,6 +549,9 @@ keeps the same bits.
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.
+- **Design pass:** [t38](../notes/t38-in-memory-tape-design.md) sets the families (explicit,
+  bit-packed as in mldb's mapped int tables, balanced parentheses, DFUDS, LOUDS) against the
+  questions and platforms, and names E10's candidates.
 
 ## Experiments
 
