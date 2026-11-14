@@ -174,6 +174,11 @@ thread_local! {
     static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
 }
 
+/// Carries the binding to a job on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["DEVICE"], &DEVICE);
+}
+
 /// Whether this thread's run may use the device.
 pub(in crate::code_rule_dsl) fn device() -> bool {
     DEVICE.with(Cell::get) != Binding::Cpu

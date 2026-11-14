@@ -1494,6 +1494,17 @@ thread_local! {
     static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
+/// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
+pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
+    c.part(&["PLANS", "OWN_PLANS"], super::run_state::Shared(share_plans(), enter_plans));
+    c.copy(&["PLAN_SITE"], &PLAN_SITE);
+    c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
+    c.copy(&["NO_SHAPES"], &NO_SHAPES);
+    c.copy(&["SKEWING"], &SKEWING);
+    c.copy(&["STEP_ROWS"], &STEP_ROWS);
+}
+
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
 fn skew_setting() -> Option<(f64, u64)> {
     static SETTING: std::sync::OnceLock<Option<(f64, u64)>> = std::sync::OnceLock::new();
@@ -5555,36 +5566,23 @@ struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u6
 // program, the views, the projections, the inputs, and the rules' numbers, whose addresses are keys only.
 unsafe impl Send for Strand<'_> {}
 
-/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's kept plans, derived values and
-/// observations, which it shares, and the thread's settings, which it copies.
-struct Ambient {
-    plans: Option<SharedPlans>,
-    memo: Option<super::derived::Shared>,
-    observed: keeps::SharedObserved,
-    device: placement::Binding,
-    explain: bool,
-    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it.
-    under: Option<String>,
-}
+/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's context (`run_state::Carry`): its
+/// kept plans, derived values and observations, which it shares, and the thread's settings, which it copies.
+struct Ambient(super::run_state::Carry);
 
 impl Ambient {
     fn here() -> Self {
-        let explain = explaining(false);
-        explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, under: super::profile::here() }
+        Ambient(super::run_state::Carry::here())
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        struct Entered(super::run_state::Entered, super::profile::Span);
         impl Drop for Entered {
-            fn drop(&mut self) {
-                placement::set_binding(self.0);
-                explaining(self.1);
-            }
+            fn drop(&mut self) {}
         }
-        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
+        let span = super::profile::span_at(self.0.under(), || "issued components (stream job)".into());
+        Entered(self.0.enter(), span)
     }
 }
 
