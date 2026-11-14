@@ -66,6 +66,9 @@ pub enum TokenRule {
     Run(Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
+    /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
+    /// one of the pairs, as a lexer reads its next byte; `P` its mask.
+    Pairs { pairs: Vec<[u8; 2]>, mask: Expr },
     /// `read K | …`: a region's token, read from its opener to its closer (decision 0177): the
     /// region whose opener holds at its first byte, then its closer's first byte after it; its
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
@@ -91,7 +94,7 @@ impl TokenRule {
                 let t = or(s.clone(), after);
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
-            TokenRule::Pair(p) => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
             TokenRule::Read(regions) => {
@@ -619,6 +622,12 @@ struct P {
     i: usize,
     /// The regions read so far (`regions`), for a token's `read` (`TokenRule::Read`).
     regions: Vec<Region>,
+    /// Statements the one just read needs before it: a `pairs`' classes, one a byte, each made
+    /// once (`classed`).
+    before: Vec<Stmt>,
+    classed: Vec<u8>,
+    /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
+    pair_sets: Vec<(String, Vec<[u8; 2]>)>,
 }
 
 type R<T> = Result<T, String>;
@@ -1084,10 +1093,38 @@ impl P {
             if self.peek().is_none() {
                 return self.err("}");
             }
-            out.push(self.stmt()?);
+            let st = self.stmt()?;
+            out.append(&mut self.before);
+            out.push(st);
             self.nls();
         }
         Ok(out)
+    }
+    /// `pairs P = "AB" …`: the mask of the pairs' first bytes, a run's every other from the
+    /// left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
+    /// hidden classes one a byte; the list kept for a token's `pair P` (`TokenRule::Pairs`).
+    fn pairs(&mut self, name_of: String) -> R<Stmt> {
+        let mut pairs: Vec<[u8; 2]> = vec![];
+        while let Some(Tok::Str(_)) = self.peek() {
+            let w = self.string()?;
+            let [a, b] = w[..] else {
+                return self.err("a pair of two bytes");
+            };
+            pairs.push([a, b]);
+        }
+        let name = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in pairs.iter().flatten() {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(name(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
+        let two = pairs.iter().map(|&[a, b]| and(Expr::Name(name(a)), next(Expr::Name(name(b))))).reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).ok_or("a pair")?;
+        let mask = and(two.clone(), Expr::Not(Box::new(Expr::Call("escaped".into(), vec![Arg::E(two)]))));
+        self.pair_sets.push((name_of.clone(), pairs));
+        Ok(Stmt::Mask(name_of, mask))
     }
     fn class_items(&mut self) -> R<Vec<(u32, u32)>> {
         let mut v = vec![];
@@ -1140,6 +1177,11 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 Stmt::Class(n, self.class_items()?)
+            }
+            "pairs" => {
+                let n = self.ident()?;
+                self.want_p("=")?;
+                self.pairs(n)?
             }
             "mask" => {
                 let n = self.ident()?;
@@ -1495,7 +1537,14 @@ impl P {
                 } else if self.eat_kw("run") {
                     Some(TokenRule::Run(self.expr()?))
                 } else if self.eat_kw("pair") {
-                    Some(TokenRule::Pair(self.expr()?))
+                    let e = self.expr()?;
+                    match &e {
+                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _)| m == n) {
+                            Some((_, pairs)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone() }),
+                            None => Some(TokenRule::Pair(e)),
+                        },
+                        _ => Some(TokenRule::Pair(e)),
+                    }
                 } else if self.eat_kw("read") {
                     let mut regions = vec![];
                     loop {
@@ -1626,11 +1675,13 @@ impl P {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], classed: vec![], pair_sets: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
-        out.push(p.stmt()?);
+        let st = p.stmt()?;
+        out.append(&mut p.before);
+        out.push(st);
         p.nls();
     }
     Ok(out)

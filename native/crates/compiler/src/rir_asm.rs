@@ -619,7 +619,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new() });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -636,12 +636,27 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     "pair" => crate::records::EndRule::Pair(o),
                     "last" => crate::records::EndRule::Last(o),
                     "read" => crate::records::EndRule::Read(o),
-                    w => return Err(format!("block {at} recrule: `run`, `pair`, `last` or `read`, not {w}")),
+                    "next" => crate::records::EndRule::Next(o),
+                    w => return Err(format!("block {at} recrule: `run`, `pair`, `last`, `read` or `next`, not {w}")),
                 });
+            } else if first == "recnext" {
+                // `recnext HEX`: an `EndRule::Next`'s second bytes, in order (none: `-`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
+                let hex = line.word()?;
+                let hex = if hex == "-" { "" } else { hex.as_str() };
+                r.nexts.push((0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad pair byte")?);
             } else if first == "recreader" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recreader before its records"))?;
                 let other: u8 = line.number("")?;
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other });
+                let retag = match line.word() {
+                    Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
+                    _ => None,
+                };
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag });
+            } else if first == "recretag" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
+                let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
+                r.retags.push(crate::records::Retag { o, kind, marks });
             } else if first == "recarm" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recarm before its records"))?;
                 let k: usize = line.number("")?;

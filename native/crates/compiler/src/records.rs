@@ -66,6 +66,11 @@ pub struct Records {
     pub checks: Vec<TokenCheck>,
     /// The readers (`EndRule::Read`).
     pub readers: Vec<Reader>,
+    /// The readers' kinds by their start masks (`Retag`), for the record passes that read the
+    /// masks (Metal's, the interpreter's).
+    pub retags: Vec<Retag>,
+    /// The second bytes of each `EndRule::Next`'s pairs.
+    pub nexts: Vec<Vec<u8>>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
@@ -107,6 +112,9 @@ pub enum EndRule {
     Last(u16),
     /// A region's token, by a reader (`Records::readers`, an index): `read K | …`.
     Read(u16),
+    /// The first byte, and the next where it is one of the bytes of `Records::nexts` (an
+    /// index): `pair "AB" …`, as a lexer reads its next byte.
+    Next(u16),
 }
 
 /// A reader (`EndRule::Read`, decision 0177): a lexer's reader of a string or a comment. The
@@ -117,6 +125,19 @@ pub enum EndRule {
 pub struct Reader {
     pub arms: Vec<ReadArm>,
     pub other: u8,
+    /// Where its kind's tokens share a first byte with another kind's (a comment and a `/`):
+    /// the code's kind for its token, which no first byte gives, and the marks it has (the
+    /// extra's), as the lean lexer's reader says what it read (`Records::retags`).
+    pub retag: Option<(u8, u32)>,
+}
+
+/// A reader's kind and marks as a mask says them (`Reader::retag`), where no reader runs: at a
+/// token whose first byte has output `o`'s bit, the kind `kind` and the marks `marks`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Retag {
+    pub o: u16,
+    pub kind: u8,
+    pub marks: u32,
 }
 
 /// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at
@@ -143,7 +164,8 @@ pub enum ReadNone {
 
 /// A reader's token's last byte from its first, `s` (`Reader`), a word of the closer's bits at
 /// a time; `Err` where the file is refused. `n`: the file's length.
-pub fn read_last(records: &Records, reader: &Reader, s: usize, n: usize, outputs: &[Vec<u64>]) -> Result<usize, ()> {
+pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outputs: &[Vec<u64>]) -> Result<usize, ()> {
+    let n = bytes.len();
     let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
     let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
     for a in &reader.arms {
@@ -172,13 +194,13 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, n: usize, outputs
     }
     match records.rules.get(usize::from(reader.other)) {
         Some(&EndRule::Read(_)) | None => Err(()),
-        Some(&rule) => Ok(last_by_rule(rule, s, outputs).unwrap_or(s)),
+        Some(&rule) => Ok(last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s)),
     }
 }
 
 /// A token's last byte from its first, `s`, by its rule, over the file's output words; `None`
 /// where a `Last` has no bit left. A run past the words ends at their end.
-pub fn last_by_rule(rule: EndRule, s: usize, outputs: &[Vec<u64>]) -> Option<usize> {
+pub fn last_by_rule(records: &Records, rule: EndRule, s: usize, bytes: &[u8], outputs: &[Vec<u64>]) -> Option<usize> {
     let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
     let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
     match rule {
@@ -199,6 +221,10 @@ pub fn last_by_rule(rule: EndRule, s: usize, outputs: &[Vec<u64>]) -> Option<usi
         }
         // A reader's (`read_last`): not by a rule's words alone.
         EndRule::Read(_) => None,
+        EndRule::Next(i) => {
+            let seconds = records.nexts.get(usize::from(i)).map_or(&[][..], |v| v.as_slice());
+            Some(s + usize::from(bytes.get(s + 1).is_some_and(|b| seconds.contains(b))))
+        }
         EndRule::Last(o) => {
             let w = words(o);
             let mut q = s / 64;
@@ -220,7 +246,7 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
             match records.rules.get(usize::from(records.ends[usize::from(first)])) {
-                Some(&rule) => last_by_rule(rule, s as usize, outputs).map(|l| l as u32),
+                Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| l as u32),
                 None => Some(s),
             }
         })
@@ -262,7 +288,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         let k = records.ends[usize::from(bytes[s])];
         let l = match records.rules.get(usize::from(k)) {
             Some(&EndRule::Read(i)) => {
-                let l = match read_last(records, &records.readers[usize::from(i)], s, n, outputs) {
+                let l = match read_last(records, &records.readers[usize::from(i)], s, bytes, outputs) {
                     Ok(l) => l.max(s),
                     Err(()) => {
                         read = true;
@@ -273,7 +299,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                 l
             }
             Some(&rule) => {
-                let l = last_by_rule(rule, s, outputs).unwrap_or(s).max(s);
+                let l = last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s);
                 checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
                 l
             }
@@ -438,10 +464,16 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         bad |= l < s || (s as u64) < after;
         after = l as u64 + 1;
         let len = (l + 1).saturating_sub(s);
-        let kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
+        let mut kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
         let word = table.word(bytes, s, len);
         let mut marks = 0u32;
-        for (k, &(o, w)) in records.marks.iter().enumerate() {
+        let bit_of = |o: u16| outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
+        for t in records.retags.iter().filter(|t| bit_of(t.o)) {
+            kind = u32::from(t.kind);
+            marks |= t.marks;
+        }
+        let retagged: u32 = records.retags.iter().fold(0, |a, t| a | t.marks);
+        for (k, &(o, w)) in records.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {
             let bit = || outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
             if mark_holds(o, w, word, bit) {
                 marks |= 1 << k;

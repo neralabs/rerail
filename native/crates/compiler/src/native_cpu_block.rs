@@ -1931,15 +1931,19 @@ fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_code
 /// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value) {
     use crate::records::EndRule;
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
     let (ended, done) = (f.create_block(), f.create_block());
     f.append_block_param(ended, types::I64);
+    f.append_block_param(ended, types::I64);
     f.append_block_param(done, types::I64);
     f.append_block_param(done, types::I64);
+    f.append_block_param(done, types::I64);
+    // The tag (`Reader::retag`): a reader's kind and marks for its token, `-1` for none.
+    let untag = f.ins().iconst(types::I64, -1);
     // Output `o`'s word `q` (`q` below the file's blocks).
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
         let off = f.ins().imul_imm(q, 8 * outputs as i64);
@@ -1963,7 +1967,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         if k + 1 == blocks.len() {
             f.set_cold_block(other);
             let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
-            f.ins().jump(done, &[s.into(), refuse.into()]);
+            f.ins().jump(done, &[s.into(), refuse.into(), untag.into()]);
         }
     }
     for (k, (&rule, &b)) in r.rules.iter().zip(&blocks).enumerate() {
@@ -1973,12 +1977,34 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let tests: Vec<crate::records::TokenCheck> = r.checks.iter().filter(|c| usize::from(c.rule) == k).copied().collect();
         let ended = if tests.is_empty() { ended } else { tested(f, &tests, outputs, c, s, done, heads) };
         match rule {
+            // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
+            EndRule::Next(i) => {
+                let seconds = &r.nexts[usize::from(i)];
+                if seconds.is_empty() {
+                    f.ins().jump(ended, &[s.into(), untag.into()]);
+                    continue;
+                }
+                let i1 = f.ins().iadd_imm(s, 1);
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, i1, c.len);
+                let at = f.ins().select(inside, i1, s);
+                let p = c.bytes_at(f, at);
+                let b = f.ins().uload8(types::I32, ro, p, 0);
+                let mut hit = f.ins().icmp_imm(IntCC::Equal, b, i64::from(seconds[0]));
+                for &x in &seconds[1..] {
+                    let y = f.ins().icmp_imm(IntCC::Equal, b, i64::from(x));
+                    hit = f.ins().bor(hit, y);
+                }
+                let hit = f.ins().band(hit, inside);
+                let hit = f.ins().uextend(types::I64, hit);
+                let l = f.ins().iadd(s, hit);
+                f.ins().jump(ended, &[l.into(), untag.into()]);
+            }
             EndRule::Pair(o) => {
                 let x = word_at(f, q0, o);
                 let bit = f.ins().ushr(x, sh);
                 let bit = f.ins().band_imm(bit, 1);
                 let l = f.ins().iadd(s, bit);
-                f.ins().jump(ended, &[l.into()]);
+                f.ins().jump(ended, &[l.into(), untag.into()]);
             }
             EndRule::Run(o) => {
                 // The run from `s + 1`: its first word's ones from there, then whole words.
@@ -1988,7 +2014,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let q = f.ins().ushr_imm(i, 6);
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                 let (first_word, next) = (f.create_block(), f.create_block());
-                inside_or_past(f, inside, first_word, limit, ended, &[s.into()]);
+                inside_or_past(f, inside, first_word, limit, ended, &[s.into(), untag.into()]);
                 f.switch_to_block(first_word);
                 let x = word_at(f, q, o);
                 let isn = f.ins().band_imm(i, 63);
@@ -1999,7 +2025,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, left);
                 let l = f.ins().iadd(s, ones);
                 let w1 = f.ins().iadd_imm(q, 1);
-                f.ins().brif(short, ended, &[l.into()], next, &[]);
+                f.ins().brif(short, ended, &[l.into(), untag.into()], next, &[]);
                 f.switch_to_block(next);
                 f.set_cold_block(next);
                 f.ins().jump(more, &[w1.into()]);
@@ -2011,7 +2037,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
                 let w64 = f.ins().ishl_imm(w, 6);
                 let at_end = f.ins().iadd_imm(w64, -1);
-                inside_or_past(f, inside, whole, limit, ended, &[at_end.into()]);
+                inside_or_past(f, inside, whole, limit, ended, &[at_end.into(), untag.into()]);
                 f.switch_to_block(whole);
                 f.set_cold_block(whole);
                 let x = word_at(f, w, o);
@@ -2021,7 +2047,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = f.ins().iadd(w64, ones);
                 let l = f.ins().iadd_imm(l, -1);
                 let w1 = f.ins().iadd_imm(w, 1);
-                f.ins().brif(full, more, &[w1.into()], ended, &[l.into()]);
+                f.ins().brif(full, more, &[w1.into()], ended, &[l.into(), untag.into()]);
             }
             EndRule::Read(i) => {
                 // A reader (`records::read_last`): the first region whose opener holds at `s`,
@@ -2029,6 +2055,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 // lexer's reader of a string or a comment, from its start.
                 use crate::records::ReadNone;
                 let rd = &r.readers[usize::from(i)];
+                let tag = match rd.retag {
+                    Some((kind, marks)) => f.ins().iconst(types::I64, i64::from(kind) | i64::from(marks) << crate::records::MARK_SHIFT),
+                    None => untag,
+                };
                 for a in &rd.arms {
                     let (arm, not) = (f.create_block(), f.create_block());
                     let x = word_at(f, q0, a.opener);
@@ -2076,20 +2106,20 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     f.switch_to_block(found);
                     let at = f.block_params(found)[0];
                     let l = f.ins().iadd_imm(at, i64::from(a.off));
-                    f.ins().jump(ended, &[l.into()]);
+                    f.ins().jump(ended, &[l.into(), tag.into()]);
                     f.switch_to_block(none);
                     match a.none {
                         ReadNone::Refuse => {
                             let refuse = f.ins().iconst(types::I64, -1);
-                            f.ins().jump(done, &[s.into(), refuse.into()]);
+                            f.ins().jump(done, &[s.into(), refuse.into(), untag.into()]);
                         }
                         ReadNone::End => {
                             let l = f.ins().iadd_imm(c.len, -1);
-                            f.ins().jump(ended, &[l.into()]);
+                            f.ins().jump(ended, &[l.into(), tag.into()]);
                         }
                         ReadNone::Bytes(m) => {
                             let l = f.ins().iadd_imm(s, i64::from(m) - 1);
-                            f.ins().jump(ended, &[l.into()]);
+                            f.ins().jump(ended, &[l.into(), tag.into()]);
                         }
                     }
                     f.switch_to_block(not);
@@ -2101,7 +2131,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     }
                     None => {
                         let refuse = f.ins().iconst(types::I64, -1);
-                        f.ins().jump(done, &[s.into(), refuse.into()]);
+                        f.ins().jump(done, &[s.into(), refuse.into(), untag.into()]);
                     }
                 }
             }
@@ -2118,7 +2148,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = f.ins().iadd(base, tz);
                 let w1 = f.ins().iadd_imm(q0, 1);
                 let next = f.create_block();
-                f.ins().brif(x, ended, &[l.into()], next, &[]);
+                f.ins().brif(x, ended, &[l.into(), untag.into()], next, &[]);
                 f.switch_to_block(next);
                 f.set_cold_block(next);
                 f.ins().jump(more, &[w1.into()]);
@@ -2130,7 +2160,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 // None found: with the loop's starts (`records::walk`), the first byte alone;
                 // else `s - 1`, which the order check refuses.
                 let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
-                inside_or_past(f, inside, look, limit, ended, &[none.into()]);
+                inside_or_past(f, inside, look, limit, ended, &[none.into(), untag.into()]);
                 f.switch_to_block(look);
                 f.set_cold_block(look);
                 let x = word_at(f, w, o);
@@ -2138,16 +2168,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let tz = f.ins().ctz(x);
                 let l = f.ins().iadd(w64, tz);
                 let w1 = f.ins().iadd_imm(w, 1);
-                f.ins().brif(x, ended, &[l.into()], more, &[w1.into()]);
+                f.ins().brif(x, ended, &[l.into(), untag.into()], more, &[w1.into()]);
             }
         }
     }
     f.switch_to_block(ended);
-    let l = f.block_params(ended)[0];
+    let (l, tag) = (f.block_params(ended)[0], f.block_params(ended)[1]);
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(done, &[l.into(), zero.into()]);
+    f.ins().jump(done, &[l.into(), zero.into(), tag.into()]);
     f.switch_to_block(done);
-    (f.block_params(done)[0], f.block_params(done)[1])
+    (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2])
 }
 
 /// A rule's end block that tests its token `s..=l` (`l` its parameter) by its token tests
@@ -2160,8 +2190,9 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], out
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
+    f.append_block_param(ended, types::I64);
     f.switch_to_block(ended);
-    let l = f.block_params(ended)[0];
+    let (l, tag) = (f.block_params(ended)[0], f.block_params(ended)[1]);
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
         let off = f.ins().imul_imm(q, 8 * outputs as i64);
         let row = f.ins().iadd(c.out, off);
@@ -2242,7 +2273,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], out
         f.switch_to_block(next);
         refuse = f.block_params(next)[0];
     }
-    f.ins().jump(done, &[l.into(), refuse.into()]);
+    f.ins().jump(done, &[l.into(), refuse.into(), tag.into()]);
     f.switch_to_block(here);
     ended
 }
@@ -2409,9 +2440,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().uload32(fl, sa, 0)
     };
     let mut refused = None;
+    let mut retag = None;
     let l = if ruled {
-        let (l, refuse) = rule_last(f, r, t, outputs, c, s, limit, heads);
+        let (l, refuse, tag) = rule_last(f, r, t, outputs, c, s, limit, heads);
         refused = Some(refuse);
+        retag = Some(tag);
         f.ins().istore32(stores, l, la, 0);
         l
     } else {
@@ -2441,6 +2474,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let first = f.ins().band_imm(raw, 0xff);
     let ka = f.ins().iadd(tables, first);
     let kind = f.ins().uload8(types::I64, ro, ka, 0);
+    // A reader's token's kind and marks (`Reader::retag`), where it gives them.
+    let (kind, tag_marks) = match retag {
+        Some(tag) if r.readers.iter().any(|rd| rd.retag.is_some()) => {
+            let has = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, tag, 0);
+            let k = f.ins().band_imm(tag, 0xff);
+            let kind = f.ins().select(has, k, kind);
+            let m = f.ins().band_imm(tag, !0xff);
+            let m = f.ins().select(has, m, zero);
+            (kind, Some(m))
+        }
+        _ => (kind, None),
+    };
     let key = cut_to(f, raw, len);
     let h1 = f.ins().bxor(key, len);
     let h1 = f.ins().imul(h1, c.mult);
@@ -2458,6 +2503,13 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let w = f.ins().ushr_imm(meta, 8);
     let bits = f.ins().select(hit, w, zero);
     let mut code = f.ins().bor(kind, bits);
+    let kind = match tag_marks {
+        Some(m) => {
+            code = f.ins().bor(code, m);
+            f.ins().bor(kind, m)
+        }
+        None => kind,
+    };
     // The word itself, where a mark or a long word's tail needs it.
     let word_of = |f: &mut FunctionBuilder<'_>| {
         let x = f.ins().ushr_imm(bits, i64::from(crate::records::KIND_BITS));
@@ -2581,7 +2633,9 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
 /// with none, of a mark with `else escape` (`Records::unplaced`), sets the totals' flag.
 #[allow(clippy::too_many_arguments)]
 fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
-    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift).map(|(k, m)| (k, m.0)).collect();
+    // The marks a reader gives (`Reader::retag`) are its: no mask is read for them.
+    let retagged: u32 = r.readers.iter().filter_map(|rd| rd.retag).fold(0, |a, (_, m)| a | m);
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
         return;

@@ -226,5 +226,43 @@ end and the four backticks are `error … by tokens` and `escape … by tokens`,
 and the CPU does not (`the_loops_errors_are_the_masks`: 1,717 files and edge cases, 152
 refused by both). The regions' last-byte masks go from the CPU: 204 operations, from 249.
 
-What still reads the region walk and `code` on the CPU: the `json_bad` mark, the `ROW` mask
-(a comment or a `/`), `float_after`, JSON's checks, and the comments' extra mark.
+## A reader says its kind
+
+A comment and a `/` share a first byte, so the token's kind came from the `ROW` mask: a
+region mask the CPU made to tell them apart. The comment's extra mark came from a mask too.
+The lean lexer's reader knows what it read. Here likewise:
+
+```text
+# the comment rows move to a byte no row starts, for tier 2's view;
+# the reader that read a comment gives its kind and marks
+# a reader: its other rule, then the kind and marks of what it reads
+recreader OTHER retag KIND MARKS
+# where no reader runs: at a bit of output O, the same kind and marks
+recretag O KIND MARKS
+```
+
+On the CPU the reader returns its tag with the last byte; the token loop writes that kind
+and ORs those marks, and the gap pass skips them. Metal and the interpreter keep the masks
+(`Records::retags`, by the moved row's start mask). The `ROW` mask and the extra mark go from
+the CPU: 191 operations, from 204.
+
+## Pairs from the next byte
+
+A two-byte spelling (`:-`, `<=`) was a mask, `two_start`: each spelling's first byte, and in
+a run of them (`:->`) every other one, by `escaped`. The lean lexer reads the byte after the
+token's first instead. Here likewise:
+
+```text
+# the spellings, one list; its mask is Metal's and the interpreter's meaning
+pairs two_start = ":-" "=>" "!=" "<=" "<:" ">=" "->"
+token punct     = start punct & p_start pair two_start
+```
+
+`pairs P = …` makes the mask, from classes of one byte each. A token's `pair P` takes the
+list too (`TokenRule::Pairs`). On the CPU each first byte gets its own rule, `next` with its
+second bytes (`EndRule::Next`, `Records::nexts`): one load of the byte after the start, if
+inside the file, and a compare a byte. A run needs nothing more: the loop starts each token
+after the one before, so `:->` is `:-` and `>`. The pair mask goes from the CPU.
+
+What still reads the region walk and `code` on the CPU: the `json_bad` mark, `float_after`,
+and JSON's checks.

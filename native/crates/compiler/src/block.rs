@@ -1722,13 +1722,25 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     crate::records::EndRule::Pair(o) => ("pair", o),
                     crate::records::EndRule::Last(o) => ("last", o),
                     crate::records::EndRule::Read(o) => ("read", o),
+                    crate::records::EndRule::Next(o) => ("next", o),
                 };
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
+            }
+            // `block N recnext HEX` each `next` rule's second bytes (`-`: none).
+            for n in &r.nexts {
+                let _ = writeln!(out, "  block {at} recnext {}", if n.is_empty() { "-".to_string() } else { hex(n) });
             }
             // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
             // refuse|end|bytesM` each of its regions (`Records::readers`).
             for (k, rd) in r.readers.iter().enumerate() {
-                let _ = writeln!(out, "  block {at} recreader {}", rd.other);
+                match rd.retag {
+                    Some((kind, marks)) => {
+                        let _ = writeln!(out, "  block {at} recreader {} retag {kind} {marks}", rd.other);
+                    }
+                    None => {
+                        let _ = writeln!(out, "  block {at} recreader {}", rd.other);
+                    }
+                }
                 for a in &rd.arms {
                     let none = match a.none {
                         crate::records::ReadNone::Refuse => "refuse".to_string(),
@@ -1738,6 +1750,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}", a.opener, a.closer, a.off);
                 }
             }
+        }
+        // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.
+        for t in &r.retags {
+            let _ = writeln!(out, "  block {at} recretag {} {} {}", t.o, t.kind, t.marks);
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {

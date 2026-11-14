@@ -1375,9 +1375,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
              \x20   bad = bad || l < s || s < after;\n\
              \x20   const uint len = l + 1u - s;\n\
-             \x20   const uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20   uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
              \x20   const uint word = record_word_{p}(bytes, f, s, len);\n\
-             \x20   uint marks = 0u;{marks}{gaps}{checks}\n\
+             \x20   uint marks = 0u;{marks}{retags}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
              {unplaced}\
@@ -1390,6 +1390,12 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 let rule = r.ends.get(b).copied().unwrap_or(rerail_compiler::records::NO_RULE);
                 r.checks.iter().enumerate().filter(|(_, c)| c.rule == rule).fold(0u32, |a, (i, _)| a | 1 << i).to_string()
             })),
+            // A reader's kind and marks by its start mask (`Records::retags`).
+            retags = r
+                .retags
+                .iter()
+                .map(|t| format!(" if (record_bit(out, f, {}u, s)) {{ kind = {}u; marks |= {}u; }}", t.o, t.kind, t.marks))
+                .collect::<String>(),
             checks = r
                 .checks
                 .iter()

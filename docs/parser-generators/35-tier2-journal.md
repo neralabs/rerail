@@ -181,3 +181,5 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177: the marks' own checks in the gap pass: `newline` `unless after ","`, `float_after` `else escape` at the file's end; `starts_g`, `after_comma` gone; 259 operations | | | |
 | 0177: a number's checks at its token (`escape … at number when count(dot)`, `run(digit)`): the token loop's, not an escape mask and a tier 2 `CHECK`; 249 operations | | | |
 | 0177: readers: a string, comment or backtick literal read from its opener to its closer's first bit after it (`read K`), not by its region's last-byte mask; open-at-end and four backticks the loop's; 204 operations | | | |
+| 0177: a reader says its kind: the comment's kind and extra mark from the reader that read it, not the `ROW` mask (comment rows on a free byte for tier 2's view); 191 operations | | | |
+| 0177: pairs from the next byte: `pairs two_start = ":-" …` one list; on the CPU a rule a first byte (`next`), one load of the byte after and a compare a byte, not the pair mask; 162 operations | | | |

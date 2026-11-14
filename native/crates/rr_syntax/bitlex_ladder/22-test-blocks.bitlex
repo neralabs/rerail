@@ -40,12 +40,7 @@ class upper_hex = '8'..'9' 'a'..'f' 'A'..'F'
 class one       = '1'
 class lbrace    = '{'
 class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&' '{' '}'
-class colon     = ':'
 class minus     = '-'
-class eq        = '='
-class lt        = '<'
-class gt        = '>'
-class bang      = '!'
 class tick      = '`'
 class ctl       = 0x00..0x1f
 class jesc      = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
@@ -177,11 +172,12 @@ mask id_first   = alpha & ident & ~prev(ident)
 
 # --- Punctuation -------------------------------------------------------------------------------
 
-# A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
-# Not masked by `code`: no run of them crosses a region's edge (no closer is one), and the
-# token loop never starts inside a region (decision 0177, 2c).
-mask two        = (colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt))
-mask two_start  = two & ~escaped(two)
+# The two-byte spellings. Their mask is a spelling's first byte; in a run of them (`:->`),
+# every other one, from the left. Not masked by `code`: no run of them crosses a region's edge
+# (no closer is one). The token loop reads the byte after a token's first instead, as a lexer
+# does (`pair two_start`, below): it starts each token after the one before, so a run needs
+# nothing more.
+pairs two_start = ":-" "=>" "!=" "<=" "<:" ">=" "->"
 mask second     = prev(two_start) & code
 mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second

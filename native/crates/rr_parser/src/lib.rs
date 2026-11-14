@@ -1366,6 +1366,8 @@ pub mod tests {
         let files = corpus();
         let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        // Runs of two-byte spellings, and one at the end: the next byte read, against the mask.
+        inputs.extend([":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="].map(str::as_bytes));
         let (ra, rb) = (a.program.block_programs[0].records.as_ref().expect("records"), b.program.block_programs[0].records.as_ref().expect("records"));
         for f in &inputs {
             let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
@@ -1480,6 +1482,14 @@ pub mod tests {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
         }
+        // Two-byte spellings (`pairs`): runs of them, and one at the file's end. The CPU reads
+        // the next byte (`EndRule::Next`); the interpreter's rule is the same, its mask Metal's.
+        for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {
+            inputs.push(t.as_bytes().to_vec());
+            inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
+        }
+        assert!(!r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Pair(_))), "a pair rule reads a mask: the pairs are read from the bytes");
+        assert!(r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Next(_))), "no pair read from the bytes");
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let got = c.parser.tier1.run_files(&refs);
         for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
