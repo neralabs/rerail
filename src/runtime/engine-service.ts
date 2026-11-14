@@ -7,6 +7,8 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import { forgetFreedOwnerLocks, holdOwnerLock } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
@@ -21,7 +23,6 @@ import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
-import { SqliteSessionStore } from "./session-store.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -230,6 +231,8 @@ interface EngineRoutingState {
   runtimeOptions: Map<string, RerailRuntimeOptions>;
   /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
   suspended: Map<string, SuspendedEntry>;
+  /** The lock the service holds for its life, which its runtimes' owner rows name (`holdOwnerLock`); none without the engine. */
+  ownerLockId: string | undefined;
 }
 
 /** A suspended session, with the runtime it was open in and what that runtime is made with. */
@@ -371,7 +374,9 @@ function runtimeFor(
   const open = state.runtimes.get(runtimeKey);
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-  const runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey) });
+  const runtime = new RerailRuntime({
+    ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: state.ownerLockId,
+  });
   state.runtimes.set(runtimeKey, runtime);
   state.runtimeOptions.set(runtimeKey, runtimeOptions);
   return runtime;
@@ -689,6 +694,9 @@ async function listenOnSocket(
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
+  const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
+  // Before any runtime registers an owner: every row this service's runtimes write names it.
+  const ownerLock = holdOwnerLock(databasePath);
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
@@ -700,6 +708,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
     runtimeOptions: new Map(),
     suspended: new Map(),
+    ownerLockId: ownerLock.id,
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
@@ -756,8 +765,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
       } finally {
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
-        // daemon.
-        endSuspended(routing);
+        // daemon. Its lock goes once its sessions have ended.
+        try {
+          endSuspended(routing);
+        } finally {
+          ownerLock.release();
+        }
       }
     },
   };
@@ -771,10 +784,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     clearInterval(idleSweep);
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    ownerLock.release();
     throw error;
   }
   // In the same turn as the listen, before any request is read: a session this service opens is its own.
-  const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
   endAbandonedSessions(databasePath, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   return engineService;
 }
@@ -782,16 +795,18 @@ export async function startEngineService(options: EngineServiceOptions): Promise
 /**
  * Ends the sessions a daemon that ended without its stop left open in the service's database: one stopped by a machine
  * restart, its heap limit or a kill ends none of the sessions it held or had suspended while quiet, and no later daemon
- * holds them, so each read as open for good. Each ends at the idle limit after it was last heard from, as the idle close
- * would have ended it, and at the latest now (`SqliteSessionStore.endSessionsOfGoneOwners`). A database not made yet
- * holds none. A failure is reported, and the service runs all the same.
+ * holds them, so each read as open for good, and as owned while another process held its pid. Each ends at the idle
+ * limit after it was last heard from, as the idle close would have ended it, and at the latest now
+ * (`SqliteAuditControlStore.endSessionsOfEndedOwners`); then the locks of the services that ended are removed. A
+ * database not made yet holds none. A failure is reported, and the service runs all the same.
  */
 function endAbandonedSessions(databasePath: string, idleMs: number, now: () => number): void {
   if (!existsSync(databasePath)) return;
-  let store: SqliteSessionStore | undefined;
+  let store: SqliteAuditControlStore | undefined;
   try {
-    store = new SqliteSessionStore(databasePath);
-    store.endSessionsOfGoneOwners(idleMs, now());
+    store = new SqliteAuditControlStore(databasePath);
+    store.endSessionsOfEndedOwners(idleMs, now());
+    forgetFreedOwnerLocks(databasePath);
   } catch (error) {
     process.stderr.write(`rerail: ending the sessions a stopped daemon left open failed: ${error instanceof Error ? error.message : String(error)}\n`);
   } finally {

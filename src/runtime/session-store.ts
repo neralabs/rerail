@@ -12,10 +12,7 @@ import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import {
-  auditViolations, checkouts, events, policySessionOwners, sessions, sessionsOfRepository, workLinks, type WorkLinkRow,
-} from "../engine/storage/schema.js";
-import { processIsLive } from "../engine/audit/audit-control.js";
+import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
@@ -220,11 +217,6 @@ function sessionCheckout(database: RerailDatabase, sessionId: string): string | 
 }
 
 
-/** Which of `processIds` name a process that is gone (`processIsLive`), each asked once. */
-function goneProcesses(processIds: readonly number[]): Set<number> {
-  return new Set([...new Set(processIds)].filter(processId => !processIsLive(processId)));
-}
-
 export function decodeEventPayload(payload: Uint8Array): unknown {
   return deserialize(payload);
 }
@@ -383,32 +375,6 @@ export class SqliteSessionStore {
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#sessionRepositories.delete(sessionId);
     this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
-  }
-
-  /**
-   * Ends each session still open whose owner row names a process that is gone (`processIsLive`): what a runtime that
-   * ended without closing its sessions left, as a daemon stopped by a machine restart, its heap limit or a kill leaves
-   * every session it held or had let go of while quiet. Each ends `idleMs` after it was last heard from (its newest
-   * recorded event, else its start), as the idle close of a runtime still running would have ended it, and at the latest
-   * at `now`. A session this process or another that still runs owns is left as it is. One query and one transaction;
-   * returns how many sessions it ended.
-   */
-  endSessionsOfGoneOwners(idleMs: number, now: number): number {
-    return this.#database.transaction(() => {
-      const open = this.#database.all<{ sessionId: string; processId: number; heardAt: number }>(sql`
-        SELECT ${sessions.sessionId} AS sessionId, ${policySessionOwners.processId} AS processId,
-          coalesce((SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = ${sessions.sessionId}
-            ORDER BY ${events.sequence} DESC LIMIT 1), ${sessions.startedAt}) AS heardAt
-        FROM ${sessions} JOIN ${policySessionOwners} ON ${policySessionOwners.sessionId} = ${sessions.sessionId}
-        WHERE ${sessions.endedAt} IS NULL
-      `);
-      const gone = goneProcesses(open.map(row => row.processId));
-      const ended = open.filter(row => gone.has(row.processId));
-      for (const { sessionId, heardAt } of ended) {
-        this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
-      }
-      return ended.length;
-    });
   }
 
   sessions(): readonly StoredSessionSummary[] {

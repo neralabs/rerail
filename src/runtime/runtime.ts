@@ -1022,6 +1022,11 @@ export interface RerailRuntimeOptions {
   timingLog?: (line: string) => void;
   /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
   suspendedSessions?: SuspendedSessions;
+  /**
+   * The lock the engine service this runtime runs in holds for its life (`owner-lock.ts`), which the owner rows of its
+   * sessions name: a later start tells from it whether their writer still runs, whatever process holds its pid then.
+   */
+  ownerLockId?: string | undefined;
   nativeSession?: {
     registry: ConversationRuleRegistry;
     ruleSync?: LiveConversationRules;
@@ -1074,6 +1079,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
   readonly #suspendedSessions: SuspendedSessions | undefined;
+  readonly #ownerLockId: string | undefined;
   #mergeAssist: MergeAssistRuntime | undefined;
   /** Whether this runtime made its Merge Assist (none was passed in), so it stops it when it is disposed. */
   readonly #ownsMergeAssist: boolean;
@@ -1084,6 +1090,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
     this.#suspendedSessions = options.suspendedSessions;
+    this.#ownerLockId = options.ownerLockId;
     this.#storageRootIsDefault = isDefaultStorageRoot(options.storageRoot, options.workspaceRoot);
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
@@ -2060,7 +2067,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
+      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background", this.#ownerLockId);
     this.#suspendedSessions?.take(sessionId);
     return claim;
   }
