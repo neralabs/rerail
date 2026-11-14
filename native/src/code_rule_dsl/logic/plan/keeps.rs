@@ -618,7 +618,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
                 continue;
             }
             let Some(&n) = model.stats.card.get(rel) else { continue };
-            let cols = (0..a.arity()).map(|c| model.ndv.get(&(rel.to_owned(), c)).map_or(n, |d| d.min(n))).collect();
+            let cols = (0..a.arity()).map(|c| model.ndv.at(&rel, c).map_or(n, |d| d.min(n))).collect();
             counted.insert(rel, cols);
         }
     }
@@ -757,8 +757,9 @@ pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<
     rule.head.args.iter().for_each(|t| t.vars(&mut head));
     let positive: Vec<usize> = (0..rule.body.len()).filter(|&i| matches!(&rule.body[i], Literal::Atom(a) if !a.neg)).collect();
     let vars: Vec<BTreeSet<String>> = rule.body.iter().map(Literal::vars).collect();
-    let (key, parts) = factor_parts(&head, &positive, &vars)?;
-    Some((key, parts.into_iter().map(|ls| ls.into_iter().map(|i| rule.body[i].clone()).collect()).collect()))
+    let numbered = Numbered::of(head.iter().map(String::as_str), vars.iter().map(|vs| vs.iter().map(String::as_str)));
+    let (key, parts) = factor_parts(&numbered, &positive)?;
+    Some((numbered.names[key].to_owned(), parts.into_iter().map(|ls| ls.into_iter().map(|i| rule.body[i].clone()).collect()).collect()))
 }
 
 /// `factors` over a rule of a version: the key's name, and each part's literals by place.
@@ -768,47 +769,107 @@ fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Optio
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
         return None;
     }
-    let name = |s| v.text(r.var(s)).to_owned();
-    let mut head: BTreeSet<String> = BTreeSet::new();
+    let name = |s| v.text(r.var(s));
+    let mut head = super::body::VarSet::new();
     for t in r.head().args() {
-        let mut vs = super::body::VarSet::new();
-        super::body::term_vars(t, &mut vs);
-        head.extend(vs.iter().map(name));
+        super::body::term_vars(t, &mut head);
     }
     let positive: Vec<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Atom(a) if !a.neg())).collect();
-    let vars: Vec<BTreeSet<String>> = lits.iter().map(|&l| super::body::lit_vars(l).iter().map(name).collect()).collect();
-    factor_parts(&head, &positive, &vars)
+    let vars: Vec<super::body::VarSet> = lits.iter().map(|&l| super::body::lit_vars(l)).collect();
+    let numbered = Numbered::of(head.iter().map(name), vars.iter().map(|vs| vs.iter().map(name)));
+    let (key, parts) = factor_parts(&numbered, &positive)?;
+    Some((numbered.names[key].to_owned(), parts))
 }
 
-/// `factors`' split of a body of literals (`vars`, each literal's variables; `positive`, the positive atoms' places)
-/// under a head naming `head`: the key, and the parts' literals by place.
-fn factor_parts(head: &BTreeSet<String>, positive: &[usize], vars: &[BTreeSet<String>]) -> Option<(String, Vec<Vec<usize>>)> {
-    let mut keys: BTreeSet<String> = BTreeSet::new();
+/// A body's variables for `factor_parts`, numbered in the order of their names (so a key tried in number order is
+/// tried in name order, as by name), with the head's and each literal's as sets of numbers.
+struct Numbered<'a> {
+    names: Vec<&'a str>,
+    head: Bits,
+    vars: Vec<Bits>,
+}
+
+impl<'a> Numbered<'a> {
+    fn of<L: IntoIterator<Item = &'a str>>(head: impl IntoIterator<Item = &'a str>, lits: impl IntoIterator<Item = L>) -> Numbered<'a> {
+        let head: Vec<&str> = head.into_iter().collect();
+        let lits: Vec<Vec<&str>> = lits.into_iter().map(|l| l.into_iter().collect()).collect();
+        let mut names: Vec<&str> = head.iter().chain(lits.iter().flatten()).copied().collect();
+        names.sort_unstable();
+        names.dedup();
+        let id = |v: &str| names.binary_search(&v).expect("a body's variable");
+        let n = names.len();
+        let set = |vs: &[&str]| {
+            let mut b = Bits::new(n);
+            vs.iter().for_each(|v| b.set(id(v)));
+            b
+        };
+        let (head, vars) = (set(&head), lits.iter().map(|l| set(l)).collect());
+        Numbered { names, head, vars }
+    }
+}
+
+/// A set of a body's variable numbers.
+#[derive(Clone, PartialEq)]
+struct Bits(Vec<u64>);
+
+impl Bits {
+    fn new(n: usize) -> Bits {
+        Bits(vec![0; n.div_ceil(64)])
+    }
+    fn set(&mut self, i: usize) {
+        self.0[i / 64] |= 1 << (i % 64);
+    }
+    fn unset(&mut self, i: usize) {
+        self.0[i / 64] &= !(1 << (i % 64));
+    }
+    fn has(&self, i: usize) -> bool {
+        self.0[i / 64] & (1 << (i % 64)) != 0
+    }
+    fn meets(&self, o: &Bits) -> bool {
+        self.0.iter().zip(&o.0).any(|(a, b)| a & b != 0)
+    }
+    fn add(&mut self, o: &Bits) {
+        self.0.iter_mut().zip(&o.0).for_each(|(a, b)| *a |= b);
+    }
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(|w| *w == 0)
+    }
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().enumerate().flat_map(|(k, &w)| (0..64).filter(move |b| w & (1 << b) != 0).map(move |b| k * 64 + b))
+    }
+}
+
+/// `factors`' split of a body of literals (`b.vars`, each literal's variables; `positive`, the positive atoms' places)
+/// under a head naming `b.head`: the key's number, and the parts' literals by place. On numbered variables: as sets
+/// of names, each key's components cloned and compared names at every step.
+fn factor_parts(b: &Numbered<'_>, positive: &[usize]) -> Option<(usize, Vec<Vec<usize>>)> {
+    let (head, vars) = (&b.head, &b.vars);
+    let mut keys = Bits::new(b.names.len());
     for &i in positive {
-        for v in &vars[i] {
-            if !head.contains(v) && positive.iter().filter(|&&j| vars[j].contains(v)).count() >= 2 {
-                keys.insert(v.clone());
+        for v in vars[i].iter() {
+            if !head.has(v) && positive.iter().filter(|&&j| vars[j].has(v)).count() >= 2 {
+                keys.set(v);
             }
         }
     }
-    for key in keys {
+    for key in keys.iter() {
         // Components over every literal, joined by the variables they share other than the key.
-        let mut comps: Vec<(Vec<usize>, BTreeSet<String>)> = Vec::new();
+        let mut comps: Vec<(Vec<usize>, Bits)> = Vec::new();
         for (i, vs) in vars.iter().enumerate() {
             let mut vs = vs.clone();
-            vs.remove(&key);
-            let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| !v.is_disjoint(&vs));
+            vs.unset(key);
+            let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| v.meets(&vs));
             let mut all = (vec![i], vs);
             for (ls, more) in joined {
                 all.0.extend(ls);
-                all.1.extend(more);
+                all.1.add(&more);
             }
             comps = rest;
             comps.push(all);
         }
         // A literal of the key alone (`$p < …`) goes with the first part that reads the key.
         let (lone, mut parts): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| v.is_empty());
-        if parts.len() < 2 || !parts.iter().all(|(ls, v)| !v.is_disjoint(head) && ls.iter().any(|i| positive.contains(i))) {
+        if parts.len() < 2 || !parts.iter().all(|(ls, v)| v.meets(head) && ls.iter().any(|i| positive.contains(i))) {
             continue;
         }
         for (ls, _) in lone {
@@ -1188,7 +1249,7 @@ fn overlay<'a>(prog: &Program, model: &mut Model, rels: impl Iterator<Item = &'a
         let Some(rows) = observed_rows(rel, nodes) else { continue };
         let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let cols = observed_cols(rel, nodes, rows);
-        let before = (0..width).map(|c| (model.ndv.get(&(rel.to_owned(), c)).copied(), model.stats.fan.get(&(rel.to_owned(), c)).copied())).collect();
+        let before = (0..width).map(|c| (model.ndv.at(&rel, c).copied(), model.stats.fan.at(&rel, c).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
         model.stats.card.insert(rel.to_owned(), rows.max(1.0));
         for (c, (ndv, fan)) in cols.into_iter().enumerate().take(width) {
@@ -1300,12 +1361,12 @@ fn estimate(prog: &Program, model: &mut Model, (base, ids_of): (&Placed, &BTreeM
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));
                     if let Some(f) = seen_fan
-                        && !model.stats.fan.contains_key(&(rel.clone(), c))
+                        && model.stats.fan.at(&rel, c).is_none()
                     {
                         model.stats.fan.insert((rel.clone(), c), f);
                         inserted.fan.push((rel.clone(), c));
                     }
-                    if model.ndv.contains_key(&(rel.clone(), c)) {
+                    if model.ndv.at(&rel, c).is_some() {
                         continue;
                     }
                     if let Some(d) = seen_ndv {
@@ -1322,7 +1383,7 @@ fn estimate(prog: &Program, model: &mut Model, (base, ids_of): (&Placed, &BTreeM
                                 && !a.neg()
                                 && let Some(at) = a.args().position(|t| t.var() == Some(x))
                             {
-                                if let Some(&d) = model.ndv.get(&(v.rel_name(a.rel()).to_owned(), at)) {
+                                if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
                                     ndv = ndv.min(d);
                                 }
                             }
@@ -1431,7 +1492,7 @@ pub mod tests {
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
         for (rel, rows, ndv) in [
@@ -1619,7 +1680,7 @@ pub mod tests {
         use std::collections::{HashMap, HashSet};
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel.to_owned(), rows);

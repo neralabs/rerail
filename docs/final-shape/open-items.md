@@ -5058,3 +5058,16 @@ rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms 
 **Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
 domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
 `dl1` and the Python pack's programs, with identical domains for every column.
+
+## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
+
+Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). Open: a rule's numbering is made again at each
+split (keep it with the body's digest), and `split_constants` works on names.
+
+After decision 0210's first five steps, a cold dl1 batch's main thread still spent about 10% in `typing::file_local::split_in`.
+Its location and filter fixpoints build a `BTreeSet<String>` of variables for each rule in each round, and
+`rule_local` makes a `format!("rr_value_tape:{v}")` for each value tape. A form numbered by variable (each rule's
+variables as small integers, made once per rule body and kept with the body's digest by the split memo) would
+remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
+string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
+`text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.

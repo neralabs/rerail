@@ -6,7 +6,7 @@ pub fn run(prog: &Program, db: &Connection, mut inputs: Inputs, lowered: Option<
     let Some(ks) = hooks.strata.take() else { return stages::run(prog,db,inputs,lowered,hooks) };
     let roots: BTreeSet<String> = prog.outputs.iter().chain(&inputs.kept).cloned().collect();
     let needed = super::super::super::front::needed(prog,roots.iter().cloned().collect());
-    let sccs = strata(prog)?.0;
+    let sccs = components_of(prog)?;
     let rules: Vec<Vec<&Rule>> = sccs.iter().map(|s|prog.rules.iter().filter(|r|s.contains(r.head.rel.as_str())).collect()).collect();
 
     // A composed boundary's provenance is its transitive input facts. Internal CTEs are not

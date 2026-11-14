@@ -671,7 +671,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.cross;
-    let Ok((sccs, _)) = front::strata(cross) else { return };
+    let Ok(sccs) = front::components_of(cross) else { return };
     let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
     let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
     // The columns of a relation that name a document or a node of one (a node id holds its document).
@@ -2052,7 +2052,10 @@ thread_local! {
     static RUN_TOKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Carries the run's nesting to a job on another thread (`run_state`): a run there is nested in this one.
+/// Carries the run's nesting to a job on another thread (`run_state`): a run there is nested in this one, and is of
+/// the same outermost run. Read there unset (`0`), a wave's every lookup counted a run of its frames' space, so one
+/// run of 116 windows counted 120, and aged out (`MEMO_RUNS`) the entries its own first windows had used: the next
+/// run found none, parsed every file and wrote them all again (decision 0170).
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
     c.copy(&["RUN_TOKEN"], &RUN_TOKEN);
@@ -2065,28 +2068,6 @@ static RUNS_STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// run once, however many of its programs keep frames in them (`content_store::frames`). `0` outside a run.
 pub(in crate::code_rule_dsl) fn run_token() -> u64 {
     RUN_TOKEN.with(std::cell::Cell::get)
-}
-
-/// The run a job started on another thread is of (`threads::Jobs::spawn`): the spawner's token, set on the thread that
-/// runs the job until it ends. Read there unset (`0`), a wave's every lookup counted a run of its frames' space, so
-/// one run of 116 windows counted 120, and aged out (`MEMO_RUNS`) the entries its own first windows had used: the
-/// next run found none, parsed every file and wrote them all again.
-pub(crate) struct CarriedRun(u64);
-
-/// Sets `token` as this thread's run while the returned guard lives (a job's), then restores the one it replaced.
-pub(crate) fn carry_run(token: u64) -> CarriedRun {
-    CarriedRun(RUN_TOKEN.with(|t| t.replace(token)))
-}
-
-impl Drop for CarriedRun {
-    fn drop(&mut self) {
-        RUN_TOKEN.with(|t| t.set(self.0));
-    }
-}
-
-/// This thread's run, for a job it starts (`carry_run`).
-pub(crate) fn current_run() -> u64 {
-    run_token()
 }
 
 /// Counts a run under way on this thread until dropped.
@@ -5245,7 +5226,7 @@ fn run_observed(
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let (sccs, _) = front::strata(&r.program).map_err(|e| Error::Plan(e.to_string()))?;
+                let sccs = front::components_of(&r.program).map_err(|e| Error::Plan(e.to_string()))?;
                 let k = retain::Retained::from_frames(store, rounds_space, key, &r.program, &sccs, &rounds_in.constant_digests())?;
                 let missing = r.missing(&k);
                 if missing.is_empty() {
@@ -6430,7 +6411,7 @@ fn run_observed(
                     }
                     let cross = &maintained_part.0;
                     // Its strata, once for every pass below (the kept part's load, cut, frames and derived relations).
-                    let (cross_sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
+                    let cross_sccs = front::components_of(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
@@ -6834,7 +6815,7 @@ fn run_observed(
                             .filter(|r| in_run_delta(r))
                             .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
                             .collect();
-                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
+                        if let Ok(sccs) = crate::code_rule_dsl::logic::front::components_of(&part.program) {
                             let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
                             let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(&part.program, &sccs);
                             for (scc, rules) in sccs.iter().zip(&by_stratum) {
@@ -7669,7 +7650,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         let (has_delta, bound_olds) = (&self.has_delta, &self.bound_olds);
         let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
         let mut given = |_: &str| None;
-        let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &front::strata(&mini.program).map_err(|e| Error::Plan(e.to_string()))?.0, &mut given, Some(&one))?;
+        let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &front::components_of(&mini.program).map_err(|e| Error::Plan(e.to_string()))?, &mut given, Some(&one))?;
         // Its form derived again (decision 0090 §4) stays: the run chooses between the two by its input deltas.
         let mut form = m.program.program;
         if maintain::levels_wanted() {

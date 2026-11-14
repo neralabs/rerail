@@ -37,6 +37,20 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.copy(&["DEPTH"], &DEPTH);
 }
 
+/// This thread's depth in runs and in `set`, for a thread it starts and waits on (`within`).
+pub(in crate::code_rule_dsl) fn depth() -> usize {
+    DEPTH.with(Cell::get)
+}
+
+/// Runs `f` on this thread as if at `depth`: a thread its starter waits on (the test stores' template, filled while a
+/// test holds `set`) takes nothing its starter holds, else its runs wait for the starter, which waits for them.
+pub(in crate::code_rule_dsl) fn within<R>(depth: usize, f: impl FnOnce() -> R) -> R {
+    let was = DEPTH.with(|d| d.replace(depth));
+    let r = f();
+    DEPTH.with(|d| d.set(was));
+    r
+}
+
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

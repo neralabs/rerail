@@ -63,7 +63,7 @@ fn rel_rows(rel: &Arc<InRel>, width: usize) -> Rows {
 
 /// The recursive components of `program`.
 fn recursive(program: &Program) -> Vec<BTreeSet<String>> {
-    let Ok((sccs, _)) = front::strata(program) else { return Vec::new() };
+    let Ok(sccs) = front::components_of(program) else { return Vec::new() };
     sccs.into_iter()
         .filter(|scc| {
             scc.len() > 1

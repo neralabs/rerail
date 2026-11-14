@@ -38,7 +38,7 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
         }
         let native: BTreeSet<_> = prog.inputs.iter().cloned().collect();
         let mut quiet = Vec::new();
-        for scc in strata(prog)?.0 {
+        for scc in components_of(prog)? {
             if scc.len()!=1 { continue; }
             let rel=scc.iter().next().unwrap();
             if prog.inputs.contains(rel) || prog.natives.contains_key(rel) || prog.facts.get(rel).is_some_and(|f|!f.is_empty()) { continue; }
