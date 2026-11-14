@@ -617,13 +617,16 @@ async function holdingService(root: string): Promise<{
   startTestRepository(root, databasePath);
   const ending = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
+  const opened = Promise.withResolvers<void>();
   const service = await startEngineService({
     socketPath,
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
     createAuditor: () => ({
-      openWorkspace: async () => undefined,
+      openWorkspace: async () => {
+        opened.resolve();
+      },
       acceptsPath: () => true,
       auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
       close: async () => {
@@ -633,6 +636,11 @@ async function holdingService(root: string): Promise<{
     }),
   });
   await service.ingest({ kind: "session-start", eventId: "start", session: busySession(root) });
+  // The session's evaluator opens in the background, and an end that arrives before it has opened does not wait for
+  // it: the end would finish at once and `ending` would resolve only later, when the late evaluator is closed. So the
+  // service is handed over once the evaluator has opened and the runtime has taken that in.
+  await opened.promise;
+  await new Promise<void>(done => setImmediate(done));
   return { service, engine: { socketPath }, databasePath, ending: ending.promise, release: () => gate.resolve() };
 }
 
