@@ -480,8 +480,10 @@ pub mod tests {
         // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
         let unmade = native.records_made();
         let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
+        // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
+        let lazy = lazy_bits(native);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
+            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != w.codes {
                 differ += 1;
                 if differ < 4 {
                     let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
@@ -1493,6 +1495,19 @@ pub mod tests {
         assert!(made.is_empty(), "the CPU's body makes {made:?}");
     }
 
+    /// The code bits of the gap marks tier 2 on the CPU tests itself
+    /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
+    fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
+        let r = block.records.as_ref().expect("records");
+        let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(block);
+        rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (rerail_compiler::records::MARK_SHIFT + u32::from(k)))
+    }
+
+    /// The interpreter's codes without those bits.
+    fn unlazy(codes: &[u32], lazy: u32) -> Vec<u32> {
+        codes.iter().map(|c| c & !lazy).collect()
+    }
+
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
     /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
     #[test]
@@ -1500,6 +1515,8 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let block = &c.program.block_programs[0];
         let r = block.records.as_ref().expect("records");
+        let lazy = lazy_bits(&c.native);
+        assert!(lazy != 0, "no gap mark tier 2 tests itself (`line`, `newline`)");
         let files = corpus();
         let mut inputs: Vec<Vec<u8>> = crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()).collect();
         inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
@@ -1539,7 +1556,7 @@ pub mod tests {
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
-            assert_eq!(g.codes, want.codes, "file {k}: the codes");
+            assert_eq!(g.codes, unlazy(&want.codes, lazy), "file {k}: the codes (the gap marks tier 2 tests itself apart)");
             assert_eq!(g.totals, want.totals, "file {k}: the totals");
         }
     }
@@ -1734,6 +1751,7 @@ pub mod tests {
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let cpu = new.parser.tier1.run_files(&refs);
+        let lazy = lazy_bits(&new.native);
         let mut taken = [0usize; 2];
         for (k, f) in refs.iter().enumerate() {
             let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
@@ -1747,7 +1765,7 @@ pub mod tests {
             if k < 5 * cases.len() {
                 taken[usize::from(x.is_ok())] += 1;
             }
-            assert_eq!(cpu[k].codes, a.codes, "file {k}: the CPU's codes");
+            assert_eq!(cpu[k].codes, unlazy(&a.codes, lazy), "file {k}: the CPU's codes");
             assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
         }
         #[cfg(target_os = "macos")]
@@ -1755,8 +1773,11 @@ pub mod tests {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
             let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            // Metal sets the gap marks tier 2 on the CPU tests itself: its codes are the
+            // interpreter's whole.
             for (k, m) in got.run.files.iter().enumerate() {
-                assert_eq!(m.codes, cpu[k].codes, "file {k}: Metal's codes");
+                assert_eq!(m.codes, new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
+                assert_eq!(unlazy(&m.codes, lazy), cpu[k].codes, "file {k}: Metal's codes, the CPU's");
                 assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
             }
         }

@@ -2483,6 +2483,19 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 /// yet in `pending` (`from`), and the word of the grammar token before (`unless after`); six.
 const STATE_WORDS: usize = 6;
 
+/// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
+/// `(mark, output)`, a gap mark of its mask alone (no token test, no `else escape`, not the
+/// extras'), made from the bytes. The token loop sets none of them; tier 2 reads the mask from
+/// the grammar token before to the token, as the lean parser asks whether a token is on a line
+/// only where a statement asks it (`on_line`). Metal and the interpreter set them in the codes.
+pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    let tested: u32 = r.checks.iter().fold(0, |a, c| match c.then {
+        crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
+        crate::records::CheckThen::Escape => a,
+    });
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| tested >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k)).collect()
+}
+
 /// The marks the token loop sets itself (decision 0177), their masks made from the bytes
 /// (`Reads`): each `(mark, output)`. The gap marks' (`lift`), from the bytes between grammar
 /// tokens, as `records::gap_marks`; the others', at a token's first byte. A mark a reader gives
@@ -2636,7 +2649,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The block's starts and runs, in registers (`BlockRegs`), as the lean lexer's: the head
     // has the starts left in the cursor's block, and the run rules' words there.
     // The marks the loop sets (`loop_marks`), their words in the registers too.
-    let (lift, at_marks) = if rd.bytes.is_some() { loop_marks(r, &|o| rd.bytewise(o)) } else { (Vec::new(), Vec::new()) };
+    let (mut lift, at_marks) = if rd.bytes.is_some() { loop_marks(r, &|o| rd.bytewise(o)) } else { (Vec::new(), Vec::new()) };
+    // Tier 2's own (`lazy_marks`): the loop sets none of them.
+    if rd.bytes.is_some() {
+        let lazy = lazy_marks(r, &|o| rd.bytewise(o));
+        lift.retain(|m| !lazy.contains(m));
+    }
     let runs: Vec<u16> = if walked.is_some() {
         let mut v = run_outputs(r);
         v.extend(lift.iter().chain(&at_marks).map(|&(_, o)| o));
@@ -2961,25 +2979,33 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         };
         let placed = f.ins().ishl_imm(held, i64::from(crate::records::MARK_SHIFT));
         let marked = f.ins().bor(code, placed);
-        let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
-        let word = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
-        let past = f.ins().iadd_imm(s, 1);
+        // The gap's start and the word before only where a gap mark is the loop's.
+        let gapped = !lift.is_empty();
         match r.extra {
             Some(e) => {
                 let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
                 let is_extra = f.ins().band_imm(is_extra, 1);
                 let left = f.ins().bor(mine, after_bits);
+                if gapped {
+                    let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                    let word = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
+                    word_before = f.ins().select(is_extra, word_before, word);
+                }
                 code = f.ins().select(is_extra, code, marked);
                 pending = f.ins().select(is_extra, left, after_bits);
-                word_before = f.ins().select(is_extra, word_before, word);
             }
             None => {
+                if gapped {
+                    let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                    word_before = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
+                }
                 code = marked;
                 pending = after_bits;
-                word_before = word;
             }
         }
-        from = past;
+        if gapped {
+            from = f.ins().iadd_imm(s, 1);
+        }
     }
     let at = f.ins().ishl_imm(cv[0], 2);
     let ca = f.ins().iadd(c.codes, at);

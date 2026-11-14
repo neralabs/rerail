@@ -926,6 +926,8 @@ enum WordFn {
     TokenMark { index: u16 },
     /// A local check over the token's bytes (`Words::local_checks`, its index): 1 where it holds.
     Check { index: u16 },
+    /// A gap mark tier 2 tests itself (`native_cpu_block::lazy_marks`), its order.
+    LazyMark { order: u8 },
 }
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
@@ -972,6 +974,95 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
     } else {
         f.ins().return_(&[]);
     }
+}
+
+/// Whether gap mark `o`'s mask has a bit from the byte after the grammar token before's first
+/// to the token's (`records::gap_marks`), 1 or 0: the records before past the extras (a stated
+/// loop, `Step::Token`), none where that token's word is an `unless after` one; then the mask's
+/// words from the bytes (`native_cpu_bytes`), a stated loop of words.
+#[allow(clippy::too_many_arguments)]
+fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], heads: &mut Vec<(Block, Step)>) -> Value {
+    let flags = MemFlags::trusted();
+    let (codes, starts, bytes, len) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, LEN));
+    let next = (e.get)(f, Mem::Next);
+    let s = (e.get)(f, Mem::Start);
+    let here = f.ins().iadd_imm(next, -1);
+    let zero = f.ins().iconst(types::I64, 0);
+    let one = f.ins().iconst(types::I64, 1);
+    let (back, none, found, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(back, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(done, types::I64);
+    f.ins().jump(back, &[BlockArg::from(here)]);
+    // The grammar token before: the records before, past the extras.
+    f.switch_to_block(back);
+    heads.push((back, Step::Token));
+    let j = f.block_params(back)[0];
+    let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
+    let on = f.create_block();
+    f.ins().brif(first, none, &[], on, &[]);
+    f.switch_to_block(on);
+    let j = f.ins().iadd_imm(j, -1);
+    let off = f.ins().ishl_imm(j, 2);
+    let ca = f.ins().iadd(codes, off);
+    let c = f.ins().uload32(flags, ca, 0);
+    let sa = f.ins().iadd(starts, off);
+    let st = f.ins().uload32(flags, sa, 0);
+    let from = f.ins().iadd_imm(st, 1);
+    match extra {
+        Some(x) => {
+            let bit = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(x));
+            let bit = f.ins().band_imm(bit, 1);
+            f.ins().brif(bit, back, &[BlockArg::from(j)], found, &[BlockArg::from(from), BlockArg::from(c)]);
+        }
+        None => {
+            f.ins().jump(found, &[BlockArg::from(from), BlockArg::from(c)]);
+        }
+    }
+    // None before: from the file's first byte, no word before.
+    f.switch_to_block(none);
+    f.ins().jump(found, &[BlockArg::from(zero), BlockArg::from(zero)]);
+    f.switch_to_block(found);
+    let (from, c) = (f.block_params(found)[0], f.block_params(found)[1]);
+    // `unless after`: the word before, one of its words.
+    let word = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+    let word = f.ins().band_imm(word, 0xff);
+    for &w in unless {
+        let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(w));
+        let on = f.create_block();
+        f.ins().brif(same, done, &[BlockArg::from(zero)], on, &[]);
+        f.switch_to_block(on);
+    }
+    // The mask's words from `from` to `s`, from the bytes.
+    let consts = crate::native_cpu_block::Consts::make(f);
+    let file = crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even };
+    let words = f.create_block();
+    f.append_block_param(words, types::I64);
+    let q0 = f.ins().ushr_imm(from, 6);
+    let qs = f.ins().ushr_imm(s, 6);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, from, s);
+    let go = f.create_block();
+    f.ins().brif(past, done, &[BlockArg::from(zero)], go, &[]);
+    f.switch_to_block(go);
+    f.ins().jump(words, &[BlockArg::from(q0)]);
+    f.switch_to_block(words);
+    heads.push((words, Step::Block));
+    let q = f.block_params(words)[0];
+    let p = f.ins().ishl_imm(q, 6);
+    let x = bw.word(f, &file, o, p, heads);
+    let lim = f.ins().iadd_imm(s, 1);
+    let m = within_word(f, q, from, lim);
+    let x = f.ins().band(x, m);
+    let any = f.ins().icmp_imm(IntCC::NotEqual, x, 0);
+    let more = f.create_block();
+    f.ins().brif(any, done, &[BlockArg::from(one)], more, &[]);
+    f.switch_to_block(more);
+    let last = f.ins().icmp(IntCC::Equal, q, qs);
+    let q1 = f.ins().iadd_imm(q, 1);
+    f.ins().brif(last, done, &[BlockArg::from(zero)], words, &[BlockArg::from(q1)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
 }
 
 /// Whether token mark `m`'s tokens follow at the token (`Words::token_marks`): each element's
@@ -3034,7 +3125,14 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                 end_bits |= 1 << order;
             }
         }
-        let rest_bits: i64 = if in_code >= 64 { 0 } else { -1i64 << in_code };
+        // The gap marks tier 2 tests itself (`lazy_marks`): live at every token, each tested
+        // where a state asks.
+        let lazy: Vec<(u8, u16)> = native.block_programs.first().and_then(|b| b.records.as_ref().map(|r| (b, r))).map_or(Vec::new(), |(b, r)| {
+            let bw = crate::native_cpu_bytes::Bytewise::of(b);
+            crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
+        });
+        let lazy_bits: i64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
+        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits;
         let one = f.ins().iconst(types::I64, 1);
         let before_first = f.ins().iconst(types::I64, -1);
         let pick = f.create_block();
@@ -3641,6 +3739,39 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let taken = f.create_block();
                         f.ins().brif(lit, taken, &[], skip, &[]);
                         f.switch_to_block(taken);
+                        // A gap mark tier 2 tests itself: at the stream's end, the end's (its
+                        // bit in `Live` there); else its mask from the grammar token before.
+                        if let Some(&(_, o)) = lazy.iter().find(|&&(k, _)| k == order) {
+                            let at_end = mget(&mut f, Mem::AtEnd);
+                            let (ask, holds) = (f.create_block(), f.create_block());
+                            f.ins().brif(at_end, holds, &[], ask, &[]);
+                            f.switch_to_block(ask);
+                            let key = WordFn::LazyMark { order };
+                            if !word_fns.contains_key(&key) {
+                                let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+                                let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
+                                let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
+                                let extra = r.extra;
+                                let name = format!("tempo_word_{}", word_fns.len());
+                                let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                    let ctx = q[0];
+                                    let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                    let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                    let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                    let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
+                                    let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                    let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, hs);
+                                    g.ins().return_(&[v]);
+                                })?;
+                                word_fns.insert(key, made);
+                            }
+                            let (id, sig, _) = &word_fns[&key];
+                            let c = pinned(&mut f);
+                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                            f.ins().brif(r, holds, &[], skip, &[]);
+                            f.switch_to_block(holds);
+                        }
                         // A token mark (decision 0129): its tokens follow, from the records.
                         if let Some(i) = pattern {
                             let m = native.token_marks[usize::from(i)].clone();

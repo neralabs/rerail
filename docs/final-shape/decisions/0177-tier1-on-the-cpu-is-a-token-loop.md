@@ -517,3 +517,43 @@ a token, and the registers:
   state, its column pointers and table bases are live across the calls in its body, more
   than the callee-saved registers hold. The end rules' `match` is a chain of compares.
 
+
+## The line marks, where tier 2 asks
+
+The lean parser does not mark lines as it lexes. A statement that ends at a line break asks
+whether the next token is on a new line, and only then (`on_line`). The `.rr` grammar's
+`line` and `newline` marks are asked the same way: only in a directive's or a declaration's
+tail.
+
+So the compiler finds the gap marks tier 2 can test itself (`lazy_marks`). A mark qualifies
+when it is:
+
+- a gap mark, its mask made from the bytes;
+- no check's `at` or `after` target, and not of tests alone;
+- placed, and not the extras' own.
+
+For `.rr` these are `line` and `newline`. On the CPU, tier 1 sets neither: they are out of
+the token loop, its registers and the end pass. Tier 2 tests one where a state asks:
+
+```text
+MARK line       at the stream's end: the end's, as before
+                else lazy_mark: the record before, past the extras (comments);
+                its word an `unless after` one: none;
+                else any bit of the mask from the byte after its first to this
+                token's first, a window function a 64-byte word
+```
+
+That is `records::gap_marks`'s meaning, read at one token, not computed at all of them.
+The Cranelift tier 2 calls an outlined function (`WordFn::LazyMark`). The ahead-of-time Rust
+has a method per mark (`lazy_k`), its window through `clif_rust`.
+
+Metal and the interpreter still set the bits in the codes; the CPU's codes are theirs
+without them. Tests: the CPU's records, the marks' tests and Metal against Cranelift compare
+the codes with those bits masked out. The corpus tapes, the lean tapes and the AOT tapes are
+unchanged.
+
+Measured (`jit_against_aot`, load average 120): tier 1 ahead of time 298 instructions and
+65 cycles a node, from 305 and 73; tier 1 + 2, 540 and 106, from 542 and 123. Most of the
+marks' 59 a token stays: it is not the line marks' gap. It is the checks' marks (`json_bad`'s
+`after string when …`, `float_after`): their hits at a token, the bits a token leaves the
+next, the extras' select. Those go with the token tests, next.
