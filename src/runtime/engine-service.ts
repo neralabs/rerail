@@ -422,8 +422,9 @@ const STALLED_REQUEST_MS = 1_000;
  * While the service closes, cuts off each connection still sending a request ({@link awaitsRequest}) once two looks
  * `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
  * so one still arriving has stalled, and waiting for it would hold the close with no limit: `server.close()` stops the
- * check that enforces the server's request and headers timeouts. A request whose body has arrived is never cut: its
- * event runs and its hook gets the whole answer. Idle connections are left to `server.close()`, which
+ * check that enforces the server's request and headers timeouts. A connection that owes an answer to a request whose
+ * body has arrived is never cut, whatever came in after that request: its event runs and its hook gets the whole
+ * answer; a next request that stalls is cut after that answer. Idle connections are left to `server.close()`, which
  * ends them once as the close begins: Node counts a connection whose answer is ended but still being written as idle,
  * so ending idle ones at each look would cut an answer larger than the socket's buffer. Each look runs after the event
  * loop has read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came
@@ -446,9 +447,10 @@ function cutStalledRequests(connections: ReadonlyMap<Socket, ConnectionState>): 
 }
 
 /**
- * What the close knows of an open connection: `undefined` until a request's headers have arrived, then the latest such
- * request, then, once that request has all arrived and its answer is written, how many bytes the connection had read
- * by then.
+ * What the close knows of an open connection: `undefined` until a request's headers have arrived; then the oldest
+ * request whose answer is not all written, while there is one (a client can send its next request before it has the
+ * answer to the one ahead); then the last request, or, once that request had all arrived when its answer was written,
+ * how many bytes the connection had read by then.
  */
 export type ConnectionState = IncomingMessage | number | undefined;
 
@@ -463,7 +465,8 @@ export type ConnectionState = IncomingMessage | number | undefined;
  * without waiting for the answer) counts with the answered request, so that connection is left to the same timeout.
  * A request answered on its headers alone (a wrong path, a refused access token, the capability proof) keeps its
  * entry, since the rest of its body is not a next request: it is cut while that body stalls, and once the body has
- * come it is left to the same timeout.
+ * come it is left to the same timeout. A connection that owes an answer to a request whose body has arrived counts as
+ * not sending one, whatever came in after that request: its entry is that request until the answer is written.
  */
 function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
   if (typeof state === "number") return socket.bytesRead > state;
@@ -476,18 +479,28 @@ function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
  */
 export function trackConnections(server: Server): ReadonlyMap<Socket, ConnectionState> {
   const connections = new Map<Socket, ConnectionState>();
+  // Each connection's requests whose answers are not all written yet, oldest first: Node writes a connection's answers
+  // in the order its requests came.
+  const unanswered = new WeakMap<Socket, IncomingMessage[]>();
   server.on("connection", (socket: Socket) => {
     connections.set(socket, undefined);
     socket.once("close", () => connections.delete(socket));
   });
   server.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
     const { socket } = incoming;
-    connections.set(socket, incoming);
-    // Left as it is when a next request on the connection has replaced this one, when the connection has closed, or
-    // when this request's body has not all arrived (an answer on its headers alone), whose rest would read as a next
-    // request.
+    const waiting = unanswered.get(socket) ?? [];
+    unanswered.set(socket, waiting);
+    waiting.push(incoming);
+    // A request that comes in while an answer is still owed on its connection waits for its turn.
+    if (waiting.length === 1) connections.set(socket, incoming);
     response.once("finish", () => {
-      if (connections.get(socket) === incoming && incoming.complete) connections.set(socket, socket.bytesRead);
+      if (!connections.has(socket)) return;
+      waiting.shift();
+      const next = waiting[0];
+      if (next !== undefined) connections.set(socket, next);
+      // Left as it is when this request's body has not all arrived (an answer on its headers alone), whose rest would
+      // read as a next request.
+      else if (incoming.complete) connections.set(socket, socket.bytesRead);
     });
   });
   return connections;

@@ -256,6 +256,30 @@ describe("engine service session concurrency", () => {
     expect(kept.answers()).toEqual(["200"]);
   }, 20_000);
 
+  it("answers a request whose body arrived while a next request on its connection stalls in its body, then cuts that next request off, when it closes", async () => {
+    const held = await holdingService();
+    // A client that sends its next request before it has the answer to the one ahead of it (pipelining): the first
+    // request has all arrived and its event runs, the next one's headers arrive whole, then part of its body and
+    // nothing more. The close begins while that event runs, which holds on past the close's look 1 s in.
+    const kept = await keptConnection(held.engine.socketPath);
+    await kept.send(keptRequest({ kind: "session-end", eventId: "end", sessionId: "busy" }));
+    await held.ending;
+    const next = nextRequest();
+    await kept.send("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
+    await next;
+    const closing = held.close();
+    await sleep(1_500);
+    held.release();
+    // Before, the next request took the first one's place in the close's list as its headers arrived, and the look 1 s
+    // in cut the connection off with the first answer still owed.
+    await vi.waitFor(() => expect(kept.answers()).toEqual(["200"]), { timeout: 5_000, interval: 10 });
+    const answeredAt = performance.now();
+    // Once that answer is written, the next request is cut off as any request that stalls before it has all arrived.
+    expect(await whenCut(kept.closed, answeredAt)).toBe("cut off 1 s in");
+    await closing;
+    expect(recorded(held.databasePath)).toContain("end");
+  }, 20_000);
+
   it("lets an answer larger than a socket holds finish arriving when it closes", async () => {
     const held = await holdingService();
     const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
@@ -321,6 +345,40 @@ describe("engine service session concurrency", () => {
     await size(1, "a connection with no request");
     silent.destroy();
     await size(0, "after that connection closed");
+  }, 20_000);
+
+  it("keeps a connection at its oldest request still owed an answer in the list the close reads", async () => {
+    const socketPath = testEngineEndpoint(await testFolder());
+    // It answers only when the test says, so the requests a client sends behind an answer still owed come in first.
+    const responses: ServerResponse[] = [];
+    const server = createServer((incoming, response) => {
+      incoming.resume();
+      responses.push(response);
+    });
+    onTestFinished(async () => {
+      server.closeAllConnections();
+      await new Promise<void>(done => server.close(() => done()));
+    });
+    const connections = trackConnections(server);
+    await new Promise<void>(done => server.listen(socketPath, done));
+    const accepted = nextConnection();
+    const client = await connected(socketPath);
+    const socket = await accepted;
+    // Two whole requests and a third whose body stalls, each sent before the answer ahead of it.
+    const whole = "POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-length: 2\r\n\r\n{}";
+    client.write(`${whole}${whole}POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-length: 1000\r\n\r\n{`);
+    await vi.waitFor(() => expect(responses).toHaveLength(3), { timeout: 5_000, interval: 10 });
+    // Which of the three the list holds for the connection: the close cuts no connection held at one that has all
+    // arrived, so it reaches the stalled third only once both answers ahead of it are written.
+    const listed = (): number => responses.findIndex(response => response.req === connections.get(socket));
+    const steps = [listed()];
+    for (const response of responses.slice(0, 2)) {
+      const written = once(response, "finish");
+      response.end("{}");
+      await written;
+      steps.push(listed());
+    }
+    expect(steps).toEqual([0, 1, 2]);
   }, 20_000);
 });
 
@@ -440,9 +498,10 @@ function nextAnswerWritten(): Promise<void> {
 }
 
 /**
- * When a connection the close cut off closed (`closed`, a `performance.now()` time), counted from the close's start
- * (`began`): `cut off 1 s in` at the look 1 s in, which finds it silent since the look the close takes as it begins;
- * how long it took when a later look, or something other than a look, closed it; or `still open` after `wait` ms.
+ * When a connection the close cut off closed (`closed`, a `performance.now()` time), counted from `began`, the close's
+ * start or the answer after which the connection can be cut: `cut off 1 s in` at the look 1 s in, which finds it
+ * silent since the look the close takes as it begins, or at the second look after that answer; how long it took when
+ * another look, or something other than a look, closed it; or `still open` after `wait` ms.
  */
 async function whenCut(closed: Promise<number>, began: number, wait = 5_000): Promise<string> {
   const at = await Promise.race([closed, sleep(wait).then(() => undefined)]);
