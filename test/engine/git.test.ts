@@ -267,28 +267,32 @@ describe("gitModifiedOrUntrackedListing", () => {
  * Lists the changed files of a repository whose clean filter leaves a process behind, outside the repository, that holds
  * Git's stderr after Git exits while a file is there, and answers what the read answered within `waitMs`, or that it was
  * still waiting. Git runs the filter to compare a.py, changed on disk, with the index. The wait ends once the listing is
- * answered, and so does removing the repository. Each run of the filter writes `+` to `loops` before it starts its
- * process, which writes `-` there as it ends: the test waits for that, so no process outlives it. The process looks for
- * the file every 20 ms, so that wait is short.
+ * answered, and so does removing the repository. The process then writes a line to the stderr it holds, in a subshell
+ * of its own, and writes how that subshell ended to `wrote` (`wrote 141`: a broken pipe's SIGPIPE ended it). Each run of
+ * the filter writes `+` to `loops` before it starts its process, which writes `-` there as it ends: the test waits for
+ * that, so no process outlives it. The process looks for the file every 20 ms, so that wait is short.
  */
-async function heldListing(waitMs: number): Promise<unknown> {
+async function heldListing(waitMs: number): Promise<{ answer: unknown; wrote: string }> {
   const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
   const held = join(root, ".git", "held");
   const loops = join(root, ".git", "loops");
-  const [heldPath, loopsPath] = [held, loops].map(path => path.replaceAll("\\", "/"));
-  const loop = `while [ -e '${heldPath}' ]; do sleep 0.02; done; echo - >> '${loopsPath}'`;
+  const wrote = join(root, ".git", "wrote");
+  const [heldPath, loopsPath, wrotePath] = [held, loops, wrote].map(path => path.replaceAll("\\", "/"));
+  const loop = `while [ -e '${heldPath}' ]; do sleep 0.02; done; (echo left >&2); echo "wrote $?" >> '${wrotePath}'; echo - >> '${loopsPath}'`;
   git(root, "config", "filter.held.clean", `echo + >> '${loopsPath}'; (cd / && ${loop}) </dev/null >/dev/null & cat`);
   await writeFile(held, "");
   await writeFile(join(root, "a.py"), "print(2)\n");
   let late: NodeJS.Timeout | undefined;
+  let answer: unknown;
   try {
     const read = gitModifiedOrUntrackedPaths(root);
-    return await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
+    answer = await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
   } finally {
     clearTimeout(late);
     await rm(held, { force: true });
     await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
   }
+  return { answer, wrote: (await readFile(wrote, "utf8")).trim() };
 }
 
 /** How many of the processes `heldListing`'s filter started have not written their end to `loops`. */
@@ -407,7 +411,13 @@ describe("Git reads and their time limit", () => {
   }, 30_000);
 
   it("answers once Git has exited and its output has ended, while a process it started holds its stderr", async () => {
-    await expect(heldListing(5_000)).resolves.toEqual(["a.py"]);
+    expect((await heldListing(5_000)).answer).toEqual(["a.py"]);
+  }, 30_000);
+
+  it("closes its end of Git's stderr once it answers, so a process Git started that writes there later gets a broken pipe", async () => {
+    // The read stops reading stderr once Git has exited and its output has ended. A process the clean filter left that
+    // writes there after that meets a pipe with no reader: SIGPIPE ends the subshell that wrote, and the process goes on.
+    expect((await heldListing(5_000)).wrote).toBe("wrote 141");
   }, 30_000);
 
   it("ends a read whose Git prints nothing at its first look past the time limit on the clock, after a stall", async () => {
