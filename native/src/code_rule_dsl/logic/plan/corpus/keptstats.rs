@@ -238,7 +238,7 @@ impl Keeper {
         // A file's rows are grouped by the document they name (its location column): its own document's, and each
         // guest's it holds (the same rows in every file that holds that guest). Each group is counted as one
         // (`patch_own`): compared with the rows kept for that document, not hashed a row at a time.
-        // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0206.
+        // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0220.
         static OWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let by_file = *OWN.get_or_init(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
         let doc_at = &self.doc_at;

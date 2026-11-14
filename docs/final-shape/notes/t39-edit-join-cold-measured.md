@@ -2,7 +2,7 @@
 
 ## Intro
 
-These measurements set up the next work after decisions 0205 and 0206. They answer three questions on the O125
+These measurements set up the next work after decisions 0205 and 0220. They answer three questions on the O125
 replay (20 historical commits, 84 files, nera-data-layer):
 
 1. Is an edit's work proportional to the edit?

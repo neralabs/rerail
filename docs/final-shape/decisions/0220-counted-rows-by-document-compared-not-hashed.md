@@ -1,4 +1,6 @@
-# 0206: A session's counted rows are kept by the document they name, compared, not hashed a row at a time
+# 0220: A session's counted rows are kept by the document they name, compared, not hashed a row at a time
+
+Numbered 0206 where it was written.
 
 Status: built (2026-11-14), `plan/corpus/exports.rs` (`Counted::patch_own`, `CountedRel::own`, `rows_once`) and
 `plan/corpus/keptstats.rs` (`by_document`). It narrows decision 0096 step 3: what the counted exports and base

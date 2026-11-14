@@ -2714,12 +2714,27 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "def f(x: a: b): pass\n",
         // `:=` after a string is a format specifier.
         "print(f\"{' a ':=^8}\")\n",
+        // Chains: each operator or postfix wraps the chain so far (held by the writer until it ends).
+        "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
+        "x = a or b and c or not d and e.f(g or h)[i and j] or k\n",
+        "x = a.b(c + d.e(f * g + h)[i - j].k + l).m\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
         assert!(!tree.root_node().has_error(), "tree-sitter-python's tree of {source:?} has an error");
         let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
         assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {source:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
+    }
+    // Long chains: linear in the writer (`Writer::open_chain`), and tree-sitter's tape.
+    let terms = |sep: &str| (0..3000).map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
+    for source in [format!("x = {}\n", terms(" + ")), format!("x = {}\n", terms(".")), format!("x = {}\n", terms(" or b.c(d) and "))] {
+        let ours = python_lean::encode(&grammar, &source, &|| false).unwrap_or_else(|why| panic!("refused a chain: {why:?}")).unwrap();
+        let tree = parser.parse(&source, None).unwrap();
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
+        assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of a chain of {} bytes differ", source.len());
+    }
+    for source in [format!("x = {}a\n", "a + ".repeat(200_000)), format!("x = a{}\n", ".b(c)".repeat(100_000))] {
+        assert!(python_lean::encode(&grammar, &source, &|| false).is_ok_and(|t| t.is_ok()), "refused a chain of {} bytes", source.len());
     }
     // Any syntax error: refused, for tree-sitter-python, which recovers as it recovers. The lean
     // parser has one behavior: tree-sitter's tape, or a refusal.
@@ -2851,6 +2866,11 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "let s = `a${b}c` + tag`d` + /re[/]g/.source; a = b\n(c)\n",
         "x = async (a) => { await a }\ny = a => a?.b?.[c]?.(d)\n",
         "a\n++b\nreturn\n",
+        // Chains: each operator or postfix wraps the chain so far (held by the writer until it ends).
+        "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
+        "x = a /* c */ + b // d\n  + c.d /* e */ .f\n  (g)\n",
+        "x = a.b(c + d.e(f * g + h)[i - j].k + l).m\n",
+        "x = new a.b[c + d].e(f + g.h) + new i.j\n",
     ];
     let jsx = ["const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n"];
     let ts = [
@@ -2860,6 +2880,7 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "abstract class A<T> extends B<T> implements C { private readonly x!: T; abstract m(): void; constructor(public y?: number) { super() } }\n",
         "enum E { A = 1, B, }\nconst enum F {}\ndeclare module 'm' { export function f(): void; }\nnamespace N.M { }\n",
         "function f<T>(this: Window, a?: T, ...b: T[]): a is T;\nfunction f() {}\nexport = f;\n",
+        "const q = a + b as T + c.d!.e<F>(g) satisfies H;\nconst r = a * b as U | V;\n",
         "const g = f<string>(x)!.y satisfies Z;\nimport q = require('q');\nimport type { R } from 'r' with { type: 'json' };\n",
     ];
     let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
@@ -2889,6 +2910,18 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 python_tape_plain(&ours, &grammar),
                 python_tape_plain(&theirs, &grammar)
             );
+        }
+        // Long chains: linear in the writer (`Writer::open_chain`), and tree-sitter's tape.
+        let terms = |sep: &str| (0..3000).map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
+        for source in [format!("x = {};\n", terms(" + ")), format!("x = {};\n", terms(".")), format!("x = {} * y.z(w);\n", terms(" - b.c + "))] {
+            let ours = ecma_lean::encode(dialect, &grammar, &source, &|| false).unwrap_or_else(|why| panic!("{dialect:?} refused a chain: {why:?}")).unwrap();
+            let tree = parser.parse(&source, None).unwrap();
+            let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
+            assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "{dialect:?}: the tapes of a chain of {} bytes differ", source.len());
+        }
+        // Past what tree-sitter's tape is compared at: the lean parser's own, not refused (no chain limit).
+        for source in [format!("x = {}a;\n", "a + ".repeat(200_000)), format!("x = a{};\n", ".b(c)".repeat(100_000))] {
+            assert!(ecma_lean::encode(dialect, &grammar, &source, &|| false).is_ok_and(|t| t.is_ok()), "{dialect:?} refused a chain of {} bytes", source.len());
         }
         // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
         // has one behavior: tree-sitter's tape, or a refusal.

@@ -102,5 +102,5 @@ The relations' statistics cost 45% less (cold) and 46% less (step 08). Their all
 
 ## Open
 
-- The counted exports and base columns, then a hash a row, are kept by document since decision 0206; an edit's
-  changed rows alone are not counted (0206 measures why).
+- The counted exports and base columns, then a hash a row, are kept by document since decision 0220; an edit's
+  changed rows alone are not counted (0220 measures why).
