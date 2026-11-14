@@ -308,6 +308,7 @@ describe("Rerail daemon control", () => {
     const hook = connect(state.kernelSocketPath);
     hook.on("error", () => undefined);
     const kill = vi.spyOn(process, "kill");
+    let passed = false;
     try {
       await once(hook, "connect");
       hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
@@ -315,13 +316,18 @@ describe("Rerail daemon control", () => {
       // The daemon ended itself; before, it waited on the hook and stop killed it once its 10 s were up.
       expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL")).toEqual([]);
       expect(processAlive(state.pid)).toBe(false);
+      passed = true;
     } finally {
       kill.mockRestore();
       hook.destroy();
       if (processAlive(state.pid)) process.kill(state.pid, "SIGKILL");
       // The stop answers once the daemon's main thread has exited, while Node counts the daemon as running until its
-      // last thread has: the clean-up removes the home only once nothing this test started runs there.
-      await vi.waitFor(() => expect(runningIn(home)).toEqual([]), { timeout: 5_000, interval: 10 });
+      // last thread has: the clean-up removes the home only once nothing this test started runs there. The wait runs
+      // here and not in onTestFinished, which Vitest runs after the afterEach that removes the home.
+      const gone = vi.waitFor(() => expect(runningIn(home)).toEqual([]), { timeout: 5_000, interval: 10 });
+      // A wait that fails after a body that failed would replace the body's error, which says what went wrong; the
+      // home's removal still fails then, naming what runs there.
+      await (passed ? gone : gone.catch(() => undefined));
     }
   }, 30_000);
 
