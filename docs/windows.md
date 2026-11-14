@@ -232,10 +232,11 @@ goes under the stored spelling, starting from the settings it read.
 They also recorded a folder outside Git under the JavaScript realpath of the folder as spelt, so `rerail stop` run
 through a mapped or `subst` drive letter saved the stop under that letter. Each start check made with the folder's own
 spelling (a hook's, with a daemon or without, the daemon's check on each event, `rerail status`, `rerail start` and
-`stop`) reads the checkout's row under the stored spelling and under that key in one statement
-(`earlierCheckoutPath`), the stored one first: a start or stop saved here decides from then on. A hook asks a daemon
-with the folder as spelt for that reason. The status line asks with the session's folder as stored, so it still shows
-Rerail on there.
+`stop`, and the status line's) reads the checkout's row under the stored spelling and under that key in one statement
+(`earlierCheckoutPath`), the stored one first: a start or stop saved here decides from then on. A hook and the status
+line ask a daemon with the folder as spelt for that reason. For a session the daemon has recorded, the status line
+reads the start state under the session's stored spelling, so where 0.1.4 stops such a folder while a session is open
+there, that session's status line still shows Rerail on.
 
 <details>
 <summary>Other places that compare Windows paths</summary>

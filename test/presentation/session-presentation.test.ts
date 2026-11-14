@@ -208,7 +208,8 @@ describe("installed session presentation", () => {
     await mkdir(nested);
     const result = await readPresentation({ sessionId, host: "claude-code", cwd: nested });
     expect(result.text).toBe("R E R A I L ● 3 rules · steered 2×");
-    expect(new URL(requested[0]!).searchParams.get("repository")).toBe(await realpath(nested));
+    // On Windows the folder goes as spelt, so the daemon's start check also reads what Rerail 0.1.4 saved under it.
+    expect(new URL(requested[0]!).searchParams.get("repository")).toBe(process.platform === "win32" ? nested : await realpath(nested));
   });
 
   it("says starting, not unavailable, while the daemon has not recorded the session's start yet (#302)", async () => {

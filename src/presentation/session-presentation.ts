@@ -428,9 +428,10 @@ async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<Sum
 }
 
 /**
- * The folder a daemon reads `cwd`'s start state for. On Windows it is `cwd` as spelt: Rerail 0.1.4 saved a stop for a
- * folder outside Git under the folder as spelt, a mapped drive letter included, and the daemon's start check reads that
- * key beside the stored spelling's only when it gets the spelling. Elsewhere it is `stored`, the realpath, as before.
+ * The folder a daemon reads `cwd`'s start state for, for a hook and for the status line. On Windows it is `cwd` as
+ * spelt: Rerail 0.1.4 saved a stop for a folder outside Git under the folder as spelt, a mapped drive letter included,
+ * and the daemon's start check reads that key beside the stored spelling's only when it gets the spelling. Elsewhere it
+ * is `stored`, the realpath, as before.
  */
 function startStateFolder(cwd: string, stored: string): string {
   return process.platform === "win32" ? resolve(cwd) : stored;
@@ -495,7 +496,7 @@ async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: Pres
   const daemon = await verifyDaemon(cwd);
   if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
   const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
+    repository: startStateFolder(cwd, daemon.workspace), host, sessionId, onDemand: String(onDemand),
   })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
