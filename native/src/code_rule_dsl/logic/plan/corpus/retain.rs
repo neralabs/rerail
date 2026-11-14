@@ -1704,7 +1704,9 @@ impl Retained {
 
     /// Input `rel`'s rows, as bound or read back from the frames; with `docs`, only the rows of the owners it takes
     /// (`group_col`), and only their granules read.
-    pub(in crate::code_rule_dsl) fn read_input(&self, store: &ContentStore, prog: &front::Program, locations: &Locations, rel: &str, docs: Option<&dyn Fn(i64) -> bool>) -> Result<Option<Vec<Vec<i64>>>> {
+    /// The inner `Err` says which granule the store no longer holds (swept, or never written): the part is not as it
+    /// was kept, and the caller derives it again (a miss, not a failed run).
+    pub(in crate::code_rule_dsl) fn read_input(&self, store: &ContentStore, prog: &front::Program, locations: &Locations, rel: &str, docs: Option<&dyn Fn(i64) -> bool>) -> Result<std::result::Result<Option<Vec<Vec<i64>>>, String>> {
         let width = prog.decls.get(rel).map_or(0, Vec::len);
         let g = group_col(prog, locations, rel);
         let take = |row: &[i64]| docs.is_none_or(|d| d(owner_of(row, g)));
@@ -1718,23 +1720,23 @@ impl Retained {
                     out.push(row.clone());
                 }
             }
-            return Ok(Some(out));
+            return Ok(Ok(Some(out)));
         }
-        let Some(frames) = self.frames.as_ref() else { return Ok(None) };
-        let Some((_, by_doc)) = frames.inputs.get(rel) else { return Ok(None) };
+        let Some(frames) = self.frames.as_ref() else { return Ok(Ok(None)) };
+        let Some((_, by_doc)) = frames.inputs.get(rel) else { return Ok(Ok(None)) };
         if width == 0 {
-            return Ok(Some(vec![Vec::new(); by_doc.values().map(|(_, n)| *n as usize).sum()]));
+            return Ok(Ok(Some(vec![Vec::new(); by_doc.values().map(|(_, n)| *n as usize).sum()])));
         }
         let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d)).collect();
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}: {} granules, from the frames", granules.len()));
         let mut out = Vec::new();
         for g in granules {
             let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], g).map_err(|e| Error::Plan(e.to_string()))? else {
-                return Err(Error::Plan(format!("{rel}: granule {g} of its stored rows is missing")));
+                return Ok(Err(format!("{rel}: granule {g} of its rows is not stored")));
             };
             out.extend(got.rows.chunks_exact(width.max(1)).take(got.n).filter(|r| take(r)).map(<[i64]>::to_vec));
         }
-        Ok(Some(out))
+        Ok(Ok(Some(out)))
     }
 
     /// Derived relation `rel`'s rows, as held or read back from the frames.

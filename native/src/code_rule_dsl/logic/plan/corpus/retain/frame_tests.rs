@@ -263,3 +263,22 @@ fn rows_read_where_reached_come_with_their_kept_statistics() {
     assert!(kept.measured("result0", &held).is_some(), "its statistics come with its rows: not counted from them");
     assert!(kept.measured_all().contains_key(&("result0".to_owned(), at)), "and are carried to the next run");
 }
+
+/// A granule the store no longer holds (swept, or never written) is a miss its reader is told of, so the part is
+/// derived again: it was a failed run (`granule 9 of its stored rows is missing`, phase 0's rounds).
+#[test]
+fn an_inputs_missing_granule_is_a_miss_not_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("facts.sqlite");
+    let store = ContentStore::open(&path).unwrap();
+    let (prog, _, _) = fixture(&store, 1);
+    let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    let all = kept.read_input(&store, &prog, &Locations::new(), "input0", None).unwrap();
+    assert_eq!(all.unwrap().unwrap().len(), 3);
+    store.written().unwrap();
+    let gone = rusqlite::Connection::open(&path).unwrap().execute("DELETE FROM frames WHERE rel = 'input0' AND part = ?1", [granule(2)]).unwrap();
+    assert_eq!(gone, 1);
+    let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    let why = kept.read_input(&store, &prog, &Locations::new(), "input0", None).unwrap().unwrap_err();
+    assert!(why.contains(&format!("granule {} of its rows is not stored", granule(2))), "{why}");
+}

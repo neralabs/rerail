@@ -358,18 +358,21 @@ impl RoundProgram {
             let program = &self.program;
             // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
             let no_locations = retain::Locations::new();
+            // A granule the store no longer holds: the last run's round is not as kept, and the rounds give up (the
+            // fixpoint derives the part again), not the run.
+            let rows = |read: std::result::Result<Option<Vec<Vec<i64>>>, String>| read.map(Option::unwrap_or_default).map_err(Gave::Up);
             for (done, _) in &self.gates {
-                open.insert(done.clone(), k.read_input(on.store, program, &no_locations, done, None)?.unwrap_or_default());
+                open.insert(done.clone(), rows(k.read_input(on.store, program, &no_locations, done, None)?)?);
             }
             for (rel, _) in &self.produced {
-                provisional.insert(rel.clone(), k.read_input(on.store, program, &no_locations, rel, None)?.unwrap_or_default());
+                provisional.insert(rel.clone(), rows(k.read_input(on.store, program, &no_locations, rel, None)?)?);
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
             // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
-                provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
+                let got = rows(k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?)?;
+                provisional.insert(rel.clone(), got.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
                 carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
