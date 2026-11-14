@@ -150,6 +150,8 @@ const STACK_BASE: i32 = 224;
 const STACK_LIMIT: i32 = 232;
 const FRAME_SHIFT: i32 = 240;
 const STATE: i32 = 248;
+// The offsets are a 64-bit target's: the JIT that reads them runs on none other (wasm32 has none).
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
 // The working rows (`native_cpu_tape`): a node's key, start and end, 12 bytes. The tape's columns
@@ -2628,19 +2630,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
     let mut builder = if cut.unsigned {
-        // `Cut::unsigned`: return addresses not signed (Cranelift signs them on every macOS
-        // target; an arm64 process, not arm64e, does not need it). The JIT's own flags, as
-        // `JITBuilder::with_flags` sets them.
-        use cranelift_codegen::settings::Configurable;
-        let mut shared = cranelift_codegen::settings::builder();
-        for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
-            shared.set(k, v).map_err(|_| Error::BackendFailure)?;
-        }
-        let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
-            .map_err(|_| Error::BackendFailure)?
-            .finish(cranelift_codegen::settings::Flags::new(shared))
-            .map_err(|_| Error::BackendFailure)?;
-        JITBuilder::with_isa(isa, default_libcall_names())
+        unsigned_builder(&flags)?
     } else {
         JITBuilder::with_flags(&flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?
     };
@@ -5466,4 +5456,27 @@ impl Parser {
         }
         Ok(())
     }
+}
+
+/// `Cut::unsigned`'s builder: return addresses not signed (Cranelift signs them on every macOS target; an arm64
+/// process, not arm64e, does not need it). The JIT's own flags, as `JITBuilder::with_flags` sets them.
+#[cfg(not(target_family = "wasm"))]
+fn unsigned_builder(flags: &[(&str, &str)]) -> Result<JITBuilder, Error> {
+    use cranelift_codegen::settings::Configurable;
+    let mut shared = cranelift_codegen::settings::builder();
+    for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
+        shared.set(k, v).map_err(|_| Error::BackendFailure)?;
+    }
+    let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
+        .map_err(|_| Error::BackendFailure)?
+        .finish(cranelift_codegen::settings::Flags::new(shared))
+        .map_err(|_| Error::BackendFailure)?;
+    Ok(JITBuilder::with_isa(isa, default_libcall_names()))
+}
+
+/// wasm32 has no JIT (`cranelift-jit-wasm`): the builder fails as `with_flags`'s does, and the caller takes the
+/// interpreter's path.
+#[cfg(target_family = "wasm")]
+fn unsigned_builder(flags: &[(&str, &str)]) -> Result<JITBuilder, Error> {
+    JITBuilder::with_flags(flags, default_libcall_names()).map_err(|_| Error::BackendFailure)
 }

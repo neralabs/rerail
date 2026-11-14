@@ -242,7 +242,8 @@ pub mod heap {
     }
 
     fn slot(ptr: usize) -> usize {
-        (ptr.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 13) & (SLOTS - 1)
+        // In 64 bits on every target (wasm32's pointers are 32): the same slot for the same address.
+        ((ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 13) as usize & (SLOTS - 1)
     }
 
     /// The allocators a sample can name beside Rust's (`alloc_by`): a high bit of its span id.
@@ -360,6 +361,9 @@ pub mod heap {
     }
 }
 
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_prof;
 #[path = "../../../src/code_rule_dsl"]
