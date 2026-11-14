@@ -127,7 +127,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let mut setup = vec![RDL_INT.to_owned()];
-    let planned_views = plan_views(prog, &mut model, &rules_by)?;
+    let planned_views = plan_views(prog, &vs, &mut model, &rules_by)?;
     let mut views = HashSet::new();
     for (rel, view) in &planned_views {
         setup.push(view_sql(rel, view));
@@ -214,7 +214,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(r, o)| Order::new(&r.body, o).lits()).any(own);
         for (rule, order) in &planned {
             let order = Order::new(&rule.body, order);
-            let query = model.checked_query(prog, &rule.head, order, None, None)?;
+            let query = model.checked_query(prog, &vs.body(rule)?, order.steps, None, None)?;
             // Positive own atoms have delta variants. An aggregate needs the complete
             // current input, so wake the full query when that recursive input changes.
             let aggregates=order.lits().filter_map(|l|match l {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
@@ -232,7 +232,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                     let ((order, _, _), explain) = model.plan_rule_explained(prog, &vs.body(rule)?, Some(i))?;
                     record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
-                    let query = model.checked_query(prog, &rule.head, Order::new(&rule.body, &order), Some(at), None)?;
+                    let query = model.checked_query(prog, &vs.body(rule)?, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
                     step(&rule.head.rel, stratum, vec![a.rel.to_string()], &query.render(), Some(query));
                 }

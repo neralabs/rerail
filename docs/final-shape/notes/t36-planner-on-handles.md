@@ -106,3 +106,19 @@ Leaves first. Each item leaves every caller working.
     instructions in two runs, warm 20.2, 20.0 and 20.15 G (item 1: 53.6 G and 19.3 G, one run each). Sampled, encoding
     is 0.5% of a cold run and 0.2% of a warm one, and the whole search 1.7% of a cold run, so most of the difference is
     the runs' own spread, not item 2's cost.
+- **Item 3, the SQL generator reads handles** (2026-11-13).
+  - `plan::select` makes a planned rule's SELECT from its `Body` and steps: `sql_select`, `checked_query` and
+    `sql_query` take `(prog, &Body, &[Step], delta_at, tables)`. Variables are bound by slot (`Env`); a walk's CTE
+    columns are still named by the variables, in name order, so the SQL text is unchanged.
+  - Every caller passes the rule it planned: a stratum's seeds and probes, the set fixpoint's seeds, probes, reprobes
+    and edge rests (each edge keeps its made version), the lattice parts, the views (`plan_views` takes the run's
+    `Versions`), `emit`, `compose` and `sql_kernel`.
+  - Checked while porting: each SQL request also ran the tree generator on the rule decoded from the version
+    (`program_image::Tree`) and asserted the same text or the same error. It never disagreed over the planner's,
+    corpus, emit, session, coverage, `rr` (127), native, image and text tests, the convert replay sample (268 events of
+    137 checks) and dl1 cold and warm. The check and the tree generator are gone. The tree `sql_term` stays for one
+    reader, the join specs' constant conditions (item 4).
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.7 G instructions, warm
+    19.9 G (53.6 G and 19.3 G in the run with the check on: the runs' spread).
+  - Open: the convert replay sample (`a_sample_of_the_replay_gives_the_recorded_findings`) takes 345 s in the debug
+    test binary, past the 170 s watchdog; it passes given the time. No earlier timing is recorded to compare.

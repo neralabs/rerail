@@ -77,6 +77,7 @@ pub mod issue;
 pub mod demand;
 pub mod keeps;
 pub mod body;
+mod select;
 pub mod native_demand;
 pub mod replanning;
 pub mod compose;
@@ -3590,14 +3591,8 @@ fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
     if atoms.is_some() { call("sym_atom", vec![e]) } else { e }
 }
 
-/// Whether `t` calls a function that can have no value (`strings::functions`' NULL, as `to_number("a")`; a regex
-/// group of a string the regex does not match, `rx_group`): a row that binds or derives its value needs it not NULL,
-/// or a negation over it would hold (`NOT EXISTS (… = NULL)`). `x / 0` is SQL's NULL, a value the row keeps (the
-/// executor's walks carry it as a nullable seed, `sql_executor::walks::nullable`).
-fn partial(t: &Term) -> bool {
-    matches!(t, Term::Call(f, args) if super::strings::functions::signature(f).is_some() || f == "rx_group" || args.iter().any(partial))
-}
-
+/// A term as SQL, read from the tree: the join specs' constant conditions (`select::term` reads handles; t36 item 4
+/// moves this reader).
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
     Ok(match t {
         Term::Var(v) => env.get(v.as_str()).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
@@ -3759,429 +3754,6 @@ impl Model {
             }
             _ => true,
         }
-    }
-
-    /// One SELECT for a planned rule body. `delta_at` is the plan position of the recursive atom that reads its delta
-    /// table. `tables` maps a relation to the (full, delta) tables to read it from instead (the native set fixpoint's
-    /// vtabs).
-    pub fn sql_select(
-        &self,
-        prog: &Program,
-        head: &Atom,
-        order: Order<'_>,
-        delta_at: Option<usize>,
-        tables: Option<&HashMap<String, (String, String)>>,
-    ) -> Result<String> {
-        Ok(self.checked_query(prog, head, order, delta_at, tables)?.render())
-    }
-
-    /// `sql_select`'s query, checked, before it is rendered.
-    pub fn checked_query(
-        &self,
-        prog: &Program,
-        head: &Atom,
-        order: Order<'_>,
-        delta_at: Option<usize>,
-        tables: Option<&HashMap<String, (String, String)>>,
-    ) -> Result<Query> {
-        // A rule whose SQL cannot be built says which rule and body it is, not only the variable: the cause first
-        // (what a one-line reader, the executor coverage ledger, keeps), the rule after.
-        let query = self.sql_query(prog, head, order, delta_at, tables).map_err(|e| match e {
-            Error::Plan(m) => Error::Plan(format!("{m}, in the SQL for {head} :- {}", order.lits().map(ToString::to_string).collect::<Vec<_>>().join(", "))),
-            e => e,
-        })?;
-        query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
-        Ok(query)
-    }
-
-    /// `sql_select`'s query, before it is checked.
-    pub fn sql_query(
-        &self,
-        prog: &Program,
-        head: &Atom,
-        order: Order<'_>,
-        delta_at: Option<usize>,
-        tables: Option<&HashMap<String, (String, String)>>,
-    ) -> Result<Query> {
-        let atoms = self.inputs.atoms;
-        let (mut env, mut frm, mut wh, mut ctes) = (HashMap::<String, Expr>::new(), Vec::<(FromItem, Vec<Expr>)>::new(), Vec::<Expr>::new(), Vec::<Cte>::new());
-        let mut alias = 0;
-        let mut a_name = || {
-            alias += 1;
-            format!("t{alias}")
-        };
-        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: &[&str]| -> Result<Vec<Expr>> {
-            a.args
-                .iter()
-                .enumerate()
-                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
-                .map(|(c, t)| Ok(eq(col(al, &self.col(&a.rel, c)), sql_term(t, env, atoms)?)))
-                .collect()
-        };
-        let subquery = |what: Expr, relation: Relation, al: String, predicates: Vec<Expr>| Select {
-            columns: vec![(what, None)],
-            from: vec![FromItem::cross(relation, al)],
-            predicates,
-            ..Select::default()
-        };
-        for (idx, s) in order.steps.iter().enumerate() {
-            match order.lit(s) {
-                Literal::Atom(l) if !l.neg => {
-                    let al = a_name();
-                    let relation = match tables.and_then(|t| t.get(l.rel.as_str())) {
-                        Some((full, delta)) => {
-                            Relation::Bound { rel: l.rel.to_string(), table: if Some(idx) == delta_at { delta.clone() } else { full.clone() } }
-                        }
-                        None => self.relation(prog, &l.rel, Some(idx) == delta_at),
-                    };
-                    let mut conds = Vec::new();
-                    if s.mode == Some(Mode::Range) {
-                        // docof($v, $d) with $d bound: $v lies in $d's node-id interval.
-                        let lv = l.vars();
-                        let found = order.steps.iter().find_map(|o| {
-                            let Literal::Atom(d) = order.lit(o) else { return None };
-                            let &(nc, dc) = self.docof.get(d.rel.as_str())?;
-                            let Term::Var(v) = &d.args[nc] else { return None };
-                            let dv = &d.args[dc];
-                            (lv.contains(v.as_str()) && (constant(dv).is_some() || matches!(dv, Term::Var(x) if env.contains_key(x.as_str()))))
-                                .then(|| (v.clone(), dv.clone()))
-                        });
-                        let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
-                        let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
-                        let (low, high) = if self.docs_by_shift {
-                            // A document's nodes are `d << 32 | index`: the interval is computed, no table read or
-                            // made (decision 0104). T's facts number nodes in preorder over the corpus: there the
-                            // intervals are `stat_docrange`'s.
-                            let lo = bin(Op::Multiply, sql_term(&dv, &env, atoms)?, integer(1 << 32));
-                            (lo.clone(), bin(Op::Add, lo, integer(0xffff_ffff)))
-                        } else {
-                            let ra = a_name();
-                            let range = FromItem::cross(Relation::DocRange { schema: self.inputs.stats.clone() }, ra.clone());
-                            frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
-                            (col(&ra, "lo"), col(&ra, "hi"))
-                        };
-                        conds.push(Expr::Between { input: Box::new(col(&al, &self.col(&l.rel, rc))), low: Box::new(low), high: Box::new(high) });
-                    }
-                    for (c, t) in l.args.iter().enumerate() {
-                        let column = col(&al, &self.col(&l.rel, c));
-                        match t {
-                            Term::Var(v) => match env.get(v.as_str()) {
-                                Some(e) => conds.push(eq(column, e.clone())),
-                                None => {
-                                    env.insert(v.to_string(), column);
-                                }
-                            },
-                            Term::Int(_) | Term::Str(_) | Term::Top => conds.push(eq(column, sql_term(t, &env, atoms)?)),
-                            _ => {}
-                        }
-                    }
-                    frm.push((FromItem::cross(relation, al), conds));
-                }
-                Literal::Atom(l) => {
-                    let al = a_name();
-                    let conds = neg_conds(l, &al, &env, &[])?;
-                    // A negation of a component's own (gated) relation reads its full table there.
-                    let relation = match tables.and_then(|t| t.get(l.rel.as_str())) {
-                        Some((full, _)) => Relation::Bound { rel: l.rel.to_string(), table: full.clone() },
-                        None => self.relation(prog, &l.rel, false),
-                    };
-                    let query = subquery(integer(1), relation, al, conds);
-                    wh.push(Expr::Exists { negated: true, query: Box::new(query) });
-                }
-                Literal::Cmp { l, op, r } => {
-                    let lv = if let Term::Var(v) = l { Some(v) } else { None };
-                    if *op == "=" && lv.is_some_and(|v| !env.contains_key(v.as_str())) {
-                        let e = sql_term(r, &env, atoms)?;
-                        // A partial scalar has no binding on failure. CTEs do not have the old
-                        // derived tables' NOT NULL constraints, including for discarded bindings.
-                        if partial(r) {
-                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
-                        }
-                        env.insert(lv.expect("a variable").to_string(), e);
-                    } else if let Some(y) = binds_right(l, op, r, &env.keys().cloned().collect()) {
-                        let e = sql_term(l, &env, atoms)?;
-                        env.insert(y.to_string(), e);
-                    } else if *op == "="
-                        && let Some(lv) = lv
-                        && r.is_cat()
-                        && !{
-                            let mut rv = BTreeSet::new();
-                            r.vars(&mut rv);
-                            rv.iter().all(|v| env.contains_key(v))
-                        }
-                    {
-                        // A split of the bound whole, as `@dot` makes it: `"" . w` is `w`, else at the "." a bound
-                        // part places, or at every "." with a part before it (`rdl_int`). In atoms mode the text
-                        // is `sym_text`'s, and the parts are interned (`sym_atom`).
-                        let inputs = &self.inputs;
-                        let w = inputs.text_of(&env[lv.as_str()]);
-                        let Term::Call(_, parts) = r else { unreachable!() };
-                        let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
-                        // A later equality can already constrain the prefix. Enumerating every
-                        // position first both amplifies work and loses prefixes beyond rdl_int's cap.
-                        // Only nonempty constants use this rewrite: an unconstrained reverse cat
-                        // and cat with an empty prefix have different enumeration contracts.
-                        if !env.contains_key(q.as_str()) && !env.contains_key(x.as_str()) {
-                            let prefix = order.steps.iter().find_map(|step| match order.lit(step) {
-                                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == q &&
-                                    (matches!(r, Term::Str(s) if !s.is_empty()) ||
-                                     inputs.atoms.is_some() && matches!(r, Term::Int(n) if *n > 0)) => Some(r),
-                                _ => None,
-                            });
-                            if let Some(prefix) = prefix { env.insert(q.to_string(), sql_term(prefix, &env, atoms)?); }
-                        }
-                        let case = |when: Expr, then: Expr, otherwise: Expr| Expr::Case { branches: vec![(when, then)], fallback: Box::new(otherwise) };
-                        if let Some(eq_) = env.get(q.as_str()).map(|e| inputs.text_of(e)) {
-                            let empty = eq(eq_.clone(), string(""));
-                            let prefix = eq(substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]), bin(Op::Concatenate, eq_.clone(), string(".")));
-                            wh.push(bin(Op::Or, empty.clone(), prefix));
-                            env.insert(x.to_string(), inputs.symbol_of(case(empty, w.clone(), substr(vec![w, bin(Op::Add, length(&eq_), integer(2))]))));
-                        } else if let Some(ex) = env.get(x.as_str()).map(|e| inputs.text_of(e)) {
-                            let whole = eq(w.clone(), ex.clone());
-                            let negated = Expr::Unary { operator: SqlUnaryOperator::Negate, input: Box::new(length(&ex)) };
-                            let suffix = bin(
-                                Op::And,
-                                eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())),
-                                bin(Op::Greater, length(&w), bin(Op::Add, length(&ex), integer(1))),
-                            );
-                            wh.push(bin(Op::Or, whole.clone(), suffix));
-                            let end = bin(Op::Subtract, bin(Op::Subtract, length(&w), length(&ex)), integer(1));
-                            env.insert(q.to_string(), inputs.symbol_of(case(whole, string(""), substr(vec![w, integer(1), end]))));
-                        } else {
-                            // Position 1 stands for `"" . w`: a "." there has no part before it.
-                            let al = a_name();
-                            let at = col(&al, "i");
-                            let first = eq(at.clone(), integer(1));
-                            let conds = vec![
-                                bin(Op::LessOrEqual, at.clone(), call("max", vec![length(&w), integer(1)])),
-                                bin(Op::Or, first.clone(), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))),
-                            ];
-                            frm.push((FromItem::cross(Relation::Integers, al), conds));
-                            env.insert(q.to_string(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
-                            env.insert(x.to_string(), inputs.symbol_of(case(first, w.clone(), substr(vec![w, bin(Op::Add, at, integer(1))]))));
-                        }
-                    } else {
-                        let operator = match *op {
-                            "=" => Op::Equal,
-                            "!=" | "<>" => Op::NotEqual,
-                            "<" => Op::Less,
-                            "<=" => Op::LessOrEqual,
-                            ">" => Op::Greater,
-                            ">=" => Op::GreaterOrEqual,
-                            o => return Err(Error::Plan(format!("no SQL for the comparison {o}"))),
-                        };
-                        wh.push(bin(operator, sql_term(l, &env, atoms)?, sql_term(r, &env, atoms)?));
-                    }
-                }
-                Literal::Agg { var, op, over, atom } => {
-                    let al = a_name();
-                    // The aggregated variable and a `join`'s ordering ones are the body's own (where the rule does not
-                    // bind them): not correlated.
-                    let mut local: Vec<&str> = over.iter().map(String::as_str).collect();
-                    if let AggOp::Join { by, .. } = op {
-                        local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
-                    }
-                    let mut conds = neg_conds(atom, &al, &env, &local)?;
-                    // Repeated local value fields are equal within the bag, even when
-                    // the outer rule binds a variable with that name.
-                    if let Some(over)=over {
-                        let columns=atom.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if v==over).then_some(c)).collect::<Vec<_>>();
-                        for pair in columns.windows(2) {conds.push(eq(col(&al,&self.col(&atom.rel,pair[0])),col(&al,&self.col(&atom.rel,pair[1]))));}
-                    }
-                    let column = |v: &str| {
-                        let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
-                        let symbol = prog.decls.get(atom.rel.as_str()).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
-                        (col(&al, &self.col(&atom.rel, c)), symbol)
-                    };
-                    let what = match (op, over) {
-                        (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
-                        // Soufflé's sum is 0 over no rows.
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
-                        // 1 over no rows (`strings::functions::Product`).
-                        (AggOp::Product, Some(o)) => call("coalesce", vec![call("rr_product", vec![column(o).0]), integer(1)]),
-                        // `rr_join(sep, value, key, …)` (`register_functors`) orders and joins the distinct rows' text;
-                        // symbols in as text.
-                        (AggOp::Join { by, sep }, Some(o)) => {
-                            let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
-                            let mut args = vec![string(sep), text(column(o))];
-                            for b in by {
-                                args.push(match env.get(b) {
-                                    Some(e) => e.clone(),
-                                    None => text(column(b)),
-                                });
-                            }
-                            self.inputs.symbol_of(call("coalesce", vec![call("rr_join", args), string("")]))
-                        }
-                    };
-                    let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
-                    let value = Expr::Scalar(Box::new(query));
-                    // Planning may bind the result first (`n = 0` before the count): the aggregate then tests that
-                    // binding, which replacing it would drop.
-                    if let Some(bound) = env.get(var) {
-                        wh.push(eq(bound.clone(), value));
-                    } else {
-                        if matches!(op, AggOp::Min | AggOp::Max) {
-                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(value.clone()) });
-                        }
-                        env.insert(var.clone(), value);
-                    }
-                }
-                Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
-                    // The climb is a native function over the tape: no CTE, and its result is just a column expression.
-                    let near = call("tape_nearest", vec![env[n].clone(), string(&prog.kindsets[kindset].join(","))]);
-                    if let Some(e) = env.get(a) {
-                        wh.push(eq(near, e.clone()));
-                    } else {
-                        env.insert(a.clone(), near.clone());
-                        wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(near) });
-                    }
-                }
-                Literal::Nearest { n, a, kindset } => {
-                    // A lowered program's members are kind atoms.
-                    let ks = kinds(&prog.kindsets[kindset]);
-                    let member = |e: Expr| Expr::In { input: Box::new(e), values: ks.clone() };
-                    let input = |rel: &str| Relation::Input { schema: self.inputs.facts.clone(), rel: rel.to_owned() };
-                    let on = |rel: &str, alias: &str, on: Vec<Expr>| FromItem { relation: input(rel), alias: alias.to_owned(), join: Join::On(on) };
-                    // Everything joined so far becomes the seed CTE; the walk is a recursive CTE seeded only from it.
-                    let k = ctes.len();
-                    let (seed, walk, near) = (format!("seed{k}"), format!("walk{k}"), format!("near{k}"));
-                    let seed_cols: Vec<String> = env.keys().cloned().collect::<BTreeSet<_>>().into_iter().collect();
-                    if frm.is_empty() {
-                        return Err(Error::Plan(format!("the walk of {} reads nothing before it", order.lit(s))));
-                    }
-                    let (items, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.drain(..).unzip();
-                    ctes.push(Cte::walk(
-                        seed.clone(),
-                        None,
-                        vec![Select {
-                            distinct: true,
-                            columns: seed_cols.iter().map(|v| (env[v].clone(), Some(v.clone()))).collect(),
-                            from: items,
-                            predicates: conds.into_iter().flatten().chain(wh.drain(..)).collect(),
-                        }],
-                    ));
-                    // The seed's columns are threaded through the walk (ast-index-spike S050 `_path_threaded`), so the
-                    // walk's output is the extended row and nothing joins back to the seed.
-                    let threaded = |alias: &str| seed_cols.iter().map(|v| (col(alias, v), None)).collect::<Vec<_>>();
-                    let with = |alias: &str, extra: Vec<Expr>| threaded(alias).into_iter().chain(extra.into_iter().map(|e| (e, None))).collect::<Vec<_>>();
-                    let mut walk_columns = seed_cols.clone();
-                    let out_var = if s.mode == Some(Mode::Climb) {
-                        walk_columns.push("cur".to_owned());
-                        let above = bin(Op::GreaterOrEqual, col("t", "par"), integer(0));
-                        let arms = vec![
-                            Select {
-                                columns: with("s", vec![col("t", "par")]),
-                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "n"), col("s", n))])],
-                                predicates: vec![above.clone()],
-                                ..Select::default()
-                            },
-                            Select {
-                                columns: with("w", vec![col("t", "par")]),
-                                from: vec![
-                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
-                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur")), Expr::Unary { operator: SqlUnaryOperator::Not, input: Box::new(member(col("k", "kind"))) }]),
-                                    on("tape", "t", vec![eq(col("t", "n"), col("w", "cur"))]),
-                                ],
-                                predicates: vec![above],
-                                ..Select::default()
-                            },
-                        ];
-                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
-                        let mut predicates = vec![eq(col("k", "n"), col("w", "cur")), member(col("k", "kind"))];
-                        if env.contains_key(a) {
-                            predicates.push(eq(col("w", "cur"), col("w", a)));
-                        }
-                        let arm = Select {
-                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
-                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w"), FromItem::cross(input("node"), "k")],
-                            predicates,
-                            ..Select::default()
-                        };
-                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
-                        a
-                    } else {
-                        // A subtree is a run of preorder positions: the walk steps over preorder keys (`node_order`),
-                        // which are the node ids themselves when nodes are numbered in preorder. Ids by definition
-                        // are not contiguous in a subtree, so there each position is mapped back to its node.
-                        let keyed = crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
-                        walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
-                        let size = col("t", "size");
-                        let start = if keyed { col("o", "k") } else { col("s", a) };
-                        let mut seed_from = vec![FromItem::cross(Relation::Cte(seed.clone()), "s")];
-                        if keyed {
-                            seed_from.push(on("node_order", "o", vec![eq(col("o", "n"), col("s", a))]));
-                        }
-                        seed_from.push(on("tape", "t", vec![eq(col("t", "n"), col("s", a))]));
-                        // The node at the walk's position.
-                        let at = if keyed { col("o", "n") } else { col("w", "cur") };
-                        let mut walk_from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            walk_from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
-                        }
-                        walk_from.push(on("node", "k", vec![eq(col("k", "n"), at.clone())]));
-                        walk_from.push(on("tape", "t", vec![eq(col("t", "n"), at.clone())]));
-                        let arms = vec![
-                            Select {
-                                columns: with("s", vec![bin(Op::Add, start.clone(), integer(1)), bin(Op::Add, start, size.clone())]),
-                                from: seed_from,
-                                predicates: vec![bin(Op::Greater, size.clone(), integer(0))],
-                                ..Select::default()
-                            },
-                            Select {
-                                columns: with(
-                                    "w",
-                                    vec![
-                                        Expr::Case {
-                                            branches: vec![(member(col("k", "kind")), bin(Op::Add, bin(Op::Add, col("w", "cur"), size), integer(1)))],
-                                            fallback: Box::new(bin(Op::Add, col("w", "cur"), integer(1))),
-                                        },
-                                        col("w", "stop"),
-                                    ],
-                                ),
-                                from: walk_from,
-                                predicates: vec![bin(Op::Less, col("w", "cur"), col("w", "stop"))],
-                                ..Select::default()
-                            },
-                        ];
-                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
-                        let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
-                        if env.contains_key(n) {
-                            predicates.push(eq(at.clone(), col("w", n)));
-                        }
-                        let mut from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
-                        }
-                        let arm = Select {
-                            columns: with("w", Vec::new()).into_iter().chain([(at, Some("near_out".to_owned()))]).collect(),
-                            from,
-                            predicates,
-                            ..Select::default()
-                        };
-                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
-                        n
-                    };
-                    env = seed_cols.iter().map(|v| (v.clone(), col(&near, v))).collect();
-                    env.entry(out_var.clone()).or_insert_with(|| col(&near, "near_out"));
-                    frm = vec![(FromItem::cross(Relation::Cte(near.clone()), near), Vec::new())];
-                }
-                Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", order.lit(s)))),
-            }
-        }
-        let mut columns = Vec::new();
-        for (i, t) in head.args.iter().enumerate() {
-            let e = sql_term(t, &env, atoms)?;
-            if partial(t) {
-                wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
-            }
-            columns.push((e, Some(format!("c{i}"))));
-        }
-        // A safe scalar rule (global aggregates, ground comparisons, or Boolean negation)
-        // evaluates once. SQLite permits its SELECT and WHERE without an outer FROM.
-        let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
-        let body = Select { distinct: true, columns, from, predicates: conds.into_iter().flatten().chain(wh).collect() };
-        Ok(Query { ctes, body })
     }
 }
 
@@ -6740,7 +6312,7 @@ impl<'a> Run<'a, '_> {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                     self.materialize(&reads)?;
                     self.ensure_indexes(Order::new(&r.body, &order))?;
-                    let select = self.model.sql_select(prog, &r.head, Order::new(&r.body, &order), None, None)?;
+                    let select = self.model.sql_select(prog, b, &order, None, None)?;
                     self.insert_rows(&r.head, &select)?;
                     sql_seeded.insert(r.head.rel.to_string());
                     continue;
@@ -6833,7 +6405,7 @@ impl<'a> Run<'a, '_> {
                         // The component's own relations are read through its views; only the others take indexes.
                         let outside: Vec<Step> = Order::new(&r.body, &order).iter().filter(|(_, l)| l.atom().is_none_or(|b| !scc.contains(b.rel.as_str()))).map(|(st, _)| *st).collect();
                         self.ensure_indexes(Order::new(&r.body, &outside))?;
-                        let sql = self.model.sql_select(prog, &r.head, Order::new(&r.body, &order), Some(at), Some(&views))?;
+                        let sql = self.model.sql_select(prog, b, &order, Some(at), Some(&views))?;
                         explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
                         lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], sql });
                         keys.push(None);
@@ -7417,9 +6989,10 @@ impl<'a> Run<'a, '_> {
         let part_rules: Vec<Rule> = parts.iter().map(|(_, head, body)| Rule { head: head.clone(), body: body.clone().into() }).collect();
         let made = body::made(&part_rules)?;
         for (k, (_, head, body)) in parts.iter().enumerate() {
-            let (order, _, _) = self.model.plan_rule(prog, &body::nth(&made, k), None)?;
+            let part = body::nth(&made, k);
+            let (order, _, _) = self.model.plan_rule(prog, &part, None)?;
             self.ensure_indexes(Order::new(body, &order))?;
-            let select = self.model.sql_select(prog, head, Order::new(body, &order), None, None)?;
+            let select = self.model.sql_select(prog, &part, &order, None, None)?;
             self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
         }
         // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
@@ -7463,10 +7036,10 @@ impl<'a> Run<'a, '_> {
         let mut seed_plans = Vec::new();
         let vs = Arc::clone(&self.versions);
         for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
-            seed_plans.push((&r.head, &r.body, self.model.plan_rule(prog, &vs.body(r)?, None)?));
+            seed_plans.push((*r, &r.head, &r.body, self.model.plan_rule(prog, &vs.body(r)?, None)?));
         }
         for r in &rels {
-            let rows: f64 = seed_plans.iter().filter(|(h, _, _)| h.rel == **r).map(|(_, _, p)| p.2).sum();
+            let rows: f64 = seed_plans.iter().filter(|(_, h, _, _)| h.rel == **r).map(|(_, _, _, p)| p.2).sum();
             let card = prior_stats(&mut self.model, prog, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
             self.model.stats.card.insert((*r).clone(), card);
         }
@@ -7483,7 +7056,7 @@ impl<'a> Run<'a, '_> {
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines: Vec<SpecLine> = rels.iter().map(|r| SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Rows }).collect();
-        let mut edges: Vec<(Atom, Vec<Literal>, Vec<Step>)> = Vec::new();
+        let mut edges: Vec<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)> = Vec::new();
         let mut probes: Vec<(&Rule, Vec<Step>, usize, usize)> = Vec::new();
         for (j, r) in rules.iter().enumerate() {
             let (h, body) = (&r.head, &r.body);
@@ -7494,7 +7067,7 @@ impl<'a> Run<'a, '_> {
             if let [(ai, a)] = rec[..] {
                 let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
                 // The spec line and edge plan of a linear rule, or the reason it is a probe.
-                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Literal>, Vec<Step>)>), String>> {
+                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)>), String>> {
                     let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
                     let mut hvars = BTreeSet::new();
                     h.args.iter().for_each(|t| t.vars(&mut hvars));
@@ -7550,7 +7123,7 @@ impl<'a> Run<'a, '_> {
                         }
                         let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
                         let src = Some((ehead.rel.to_string(), t));
-                        edge = Some((ehead, rest.clone(), order));
+                        edge = Some((ehead, rest.clone(), order, made));
                         src
                     } else {
                         None
@@ -7572,17 +7145,17 @@ impl<'a> Run<'a, '_> {
                 probes.push((*r, order, at, ai));
             }
         }
-        for (h, body, (order, _, _)) in &seed_plans {
+        for (r, h, body, (order, _, _)) in &seed_plans {
             self.ensure_indexes(Order::new(body, order))?;
-            let select = self.model.sql_select(prog, h, Order::new(body, order), None, None)?;
+            let select = self.model.sql_select(prog, &vs.body(r)?, order, None, None)?;
             self.insert_rows(h, &select)?;
         }
-        for (ehead, rest, order) in &edges {
+        for (ehead, rest, order, made) in &edges {
             self.ensure_indexes(Order::new(rest, order))?;
             let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
             self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
             if !ehead.args.is_empty() {
-                let select = self.model.sql_select(prog, ehead, Order::new(rest, order), None, None)?;
+                let select = self.model.sql_select(prog, &body::nth(made, 0), order, None, None)?;
                 self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)), [])?;
             }
         }
@@ -7600,7 +7173,7 @@ impl<'a> Run<'a, '_> {
             let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
             self.ensure(&reads)?;
             self.ensure_indexes(Order::new(&r.body, order))?;
-            let sql = self.model.sql_select(prog, &r.head, Order::new(&r.body, order), Some(*at), Some(&tables))?;
+            let sql = self.model.sql_select(prog, &vs.body(r)?, order, Some(*at), Some(&tables))?;
             lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], sql });
         }
         self.fx().open(&ComponentSpec { name: name.clone(), lines })?;
@@ -7636,7 +7209,7 @@ impl<'a> Run<'a, '_> {
                     Some(spec) => Reprobe::Join(spec),
                     None => {
                         self.ensure_indexes(Order::new(&r.body, &new))?;
-                        Reprobe::Sql(self.model.sql_select(prog, &r.head, Order::new(&r.body, &new), Some(nat), Some(&tables))?)
+                        Reprobe::Sql(self.model.sql_select(prog, &vs.body(r)?, &new, Some(nat), Some(&tables))?)
                     }
                 };
                 self.fx().reprobe(&name, k, &new_body)?;
@@ -8166,7 +7739,7 @@ pub fn view_sql(rel: &str, query: &Query) -> String {
 }
 
 /// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
-fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
+fn plan_views(prog: &Program, vs: &body::Versions, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
     let mut views = Vec::new();
     // Resident consumers need facts, not a SQL view that must be read back at each chunk.
     // Other native operators still use SQL-owned inputs and keep their projection views.
@@ -8191,7 +7764,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
             continue;
         }
         let order = vec![Step { at: 0, mode: None }];
-        let mut query = model.checked_query(prog, h, Order::new(b, &order), None, None)?;
+        let mut query = model.checked_query(prog, &vs.body(rule)?, &order, None, None)?;
         // A projection is a set. Omit DISTINCT only when the head retains an input key;
         // otherwise alternate input supports must not multiply aggregate counts.
         let preserves=|t:&Term|match t{Term::Var(v)=>h.args.iter().any(|x|matches!(x,Term::Var(x) if x==v)),Term::Wild=>false,_=>true};
@@ -8559,7 +8132,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), numbers: Arc::new(prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect()), versions: Arc::new(body::Versions::of(prog)?), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
-    let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &mut run.model, &rules_by)? };
+    let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
     for (rel, view) in planned_views {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.

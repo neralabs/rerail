@@ -291,9 +291,9 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             arms.push(format!("SELECT DISTINCT {cols} FROM {} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE frame=demanded.handle{target}{parameters}",frames[input]));
         } else {
             for rule in rules {
-                let ((order, _, _), _) =
-                    model.plan_rule_reused(prog, &vs.body(rule)?, None)?;
-                let mut q = model.checked_query(prog, &rule.head, super::Order::new(&rule.body, &order), None, None)?;
+                let b = vs.body(rule)?;
+                let ((order, _, _), _) = model.plan_rule_reused(prog, &b, None)?;
+                let mut q = model.checked_query(prog, &b, &order, None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
                 bind_names(&mut q.body, &names);

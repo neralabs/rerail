@@ -105,7 +105,7 @@ pub fn component(
     let mut p = program_for(run, scc)?;
     let mut queries = Vec::new();
     for (rule, order) in planned {
-        let q = run.model.checked_query(run.prog, &rule.head, Order::new(&rule.body, order), None, None)?;
+        let q = run.model.checked_query(run.prog, &run.versions.body(rule)?, order, None, None)?;
         p.steps.push(schedule::Step {
             output: rule.head.rel.to_string(),
             stratum: 0,
@@ -122,13 +122,10 @@ pub fn component(
                     && !a.neg
                     && scc.contains(a.rel.as_str())
                 {
-                    let (order, _, _) =
-                        run.model
-                            .plan_rule(run.prog, &run.versions.body(rule)?, Some(i))?;
+                    let b = run.versions.body(rule)?;
+                    let (order, _, _) = run.model.plan_rule(run.prog, &b, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
-                    let q =
-                        run.model
-                            .checked_query(run.prog, &rule.head, Order::new(&rule.body, &order), Some(at), None)?;
+                    let q = run.model.checked_query(run.prog, &b, &order, Some(at), None)?;
                     p.steps.push(schedule::Step {
                         output: rule.head.rel.to_string(),
                         stratum: 0,
