@@ -434,3 +434,22 @@ ported, over the targeted tests and dl1.
   - Open (found while building, not this item's): the crate split left about twenty warnings of dead code and of
     private types in public interfaces in the store, prof, java_lean and w crates (items only another crate's tests
     use); the logic and engine ones were fixed here.
+
+- **Item 7, step 5 continued: the run's rule readers on handles** (2026-11-14).
+  - Read by their handles in the run's `Versions` (`rule_of`, `reads_of`: a rule read in place, with no `Body`):
+    `strand_reads_with`, `run_members`' waiting reads, `native_stratum_`'s filters of rules over empty or unfilled
+    relations and its gates' readers, the planning spans, the answering strata's reads, the probes of
+    `native_set_fixpoint`, `issue::Board`'s estimate and digests (`Body::observed_key`, which equals `obs_rule`), and
+    the run loop's: the named relations, the pinned views' reads, a form's count requests, its digests and estimate,
+    its plainness, the deferred reads, the SQL strata's reads, the answered relations' readers and the rows trace.
+  - Still on the tree: the again and together paths (`g.rules`, `g.deltas`, their last reads: step 7, `Maint`), the
+    fixpoints' made rules (`native_fixpoint`, `native_set_fixpoint`'s edge parts, to become a run-local overlay), the
+    literal counts charged before the version is made, and the rule lists themselves (step 3).
+  - Checked: logic `plan::` (110); the engine's keeps, demand, negation, inline, cone, phase0, session, maintain,
+    again, retain, edit, strata, answer, native, setfix, `corpus::` (in chunks) and `rr::`; dl1 against 80ffec69e's
+    build: the same 48 findings cold and warm.
+  - Measured on dl1: 45.1–45.7 G cold against 44.2–44.3 G, 2.6 G warm on both. The difference is the lookup of a
+    rule's handles (`Versions::rule_ref`, about 6% of `run`'s samples): the rule's address searched among the
+    versions' ranges, then `Version::rule` down the overlay chain (one binary search a pass's overlay). Step 3 (the
+    lists as `RuleKey`s) removes the address search; folding a run's overlays into one (the builder's fold, which
+    counts removals today) removes the chain.

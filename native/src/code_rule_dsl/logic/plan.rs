@@ -5130,6 +5130,12 @@ fn body_of<'v>(vs: &'v body::Versions, r: &Rule) -> Body<'v> {
     vs.body(r).unwrap_or_else(|e| panic!("{e}"))
 }
 
+/// The relations rule `r`'s atoms and aggregates read, in body order, by its handles in `vs`.
+fn reads_of<'v>(vs: &'v body::Versions, r: &Rule) -> impl Iterator<Item = &'v str> + 'v {
+    let (v, rule) = rule_of(vs, r);
+    rule.body().filter_map(|l| l.atom()).map(move |a| v.rel_name(a.rel()))
+}
+
 /// `body_of`'s rule read in place (`Versions::rule_ref`), for a reader that walks it once.
 fn rule_of<'v>(vs: &'v body::Versions, r: &Rule) -> (&'v super::program_image::Version, super::program_image::RuleRef<'v>) {
     vs.rule_ref(r).unwrap_or_else(|e| panic!("{e}"))
@@ -5352,13 +5358,14 @@ impl<'a> Run<'a, '_> {
                 else { continue };
             return Err(why);
         }
-        if rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. }))) {
+        if rules.iter().any(|r| rule_of(&self.versions, r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. }))) {
             return Err("an Ast literal");
         }
         let mut reads: BTreeSet<String> = scc.clone();
         for r in rules {
-            for a in r.body.iter().filter_map(Literal::atom) {
-                let rel = a.rel.as_str();
+            let (v, rule) = rule_of(&self.versions, r);
+            for a in rule.body().filter_map(|l| l.atom()) {
+                let rel = v.rel_name(a.rel());
                 if scc.contains(rel) {
                     continue;
                 }
@@ -5530,7 +5537,10 @@ impl<'a> Strand<'a> {
             Ok(())
         };
         for (k, (scc, rules)) in members.iter().enumerate() {
-            let reads_waiting = waiting.iter().any(|(w, _)| rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).any(|a| members[*w].0.contains(a.rel.as_str())));
+            let reads_waiting = waiting.iter().any(|(w, _)| rules.iter().any(|r| {
+                let (v, rule) = rule_of(&self.0.versions, r);
+                rule.body().filter_map(|l| l.atom()).any(|a| members[*w].0.contains(v.rel_name(a.rel())))
+            }));
             if reads_waiting && let Err(e) = finish(&mut self.0, &mut waiting, times) {
                 return (0, Some(Err(e)));
             }
@@ -5861,7 +5871,10 @@ impl<'a> Run<'a, '_> {
                 e
             };
             let before = rules.len();
-            let kept: Vec<&Rule> = rules.into_iter().filter(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && is_empty(&a.rel)))).collect();
+            let kept: Vec<&Rule> = rules.into_iter().filter(|r| {
+                let (v, rule) = rule_of(&vs, r);
+                !rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && is_empty(v.rel_name(a.rel()))))
+            }).collect();
             if before > kept.len() {
                 super::profile::decision("rules over empty relations", || format!("{} of {before} rules not run: each joins a relation of a lower stratum that has no rows", before - kept.len()));
             }
@@ -5881,14 +5894,20 @@ impl<'a> Run<'a, '_> {
                 let heads: BTreeSet<&str> = kept.iter().map(|r| r.head.rel.as_str()).collect();
                 let unfilled = |rel: &str| scc.contains(rel) && !heads.contains(rel) && !written.contains(rel);
                 let n = kept.len();
-                kept.retain(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && unfilled(&a.rel))));
+                kept.retain(|r| {
+                    let (v, rule) = rule_of(&vs, r);
+                    !rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && unfilled(v.rel_name(a.rel()))))
+                });
                 if kept.len() == n { break; }
                 super::profile::decision("rules over empty relations", || format!("{} rules not run: each joins a relation of its component that starts empty and that nothing fills", n - kept.len()));
             }
             kept
         };
         // A gate ordering pieces (decision 0101 §3) that no rule left reads has nothing to order.
-        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(*g)) || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.as_str() == *g))));
+        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(*g)) || rules.iter().any(|r| {
+            let (v, rule) = rule_of(&vs, r);
+            rule.body().any(|l| l.atom().is_some_and(|a| v.rel_name(a.rel()) == *g))
+        }));
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), f.types(r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
         // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
@@ -6000,7 +6019,8 @@ impl<'a> Run<'a, '_> {
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
                 let no = rule_no(r).map_or("?".to_owned(), |k| format!("{k:04}"));
-                format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
+                let (v, rule) = rule_of(&vs, r);
+                format!("{what} #{no} {}, {} literals", v.rel_name(rule.head().rel()), rule.body().count())
             })
         };
         let planning_key = |k: body::RuleKey, what: &str| {
@@ -6066,7 +6086,7 @@ impl<'a> Run<'a, '_> {
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
-                    let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
+                    let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
                     self.materialize(&reads)?;
                     self.ensure_indexes(Order::new(b, &order))?;
                     let select = self.model.sql_select(pf, b, &order, None, None)?;
@@ -6180,7 +6200,7 @@ impl<'a> Run<'a, '_> {
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
-                        let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
+                        let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
                         self.ensure(&reads)?;
                         self.materialize(&reads)?;
@@ -7035,20 +7055,17 @@ impl<'a> Run<'a, '_> {
         let join = self.model.inputs.native.contains("join");
         let none = BTreeSet::new();
         for (r, order, at, ai) in &probes {
-            let rel = match &r.body[*ai] {
-                Literal::Atom(a) => a.rel.clone(),
-                _ => unreachable!(),
-            };
-            if join && let Some(spec) = self.whole_join_spec(&vs.body(r)?, order, Some(*at), &ri, scc, &none) {
-                lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], join: spec, whole: None });
+            let b = vs.body(r)?;
+            let rel = b.rel(b.plain_atom(*ai).expect("the probe's recursive atom"));
+            if join && let Some(spec) = self.whole_join_spec(&b, order, Some(*at), &ri, scc, &none) {
+                lines.push(SpecLine::Join { head: ri[b.rel(b.head())], delta: ri[rel], join: spec, whole: None });
                 continue;
             }
-            let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
+            let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a).to_owned()).collect();
             self.ensure(&reads)?;
-            let b = vs.body(r)?;
             self.ensure_indexes(Order::new(&b, order))?;
             let sql = self.model.sql_select(pf, &b, order, Some(*at), Some(&tables))?;
-            lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], sql });
+            lines.push(SpecLine::Probe { head: ri[b.rel(b.head())], delta: ri[rel], sql });
         }
         self.fx().open(&ComponentSpec { name: name.clone(), lines })?;
         for r in &rels {
@@ -8135,13 +8152,11 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // The last run's views read in place are not this one's.
     crate::code_rule_dsl::facts::vtab::forget_views(db);
     // Relations the program's rules or outputs name (a part of a split program declares the whole's).
+    let vs0 = Arc::clone(&run.versions);
     let named: HashSet<&str> = prog
         .rules
         .iter()
-        .flat_map(|r| std::iter::once(r.head.rel.as_str()).chain(r.body.iter().filter_map(|l| match l {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-            _ => None,
-        })))
+        .flat_map(|r| std::iter::once(r.head.rel.as_str()).chain(reads_of(&vs0, r)))
         .chain(f0.outputs())
         .chain(f0.fact_rels().into_iter().map(|f| f0.text(f.name())))
         .collect();
@@ -8327,7 +8342,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             .rules
             .iter()
             .filter(|r| pinned.contains(r.head.rel.as_str()) && run.views.contains(r.head.rel.as_str()))
-            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))
+            .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
             .filter(|r| !pinned.contains(r.as_str()))
             .collect();
         if more.is_empty() {
@@ -8714,12 +8729,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     if native.contains("program") {
                         run.set_prog(form);
                         for (piece, rules) in &pieces {
-                            wants.extend(rules.iter().flat_map(|r| r.body.iter()).filter_map(|l| match l {
-                                Literal::Agg { op: AggOp::Count, atom, .. } if !piece.contains(atom.rel.as_str()) && run.native_rels.contains(atom.rel.as_str()) => {
-                                    Some((atom.rel.to_string(), (0..atom.args.len()).filter(|&c| !matches!(atom.args[c], Term::Wild)).collect()))
-                                }
-                                _ => None,
-                            }));
+                            let vs = Arc::clone(&run.versions);
+                            wants.extend(rules.iter().flat_map(|r| {
+                                let (v, rule) = rule_of(&vs, r);
+                                rule.body().filter_map(move |l| match l.view() {
+                                    Lit::Agg { op: super::program_image::AggRef::Count, atom, .. } => Some((v.rel_name(atom.rel()), atom)),
+                                    _ => None,
+                                })
+                            }).filter(|(rel, _)| !piece.contains(*rel) && run.native_rels.contains(*rel))
+                                .map(|(rel, atom)| (rel.to_owned(), atom.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c).collect())));
                             specs.extend(run.seed_specs(piece, rules));
                         }
                         run.set_prog(prog);
@@ -8771,10 +8789,13 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                             continue;
                         }
                         let all: Vec<&Rule> = pieces.iter().flat_map(|(_, r)| r.iter().copied()).collect();
-                        let digests: Vec<u64> = all.iter().map(|r| obs_rule(&r.head, &r.body)).collect();
+                        let digests: Vec<u64> = all.iter().map(|r| body_of(&run.versions, r).observed_key()).collect();
                         // A maintained rule's work is its delta's: per rule, the rows of the least of its positive atoms
                         // (the driver a delta rule is planned from), not those of all it reads (its old rows' millions).
-                        let rows: f64 = all.iter().map(|r| r.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| run.model.stats.card.get(a.rel.as_str()).copied().unwrap_or(1.0)).fold(f64::INFINITY, f64::min)).filter(|x| x.is_finite()).sum();
+                        let rows: f64 = all.iter().map(|r| {
+                            let (v, rule) = rule_of(&run.versions, r);
+                            rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).map(|a| run.model.stats.card.get(v.rel_name(a.rel())).copied().unwrap_or(1.0)).fold(f64::INFINITY, f64::min)
+                        }).filter(|x| x.is_finite()).sum();
                         let estimate = fixed * pieces.len() as f64 + rows * 20e-9;
                         let read_by = Model::read_by(&run.versions, &all).into_iter().map(str::to_owned).collect();
                         ready.push((j, form, reads, own, digests, read_by, estimate));
@@ -8869,7 +8890,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     // Its form derives it again from its reads as they are (no old rows, no delta read or made): the
                     // base program's rules for it.
                     let delta_rel = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
-                    let plain = again || pieces.iter().all(|(_, rs)| rs.iter().all(|r| !delta_rel(&r.head.rel) && !r.body.iter().any(|l| l.atom().is_some_and(|a| delta_rel(&a.rel)))));
+                    let plain = again || pieces.iter().all(|(_, rs)| rs.iter().all(|r| !delta_rel(&r.head.rel) && !reads_of(&run.versions, r).any(delta_rel)));
                     let mut base = false;
                     for (k, (piece, piece_rules)) in pieces.iter().enumerate().skip(from) {
                         let ok = run.native_stratum_now(piece, piece_rules);
@@ -8983,7 +9004,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         if !deferred.is_empty() {
-            let wanted: Vec<&str> = rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
+            let vs = Arc::clone(&run.versions);
+            let wanted: Vec<&str> = rules.iter().flat_map(|r| reads_of(&vs, r)).collect();
             run.make_deferred(&wanted, &mut deferred)?;
         }
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
@@ -9001,7 +9023,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let answering = (!asks.is_empty() || produced_only) && run.answer.is_some();
             // A view is made over what its stratum holds, so it is as its stratum's other relations and reads are.
             let plain = !scc.iter().any(|r| f0.native(r).is_some() || f0.lattice(r) || f0.request_of(r).is_some_and(|q| !(answering && (scc.contains(q) || produced_only))))
-                && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })));
+                && !rules.iter().any(|r| rule_of(&run.versions, r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })));
             let mut clean = plain && (!rules.is_empty() || produced_only) && scc.iter().all(|r| run.views.contains(r) || ks.has_rows(r));
             let mut nows: Option<Vec<(String, u64)>> = Some(Vec::new());
             // A stratum's reads of its own relations (its recursion) are what it derives from its other reads; one
@@ -9140,7 +9162,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
                 // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
+                if f0.is_input(rel) || rows.is_empty() || !prog.rules.iter().any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
@@ -9319,25 +9341,10 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         }
         // This stratum runs in SQL, which reads the native relations it joins from their tables.
         super::profile::strict_declined(&skey, &why, run.why_class.as_deref());
-        let read: Vec<String> = rules
-            .iter()
-            .flat_map(|r| &r.body)
-            .filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
-                _ => None,
-            })
-            .collect();
+        let read: Vec<String> = rules.iter().flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>()).collect();
         run.materialize(&read)?;
         // This stratum runs in SQL: its relations' and those it reads' tables.
-        let read: Vec<String> = rules
-            .iter()
-            .flat_map(|r| &r.body)
-            .filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
-                _ => None,
-            })
-            .chain(scc.iter().cloned())
-            .collect();
+        let read: Vec<String> = rules.iter().flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>()).chain(scc.iter().cloned()).collect();
         run.ensure(&read)?;
         // What it reads that the engine holds (a relation of facts alone, decision 0104) is moved to its table first.
         run.materialize(&read)?;
@@ -9445,7 +9452,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| Error::Plan(e.to_string()))?;
         let _ = writeln!(f, "== run {at}");
         let mut all: BTreeSet<String> = sccs.iter().flatten().cloned().collect();
-        all.extend(prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string())));
+        all.extend(prog.rules.iter().flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>()));
         let dir = std::env::var_os("RERAIL_REL_DIR").map(|d| std::path::Path::new(&d).join(format!("run{at}")));
         if let Some(d) = &dir { let _ = std::fs::create_dir_all(d); }
         for r in &all {

@@ -243,7 +243,11 @@ impl<'a> Board<'a> {
 
     /// A stratum's estimate: the fixed cost and its rules' reads' rows.
     fn estimate(&self, run: &Run<'a, '_>, rules: &[&Rule]) -> f64 {
-        let rows: f64 = rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| run.model.stats.card.get(a.rel.as_str()).copied().unwrap_or(1.0)).sum();
+        // Summed in the order the reads come, one sum over every rule's (as the tree's reading summed them).
+        let rows: f64 = rules.iter().flat_map(|r| {
+            let (v, rule) = super::rule_of(&run.versions, r);
+            rule.body().filter_map(|l| l.atom()).map(move |a| run.model.stats.card.get(v.rel_name(a.rel())).copied().unwrap_or(1.0))
+        }).sum();
         self.fixed + rows * 20e-9
     }
 
@@ -308,7 +312,7 @@ impl<'a> Board<'a> {
             }
             members.sort_unstable();
             let rules: Vec<Vec<&'a Rule>> = members.iter().map(|&m| rules_of(m)).collect();
-            let digests: Vec<u64> = rules.iter().flatten().map(|r| obs_rule(&r.head, &r.body)).collect();
+            let digests: Vec<u64> = rules.iter().flatten().map(|r| super::body_of(&run.versions, r).observed_key()).collect();
             // Its statistics are not made here: the components issued together request theirs, made in one batch
             // below (decision 0123). A component whose strand cannot be made runs on the loop's thread, as it would.
             let Ok(strand) = run.strand(&reads, &digests, &[]) else {
