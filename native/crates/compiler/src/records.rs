@@ -73,6 +73,10 @@ pub struct Records {
     pub nexts: Vec<PairTable>,
     /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
     pub tested_only: u32,
+    /// The masks tier 2's local checks read (`program::LocalCheck::mask`, indexes into the block
+    /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
+    /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.
+    pub check_masks: Vec<u16>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,

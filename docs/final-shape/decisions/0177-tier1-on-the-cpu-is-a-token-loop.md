@@ -433,3 +433,26 @@ as the lean lexer's `words != 0`. Punctuation, numbers and strings take no hash.
 function of its own a run (`carry_fn`); the loops that read it call it from a cold block, and
 keep only the test of the byte before inline.
 
+## Tier 2's checks read the bytes
+
+The last mask the CPU's body made was `uesc`, an escaped `u`, for the two `\u` checks tier 2
+runs at a string (decision 0133: the digits' tests at the token, none of them tier 1's). It
+was 4 operations a block, and a row stored for tier 2 to load.
+
+Tier 2 on the CPU now reads a check's mask from the bytes where they make it: the check's
+function calls the mask's window (`Bytewise::word`), at each token of its kind. The
+ahead-of-time tier 2 (`rust_stream`) does the same: the window's Cranelift function goes
+through `clif_rust`, a module of the source (`window_N::mask`). 0133 holds: the digits are
+tested at the token, never in a block. Metal and the interpreter make `uesc` a mask, as
+before; the meaning is one.
+
+```text
+records' check_masks   the masks tier 2's checks alone read (text row `recchecked`)
+the CPU's form         makes none of them: nothing left but constants
+```
+
+A window or carry function no code calls is not built (it was: 10 of tier 1's 26 functions
+in the Rust). Tier 1's Rust: 17 functions, 276 KB, from 423 KB. The guard
+`the_cpu_reads_local_tests_at_the_token` holds the body empty; `rr_checks_its_unicode_escapes_at_the_string`
+the checks' cases, on the JIT and (`aot_tapes_are_the_jits`) ahead of time.
+

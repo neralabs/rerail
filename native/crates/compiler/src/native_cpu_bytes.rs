@@ -82,6 +82,31 @@ impl<'a> Bytewise<'a> {
         self.carry_loop(f, at, a, pos, zero, heads)
     }
 
+    /// Output `o`'s window (`word`) as a function of its own, user name `u0:id`: `(bytes, len,
+    /// p)` to its bits for the file's bytes `p .. p + 64`. For a backend that is given functions
+    /// (`clif_rust`): tier 2's ahead-of-time source reads a mask so.
+    pub fn window_function(&self, o: u16, id: u32) -> cranelift_codegen::ir::Function {
+        use cranelift_codegen::ir::{AbiParam, Signature, UserFuncName};
+        let mut sig = Signature::new(cranelift_codegen::isa::CallConv::SystemV);
+        sig.params.extend([AbiParam::new(types::I64); 3]);
+        sig.returns.push(AbiParam::new(types::I64));
+        let mut func = cranelift_codegen::ir::Function::with_name_signature(UserFuncName::user(0, id), sig);
+        let mut ctx = cranelift_frontend::FunctionBuilderContext::new();
+        let mut f = FunctionBuilder::new(&mut func, &mut ctx);
+        let entry = f.create_block();
+        f.append_block_params_for_function_params(entry);
+        f.switch_to_block(entry);
+        let p = f.block_params(entry).to_vec();
+        let k = crate::native_cpu_block::Consts::make(&mut f);
+        let file = File { bytes: p[0], len: p[1], nibble: k.nibble, weights: k.weights, even: k.even };
+        let mut heads = Vec::new();
+        let w = self.word(&mut f, &file, o, p[2], &mut heads);
+        f.ins().return_(&[w]);
+        f.seal_all_blocks();
+        f.finalize();
+        func
+    }
+
     /// Whether output `o` is made from the bytes.
     pub fn can(&self, o: u16) -> bool {
         self.native.outputs.get(usize::from(o)).is_some_and(|&v| self.can[usize::from(v)])

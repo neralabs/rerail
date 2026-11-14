@@ -982,7 +982,8 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// value at each of its 64 places at once (`local_word`), and the test one AND. 1 where it holds
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
-fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+#[allow(clippy::too_many_arguments)]
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1003,7 +1004,16 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
     let (body, zero) = (f.create_block(), f.ins().iconst(types::I64, 0));
     f.ins().brif(past, done, &[BlockArg::from(zero)], body, &[]);
     f.switch_to_block(body);
-    let word = mask_word(f, base, lasts_stride, w);
+    // From the bytes, where they make the mask (`native_cpu_bytes`): the CPU's tier 1 makes
+    // none of it. Else its row's word.
+    let word = match bytewise {
+        Some(b) => {
+            let file = crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even };
+            let p = f.ins().ishl_imm(w, 6);
+            b.word(f, &file, output as u16, p, heads)
+        }
+        None => mask_word(f, base, lasts_stride, w),
+    };
     let ones = f.ins().iconst(types::I64, -1);
     let s = f.ins().band_imm(start, 63);
     let lo = f.ins().ishl(ones, s);
@@ -3779,9 +3789,16 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
                     let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    // The mask from the bytes where they make it: the check's function reads it
+                    // there, a call a token of the kind, no row to load first.
+                    let bytewise = native.block_programs.first().map(crate::native_cpu_bytes::Bytewise::of).filter(|b| b.can(output as u16));
+                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                    let slow = f.create_block();
+                    if bytewise.is_some() {
+                        f.ins().jump(slow, &[]);
+                    } else {
                     // Most tokens: no bit of the mask from the start on, in the start's word, and
                     // the token ends in it. One load.
-                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);
                     let base = f.ins().iadd(outputs_p, off);
@@ -3793,8 +3810,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let other = f.ins().icmp(IntCC::NotEqual, wl, w);
                     let any = f.ins().icmp_imm(IntCC::NotEqual, word, 0);
                     let go = f.ins().bor(any, other);
-                    let slow = f.create_block();
                     f.ins().brif(go, slow, &[], fall, &[]);
+                    }
                     f.switch_to_block(slow);
                     // Always a function of its own, one a check: rare code, out of the arm's.
                     let r = {
@@ -3808,7 +3825,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
                                 let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a check returns whether it holds");
                                 let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                let v = check_word(g, &env, &c, &form, output, q[1], q[2], hs);
+                                let v = check_word(g, &env, &c, &form, output, bytewise.as_ref(), q[1], q[2], hs);
                                 g.ins().return_(&[v]);
                             })?;
                             word_fns.insert(key, made);

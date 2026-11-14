@@ -219,12 +219,25 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         writeln!(out, "    /// Whether a token mark that refuses holds at this token (`TokenMark::refuses`).\n    #[inline(never)]\n    #[cold]\n    fn refusals(&self) -> bool {{\n        {}\n    }}\n", refusing.join(" || ")).unwrap();
     }
     let mut on_p = String::new();
+    // A check's mask from the bytes, where they make it (`native_cpu_bytes`): its window
+    // function through `clif_rust`, a module of its own; the CPU's tier 1 makes none of it.
+    let bytewise = n.block_programs.first().map(crate::native_cpu_bytes::Bytewise::of);
+    let mut windows = String::new();
     for (i, c) in n.local_checks.iter().enumerate() {
         let o = mask_output(n, c.mask)?;
-        check(out, &mut on_p, i, c, o)?;
+        let word = match bytewise.as_ref().filter(|b| b.can(o as u16)) {
+            Some(b) => {
+                let func = b.window_function(o as u16, 0);
+                let src = crate::clif_rust::translate(&[(0, func)], &[(0, "mask")], &[]).map_err(|e| format!("check {i}'s mask: {e}"))?;
+                writeln!(windows, "/// Check {i}'s mask from the bytes, a window (`native_cpu_bytes`).\nmod window_{i} {{\n{src}}}\n").unwrap();
+                format!("unsafe {{ window_{i}::mask(self.bytes as u64, self.len as u64, (w as u64) << 6) }}")
+            }
+            None => format!("self.mask_word({o}, w)"),
+        };
+        check(out, &mut on_p, i, c, &word)?;
     }
     out.push_str("}\n\n");
-    writeln!(out, "impl S {{\n{on_p}}}\n").unwrap();
+    writeln!(out, "impl S {{\n{on_p}}}\n{windows}").unwrap();
     Ok(())
 }
 
@@ -1230,7 +1243,7 @@ pub(crate) fn word_form(ops: &[LocalOp]) -> Result<WordForm, String> {
 
 /// A local check (`CHECK`): at the token, the check's mask's word at its start, one load; where
 /// it has bits in the token's bytes, the check over each word of them, word-parallel.
-fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize) -> Result<(), String> {
+fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, word: &str) -> Result<(), String> {
     let w = word_form(&c.ops).map_err(|e| format!("check {i}: {e}"))?;
     let (n, need, tables, class_of) = (c.ops.len(), w.need, w.tables, w.class_of);
     let backs: BTreeSet<usize> = need.iter().filter(|&&(k, _)| matches!(c.ops[k], LocalOp::Bytes(_))).map(|&(_, t)| t).collect();
@@ -1284,7 +1297,7 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
     fn check_{i}_words(&self, st: u32, lim: u32) -> R {{
         let (first, last) = (st >> 6, (lim - 1) >> 6);
         for w in first..=last {{
-            let a = self.mask_word({o}, w) & S::within(w as i64, st as i64, lim as i64);
+            let a = {word} & S::within(w as i64, st as i64, lim as i64);
             if a != 0 && a & ({at}) != 0 {{
                 return Err(false);
             }}
@@ -1302,7 +1315,7 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
     fn check_{i}(&self) -> R {{
         let (st, lim) = (self.start, self.rec_end);
         let w = st >> 6;
-        if self.mask_word({o}, w) >> (st & 63) == 0 && (lim - 1) >> 6 == w {{
+        if {word} >> (st & 63) == 0 && (lim - 1) >> 6 == w {{
             return Ok(());
         }}
         self.check_{i}_words(st, lim)

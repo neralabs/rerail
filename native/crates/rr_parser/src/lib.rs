@@ -1488,6 +1488,9 @@ pub mod tests {
         for &o in &at {
             assert!(matches!(cpu.insts[usize::from(cpu.outputs[o])], BlockInst::Const(0)), "the CPU makes test {o}'s mask");
         }
+        // Tier 2's `\\u` checks read their mask from the bytes too: the CPU's body makes nothing.
+        let made: Vec<String> = cpu.insts.iter().filter(|i| !matches!(i, BlockInst::Const(_))).map(|i| format!("{i:?}")).collect();
+        assert!(made.is_empty(), "the CPU's body makes {made:?}");
     }
 
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,

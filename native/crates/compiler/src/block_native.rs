@@ -350,6 +350,10 @@ impl BlockNative {
         let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
         read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
         let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
+        // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
+        let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
+        read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
         let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();

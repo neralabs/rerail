@@ -3967,10 +3967,20 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     for (id, _, func) in part_calls {
         regions.push((id, func));
     }
-    for (_, id, _, func) in byte_calls {
-        regions.push((id, func));
+    // The window and carry functions some function calls; the rest are not built (an output
+    // the loop reads inline, a carry no window needs).
+    let mut extra: Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)> = byte_calls.into_iter().map(|(_, id, _, func)| (id, func)).chain(carry_calls).collect();
+    let names = |func: &cranelift_codegen::ir::Function| -> Vec<u32> { func.params.user_named_funcs().values().map(|n| n.index).collect() };
+    let mut called: std::collections::HashSet<u32> = names(&context.func).into_iter().chain(regions.iter().flat_map(|(_, func)| names(func))).collect();
+    loop {
+        let more: Vec<u32> = extra.iter().filter(|(id, _)| called.contains(&id.as_u32())).flat_map(|(_, func)| names(func)).filter(|n| !called.contains(n)).collect();
+        if more.is_empty() {
+            break;
+        }
+        called.extend(more);
     }
-    regions.extend(carry_calls);
+    extra.retain(|(id, _)| called.contains(&id.as_u32()));
+    regions.extend(extra);
     // The walks' functions, checked where they are built (`native_cpu_walk::build_walk`).
     for (w, built) in walks.built.into_inner().into_iter().enumerate() {
         if let Some(func) = built {
