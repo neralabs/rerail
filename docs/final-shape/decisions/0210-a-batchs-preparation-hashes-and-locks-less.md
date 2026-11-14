@@ -50,6 +50,20 @@ and the split and magic self-checks pass.
    `tarjan` numbers its nodes too. The components, their order and the errors are unchanged. The merged
    Typing-support-final-shape work (t36 item 6) already gives `keeps` and the negation split strata by `RelId`;
    this is the same cut for the passes that still hold a tree.
+8. **Domains, text-kind demand and keep factors on numbers.**
+   - `lower::domains` numbers the relations in declaration order. Each relation's column domains are a vector, and
+     the rules and readers are listed by number. `rule_vars` takes a lookup by atom, and `columns_of` gives the
+     by-name view to the callers that read one.
+   - `text_kind_demand` (`facts/vtab/syntax.rs`) keeps its kind table by number and folds its fixpoint
+     (intersections and unions) on it, with the heads found once.
+   - `keeps::factor_parts` works on numbered variables and bit sets. Only the answer is mapped back to names.
+9. **The planner's column statistics by relation.** `Model::ndv`, `Stats::fan` and `Stats::dfreq` were maps keyed
+   by `(relation, column)`. A strand's model (`Model::fork_with`) copied each column's entry with its own copy of
+   the relation's name, and each frequency map whole. They are now a `ColMap`: per relation, one shared vector of
+   its columns. A fork takes a relation's vector by a count, and a write copies only that relation's vector.
+   `absorb_with` sets the columns below the width from the fork's vector, as moving each entry did. Reads take
+   `at(relation, column)` and build no key. Keying `Model` by `RelId` as a whole (0173 stage 2) waits on the
+   planner taking a program version (t36 item 7), which is not started.
 
 ## Measured
 
@@ -64,6 +78,8 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | sharded names | ~22.95 → ~22.83 G; `Name::new` 872 of 13,605 samples → 2 of 13,269 |
 | numbered split | 23.08 → 22.47 G (load 52–65) |
 | strata on numbers (after the Typing merge) | 22.60 → 22.25 G (load 20–24) |
+| domains, text-kind demand, keep factors | 22.64 → 21.96 G (load 63–78) |
+| column statistics by relation | 21.71–21.78 → 21.49–21.65 G (load 26–28) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are
@@ -83,3 +99,5 @@ These are open items (O-split-in-strings and the others in open-items.md):
   classes and tapes) could be kept with its body's digest across splits. `split_constants` still works on names.
 - `Board::finish` is 15% of the main thread, mostly waiting on the pool (`LockLatch`).
 - `memcmp` is 14.6%, spread over the string-keyed BTree lookups of many passes.
+- `keeps::choose` still keys its refusals, bounds and estimates by name (`BTreeMap<&str, …>`, `BTreeSet<String>`),
+  and `Model`'s other maps (cards, memo, delta rows) are by name. Both wait on 0173 stage 2 (`RelId` keys).
