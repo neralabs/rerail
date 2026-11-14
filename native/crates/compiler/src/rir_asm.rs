@@ -619,7 +619,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0 });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -640,6 +640,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recuntaken" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recuntaken before its records"))?;
                 r.untaken.push(line.number("")?);
+            } else if first == "recunplaced" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recunplaced before its records"))?;
+                r.unplaced = line.number("")?;
+            } else if first == "recunless" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recunless before its records"))?;
+                let (k, w): (u8, u16) = (line.number("")?, line.number("")?);
+                r.unless.push((k, w));
             } else if first == "recgaps" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recgaps before its records"))?;
                 r.gaps = line.number("")?;

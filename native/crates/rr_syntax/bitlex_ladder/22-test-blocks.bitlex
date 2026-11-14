@@ -229,11 +229,9 @@ skip ws
 
 # --- Line breaks -------------------------------------------------------------------------------
 
-# Every grammar token's start (the comments' left out): a mark goes before the next one.
-mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & int & ~prev(int)) | p_start
-mask after_comma = fill(code & comma & p_start, starts_g)
-# The token after a float: first of the marks, as tier 2 reads it right after the number.
-mark float_after = frac_last
+# The token after a float: first of the marks, as tier 2 reads it right after the number. A
+# float the file ends with has none, and goes to the engine.
+mark float_after = frac_last, else escape "a float the file ends with"
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
@@ -254,11 +252,12 @@ mark empty_parens = tokens "(" ")"
 # aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
 # file is refused wherever it is.
 mark no_value   = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
-mark newline     = lf & ~after_comma, end
+# A line break, but not after a `,`: a list goes on over lines. The gap's, from the grammar
+# token before, as lean's parser asks it.
+mark newline     = lf unless after ",", end
 # A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments. After the
 # line breaks' marks, which a statement before it takes.
 mark end_on      = tokens "." "end"
-escape "a float the file ends with" when last_byte & fill(frac_last, starts_g)
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
 mask in_str      = f_str & ~o_str

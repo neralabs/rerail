@@ -1350,7 +1350,10 @@ pub mod tests {
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
             .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
             .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
-            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last");
+            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
+            // The gap pass's clauses need the loop; this compares the starts and lasts alone.
+            .replace("lf unless after \",\", end", "lf, end")
+            .replace(", else escape \"a float the file ends with\"", "");
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
         let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
         let files = corpus();
@@ -1593,6 +1596,37 @@ pub mod tests {
         // `TOKEN m=1+k` would read mask `k` for any mark; `m=128` is the extras' alone.
         let any_mark = |l: &&str| l.contains(" TOKEN m=") && !l.contains(" TOKEN m=128 ");
         assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
+        assert!(!r.unless.is_empty(), "a line break after a `,` is the gap pass's, not a mask's");
+        assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
+    }
+
+    /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on
+    /// over lines, comments between, as the engine reads it; a break after any other token ends
+    /// a setting.
+    #[test]
+    fn a_line_break_after_a_comma_is_none() {
+        let c = crate::compiled().expect("compiles");
+        let cases = [
+            ".decl a(x: number, y: number)\na(x, y) :- b(x),\n  c(y).\n",
+            ".decl a(x: number,\n  y: number)\n",
+            ".decl a(x: number, // first\n  y: number)\n",
+            ".decl a(x: number, /* a\n b */\n  y: number)\n",
+            ".decl a(x: number) // a\n\n.output a\n",
+            "\n\n// head\n.decl a(x: number)\n.limit 3,\n",
+            ".limit 3\n.decl a(x: number)\n",
+        ];
+        for src in cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            let engine = std::panic::catch_unwind(|| crate::engine_tape(src)).ok();
+            match (c.parser.image(src.as_bytes()), engine) {
+                (Ok(t), Some(e)) => {
+                    assert!(interp.is_ok(), "{src:?}: the interpreter takes it");
+                    assert_eq!(t, e, "{src:?}: the engine's tape");
+                }
+                (Ok(_), None) => panic!("{src:?}: taken, the engine refuses it"),
+                (Err(_), _) => assert!(interp.is_err(), "{src:?}: refused, the interpreter takes it"),
+            }
+        }
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

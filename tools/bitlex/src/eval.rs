@@ -120,6 +120,10 @@ pub struct Ev<'a> {
     /// The token marks (`Stmt::TokenMark`), by their index in `marks`: the token before, then
     /// the run.
     token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
+    /// A mark's `unless after` words (`Stmt::Mark`), by its index in `marks`.
+    unless: HashMap<usize, Vec<Vec<u8>>>,
+    /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
+    unplaced: HashMap<usize, String>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -185,6 +189,8 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             marks: vec![],
             token_marks: HashMap::new(),
+            unless: HashMap::new(),
+            unplaced: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -409,8 +415,14 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end } => {
+            Stmt::Mark { kind, at, end, unless, unplaced } => {
                 let m = self.mask(at)?;
+                if !unless.is_empty() {
+                    self.unless.insert(self.marks.len(), unless.clone());
+                }
+                if let Some(why) = unplaced {
+                    self.unplaced.insert(self.marks.len(), why.clone());
+                }
                 self.marks.push((kind.clone(), m, *end));
             }
             Stmt::TokenMark { kind, before, seq } => {
@@ -1189,14 +1201,27 @@ impl<'a> Ev<'a> {
                 }
             }
         }
+        let mut escapes = Vec::new();
         for (k, (_, m, _)) in self.marks.iter().enumerate() {
+            let unless: Vec<TokenElem> = self.unless.get(&k).map_or(vec![], |ws| ws.iter().cloned().map(TokenElem::Word).collect());
             for i in m.ones_iter() {
                 let g = grammar.partition_point(|&t| toks[t].start < i);
-                if let Some(&t) = grammar.get(g) {
-                    before[t][k] = true;
+                // `unless after`: none where the grammar token before is one of its words.
+                if g > 0 && !unless.is_empty() && is(Some(&toks[grammar[g - 1]]), &unless) {
+                    continue;
+                }
+                match grammar.get(g) {
+                    Some(&t) => before[t][k] = true,
+                    // `else escape`: no grammar token at or after the bit.
+                    None => {
+                        if let Some(why) = self.unplaced.get(&k) {
+                            escapes.push(format!("escape: {why} (byte {i})"));
+                        }
+                    }
                 }
             }
         }
+        self.errors.extend(escapes);
         let mut out = Vec::with_capacity(toks.len());
         for (t, tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {

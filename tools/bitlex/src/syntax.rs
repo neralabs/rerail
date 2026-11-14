@@ -367,8 +367,11 @@ pub enum Stmt {
     /// `mark KIND = E`: a token of no width before the first grammar token that starts at or
     /// after each bit of `E`; several bits before one token are one mark, and marks of several
     /// kinds before one token come in the order they are declared. `, end`: the end of the file
-    /// has it too, after the last token.
-    Mark { kind: String, at: Expr, end: bool },
+    /// has it too, after the last token. `unless after W …`: a mark whose grammar token before
+    /// (the extras passed over) is one of these words is none, as lean's parser asks whether a
+    /// `,` ends the line before (decision 0177). `, else escape "WHY"`: a bit with no grammar
+    /// token at or after it (past the last one's start) sends the file to the fallback.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -1380,11 +1383,27 @@ impl P {
                     return Ok(s);
                 }
                 let at = self.expr()?;
-                let end = self.eat_p(",");
-                if end {
-                    self.want_kw("end")?;
+                let mut unless = vec![];
+                if self.eat_kw("unless") {
+                    self.want_kw("after")?;
+                    for c in self.token_choices()? {
+                        match c {
+                            TokenElem::Word(w) => unless.push(w),
+                            _ => return self.err("`unless after` words only"),
+                        }
+                    }
                 }
-                Stmt::Mark { kind, at, end }
+                let (mut end, mut unplaced) = (false, None);
+                while self.eat_p(",") {
+                    if self.eat_kw("else") {
+                        self.want_kw("escape")?;
+                        unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
+                    } else {
+                        self.want_kw("end")?;
+                        end = true;
+                    }
+                }
+                Stmt::Mark { kind, at, end, unless, unplaced }
             }
             "token" => {
                 let kind = self.kind()?;

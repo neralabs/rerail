@@ -1732,6 +1732,14 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
         }
+        // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
+        for (k, w) in &r.unless {
+            let _ = writeln!(out, "  block {at} recunless {k} {w}");
+        }
+        // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
+        if r.unplaced != 0 {
+            let _ = writeln!(out, "  block {at} recunplaced {}", r.unplaced);
+        }
         // `block N recuntaken O` each error the token loop checks.
         for o in &r.untaken {
             let _ = writeln!(out, "  block {at} recuntaken {o}");

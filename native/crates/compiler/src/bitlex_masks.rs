@@ -211,6 +211,10 @@ pub struct Lowering {
     /// The token marks (`mark K = tokens …`, decision 0129), by their index in `marks`: the token
     /// before, then the run. Tier 1 makes no mask for them.
     pub token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
+    /// A mark's `unless after` words, by its index in `marks` (`Records::unless`).
+    pub unless: HashMap<usize, Vec<Vec<u8>>>,
+    /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
+    pub unplaced: Vec<usize>,
     pub hidden: Vec<String>,
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
@@ -299,6 +303,8 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         marks: Vec::new(),
         mark_exprs: Vec::new(),
         token_marks: HashMap::new(),
+        unless: HashMap::new(),
+        unplaced: Vec::new(),
         hidden: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
@@ -589,7 +595,13 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end } => {
+                Stmt::Mark { kind, at, end, unless, unplaced } => {
+                    if !unless.is_empty() {
+                        self.unless.insert(self.marks.len(), unless.clone());
+                    }
+                    if unplaced.is_some() {
+                        self.unplaced.push(self.marks.len());
+                    }
                     let x = self.expr(at)?;
                     self.marks.push((kind.clone(), x, *end));
                     self.mark_exprs.push(at.clone());
@@ -2076,7 +2088,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)) });
+            marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -2192,6 +2204,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
         let before = low.andnot(m, gs)?;
+        // `unless after`: the gap pass's, from the grammar token before (`Records::unless`).
+        if (low.unless.contains_key(&k) || low.unplaced.contains(&k)) && !(looped && word.is_none() && k < crate::records::MARKS) {
+            return Err(format!("mark {kind}: `unless after` and `else escape` need the token loop and a mark of no word"));
+        }
         if looped {
             // A mark of one word reads its terms at the token; any other, its own mask, lifted.
             if word.is_none() && k < crate::records::MARKS {
@@ -2240,7 +2256,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
             }
         }
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None });
+        let unless = low.unless.get(&k).cloned().unwrap_or_default();
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless });
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
     // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
@@ -2511,7 +2528,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }),
         _ => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new() };
+    // Each `unless after` word's code: its index among the words, plus one (tier 2 names them).
+    let mut unless = Vec::new();
+    for (k, m) in marks.iter().enumerate().take(crate::records::MARKS) {
+        for w in &m.unless {
+            let at = lowered.strings.iter().position(|s| s == w).ok_or("an `unless after` word not among the words")?;
+            unless.push((k as u8, at as u16 + 1));
+        }
+    }
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k) };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }

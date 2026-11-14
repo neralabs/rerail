@@ -157,3 +157,21 @@ file at such a byte. The interpreter does both. Over the corpus and stray bytes 
 edges, the two refuse the same files with the other errors (`the_loops_errors_are_the_masks`,
 1,525 files). The `.rr` grammar's `a byte no token takes` is one. CPU form: 276 operations.
 
+
+## The marks' own checks
+
+Two marks read the token starts only to ask about the token before or after them. Both are
+now the gap pass's, as lean's parser asks them of its tokens:
+
+- `mark newline = lf unless after ","`: a line break is none where the grammar token before
+  it is a `,`, a list going on over lines. It was `lf & ~after_comma`, `after_comma` a fill
+  from a `,` to the next grammar start (`starts_g`). The gap pass knows the token before:
+  `Records::unless`, each mark's words.
+- `mark float_after = frac_last, else escape "a float the file ends with"`: a bit with no
+  grammar token at or after it sends the file to the fallback. It was an escape of its own,
+  `last_byte & fill(frac_last, starts_g)`. The gap pass knows what is past the last token:
+  `Records::unplaced`.
+
+`starts_g` and `after_comma` go. The interpreter, the CPU's late marks and Metal's record
+kernel each do both (`a_line_break_after_a_comma_is_none`, `chained_floats_go_to_the_engine`).
+CPU form: 259 operations, from 276; the fallback reads 130, from 189.

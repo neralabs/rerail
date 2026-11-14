@@ -55,6 +55,12 @@ pub struct Records {
     /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
     /// token at that no token begins with refuses the file. The CPU makes none of them.
     pub untaken: Vec<u16>,
+    /// The gap marks' `unless after` words: mark `k` is none at a token whose grammar token
+    /// before has word code `w` (`(k, w)`), as lean's parser asks whether a `,` ends a line.
+    pub unless: Vec<(u8, u16)>,
+    /// The gap marks (bits of `marks`) with an `else escape`: a bit of one with no grammar token
+    /// at or after it (past the last one's start) refuses the file.
+    pub unplaced: u32,
 }
 
 /// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
@@ -323,8 +329,8 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         }
         codes.push(kind | word << KIND_BITS | marks << MARK_SHIFT);
     }
-    gap_marks(records, starts, outputs, &mut codes);
-    (codes, bad)
+    let unplaced = gap_marks(records, starts, outputs, &mut codes);
+    (codes, bad || unplaced)
 }
 
 /// Whether output `o` holds anywhere in bytes `a..=b` (`a > b`: none), a word at a time.
@@ -346,13 +352,16 @@ pub fn any_in(outputs: &[Vec<u64>], o: u16, a: usize, b: usize) -> bool {
 }
 
 /// The gap marks (`Records::gaps`) into the codes: each grammar token's, from its mark's output
-/// after the grammar token before it up to its first byte. An extra's token has none.
-pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) {
+/// after the grammar token before it up to its first byte. An extra's token has none. Whether
+/// a bit of an `else escape` mark has no grammar token to hold it (`Records::unplaced`).
+pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) -> bool {
     if records.gaps == 0 {
-        return;
+        return false;
     }
     let extra = |c: u32| records.extra.is_some_and(|e| c >> (MARK_SHIFT + u32::from(e)) & 1 == 1);
     let mut from = 0usize;
+    // The word of the grammar token before (0: none, or the file's first).
+    let mut word_before = 0u32;
     for (k, &s) in starts.iter().enumerate().take(codes.len()) {
         let s = s as usize;
         if extra(codes[k]) {
@@ -361,11 +370,18 @@ pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes:
         }
         let mut gap = 0u32;
         for (m, &(o, _)) in records.marks.iter().enumerate().filter(|&(m, _)| records.gaps >> m & 1 == 1) {
-            if any_in(outputs, o, from, s) {
+            let none = records.unless.iter().any(|&(u, w)| usize::from(u) == m && u32::from(w) == word_before);
+            if !none && any_in(outputs, o, from, s) {
                 gap |= 1 << m;
             }
         }
         codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | gap << MARK_SHIFT;
         from = s + 1;
+        word_before = codes[k] >> KIND_BITS & ((1 << (MARK_SHIFT - KIND_BITS)) - 1);
     }
+    // The bits past the last grammar token's start.
+    records.marks.iter().enumerate().filter(|&(m, _)| records.unplaced >> m & 1 == 1).any(|(_, &(o, _))| {
+        let words = outputs.get(usize::from(o)).map_or(0, Vec::len);
+        words > 0 && any_in(outputs, o, from, 64 * words - 1)
+    })
 }
