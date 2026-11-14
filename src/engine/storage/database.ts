@@ -228,9 +228,8 @@ export interface AsIsOpenOptions {
  */
 export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = {}): RerailDatabase {
   const migrations = RERAIL_MIGRATIONS;
-  const wait = options.wait !== false;
-  if (!wait) openableNow(path);
-  const database = openChecked(path, true, migrations, schemaVersionOf(migrations), wait ? BUSY_TIMEOUT_MS : 0);
+  const supported = schemaVersionOf(migrations);
+  const database = options.wait === false ? openReadOnlyAtOnce(path, supported) : openChecked(path, true, migrations, supported);
   const upgrade = upgradeBeforeReading(path, database, migrations);
   if (upgrade === undefined) return database;
   database.$client.close();
@@ -248,6 +247,27 @@ export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = 
  */
 function openableNow(path: string): void {
   if (process.platform === "win32") closeSync(openSync(path, "r"));
+}
+
+/**
+ * `openChecked`'s read-only steps over a connection that waits on no lock, after {@link openableNow}: a file that is
+ * not SQLite and a stamp this build cannot read are refused as `openChecked` refuses them. Its own function, so
+ * `openChecked`, which every other open goes through, stays as it is.
+ */
+function openReadOnlyAtOnce(path: string, supported: number): RerailDatabase {
+  openableNow(path);
+  let database: RerailDatabase;
+  try {
+    database = connectSqlite(path, true, 0);
+  } catch (error) {
+    throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database", supported)) : error;
+  }
+  try {
+    applySchema(database, path, undefined, supported);
+  } catch (error) {
+    closeAndRethrow(database, path, error, supported);
+  }
+  return database;
 }
 
 /**
@@ -290,10 +310,10 @@ function missingSchemaObjects(database: RerailDatabase): string[] {
   return SCHEMA_OBJECTS.filter(name => !present.has(name));
 }
 
-function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number, busyTimeoutMs?: number): RerailDatabase {
+function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {
   let database: RerailDatabase;
   try {
-    database = connectSqlite(path, readonly, busyTimeoutMs);
+    database = connectSqlite(path, readonly);
   } catch (error) {
     throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database", supported)) : error;
   }
