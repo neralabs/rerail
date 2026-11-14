@@ -384,8 +384,9 @@ impl<'a> P<'a> {
         let mut spread = false;
         for j in 1..close {
             if self.kind_at(j) == T::DotDot {
-                // `[a, ..]`: tree-sitter reads `..]` as a range and fails; not read.
-                if self.kind_at(j + 1) == T::RBracket {
+                // `[a, ..]`: tree-sitter reads `..]` as a range and fails; `.. var r` (a slice
+                // with a pattern) is not in its grammar. Only `..,` is read.
+                if self.kind_at(j + 1) != T::Comma {
                     return self.refuse();
                 }
                 spread = true;

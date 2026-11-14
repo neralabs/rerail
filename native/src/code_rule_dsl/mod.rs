@@ -4908,6 +4908,11 @@ pub(crate) fn install_languages() {
             // tree-sitter-java.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
         }
+        if cfg!(feature = "lang-csharp") {
+            // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
+            // tree-sitter-c-sharp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

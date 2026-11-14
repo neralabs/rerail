@@ -91,6 +91,8 @@ rerail-ecma-lean = { path = "../ecma_lean" }
 rerail-rust-lean = { path = "../rust_lean" }
 # Java's lean parser: tree-sitter-java's tape, written as the parse goes (`tape::java_lean`).
 rerail-java-lean = { path = "../java_lean" }
+# C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
+rerail-csharp-lean = { path = "../csharp_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
