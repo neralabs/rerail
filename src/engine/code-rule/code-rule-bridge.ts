@@ -63,11 +63,12 @@ const FIRST_SIGHT_TEXT_BYTES = 8 * 1024 * 1024;
 const OBSERVATION_CONCURRENCY = 16;
 /**
  * How many listings asked again (`#startListingAgain`) hold a slot to ask Git at once, and how long one holds its slot
- * at most before the next listing asked takes it: until Git answers, or `LISTING_AGAIN_WAIT_MS`. Git lists a checkout in
- * milliseconds, so no more than `LISTINGS_AGAIN_AT_ONCE` run at once while each answers in time, and a slow one keeps
- * the rest waiting no more than a second. Four slots list 72 late checkouts within the second or two before an agent's
- * next tool call on a busy Windows machine, where one or two do not. When every listing is slow, four more start each
- * second, so up to about 44 run at once until Git's 10 s limit ends the first.
+ * at most before the next listing asked takes it: until Git answers, or `LISTING_AGAIN_WAIT_MS`. The slots are each
+ * session's own (one bridge per session), so every count here holds in each session. Git lists a checkout in
+ * milliseconds, so no more than `LISTINGS_AGAIN_AT_ONCE` run at once in each session while each answers in time, and a
+ * slow one keeps the rest waiting no more than a second. Four slots list 72 late checkouts within the second or two
+ * before an agent's next tool call on a busy Windows machine, where one or two do not. When every listing is slow, four
+ * more start each second, so up to about 44 run at once in each session until Git's 10 s limit ends the first.
  */
 const LISTINGS_AGAIN_AT_ONCE = 4;
 const LISTING_AGAIN_WAIT_MS = 1_000;
@@ -1746,8 +1747,8 @@ export class CodeRuleBridge {
    * walk just applied, off every walk's path: no walk or boundary waits for it, so what that walk and the next find is
    * checked at the boundary each reaches. Each checkout's listing asks Git once it holds one of `LISTINGS_AGAIN_AT_ONCE`
    * slots, in the order asked, and hands its slot on once Git has answered or has run `LISTING_AGAIN_WAIT_MS`: the load
-   * that made them late meets no more than that many more Gits at once while each answers in time, and a slow one keeps
-   * the rest waiting no longer than that. The next boundary reports each checkout (`newlyLate`).
+   * that made them late meets no more than that many more Gits at once from this session while each answers in time,
+   * and a slow one keeps the rest waiting no longer than that. The next boundary reports each checkout (`newlyLate`).
    * `late` holds the sources the walk saw first in each, whose first-sight text it could not keep; a listing asked again
    * that has not answered yet, running or waiting its turn, takes them on.
    */
