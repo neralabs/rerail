@@ -121,6 +121,11 @@ ported, over the targeted tests and dl1.
 7. **The maintained forms by edits.** `maintain::rewrite_with` and `Driver::form` write their rules with `RuleBuilder`
    over the run's version, an overlay (E3 and E5). `supports` and `maintained_cross` follow, and the `Forms` arena
    goes.
+   **Order, revised after steps 1 and 2 (2026-11-14).** The run's rule lists cannot become ids (step 3) before their
+   readers read handles: each of about 30 helpers reads `r.head` and `r.body`. A tree rule of the run already finds
+   its handle (`Versions::body(&Rule)`, by address). So the readers move first, one helper at a time, each reading
+   the rule's `Body` and the version's fields (steps 5 and 4). Once none reads the tree, the lists become `RuleKey`s
+   (step 3), which is then mechanical, and the address lookup goes.
 8. **`run` takes a version.** Its signature takes the program's `Placed` and the lowering's domains. `run_atoms*`
    pass the version they were given. `choices` keeps only the version.
 9. **The callers pass versions (E1 to E3).**
