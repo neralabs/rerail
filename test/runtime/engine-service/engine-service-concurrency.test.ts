@@ -297,6 +297,39 @@ describe("engine service session concurrency", () => {
     }
   }, 20_000);
 
+  it("cuts off a next request that came in before the answer ahead of it and stalls in its body, on a connection its client keeps open, when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      // A client that sends its next request before it has the answer to the one ahead of it (pipelining): that next
+      // request's headers arrive whole while the first one's event runs, then part of its body and nothing more.
+      const kept = await keptConnection(held.engine.socketPath);
+      const answered = nextAnswerWritten();
+      await kept.send(keptRequest({ kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      const next = nextRequest();
+      await kept.send("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
+      await next;
+      held.release();
+      await answered;
+      const began = performance.now();
+      const closing = held.service.close();
+      try {
+        // The answer ahead of it leaves the connection to that next request, which the close cuts off as any request
+        // that stalls before it has all arrived.
+        expect(await whenCut(kept.closed, began)).toBe("cut off 1 s in");
+      } finally {
+        kept.destroy();
+        held.release();
+        await closing;
+      }
+      expect(kept.answers()).toEqual(["200"]);
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
   it("lets an answer larger than a socket holds finish arriving when it closes", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const held = await holdingService(root);
