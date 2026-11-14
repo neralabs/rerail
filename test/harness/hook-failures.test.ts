@@ -523,6 +523,26 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect(countOf(said)).toBe(full + 1);
   });
 
+  // As above, but the hook moves the log on after status found it under the first hook's name and before status opens it.
+  it("counts the log a hook moves on from another hook's name between status finding it and reading it", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const [first, second] = [takenName(rerailHome, 1_000), takenName(rerailHome, 1_004)];
+    renameSync(join(rerailHome, HOOK_FAILURES_FILE), first);
+    appendFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${JSON.stringify(failure(2))}\n`);
+    const { said } = await statusWith(rerailHome, {
+      statSync: `stat => (path, ...rest) => {
+        const stats = stat(path, ...rest);
+        if (String(path) === ${JSON.stringify(first)} && !globalThis.moved) {
+          globalThis.moved = true;
+          fs.renameSync(${JSON.stringify(first)}, ${JSON.stringify(second)});
+        }
+        return stats;
+      }`,
+    });
+    expect(countOf(said)).toBe(full + 1);
+  });
+
   // Status reads the live log before it lists the others: a log hooks take as it lists them, and move on from name to
   // name, was met already.
   it("counts the live log hooks take and move from name to name at each listing while status reads", async () => {
@@ -695,7 +715,7 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 }
 
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
-type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync", string>>;
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync", string>>;
 
 /**
  * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
