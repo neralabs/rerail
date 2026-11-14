@@ -464,6 +464,8 @@ def remote(host, rustc, args, env, since):
 
     if host.get("shared"):
         return run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
+    if host.get("mirror"):
+        return run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up)
     # The crate's sources: its checkout's files, or (a dependency's) its own directory.
     if checkout and not sync(name, checkout, tracked(checkout), since):
         return give_up("its checkout was not copied")
@@ -521,11 +523,34 @@ def remote(host, rustc, args, env, since):
     return True
 
 
+READ_MARK = b"\0rerail-farm-read "
+
+
 def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up):
-    """Compiles on a host that mounts this machine's checkouts, target directories and registry at
-    the same paths (`"shared": true`, README): nothing is copied either way. rustc reads its inputs
-    and writes its outputs through the mount."""
-    request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
+    """Compiles on a host that mounts this machine's checkouts and target directories at the same
+    paths (`"shared": true`, README): nothing is copied either way. rustc reads its inputs and writes
+    its outputs through the mount. What the host sees may lag what is here by its attribute cache: it
+    waits until it sees each dependency and the dependency directory as they are here, and reports
+    what it read (the dep-info's files), which must be what is here; else this compile runs here."""
+    def here(path):
+        try:
+            st = os.stat(path)
+            return [st.st_mtime_ns, st.st_size]
+        except OSError:
+            return None
+    fresh = {}
+    for e in values(args, "--extern"):
+        if "=" in e:
+            path = os.path.abspath(e.split("=", 1)[1])
+            if here(path):
+                fresh[path] = here(path)
+    # rustc finds the dependencies of dependencies by listing this directory.
+    for d in {out_dir} | {os.path.abspath(v.split("=", 1)[-1]) for v in values(args, "-L") if v.startswith("dependency=")}:
+        if here(d):
+            fresh[d] = [here(d)[0], None]
+    crate_extra = f"{crate}{codegen(args, 'extra-filename') or ''}"
+    request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "fresh": fresh,
+               "depinfo": os.path.join(out_dir, crate_extra + ".d") if "dep-info" in emits(args) else None,
                "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
     try:
         run = subprocess.run(ssh(host["name"], os.path.join(SHARE, "remote-rustc")), input=json.dumps(request).encode(),
@@ -533,11 +558,70 @@ def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
     except subprocess.TimeoutExpired:
         return give_up("the compile timed out")
     lap("compile")
+    if run.returncode == 75:
+        return give_up(f"the host's view stayed stale: {run.stderr[-300:]!r}")
     if run.returncode != 0:
         return give_up(f"the compile failed ({run.returncode}): {run.stderr[-400:]!r}")
+    stderr, _, report = run.stderr.rpartition(READ_MARK)
+    if not _:
+        stderr, report = run.stderr, b"{}"
+    try:
+        read = json.loads(report)
+    except ValueError:
+        read = {"?": None}
+    stale = [p for p, seen in read.items() if seen != here(p)]
+    if stale:
+        return give_up(f"it read files that are not as they are here: {stale[:3]}")
     sys.stdout.buffer.write(run.stdout)
-    sys.stderr.buffer.write(run.stderr)
-    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)})")
+    sys.stderr.buffer.write(stderr)
+    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)}, {len(fresh)} fresh, {len(read)} read)")
+    return True
+
+
+def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up):
+    """Compiles on a host through the live mirror (`"mirror": true`, README; mirror.py): the daemon
+    here sends what changed of what the compile may read, then the compile, over one connection
+    to the host; its outputs come back on it. What it read (the dep-info's files) must be what is
+    here; else this compile runs here."""
+    import mirror
+    checkout = checkout_of(cwd)
+    roots = [[checkout, "checkout"]] if checkout else [[cwd, "tree"]]
+    roots.append([out_dir, "deps"])
+    if env.get("OUT_DIR"):
+        roots.append([os.path.abspath(env["OUT_DIR"]), "tree"])
+    for d in values(args, "-L"):
+        d = os.path.abspath(d.split("=", 1)[-1])
+        if d != out_dir and d.startswith(HOME + "/") and os.path.isdir(d):
+            roots.append([d, "top"])
+    files = [os.path.abspath(e.split("=", 1)[1]) for e in values(args, "--extern") if "=" in e]
+    extra = codegen(args, "extra-filename") or ""
+    kinds = emits(args)
+    outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
+        + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
+    run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
+           "outputs": [os.path.join(out_dir, o) for o in outputs],
+           "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
+           "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
+    reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
+    if reply is None:
+        return give_up("the mirror daemon did not answer")
+    t = reply.get("times", {})
+    lap(f"sync {t.get('sync')} ({t.get('files')} files), compile {t.get('compile')}, mirror")
+    if reply["code"] != 0:
+        return give_up(f"the compile failed ({reply['code']}): {reply.get('why', '')} {reply['stderr'][-400:]!r}")
+
+    def here(path):
+        try:
+            st = os.stat(path)
+            return [st.st_mtime_ns, st.st_size]
+        except OSError:
+            return None
+    stale = [p for p, seen in reply["read"].items() if seen != here(p)]
+    if stale:
+        return give_up(f"it read files that are not as they are here: {stale[:3]}")
+    sys.stdout.buffer.write(reply["stdout"].encode("latin-1"))
+    sys.stderr.buffer.write(reply["stderr"].encode("latin-1"))
+    log(f"{crate}: compiled on {host['name']}, mirror ({t.get('sync')} s sync, {t.get('compile')} s compile, {len(reply['read'])} read)")
     return True
 
 

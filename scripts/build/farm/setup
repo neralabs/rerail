@@ -1,13 +1,13 @@
 #!/bin/sh
 # Installs the build farm for this user (README.md): the scripts and the farm's sccache under
-# ~/.local/share/rerail-farm, the hosts under ~/.config/rerail-farm, and remote-rustc on each host.
+# ~/.local/share/rerail-farm, the hosts under ~/.config/rerail-farm, and remote-rustc and farm-agent on each host.
 # Usage: setup [path-to-patched-sccache]
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 share=$HOME/.local/share/rerail-farm
 config=$HOME/.config/rerail-farm
 mkdir -p "$share/bin" "$config"
-for f in farm.py rustc-wrapper farm-rustc remote-rustc shared-volume; do
+for f in farm.py mirror.py rustc-wrapper farm-rustc remote-rustc farm-agent shared-volume; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$share/bin/sccache.tmp" "$share/bin/sccache"; fi
@@ -16,7 +16,7 @@ toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain
 python3 -c 'import json,sys; [print(h["name"]) for h in json.load(open(sys.argv[1])) if h.get("enabled", True)]' "$config/hosts.json" |
 while read -r host; do
   if ssh -o ConnectTimeout=3 "$host" "mkdir -p ~/.local/share/rerail-farm" </dev/null; then
-    scp -q "$here/remote-rustc" "$here/shared-volume" "$host:.local/share/rerail-farm/"
+    scp -q "$here/remote-rustc" "$here/farm-agent" "$here/shared-volume" "$host:.local/share/rerail-farm/"
     ssh "$host" "~/.cargo/bin/rustup toolchain list | grep -q '^$toolchain' || ~/.cargo/bin/rustup toolchain install $toolchain --profile minimal" </dev/null
     echo "$host: ready"
   else

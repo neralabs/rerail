@@ -36,7 +36,9 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `rustc-wrapper` | cargo's `RUSTC_WRAPPER` |
 | `farm-rustc` | the compiler the farm's sccache runs on a miss |
 | `farm.py` | both of them |
-| `remote-rustc` | runs one compile on a remote Mac |
+| `remote-rustc` | runs one compile on a remote Mac (copy and shared modes) |
+| `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
+| `farm-agent` | the live mirror's end on each host |
 | `setup` | installs all of it, and `remote-rustc` on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
 | `hosts.example.json` | the hosts, copied to `~/.config/rerail-farm/hosts.json` |
@@ -96,6 +98,19 @@ sources stay copied (`setup`); a host's own `~/.cargo` is its own.
 
 A crate that links a host's system library that the host lacks (Xcode 26's `clang_rt` on an older
 macOS) fails there and compiles here.
+
+## Live mirror
+
+With `"mirror": true` a host keeps a copy of what its compiles read on its own disk, at this
+machine's paths, and is sent only what changed, over one connection that stays open. A daemon here
+(`mirror.py`, started by the first compile, gone after 15 idle minutes) holds a `farm-agent` per
+host over ssh. For each compile it scans what the compile may read (the checkout's files, the
+dependency directory, `OUT_DIR`, native library directories; one scan serves every compile that
+started before it), sends each file whose size or mtime differs from what it last sent, then the
+compile, on the same stream: the agent writes the files before it runs the compile. The outputs
+come back on the stream. Every file the compile read (its dep-info) must have the size and mtime
+it has here, or the compile runs here. The agent refuses to write under an NFS mount or automount:
+a host with the shared volume runs `shared-volume client-off` first.
 
 `RERAIL_FARM_LOG=file` logs each decision (hot, hit: nothing logged, here, or which host) with
 where a remote compile's time went, and why a compile did not go remote. `RERAIL_FARM_LOCAL=1`
