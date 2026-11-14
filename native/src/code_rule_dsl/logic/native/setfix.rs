@@ -4887,7 +4887,7 @@ pub(crate) const PROBE_B: u8 = 4;
 pub(crate) const UNREAD_OUT: u8 = 8;
 pub(crate) const UNREAD_A: u8 = 16;
 pub(crate) const UNREAD_B: u8 = 32;
-/// Read only as text (decision 0223): every later reader is a `cat`'s part or a text function's text argument, so
+/// Read only as text (decision 0228): every later reader is a `cat`'s part or a text function's text argument, so
 /// the text is held in the join's scratch for its branch (`Ctx::texts`, a value `SCRATCH + i`), as the device holds
 /// one in its arena, and needs no atom. The findings' JSON is one text of thirty pieces: each piece was an atom.
 pub(crate) const TEXT_OUT: u8 = 64;
@@ -5270,7 +5270,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      work: u64, budget: u64, stop: bool,
                      /// The step whose rows are restricted, the rows it may still read (others are passed over), and
                      /// the first step's candidates in the order read, under a budget.
-                     only_step: usize, only: Option<Rows0>, list0: Option<(RowsOf, Vec<u32>)> }
+                     only_step: usize, only: Option<Rows0>, list0: Option<(RowsOf, Vec<u32>)>,
+                     /// The first step from which the body binds nothing the head reads (`tail`), or `usize::MAX` for
+                     /// a walk that collects: from it on, a row made ends its step's loop (one witness is enough).
+                     cut_from: usize }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -5563,10 +5566,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         }
                         cx.snap.truncate(at);
                         cx.deep = cx.deep.max(deep);
-                        return false;
+                        return i >= cx.cut_from && cx.n > made;
                     }
+                    let made = cx.n;
                     go(cx, i + 1, slots);
-                    false
+                    // The head's row is made, and nothing from here on binds what it reads: every other row of this
+                    // step makes the same one again (`tail`).
+                    i >= cx.cut_from && cx.n > made
                 });
                 if reads_delta { cx.only = only; }
                 if exists && found != *neg { go(cx, i + 1, slots); }
@@ -5761,7 +5767,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
-                       only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None };
+                       only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
+                       cut_from: usize::MAX };
+    if cx.collect.is_none() { cx.cut_from = tail(j); }
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
@@ -5821,6 +5829,27 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
     }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
+}
+
+/// The slots step `st` binds.
+fn bound_by(st: &Step) -> Vec<usize> {
+    match st {
+        Step::Atom { neg: false, binds, .. } => binds.iter().map(|&(_, s)| s).collect(),
+        Step::Cat { out, bind: true, .. } | Step::Scalar { out, bind: true, .. } | Step::Func { out, bind: true, .. }
+        | Step::DocOf { out, bind: true, .. } | Step::StrJoin { out, bind: true, .. } => vec![*out],
+        Step::Split { a, b, .. } => a.iter().chain(b).copied().collect(),
+        Step::Let { a, .. } => vec![*a],
+        _ => Vec::new(),
+    }
+}
+
+/// The first step from which the body binds no slot the head reads: past it, every row a step reads leads to the
+/// same head row, so the walk needs one witness, not all of them (a semi-join on the rest of the body). A factorized
+/// part's key, `fzk($d) :- demand($d), node($d, $v, …), line($v, $l)`, read every node of each document for one row
+/// a document (PostHog: 10.6 M rows for 7,086 keys at one step).
+fn tail(j: &JoinRule) -> usize {
+    let head: Vec<usize> = j.out.iter().flat_map(|t| match *t { Term::Slot(s) => vec![s], Term::Cat(a, b) => vec![a, b], Term::Const(_) => Vec::new() }).collect();
+    j.steps.iter().enumerate().filter(|(_, st)| bound_by(st).iter().any(|s| head.contains(s))).map(|(i, _)| i + 1).max().unwrap_or(0)
 }
 
 /// The most slots a factored step's failed set is keyed by.

@@ -1,6 +1,6 @@
-# 0223: A warm run marks and names only what is news, and keeps no text it only passes on
+# 0228: A warm run marks and names only what is news, and keeps no text it only passes on
 
-Status: built (2026-11-14). Follows decision 0211 (a warm run writes nothing) and 0213 (intern only what is stored).
+Status: built (2026-11-14). Numbered 0223 when written; moved to 0228 (another worktree took 0223). Follows decision 0211 (a warm run writes nothing) and 0213 (intern only what is stored).
 
 ## Intro
 

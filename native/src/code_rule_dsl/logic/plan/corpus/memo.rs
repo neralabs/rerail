@@ -210,7 +210,7 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 /// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
 /// queued under (`write_back::Key`), where only it stores the text.
 pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
-    // Stored already (decision 0223): named now, and only its pin queued (a lock, as `stored_source` takes it). The
+    // Stored already (decision 0228): named now, and only its pin queued (a lock, as `stored_source` takes it). The
     // writer is for what a queued write stores: the lookup there was a write a warm run made.
     if let Some(id) = stored_source(cache, &text).ok().flatten() {
         late.lock().expect("the late sources").push(id);
@@ -610,7 +610,7 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
     let mut used = Vec::new();
     for (i, digest, part) in wanted {
         let Some(admitted) = frames.remove(&part) else { continue };
-        // Marked used only once it ages (decision 0223): a mark that moves no part nearer or further from being
+        // Marked used only once it ages (decision 0228): a mark that moves no part nearer or further from being
         // forgotten is no write, and a warm run makes none.
         let ages = admitted.ages(MEMO_RUNS);
         let Some(frame) = Frame::of(admitted, Some(program.syms.clone())) else { continue };

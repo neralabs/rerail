@@ -200,7 +200,7 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
 }
 
 impl Admitted {
-    /// Whether a run that reads it marks it used (decision 0223): once it is `keep / 2` runs of its space old, so a
+    /// Whether a run that reads it marks it used (decision 0228): once it is `keep / 2` runs of its space old, so a
     /// part read at least that often never reaches `keep` and is never forgotten. A warm run after a counted one finds
     /// every part it reads young, and writes no mark.
     pub fn ages(&self, keep: i64) -> bool {
@@ -771,7 +771,7 @@ impl ContentStore {
     }
 
     /// Whether a run's use of `space` (`used`: the relations, the run's token, its program) changes what collection
-    /// keeps (decision 0223): the program's newest use, as the snapshot holds it, misses one of the relations, or is
+    /// keeps (decision 0228): the program's newest use, as the snapshot holds it, misses one of the relations, or is
     /// `ABANDON / 2` runs of the space old. Collection keeps the relations a program's last `RUNS` uses name, none of
     /// them `ABANDON` runs old: a use that repeats a young one moves neither, and a warm run writes none. Without a
     /// snapshot, or a use known, every use is news.
@@ -974,7 +974,7 @@ impl ContentStore {
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
         // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0211). A use alone is
-        // written only when it is news to collection (decision 0223).
+        // written only when it is news to collection (decision 0228).
         let only_use = frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty();
         if only_use && used.as_ref().is_none_or(|u| !self.use_is_news(&space, u)) {
             return;
@@ -1891,7 +1891,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Decision 0223: a stored part carries its age, the runs of its space since one last marked it used. A reader
+    /// Decision 0228: a stored part carries its age, the runs of its space since one last marked it used. A reader
     /// marks it once it is half the window old.
     #[test]
     fn a_part_read_is_marked_only_once_it_ages() {
@@ -1918,7 +1918,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Decision 0223: a program's use of a space alone is written only when it is news to collection: a relation its
+    /// Decision 0228: a program's use of a space alone is written only when it is news to collection: a relation its
     /// newest use misses, or a newest use `ABANDON / 2` runs old.
     #[test]
     fn a_use_that_repeats_a_young_one_is_no_news() {

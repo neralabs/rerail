@@ -3031,7 +3031,12 @@ impl Model {
         };
         // (work, rows out, mode) of adding join literal `l`, or None if it can't run yet.
         let long = (0..b.len()).filter(|&i| b.is_join(i)).count() > joins::greedy_limit(GREEDY, cx.wide);
-        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
+        // Past the step that binds the head's last variable, the native walk needs one witness (`setfix::tail`): a
+        // step there passes on at most the bindings it gets, and reads no further rows of them than it passes on. A
+        // factorized part's key, `fzk($d) :- demand($d), node($d, $v, …), col($v, $c)`, was planned from `col` (31,191
+        // rows est., 4 M read) where `demand` first reads one node a document.
+        let head_vars = body::atom_vars(b.head());
+        let step_all = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
             // In a long body's greedy order, a step that reads with no bound variable (a scan, a cross product) is
             // priced from at least one binding (Postgres's `clamp_row_est`): an estimate near 0 would make every next
             // step look free (decision 0038). The search keeps T's pricing, which takes a cross product after an
@@ -3064,6 +3069,14 @@ impl Model {
                 }
                 _ => None,
             }
+        };
+        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
+            let (w, out, mode) = step_all(l, rows, bound)?;
+            if out > rows && head_vars.is_subset(bound) {
+                let atom = matches!(b.view(l), Lit::Atom(_));
+                return Some((if atom { w - out + rows } else { w }, rows, mode));
+            }
+            Some((w, out, mode))
         };
         // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
         // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
