@@ -1665,6 +1665,9 @@ pub struct RecordTables {
     /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
     /// (`Records::nexts`).
     pub pairs: Vec<(usize, usize)>,
+    /// Where each byte's flag is, a byte each: some word starts with it. A token whose first
+    /// byte starts none looks up no word (the lean lexer's `words != 0`).
+    pub wordy: usize,
 }
 
 impl RecordTables {
@@ -1702,7 +1705,15 @@ impl RecordTables {
             words.extend(t.sets.iter().flatten());
             pairs.push((rows, sets));
         }
-        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts, pairs })
+        let wordy = 8 * words.len();
+        let mut flags = [0u8; 256];
+        for w in &r.words {
+            if let Some(&b) = w.first() {
+                flags[usize::from(b)] = 1;
+            }
+        }
+        words.extend(flags.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 flags"))));
+        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts, pairs, wordy })
     }
 }
 
@@ -2787,6 +2798,16 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
         _ => (kind, None),
     };
+    // A first byte no word starts: no word to look up, its code the kind and a reader's marks.
+    let looked = f.create_block();
+    let wa = f.ins().iadd(tables, first);
+    let wordy = f.ins().uload8(types::I64, ro, wa, t.wordy as i32);
+    let plain = match tag_marks {
+        Some(m) => f.ins().bor(kind, m),
+        None => kind,
+    };
+    f.ins().brif(wordy, looked, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), h[4].into(), h[5].into(), plain.into(), hits.into()]);
+    f.switch_to_block(looked);
     let key = cut_to(f, raw, len);
     let h1 = f.ins().bxor(key, len);
     let h1 = f.ins().imul(h1, c.mult);

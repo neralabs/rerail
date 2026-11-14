@@ -425,3 +425,7 @@ a mark never placed          refused at the file's end, as the interpreter
 The end pass sets only the others (a reader's, a word's, of tests alone). The CPU's form makes
 none of the loop's marks: 6 operations, from 8. Same tests as above, and the AOT tapes.
 
+A token whose first byte starts no word looks up none: the record tables carry a flag a byte
+(`RecordTables::wordy`), made from the grammar's words, and the loop branches past the hash,
+as the lean lexer's `words != 0`. Punctuation, numbers and strings take no hash.
+
