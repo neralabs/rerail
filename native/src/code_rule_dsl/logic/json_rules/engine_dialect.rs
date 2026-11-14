@@ -477,10 +477,26 @@ fn unset_unbound(px: &Patterns, text: String) -> R<String> {
                     ok.push(binds(b, x)?);
                 }
                 if ok.iter().any(|k| *k) && !ok.iter().all(|k| *k) {
-                    lits[i] = format!(
-                        " ({})",
-                        branches.iter().zip(&ok).map(|(b, k)| if *k { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) }).collect::<Vec<_>>().join(" ; ")
-                    );
+                    // ast-grep's `any` takes its first alternative that matches (`any: [{pattern: $MV}, {regex: "^"}]`
+                    // leaves MV unset only where it cannot bind it): a branch holds only where no earlier one that
+                    // differs in binding x does.
+                    let mut outer: Set = lits.iter().enumerate().filter(|(j, _)| *j != i).flat_map(|(_, l)| super::demand::vars_of(px, l)).collect();
+                    outer.insert("n".to_owned());
+                    outer.remove(x);
+                    let parts: Vec<String> = branches
+                        .iter()
+                        .enumerate()
+                        .map(|(k, b)| {
+                            let mut out = if ok[k] { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) };
+                            for j in (0..k).filter(|j| ok[*j] != ok[k]) {
+                                if let Some(not) = super::translate::not_earlier(px, &branches[j], &outer, j) {
+                                    out.push_str(&format!(", {not}"));
+                                }
+                            }
+                            out
+                        })
+                        .collect();
+                    lits[i] = format!(" ({})", parts.join(" ; "));
                     done = true;
                     changed = true;
                     break;

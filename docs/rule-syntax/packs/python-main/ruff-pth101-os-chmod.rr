@@ -16,7 +16,7 @@
     suppress noqa "PTH101"
 PTH101(F, n) :- kind(n, "call"), field(n, "function", c1), pth101_callee(c1, F),
     ( kind(n, "call"), pth101_arg_no_path_1(n), unset(S)
-    ; kind(n, "call"), pth101_arg_path_1(n, a1_2), S = a1_2
+    ; kind(n, "call"), pth101_arg_path_1(n, a1_2), S = a1_2, count : { kind(n, "call"),pth101_arg_no_path_1(n) } = 0
     ),
 
     count : { field(n, "arguments", c3), kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "keyword_argument"), pth101_tok_has_4(c4), field(c4, "value", c13), !pth101_none_literal(c13) } = 0,

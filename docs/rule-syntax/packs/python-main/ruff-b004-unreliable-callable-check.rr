@@ -15,7 +15,7 @@
     suppress noqa "B004"
 B004(n) :- kind(n, "call"),
     ( n ~ `$FUNC($OBJ, $ATTR)`, unset(DEFAULT), unset(GETATTR)
-    ; n ~ `$GETATTR($OBJ, $ATTR, $DEFAULT)`, unset(FUNC)
+    ; n ~ `$GETATTR($OBJ, $ATTR, $DEFAULT)`, unset(FUNC), count : { n ~ `$FUNC_E0($OBJ_E0, $ATTR_E0)` } = 0
     ),
     b004_builtin_callee(FUNC), b004_getattr_callee(GETATTR), b004_positional(OBJ), b004_call_string(ATTR),
     b004_positional(DEFAULT).

@@ -16,7 +16,7 @@
     suppress nosec "B614"
 B614(F, n) :- node(_, WEIGHTS, _, _, _), n ~ `$F($$$ARGS)`,
     ( kind(n, "call"), b614_arg_no_weights_only_1(n), unset(WEIGHTS)
-    ; kind(n, "call"), b614_arg_weights_only_1(n, a1_2), WEIGHTS = a1_2
+    ; kind(n, "call"), b614_arg_weights_only_1(n, a1_2), WEIGHTS = a1_2, count : { kind(n, "call"),b614_arg_no_weights_only_1(n) } = 0
     ),
     (sym_of(F, "torch.load") ; sym_of(F, "torch.serialization.load")),
     value(WEIGHTS, false).

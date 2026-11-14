@@ -58,20 +58,34 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
    guest's grammar, and `has` over a guest found nothing once two programs ran together.
 7. **The translator follows ast-grep where it enumerated**:
    - `any` takes the first alternative that matches: a branch that binds a capture differently holds only where
-     no earlier one does (`count : { earlier } = 0`, its own variables renamed).
+     no earlier one does (`count : { earlier } = 0`, its own variables renamed). This holds wherever the
+     alternatives land: in a rule's own disjunction, in a util's alternatives inlined at a call
+     (`share::expansion`), and in the engine dialect's unset branches. A branch's `unset(X)` (the catch-all
+     `regex: "^"`) is not a binding of X. A capture the earlier branch binds inside a pattern is renamed there too
+     (`$MV_E0`). Without this, each util row also had a copy with its captures unset, which a later "is unset"
+     test read (no-shadow's "is a type" on `const x = 1; { type x = string; }`).
    - `field` on an `inside`/`has` that is not a neighbor names the step at the ancestor: the child the path comes
      through (`data: () => ({ … })`).
    - `compare … text: "node"` between two captures is node identity, not equal text; a capture against itself stays
      "is set". Main's default `text` is the source.
    - A `binds.site` test that names no kind is the site itself, not any ancestor.
    - A token `has`/`precedes` reads keywords beside `not: {kind: K}` when K fails the regex (a getter's `get`), a
-     field's token (`for…in`'s `in`), and a stop past comments (`)` after a call's last argument).
+     field's token (`for…in`'s `in`, only for a whole-token regex `^…$`: an open one like ANN204's
+     `return_type` `.` reads the field's child alone), and a stop past comments (`)` after a call's last argument).
    - A `binds` list may splice an option's cases (`vars: "all"` adds `global`).
-8. **`resolves.write: "last"` is `write_anchor(a, d)`** (`tsx/names.rr`): the variable's last write from its own
+8. **A relation may have up to 64 columns** (`setfix::MAX_KEY`, was 32): UP028's demand aggregate has 36.
+9. **`resolves.write: "last"` is `write_anchor(a, d)`** (`tsx/names.rr`): the variable's last write from its own
    function scope, else its first definition's name, as main's `anchor`. `site_used` counts reads only: a plain
    write and a discarded self-update (`x++;`) are no use, as in ESLint.
 
 ## Consequences
+
+- typescript-eslint's no-shadow valid fixtures 018, 020, 025, 026 and 028–033 are no longer flagged; 034–042
+  are as before (7 of 9, 038 and 039 missing). Five hashed invalid cases are no longer flagged: they are
+  `ignoreTypeValueShadow: false` cases (bac11967b17f is 020's code), which the default options do not report.
+- 40 Python rules translate differently from HEAD. Against 5354792f5's text, on the 86 Ruff fixture files, each
+  finds the same, except RUF018, which passes 2 GB both ways (open). The 199 rules changed since 5354792f5 find
+  the same; ANN204's lost `__init__` finding (the token-field reading) is back. The Ruff comparison is unchanged.
 
 - no-shadow over 62 React and TypeScript files: 3.4 s CPU, against 39 s, with the same findings. Over 10 files:
   3.5 s against 4.2 s. What is left is mostly the program's compile.
