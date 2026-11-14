@@ -639,6 +639,8 @@ impl Index {
     /// A run of the rows `lo..hi` in this order, printed if the order is: the prints made in row order (the rows
     /// read in turn), then placed as the ids sort.
     fn run_of<D: RowData + ?Sized>(&self, data: &D, k: usize, lo: u32, hi: u32) -> Run {
+        presorted::note(data, k, &self.cols, lo, hi, self.printed);
+        let _t = presorted::Timed::start(self.printed);
         if !self.printed {
             return Run::of(data, k, &self.cols, (lo..hi).collect());
         }
@@ -816,6 +818,56 @@ impl Index {
     /// counted by each holder).
     pub(super) fn bytes(&self) -> usize {
         self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.prints.capacity() + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
+    }
+}
+
+/// Measurement aid (`RERAIL_SPIKE_PRESORTED`): how much of each run's rows come already in the order's key order
+/// (row id order), the case known-sorted ranges would skip the sort for.
+pub mod presorted {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    /// [derived input orders, component orders] × [runs, rows, runs wholly in order, rows in stretches of 64 or more
+    /// in order, stretches of 64 or more].
+    static COUNTS: [[AtomicU64; 6]; 2] = [const { [const { AtomicU64::new(0) }; 6] }; 2];
+    /// A run's build time (ns), into `COUNTS[_][5]`, when measuring.
+    pub(super) struct Timed(Option<(std::time::Instant, bool)>);
+    impl Timed {
+        pub(super) fn start(printed: bool) -> Timed {
+            Timed(std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some().then(|| (std::time::Instant::now(), printed)))
+        }
+    }
+    impl Drop for Timed {
+        fn drop(&mut self) {
+            if let Some((t, printed)) = self.0 {
+                COUNTS[usize::from(!printed)][5].fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
+            }
+        }
+    }
+    pub(super) fn note<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], lo: u32, hi: u32, printed: bool) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) || hi <= lo {
+            return;
+        }
+        let c = &COUNTS[usize::from(!printed)];
+        let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
+        let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
+        for id in lo + 1..hi {
+            if cmp_vals(cols, tagged(cols, k), data.row(id - 1, k), data.row(id, k)) == Ordering::Greater {
+                close(start, id);
+                start = id;
+                whole = false;
+            }
+        }
+        close(start, hi);
+        for (i, v) in [1, u64::from(hi - lo), u64::from(whole), long, stretches].into_iter().enumerate() {
+            c[i].fetch_add(v, Relaxed);
+        }
+    }
+    pub fn report() -> String {
+        let row = |i: usize| COUNTS[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
+        let (d, o) = (row(0), row(1));
+        let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6);
+        format!("derived-input orders: {}; component orders: {}", f(&d), f(&o))
     }
 }
 

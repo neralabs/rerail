@@ -2039,6 +2039,7 @@ fn spike_o125_replay() {
     println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(Vec::len).collect::<Vec<_>>());
     let (opened, made) = crate::code_rule_dsl::logic::native::setfix::orders_counted();
     println!("o125r cold derived-input orders: {opened} opened, {made} made (first probed)");
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r cold presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
     println!("o125r cold phases (G instructions): {}", cold.phase_instructions.iter().map(|(n, i)| format!("{n} {:.2}", *i as f64 / 1e9)).collect::<Vec<_>>().join(", "));
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
     let full_only = std::env::var_os("O125_FULL_ONLY").is_some();
@@ -2079,6 +2080,7 @@ fn spike_o125_replay() {
         }
         println!("{line}");
     }
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r all presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);
 }
