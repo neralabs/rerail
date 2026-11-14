@@ -1844,18 +1844,54 @@ impl FileCols {
     /// its offset. In rows, one base for the three fields (the lean lexer's `Tok`): the
     /// offset says which.
     fn field(&self, f: &mut FunctionBuilder<'_>, field: usize, k: Value) -> (Value, i32) {
+        let cur = self.cursor(f, k);
+        self.at(f, field, cur)
+    }
+
+    /// The token loop's cursor for token `k` (`at`, `step`): in rows the address of its
+    /// record, which the loop bumps a record a token, as the lean lexer pushes a `Tok`, so a
+    /// field is the cursor and an offset, no index scaled; in columns the index.
+    fn cursor(&self, f: &mut FunctionBuilder<'_>, k: Value) -> Value {
         match self.layout {
-            crate::records::RecordLayout::Columns => {
-                let at = f.ins().ishl_imm(k, 2);
-                let col = [self.starts, self.lasts, self.codes][field];
-                (f.ins().iadd(col, at), 0)
-            }
+            crate::records::RecordLayout::Columns => k,
             crate::records::RecordLayout::Rows => {
                 let at = f.ins().imul_imm(k, crate::records::RecordLayout::Rows.stride() as i64);
-                (f.ins().iadd(self.starts, at), 4 * field as i32)
+                f.ins().iadd(self.starts, at)
             }
         }
     }
+
+    /// The token a cursor is at (`cursor`'s inverse), where the loop's count leaves it.
+    fn index(&self, f: &mut FunctionBuilder<'_>, cur: Value) -> Value {
+        match self.layout {
+            crate::records::RecordLayout::Columns => cur,
+            crate::records::RecordLayout::Rows => {
+                let d = f.ins().isub(cur, self.starts);
+                f.ins().udiv_imm(d, crate::records::RecordLayout::Rows.stride() as i64)
+            }
+        }
+    }
+
+    /// The cursor at the next token.
+    fn step(&self, f: &mut FunctionBuilder<'_>, cur: Value) -> Value {
+        match self.layout {
+            crate::records::RecordLayout::Columns => f.ins().iadd_imm(cur, 1),
+            crate::records::RecordLayout::Rows => f.ins().iadd_imm(cur, crate::records::RecordLayout::Rows.stride() as i64),
+        }
+    }
+
+    /// Field `field` at cursor `cur`: the address and its offset.
+    fn at(&self, f: &mut FunctionBuilder<'_>, field: usize, cur: Value) -> (Value, i32) {
+        match self.layout {
+            crate::records::RecordLayout::Columns => {
+                let at = f.ins().ishl_imm(cur, 2);
+                let col = [self.starts, self.lasts, self.codes][field];
+                (f.ins().iadd(col, at), 0)
+            }
+            crate::records::RecordLayout::Rows => (cur, 4 * field as i32),
+        }
+    }
+
 }
 
 /// The signature of a file's record function (`record_fn`).
@@ -3159,13 +3195,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let wait = part.map(|_| f.create_block());
     let limit = match (part, wait) {
         (Some(p), Some(wait)) => {
-            let init: Vec<BlockArg> = p.init.iter().map(|&v| BlockArg::from(v)).chain((0..if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| BlockArg::from(zero))).collect();
+            let k0 = c.cursor(f, p.init[0]);
+            let init: Vec<BlockArg> = std::iter::once(k0).chain(p.init[1..].iter().copied()).map(BlockArg::from).chain((0..if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| BlockArg::from(zero))).collect();
             let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, p.ready, c.blocks);
             f.ins().jump(head, &init);
             Some(Limit { ready: p.ready, last, wait })
         }
         _ => {
-            let init: Vec<BlockArg> = (0..STATE_WORDS + if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| BlockArg::from(zero)).collect();
+            let k0 = c.cursor(f, zero);
+            let init: Vec<BlockArg> = std::iter::once(k0).chain((1..STATE_WORDS + if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| zero)).map(BlockArg::from).collect();
             f.ins().jump(head, &init);
             None
         }
@@ -3178,7 +3216,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if let Some(wait) = wait {
         f.switch_to_block(wait);
         f.set_cold_block(wait);
-        let args: Vec<BlockArg> = h[..STATE_WORDS].iter().map(|&v| BlockArg::from(v)).collect();
+        let k = c.index(f, h[0]);
+        let args: Vec<BlockArg> = std::iter::once(k).chain(h[1..STATE_WORDS].iter().copied()).map(BlockArg::from).collect();
         f.ins().jump(then, &args);
         f.switch_to_block(head);
     }
@@ -3297,16 +3336,17 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             f.ins().brif(more, token, &[s.into()], finish, &[h[2].into(), h[0].into(), pending_in.into(), from_in.into()]);
         }
         None => {
-            let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], n);
-            f.ins().brif(more, token, &[], finish, &[h[2].into(), n.into(), h[3].into(), h[4].into()]);
+            let end = c.cursor(f, n);
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], end);
+            f.ins().brif(more, token, &[], finish, &[h[2].into(), end.into(), h[3].into(), h[4].into()]);
         }
     }
 
     // A token: its first and last bytes, its kind and its word's slot.
     f.switch_to_block(token);
     let (k, after, bad, pending) = (h[0], h[1], h[2], pending_in);
-    let (sa, so) = c.field(f, crate::records::FIELD_START, k);
-    let (la, lo_off) = c.field(f, crate::records::FIELD_LAST, k);
+    let (sa, so) = c.at(f, crate::records::FIELD_START, k);
+    let (la, lo_off) = c.at(f, crate::records::FIELD_LAST, k);
     let s = if walked.is_some() {
         let s = f.block_params(token)[0];
         f.ins().istore32(stores, s, sa, so);
@@ -3581,9 +3621,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             from = f.ins().iadd_imm(s, 1);
         }
     }
-    let (ca, co) = c.field(f, crate::records::FIELD_CODE, cv[0]);
+    let (ca, co) = c.at(f, crate::records::FIELD_CODE, cv[0]);
     f.ins().istore32(stores, code, ca, co);
-    let k1 = f.ins().iadd_imm(cv[0], 1);
+    let k1 = c.step(f, cv[0]);
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.
     if let Some(g) = &regs {
@@ -3604,7 +3644,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The file's end: a refusal sets the totals' flag, the count after the extracts'. A bit
     // left of an `else escape` mark (`Records::unplaced`) has no grammar token: it refuses.
     f.switch_to_block(finish);
-    let (bad, n) = (f.block_params(finish)[0], f.block_params(finish)[1]);
+    let bad = f.block_params(finish)[0];
+    let n = c.index(f, f.block_params(finish)[1]);
     let unplaced_lift: Vec<(u8, u16)> = lift.iter().copied().filter(|&(m, _)| r.unplaced >> m & 1 == 1).collect();
     let bad = if r.unplaced != 0 && (r.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape) || !unplaced_lift.is_empty()) {
         let mut rest = f.block_params(finish)[2];

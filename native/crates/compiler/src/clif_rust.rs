@@ -602,6 +602,8 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Bnot => set(format!("!{}", args[0])),
         Opcode::IaddImm => set(format!("{}.wrapping_add({}i64 as {u})", args[0], imm()?)),
         Opcode::ImulImm => set(format!("{}.wrapping_mul({}i64 as {u})", args[0], imm()?)),
+        // A divisor that is a constant and not zero (Cranelift's verifier refuses a zero one).
+        Opcode::UdivImm => set(format!("{} / ({}i64 as {u})", args[0], imm()?)),
         Opcode::IrsubImm => set(format!("({}i64 as {u}).wrapping_sub({})", imm()?, args[0])),
         Opcode::BandImm => set(format!("{} & ({}i64 as {u})", args[0], imm()?)),
         Opcode::BorImm => set(format!("{} | ({}i64 as {u})", args[0], imm()?)),
