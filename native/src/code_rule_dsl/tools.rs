@@ -532,7 +532,8 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// The command line's runs keep their outputs for phase 0's cutoff (`corpus::reuse`), unless the caller said.
 fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
-    let mut options = options.clone();
+    // No options (`null`, as `run-policies` passes) are options too: the cutoff was off for every policy it ran.
+    let mut options = if options.is_null() { serde_json::json!({}) } else { options.clone() };
     if let Some(map) = options.as_object_mut() {
         map.entry("reuse").or_insert(serde_json::Value::Bool(true));
     }
@@ -618,6 +619,15 @@ mod settings_tests {
         assert!(with.contains("env(\"quote\", \"a\\\"b\").") && with.contains("env(\"python.version\", \"3.13\")."), "{with}");
         // A program that does not declare `env` is unchanged.
         assert_eq!(super::with_settings(".decl envy(x: symbol)\n", &settings), ".decl envy(x: symbol)\n");
+    }
+
+    #[test]
+    fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
+        use serde_json::json;
+        // `run-policies` passes no options (`null`): its runs ask for the cutoff too.
+        assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
     }
 }
 

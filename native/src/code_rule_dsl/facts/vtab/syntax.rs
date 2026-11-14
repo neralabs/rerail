@@ -2552,18 +2552,21 @@ impl Batch {
         // `rx_span`'s regexes, compiled once for the batch.
         // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
         // end after, chunk at a time, so the regex runs only where one can.
+        // Each on the pool's threads, a class of every character first written as any character (`unfolded`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
+            use rayon::prelude::*;
             projection
                 .rx_spans
-                .iter()
+                .par_iter()
                 .map(|(within, re)| {
                     use crate::code_rule_dsl::logic::front::ast::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+                    let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
                     let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(re, *within == SpanIn::Line),
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
                         _ => None,
                     };
-                    regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+                    regex::Regex::new(&compiled).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
                 })
                 .collect::<StoreResult<_>>()?
         } else {

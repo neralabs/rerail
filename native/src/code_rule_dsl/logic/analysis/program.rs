@@ -238,9 +238,16 @@ impl ProgramAnalysis {
             *producers.entry(r.head.rel.as_str()).or_default() += 1;
         }
         let inputs: std::collections::HashSet<&str> = program.inputs.iter().map(String::as_str).collect();
+        // A rule's projection reads only its positive atoms' keys. A rule none of whose relations gained a key since
+        // it was last projected gives the same key again, which its own relation (it is its only producer) already
+        // holds: it is passed over, in the same sweeps and order, so the keys found are those every rule re-projected
+        // in every sweep finds. Each sweep projected every rule (thousands, a sweep per step of a chain of keys).
+        let mut step = 0usize;
+        let mut gained: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut projected: Vec<Option<usize>> = vec![None; program.rules.len()];
         loop {
             let mut changed = false;
-            for rule in &program.rules {
+            for (ri, rule) in program.rules.iter().enumerate() {
                 let name = &rule.head.rel;
                 if inputs.contains(name.as_str())
                     || program.facts.get(name.as_str()).is_some_and(|v| !v.is_empty())
@@ -250,6 +257,12 @@ impl ProgramAnalysis {
                 {
                     continue;
                 }
+                if let Some(at) = projected[ri]
+                    && !rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && gained.get(a.rel.as_str()).is_some_and(|&g| g > at)))
+                {
+                    continue;
+                }
+                projected[ri] = Some(step);
                 let model = projection(&rule.head, &rule.body, &relation_keys);
                 if let Some(key) = model.key() {
                     let current = relation_keys.entry(name.to_string()).or_default();
@@ -257,6 +270,8 @@ impl ProgramAnalysis {
                         key_inferences.push(KeyInference { relation: name.to_string(), columns: key.clone(), reason: "Projection preserves a determining input key, with one rule and no additional producer".into(), proof: Some(model.prove(&key)) });
                         *current = vec![key];
                         changed = true;
+                        step += 1;
+                        gained.insert(name.as_str(), step);
                     }
                 }
             }
@@ -264,9 +279,11 @@ impl ProgramAnalysis {
                 break;
             }
         }
+        // Each rule's analyses alone, on the pool's threads.
+        use rayon::prelude::*;
         let rules: Vec<RuleAnalysis> = program
             .rules
-            .iter()
+            .par_iter()
             .map(|r| RuleAnalysis {
                 head: r.head.rel.to_string(),
                 uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),

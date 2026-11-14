@@ -207,6 +207,8 @@ fn median<T: Ord + Copy>(values: impl Iterator<Item = T>) -> Option<T> {
 }
 
 pub fn estimate(operation: Operation, inputs: &Inputs, strategy: Strategy) -> Estimate {
+    // The stored observations are read beside the run's start (`costs::start`).
+    super::ready();
     let model = MODEL.read();
     let samples = model
         .0

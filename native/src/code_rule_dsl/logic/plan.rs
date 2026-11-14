@@ -380,6 +380,17 @@ impl FromIterator<((String, String), [i64; 4])> for ColStats {
 
 /// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
+/// The climbs `Stats::steps` priced, by kind and set: each a function of the tree's statistics alone, so a model's
+/// plans made on several threads (`keeps::estimate`) share them.
+#[derive(Debug, Default)]
+struct StepsCache(parking_lot::Mutex<HashMap<(Option<String>, String), f64>>);
+
+impl Clone for StepsCache {
+    fn clone(&self) -> Self {
+        StepsCache(parking_lot::Mutex::new(self.0.lock().clone()))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
@@ -413,7 +424,7 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
-    steps_cache: RefCell<HashMap<(Option<String>, String), f64>>,
+    steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
@@ -493,7 +504,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
-            steps_cache: RefCell::new(HashMap::new()),
+            steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
@@ -519,7 +530,7 @@ impl Stats {
             })
             .collect());
         self.docs = Some(docs);
-        self.steps_cache.borrow_mut().clear();
+        self.steps_cache.0.lock().clear();
     }
 
     /// Whether any column of `rel` has statistics (read or measured).
@@ -664,7 +675,7 @@ impl Stats {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
             }),
-            steps_cache: RefCell::new(HashMap::new()),
+            steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
@@ -689,7 +700,7 @@ impl Stats {
     /// Expected parent reads to climb from `kind` to the nearest ancestor in `kset` (an absorbing Markov chain).
     fn steps(&self, kind: Option<&str>, kset: &str) -> f64 {
         let key = (kind.map(str::to_owned), kset.to_owned());
-        if let Some(&s) = self.steps_cache.borrow().get(&key) {
+        if let Some(&s) = self.steps_cache.0.lock().get(&key) {
             return s;
         }
         let members: HashSet<&str> = self.kindsets.get(kset).into_iter().flatten().map(String::as_str).collect();
@@ -719,7 +730,7 @@ impl Stats {
                 }
             }
         }
-        self.steps_cache.borrow_mut().insert(key, out);
+        self.steps_cache.0.lock().insert(key, out);
         out
     }
 }
@@ -820,7 +831,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
-            steps_cache: RefCell::new(HashMap::default()),
+            steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),

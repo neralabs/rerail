@@ -4932,3 +4932,78 @@ is lowering: each program's rules 31 ms, its analyses 24 ms, aggregate demand 15
 the libraries once per run and checking cycles once, combined, were built and measured; neither paid. The next
 lever in loading is the per-rule cost of lowering (about 2 ms a program), not the libraries.
 
+
+## What a cold batch still runs in series (2026-11-13, after decision 0179)
+
+The items below remain from the cold `dl1` batch (44 data-layer policies as one pack, `RERAIL_TAPE_CACHE=off`).
+Decisions 0178 and 0179 put the whole-program passes on the pool and removed the repeated work in them: median wall
+went from 2.32 s to 1.77 s. What is left runs on the main thread, one step after another.
+
+## O-run-state-threads. A run's state lives in thread-locals, so two runs cannot overlap
+
+**Seen (2026-11-13).** These steps run one after another on the main thread:
+
+```
+phase 0 → combine → the bridged typing run → phase 1 → constants → prepare → local → cross
+```
+
+Several of them are nested engine runs: phase 0's runs, the bridged typing run, phase 1 and the constants. Some
+nested runs need only part of what comes before them. For example, phase 1 needs the combined program only for its
+language and scope. Such a run could overlap the next step if it ran on another thread. It cannot yet, because a
+run's state is held per thread and per process:
+- 123 `thread_local!` in the engine, among them run nesting (`RUNS_UNDER_WAY`), the current phase, phase 0's mode,
+  the profile's hold, the session, the kept plans and derived values (`KeepPlans`, `derived::Keep`), the consulted
+  inputs and the Git scope;
+- process-wide state: the split memo (`split_memo::SPLITS`, two kept splits) and the profile.
+
+A nested run on another thread would see none of this. It would take itself for an outer run, and it would share
+the split memo with the run beside it.
+
+**Closure:** a run's state is one value passed to the run (or carried to the thread that runs it, as
+`rr::recorded_on_worker` carries the library reads), and the split memo is the run's own. Then a nested run with no
+dependency on the step before it runs on the pool, beside that step. Measured: `dl1` cold, same findings, with the
+overlapped steps' wall shown by `RERAIL_TIMELINE`. See O-typing-run-overlap for the largest such step.
+
+## O-typing-run-overlap. The bridged typing run waits for the whole combined program
+
+**Seen (2026-11-13).** The bridged typing run (`bridge::facts` → `run_typed`) is about 0.3 s of the cold run's
+wall, and 13% of the main thread's samples. It is a whole nested run, with its own phase 0, combine, phase 1,
+prepare, local and cross. It starts after all 44 programs are combined (about 0.18 s), because `bridge::wanted`
+reads the combined program to find the bridged outputs that a rule reaching an output reads.
+
+The typing program's own text does not depend on the policies. Only the outputs it is asked for do (the
+`typing_bridge_at` rules added to its text).
+
+**Closure:** depends on O-run-state-threads. Two options:
+1. run the typing program's preparation, which does not depend on the policies, beside the policies' combine;
+2. find the wanted outputs from the policies' declarations before combining, then run the typing run beside the
+   combine.
+
+Measured as the typing run's wall overlapping the combine's on `dl1`, with findings unchanged. O-batch-typing-once
+is the same run's repetition across a batch's policies.
+
+## O-demand-negation-rounds. The negation split checks every reader again each round
+
+**Seen (2026-11-13).** `plan::demand::split_negations` takes 3 rounds on `dl1`'s cross part and 5 on its local part
+(31 ms and 10 ms, "negation split" in the timeline). Each round already drops every candidate it finds failing:
+the guard's refusals, the untyped variables, and every component that does not stratify. The rounds are a real
+fixpoint: dropping a candidate changes which reads the others' anchors bind. But each round checks every reader
+again, and clones and stratifies the whole program again, though only the readers of the dropped candidates can
+change.
+
+**Closure:** a round after the first checks again only the readers of the candidates the round before dropped. It
+also stratifies again only the components that held them, as `magic_adorn`'s trials do since decision 0179. A check
+mode compares the result with the whole rounds. Measured as the negation split's span on `dl1`, with the same
+demanded relations.
+
+## O-lower-domains-order. Lowering's domain fixpoint depends on the order of its rules
+
+**Seen (2026-11-13).** `plan::lower::domains` gives each `sym` column a domain (a name, a kind, a field) by a
+worklist over the rules. The first rule that gives a column a domain wins (`slot @ None`). If two rules would give
+the same column different domains, the order of the rules decides between them. So the worklist cannot run in
+rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms of "lower the program" on `dl1`
+(38 ms in all), after decision 0179 cut its repeated column lookups.
+
+**Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
+domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
+`dl1` and the Python pack's programs, with identical domains for every column.

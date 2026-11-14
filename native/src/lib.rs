@@ -137,10 +137,14 @@ fn install_store_functions_on_load() {
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
     // Library callers and the test runner can park their main thread. Their pool needs
-    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
-    // own main thread explicitly, before its first job.
+    // actual workers, including with RERAIL_THREADS=1. The CLI registers its own main thread
+    // explicitly, before its first job (`threads::configure(true)`), headless or not: a
+    // constructor that made the pool first left the CLI's main thread out of it, so every
+    // parallel loop it ran queued its work and slept, and its waits ran no jobs.
     #[cfg(not(feature = "headless"))]
-    threads::configure(false);
+    if !std::env::current_exe().is_ok_and(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("rerail-engine"))) {
+        threads::configure(false);
+    }
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {

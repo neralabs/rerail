@@ -173,12 +173,15 @@ impl Vars<'_> {
 fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule: usize) -> Result<HashMap<String, Domain>> {
     let r = &prog.rules[rule];
     let mut vars = Vars { head: &r.head, map: HashMap::new() };
+    // Each atom's columns, looked up once (by name, in a map of every relation), not once per argument per pass.
+    let atoms: Vec<(&Atom, Option<&Vec<Option<Domain>>>)> =
+        std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)).map(|a| (a, cols.get(a.rel.as_str()))).collect();
     let mut changed = true;
     while changed {
         changed = false;
-        for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
+        for &(a, ds) in &atoms {
             for (c, t) in a.args.iter().enumerate() {
-                if let (Term::Var(v), Some(Some(d))) = (t, cols.get(a.rel.as_str()).and_then(|ds| ds.get(c))) {
+                if let (Term::Var(v), Some(Some(d))) = (t, ds.and_then(|ds| ds.get(c))) {
                     changed |= vars.set(v, *d)?;
                 }
                 changed |= vars.call(t)?;
