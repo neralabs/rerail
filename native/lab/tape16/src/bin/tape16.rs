@@ -691,6 +691,171 @@ fn cmd_writer(path: &str) {
     }
 }
 
+/// E9 (T8): the engine's base relations as copied rows against the tape kept and rebuilt (`base`).
+fn cmd_base(path: &str) {
+    use rerail_tape_lab::base::{self, NAMES, WIDTHS};
+    use rerail_tape_lab::measure::Cost;
+    use rerail_tape_lab::measure::cost;
+    use rerail_tape_lab::tree::NONE;
+    let corpus = load(path);
+    let nodes: usize = corpus.files.iter().map(|p| p.nodes).sum();
+    // Bytes: rows per relation; a block per document (a memo entry's) and per corpus (a kept frame's, sized as one
+    // block: the encoding is a column at a time, so its size streams, each column's last value carried on).
+    let mut count = [0usize; 5];
+    let mut per_doc = [0usize; 5];
+    let mut corpus_bytes = [0usize; 5];
+    let mut last: Vec<Vec<i64>> = WIDTHS.iter().map(|&w| vec![0i64; w]).collect();
+    let (mut v15, mut ev_zstd) = (0usize, 0usize);
+    // Rebuild costs, one thread: rows decoded (+ span_within sorted by outer, the other probe's order); the tape's
+    // events decoded to a tree (`events::decode`) and its reader columns derived.
+    let (mut decode_rows, mut sort_outer, mut decode_tape, mut derive) = (Cost::default(), Cost::default(), Cost::default(), Cost::default());
+    // Probes, each node once a pattern: ns summed.
+    let mut probe = [[0u128; 2]; 5];
+    let mut probes = [0usize; 5];
+    let mut sink = 0i64;
+    let mut got = [[0i64; 2]; 5];
+    let mut base_id = 0i64;
+    let (mut line_search, mut line_table) = (0u128, 0usize);
+    for (d, p) in corpus.files.iter().enumerate() {
+        v15 += p.v15_stored;
+        let (bs, _) = blocks::split(&p.events, Cut::Whole);
+        for b in &bs {
+            let laid = layout::lay(b, Layout::BytePlanes, Extras { parent: false, size: false }, &[], &[]);
+            ev_zstd += zstd::bulk::compress(&laid, 3).map(|c| c.len()).unwrap_or(0);
+        }
+        let (tree, c) = cost(|| p.tree(&corpus));
+        decode_tape += c;
+        let (cols, c) = cost(|| base::columns(&tree, &p.source));
+        derive += c;
+        let rels = base::rows(&tree, d as i64, base_id, &cols.line_starts);
+        let mut blocks: Vec<Vec<u8>> = Vec::new();
+        for r in 0..5 {
+            let w = WIDTHS[r];
+            count[r] += rels[r].len() / w;
+            let mut b = Vec::new();
+            base::encode(w, &rels[r], &mut b);
+            per_doc[r] += b.len();
+            for c in 0..w {
+                for row in rels[r].chunks_exact(w) {
+                    let dlt = row[c].wrapping_sub(last[r][c]);
+                    last[r][c] = row[c];
+                    let z = ((dlt << 1) ^ (dlt >> 63)) as u64;
+                    corpus_bytes[r] += (64 - z.max(1).leading_zeros() as usize).div_ceil(7);
+                }
+            }
+            blocks.push(b);
+        }
+        // The rows' way back: each block decoded to columns.
+        let (decoded, c) = cost(|| {
+            (0..5).map(|r| {
+                let mut cols: Vec<Vec<i64>> = vec![Vec::new(); WIDTHS[r]];
+                base::decode(WIDTHS[r], rels[r].len() / WIDTHS[r], &blocks[r], &mut cols);
+                cols
+            }).collect::<Vec<_>>()
+        });
+        decode_rows += c;
+        let (by_outer, c) = cost(|| {
+            let mut pairs: Vec<(i64, i64)> = decoded[4][1].iter().copied().zip(decoded[4][0].iter().copied()).collect();
+            pairs.sort_unstable();
+            pairs
+        });
+        sort_outer += c;
+        let outer_col: Vec<i64> = by_outer.iter().map(|x| x.0).collect();
+        let n = tree.len();
+        // child by parent.
+        let t = std::time::Instant::now();
+        for i in 0..n { let r = base::range(&decoded[1][0], base_id + i as i64); got[1][0] += r.len() as i64; }
+        probe[1][0] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n { got[1][1] += i64::from(cols.child_offsets[i + 1] - cols.child_offsets[i]); }
+        probe[1][1] += t.elapsed().as_nanos();
+        // field by parent: the rows' range; the columns' children filtered by field.
+        let t = std::time::Instant::now();
+        for i in 0..n { let r = base::range(&decoded[2][0], base_id + i as i64); got[2][0] += r.len() as i64; }
+        probe[2][0] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let (a, b) = (cols.child_offsets[i] as usize, cols.child_offsets[i + 1] as usize);
+            got[2][1] += cols.children[a..b].iter().filter(|&&c| tree.nodes[c as usize].field != 0).count() as i64;
+        }
+        probe[2][1] += t.elapsed().as_nanos();
+        // line by node: the rows are dense by node (an index); the columns' line table searched by start.
+        let t = std::time::Instant::now();
+        for i in 0..n { got[3][0] += decoded[3][1][i]; }
+        probe[3][0] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n { got[3][1] += i64::from(cols.line[i]); }
+        probe[3][1] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n { sink += base::line_of(&cols.line_starts, tree.nodes[i].start) as i64; }
+        line_search += t.elapsed().as_nanos();
+        line_table += base::line_table_bytes(&cols.line_starts);
+        // span_within by inner (its containers): the rows' range; a climb and the same-span descendants.
+        let t = std::time::Instant::now();
+        for i in 0..n { let r = base::range(&decoded[4][0], base_id + i as i64); got[4][0] += r.len() as i64; }
+        probe[4][0] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let mut k = 0i64;
+            let mut a = i as u32;
+            while a != NONE { k += 1; a = tree.parent[a as usize]; }
+            let x = &tree.nodes[i];
+            let mut dd = i + 1;
+            while dd < i + tree.size[i] as usize && tree.nodes[dd].start == x.start && tree.nodes[dd].end == x.end { k += 1; dd += 1; }
+            got[4][1] += k;
+        }
+        probe[4][1] += t.elapsed().as_nanos();
+        // span_within by outer (what it holds): the rows re-sorted by outer; the subtree, an interval, and the
+        // ancestors of the same span.
+        let t = std::time::Instant::now();
+        for i in 0..n { let r = base::range(&outer_col, base_id + i as i64); got[0][0] += r.len() as i64; }
+        probe[0][0] += t.elapsed().as_nanos();
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let mut k = i64::from(tree.size[i]);
+            let x = &tree.nodes[i];
+            let mut a = tree.parent[i];
+            while a != NONE && tree.nodes[a as usize].start == x.start && tree.nodes[a as usize].end == x.end { k += 1; a = tree.parent[a as usize]; }
+            got[0][1] += k;
+        }
+        probe[0][1] += t.elapsed().as_nanos();
+        for r in 0..5 { probes[r] += n; }
+        base_id += n as i64;
+    }
+    std::hint::black_box(sink);
+    let same = got.iter().all(|g| g[0] == g[1]);
+    let nf = nodes as f64;
+    println!("{path}: {} files, {nodes} nodes\n", corpus.files.len());
+    println!("| relation | rows | rows/node | B/row, a block per document | B/node | B/row, one block | B/node |");
+    println!("|---|---|---|---|---|---|---|");
+    for r in 0..5 {
+        println!("| {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |", NAMES[r], count[r], count[r] as f64 / nf,
+            per_doc[r] as f64 / count[r].max(1) as f64, per_doc[r] as f64 / nf, corpus_bytes[r] as f64 / count[r].max(1) as f64, corpus_bytes[r] as f64 / nf);
+    }
+    let (pd, cb): (usize, usize) = (per_doc.iter().sum(), corpus_bytes.iter().sum());
+    println!("| **all five** | {} | | | **{:.2}** | | **{:.2}** |", count.iter().sum::<usize>(), pd as f64 / nf, cb as f64 / nf);
+    println!("| the tape: format 15 as stored | | | | {:.2} | | |", v15 as f64 / nf);
+    println!("| the tape: format 16 events, byte planes, zstd 3 (no dictionary) | | | | {:.2} | | |", ev_zstd as f64 / nf);
+    println!("| the line table, stored (a varint a line) | | | | {:.2} | | |\n", line_table as f64 / nf);
+    let per = |c: Cost| format!("{:.1} ns, {:.0} instr", c.nanos as f64 / nf, c.instructions as f64 / nf);
+    println!("| rebuild, per node, one thread | rows | the tape |");
+    println!("|---|---|---|");
+    println!("| decode | {} (the five relations' blocks) | {} (events to a tree) |", per(decode_rows), per(decode_tape));
+    println!("| index | {} (span_within by outer, sorted) | {} (children CSR, line table, line column) |", per(sort_outer), per(derive));
+    let mut sum_rows = decode_rows; sum_rows += sort_outer;
+    let mut sum_tape = decode_tape; sum_tape += derive;
+    println!("| **total** | **{}** | **{}** |\n", per(sum_rows), per(sum_tape));
+    println!("Probes checked: rows found on each side {}.\n", if same { "equal for every pattern" } else { "DIFFER" });
+    if !same { println!("{got:?}"); }
+    println!("| probe, each node once | rows: ns/probe | the tape's columns: ns/probe |");
+    println!("|---|---|---|");
+    let label = ["span_within by outer", "child by parent", "field by parent", "line by node", "span_within by inner"];
+    for r in [1, 2, 3, 4, 0] {
+        println!("| {} | {:.1} | {:.1} |", label[r], probe[r][0] as f64 / probes[r] as f64, probe[r][1] as f64 / probes[r] as f64);
+    }
+    println!("| line by node, the line table searched instead | | {:.1} |", line_search as f64 / probes[3] as f64);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -716,6 +881,7 @@ fn main() {
         "dicts" => cmd_dicts(path),
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
+        "base" => cmd_base(path),
         #[cfg(target_os = "macos")]
         "columns" => {
             let lang = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).map(String::as_str);

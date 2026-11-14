@@ -547,6 +547,81 @@ not parents (parent reads stay under 0.01 a node in every rule).
 19 rules have no counts. 12 ran past the 2-minute cap, 5 aborted under strict SQL (below), and 2 were
 cut off when the run was stopped.
 
+## E9: base relations as rows, against the tape (T8)
+
+The engine copies base relations at its boundaries: memo entries store each document's base rows, and
+the kept cross part stores its inputs' rows as frames. `tape16 base` builds the rows the engine keeps,
+encodes them as the store does (`cross_rows::encode`, copied into the lab), and sets them against the
+tape. It measures bytes, the cost to rebuild each side's probe form on one CPU thread, and one probe of
+each node per join pattern.
+
+- **The rows** follow the engine's counts on `impl/sqlite`. There, the engine's frames held node
+  435,959, child 435,737 (node less the roots), line 436,182 and span_within 3,960,870 rows. The lab's
+  capture of the same tree has 472,556 nodes, 8% more (not traced), and the same ratios.
+- **`span_within`** pairs each node with itself, its ancestors and its descendants of the same span.
+  A zero-width node's extra containers are left out.
+- **Coverage.** Every file of each capture is counted, not only the test half. The load average was
+  70–86, so compare instructions; the nanoseconds are rough.
+
+Corpora: `impl/sqlite` (222 files, 472556 nodes), data-layer every 10th (2791 files, 9539304 nodes), rerail every 5th (1453 files, 5891521 nodes).
+
+**Bytes** (B/node; a block per document, as a memo entry holds them; one block per corpus is the same
+to 0.01):
+
+| | impl/sqlite | data-layer | rerail |
+|---|---|---|---|
+| node | 5.82 | 5.33 | 5.41 |
+| child | 3.01 | 3.01 | 3.01 |
+| field | 1.32 | 1.24 | 1.16 |
+| line | 2.00 | 2.00 | 2.00 |
+| span_within | 21.04 | 30.31 | 27.62 |
+| **all five rows** | **33.20** | **41.90** | **39.21** |
+| span_within rows a node | 8.99 | 12.79 | 11.63 |
+| the tape, format 15 as stored | 2.47 | 1.56 | 1.56 |
+| the tape, format 16 events + zstd 3, no dictionary | 1.56 | 0.73 | 0.90 |
+| the line table, a varint a line | 0.17 | 0.07 | 0.12 |
+
+**Rebuild** (per node, one thread; ns, instructions):
+
+| | impl/sqlite | data-layer | rerail |
+|---|---|---|---|
+| rows: the five blocks decoded | 51.4 ns, 645 instr | 67.8 ns, 820 instr | 65.6 ns, 774 instr |
+| rows: span_within sorted by outer (its second probe order) | 260.5 ns, 3648 instr | 429.9 ns, 5968 instr | 427.3 ns, 5622 instr |
+| **rows, total** | **311.9 ns, 4293 instr** | **497.7 ns, 6788 instr** | **492.9 ns, 6395 instr** |
+| the tape: events decoded to a tree | 25.7 ns, 373 instr | 23.7 ns, 358 instr | 22.3 ns, 307 instr |
+| the tape: children CSR, line table, line column | 11.1 ns, 127 instr | 8.8 ns, 125 instr | 11.0 ns, 131 instr |
+| **the tape, total** | **36.8 ns, 501 instr** | **32.5 ns, 483 instr** | **33.3 ns, 438 instr** |
+
+**Probes** (ns a probe, each node once; rows by binary search over the sorted column, the tape by its
+columns; on each corpus both sides find the same rows for every pattern):
+
+| | impl/sqlite rows | tape | data-layer rows | tape | rerail rows | tape |
+|---|---|---|---|---|---|---|
+| child by parent | 41.6 | 0.6 | 49.1 | 0.7 | 54.5 | 0.7 |
+| field by parent | 35.1 | 4.9 | 44.1 | 3.3 | 44.6 | 3.6 |
+| line by node | 0.6 | 0.5 | 0.6 | 0.5 | 0.7 | 0.5 |
+| span_within by inner | 55.7 | 11.7 | 71.5 | 10.0 | 77.0 | 12.5 |
+| span_within by outer | 55.9 | 4.2 | 65.9 | 2.5 | 73.1 | 2.8 |
+| line by node, the line table searched instead | | 10.7 | | 5.5 | | 12.3 |
+
+What it says:
+
+- **The copies are 13–57× the tape.** They take 33–42 B/node, against 0.7–1.6 for the tape. 64–72% of
+  that is `span_within`, a relation the tree already holds: 9–13 rows a node, growing with depth.
+- **Rebuilding from the tape is cheaper than reading the copies.** It takes 33–37 ns a node, against
+  50–68 ns just to decode the rows' blocks, and 312–498 ns once `span_within` is sorted for its outer
+  probe. For `impl/sqlite`'s 472k nodes that is about 16 ms on one thread. So spike A's slower edit
+  route came from evaluating again, not from decoding: the boundary needs a tape-backed source, not
+  the rows.
+- **Probes are 4–70× faster on the columns.** CSR children take 0.6 ns, a subtree interval 2.5–4 ns,
+  a parent climb 10–12 ns, against binary searches of 35–77 ns.
+- **`line` needs a line column, not a search.** A merge of the nodes' starts with the line table
+  makes it at decode, for 0.5 ns a probe, against 5–12 ns searching the table. The table costs
+  0.07–0.17 B/node, so the tape can carry it (T6) and `line` needs no source.
+- **Not measured yet:** the engine's own probe structures, which may beat a binary search (0185's
+  key prints). Text and token relations (0174's requests). And a document decoded only for the few
+  nodes a reader asks (span LZ's random reads, 2–11 µs each), against decoding it whole.
+
 ## Open items found along the way
 
 - **The tape cache trips the strict-SQL abort.** The E7 runs had to set `RERAIL_TAPE_CACHE=off` and

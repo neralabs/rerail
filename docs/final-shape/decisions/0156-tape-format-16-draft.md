@@ -497,6 +497,26 @@ Today a node is its preorder ordinal in its file. Four ways to name a node:
 - **Measured by:** E4's history replay, rows changed per commit under A, B and D, and E8, the key
   width's effect on the index and fact stores.
 
+### T8. Base relations: kept as rows, or read from the tape
+
+Inside a run the engine already reads base relations off its decoded tape (`Facts`; `span_within` per
+looked-up node, decision 0050). At its boundaries it copies them: a memo entry stores each document's
+base rows, and the kept cross part stores its inputs' rows as frames, `span_within` made for every
+node. The choice is whether those boundaries keep the tape and rebuild what a reader asks.
+
+- **Rows:** ready in the engine's form, so a hit decodes nothing more. But they are many times the
+  tape. `span_within` alone is 9–13 rows a node, and a probe is a search over a sorted column (or a
+  second sort, for `span_within` by its outer side).
+- **The tape:** one copy, and a reader's probes are array reads (children in CSR, a parent climb, a
+  subtree interval). But every reader must decode it first. The engine has no rebuild at the
+  boundaries yet: in spike A (memo entries without base rows), hits lacking their base rows became
+  misses and were evaluated again, and the edit route got slower (0.54 → 1.43 s on `impl/sqlite`).
+- **What it asks of format 16:** decoding a whole document must be cheap on the CPU, not just on the
+  GPU. Children, subtree ends and lines must come out of that decode with no extra pass that costs
+  much (T5). `line` must be answerable without the source, so the line table belongs in the tape
+  (T6). And `span_within` is never stored, because the tree already holds it.
+- **Measured by:** E9.
+
 ## Experiments
 
 Each reports a curve over its options, not a pass or fail. Each runs on captured corpora
@@ -515,6 +535,9 @@ Each reports a curve over its options, not a pass or fail. Each runs on captured
 - **E6, writer.** The lean parser through the event writer, against 425.6M instructions (doc 35), and
   the tree-sitter path against `pack`.
 - **E7, readers' needs** (T5). How often each reader asks for a parent, a size, a line, a text.
+- **E9, base relations** (T8). The engine's base relations (`node`, `child`, `field`, `line`,
+  `span_within`) as the store encodes them, against the tape. Measures bytes, the cost to rebuild
+  each side's probe form, and ns a probe.
 - **E8, key width** (T7). Index and fact store bytes a row under each identity, against the
   4.5–8 B/row target.
 
@@ -529,6 +552,9 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
 - literal-pool LZ decodes at 4.6–5.4 GB/s on Metal, and costs 2.4× format 15 at rest without
   replays, 1.4× with them;
 - identity D (ordinal + shift map) changes 3% of rows per edit, against 71% for A and 16% for C.
+- E9: the base rows the boundaries copy take 33–42 B/node, against 0.7–1.6 B/node for the tape. Rebuilt
+  from the tape on one CPU thread, they cost 33–37 ns a node, against 312–498 ns to decode and index
+  the rows. Probes on the tape's columns take 0.5–12 ns, against 35–77 ns on the rows.
 
 ## Answered by the user (2026-11-13)
 

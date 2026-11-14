@@ -14,6 +14,7 @@
 //!
 //! `text` (T6) and `edits` (T7, E4) work from the same trees. `report` prints every metric.
 
+pub mod base;
 pub mod blocks;
 pub mod capture;
 pub mod codec;
