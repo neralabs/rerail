@@ -585,12 +585,13 @@ A Rerail older than this one reads an audit's rule provenance only from the audi
 one may still be using the database: it starts only once no audit an older Rerail recorded, with rules on or none, has
 begun for 7 days. The new version marks every audit it records with its shared copy, an empty one included, so an
 audit without that mark is an older Rerail's. The audits recorded before the update count too, so with only the new
-version running the move starts 7 days after the last audit recorded before the update, and every audit reads in full
-that week as before. While it waits, the daemon writes why and until when to `daemon.log` when the wait begins, and
-again when it finds another audit to wait for, as when an older Rerail has recorded one since. It looks again an hour
-later, or when the wait ends if that comes first, so an older Rerail that keeps recording adds at most one line an
-hour, and after the computer sleeps the move starts at most an hour late. A move that finds such an audit before its
-next batch stops there and waits the same way; the audits it has not reached keep their provenance in their row.
+version running the move starts 7 days after the last audit recorded before the update, and an older Rerail reads
+the audits recorded before the update in full that week, as before. While it waits, the daemon writes why and until
+when to `daemon.log` when the wait begins, and again when it finds another audit to wait for, as when an older Rerail
+has recorded one since. It looks again an hour later, or when the wait ends if that comes first, so an older Rerail
+that keeps recording adds at most one line an hour, and after the computer sleeps the move starts at most an hour
+late. A move that finds such an audit before its next batch stops there and waits the same way; the audits it has not
+reached keep their provenance in their row.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
@@ -602,9 +603,10 @@ sharing the file. An older Rerail reads an empty rule provenance for each audit 
 `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
 provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
 it, and the move leaves them there. Since the move waits while an older Rerail records audits (above), one that keeps
-running beside the new version, and records an audit at least once every 7 days, reads every audit in full. One
-started again after the move reads those recorded before the update empty, while `rerail.sqlite.pre-update`, the copy
-`rerail update` took before the update, holds each in full until a later update replaces it.
+running beside the new version, and records an audit at least once every 7 days, reads the audits recorded before the
+update, and its own, in full, as before. One started again after the move reads those recorded before the update
+empty, while `rerail.sqlite.pre-update`, the copy `rerail update` took before the update, holds each in full until a
+later update replaces it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
