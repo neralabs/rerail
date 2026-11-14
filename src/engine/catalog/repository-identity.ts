@@ -9,6 +9,7 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -77,8 +78,8 @@ function checkoutLocation(top: string, commonDirectory: string, gitDirectory: st
  * refuses the checkout (`safe.directory`, a ceiling, a filesystem boundary, `core.bare`); with no `.git` above, it ends
  * outside Git. Each end is the location {@link repositoryIdentityLocation} gives there, for the folder's real path, which
  * is what a hook asks the daemon about. Undefined where the filesystem leaves the end open: a folder with no real path, a
- * `.git` Git would pass over or refuse, a Git folder on the way (inside `.git`, a bare repository), or a `core.worktree`
- * that puts the checkout elsewhere.
+ * `.git` Git would pass over or refuse, a Git folder on the way (inside `.git`, a bare repository), a `core.worktree`
+ * that puts the checkout elsewhere, or a checkout whose top Git would name otherwise than this walk spells it.
  */
 export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] | undefined {
   const requested = realFolder(workspace);
@@ -102,19 +103,62 @@ function realFolder(workspace: string): string | undefined {
   }
 }
 
-/** The checkout Git's search from `start` up finds: undefined where it finds none, "open" where the filesystem leaves it open. */
+/**
+ * The checkout Git's search from `start` up finds: undefined where it finds none, "open" where the filesystem leaves it
+ * open or Git names its top otherwise than this walk spells it.
+ */
 function nearestGitTop(start: string): RepositoryIdentityLocation | "open" | undefined {
   for (let folder = start; ; folder = dirname(folder)) {
     const step = dotGitIn(folder);
-    if (step.kind === "taken") return checkoutLocation(folder, step.commonDirectory, step.gitDirectory);
+    if (step.kind === "taken") return topAsGitNamesIt(folder, step);
     // A folder that is a Git folder itself (inside `.git`, a bare repository) ends Git's search with no checkout.
     if (step.kind === "open" || existsSync(join(folder, "HEAD"))) return "open";
     if (dirname(folder) === folder) return undefined;
   }
 }
 
+/**
+ * The checkout at `folder`, whose `.git` Git takes as `taken`, keyed as the daemon keys it: by the top Git names. "open"
+ * where Git would name it otherwise than this walk spells it.
+ */
+function topAsGitNamesIt(folder: string, taken: TakenDotGit): RepositoryIdentityLocation | "open" {
+  return spelledAsGitNamesIt(folder) ? checkoutLocation(folder, taken.commonDirectory, taken.gitDirectory) : "open";
+}
+
+/**
+ * Whether Git names the top of a checkout at `folder` as this walk spells it. Git names a top as `getcwd` gives it
+ * there. On Windows and macOS that is each name as the disk stores it, as the native realpath the walk starts from
+ * gives it (`realFolder`). On Linux it is the kernel's name for each folder on the way, which the realpath can spell
+ * otherwise: on a case-insensitive folder (ext4 or tmpfs with casefold, a FAT or SMB mount) the realpath keeps the case
+ * a name was typed in, and the kernel gives the one it cached. The process's own link to the open folder
+ * (`/proc/self/fd`) gives the kernel's name.
+ */
+function spelledAsGitNamesIt(folder: string): boolean {
+  return process.platform === "win32" || process.platform === "darwin" || kernelName(folder) === folder;
+}
+
+/** `folder` as the kernel names it, as `getcwd` would give it there; undefined where it gives no name. */
+function kernelName(folder: string): string | undefined {
+  let descriptor: number;
+  try {
+    descriptor = openSync(folder, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    return readlinkSync(`/proc/self/fd/${descriptor}`);
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /** What a `.git` gives Git's search in one folder: nothing, a Git folder Git takes, or one the filesystem cannot settle. */
-type DotGit = { readonly kind: "none" | "open" } | { readonly kind: "taken"; readonly gitDirectory: string; readonly commonDirectory: string };
+type DotGit = { readonly kind: "none" | "open" } | TakenDotGit;
+
+/** A Git folder Git takes for the checkout its `.git` is in, and its common folder. */
+type TakenDotGit = { readonly kind: "taken"; readonly gitDirectory: string; readonly commonDirectory: string };
 
 const NO_DOT_GIT: DotGit = { kind: "none" };
 const OPEN_DOT_GIT: DotGit = { kind: "open" };
