@@ -708,8 +708,8 @@ describe("CodeRuleBridge", () => {
       asyncGitCalls.failing = undefined;
     }
     said.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
-    // Said once: at the first boundary after it, or there in place of the late listing when it failed first.
-    expect(said.filter(message => message.includes("asked again"))).toEqual([
+    // Said once: at the first boundary after it, or there beside the late listing when it failed first.
+    expect(said.flatMap(message => message.split("; ")).filter(message => message.includes("asked again"))).toEqual([
       ".: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
     ]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
@@ -751,6 +751,40 @@ describe("CodeRuleBridge", () => {
     expect(afterThrow.failures).toEqual([expect.objectContaining({
       code: "source-incomplete", message: expect.stringContaining(".: Git could not list the checkout's changed files when asked again: "),
     })]);
+  });
+
+  it("says both that a checkout's listing asked again failed and that a later walk's listing ran late, with no boundary between", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(dirty, draft);
+    // The baseline walk cannot read `deep`, so the walk after it is the first to see draft.py there and lists it.
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // Both walks' listings run past their time limit. The one asked again after the first fails, as a Git that exits with
+    // an error does, while the second walk waits at draft.py.
+    listings.late.push(root, root);
+    asyncGitCalls.failing = "--modified";
+    const secondWalk = holdDiscovery("reads", draft);
+    try {
+      await bridge.openWorkspace("session-1");
+      await secondWalk.entered;
+      await bridge.settleListingsAgain();
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    secondWalk.release();
+    // The first boundary says what the failure cost the files changed before the session, besides the late listings.
+    expect((await bridge.checkpoint("turn")).failures.map(failure => failure.message)).toEqual([
+      ".: Git did not list the checkout's changed files in time; .: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
+    ]);
+    await bridge.settleListingsAgain();
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
   });
 
   it("asks Git again for the checkouts a walk found late one at a time, and keeps what it first saw in each", async () => {

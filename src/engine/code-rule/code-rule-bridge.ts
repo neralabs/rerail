@@ -444,10 +444,10 @@ interface SourceDiscovery {
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
   /**
-   * The checkouts whose Git did not list their changed files in time, by path, each with what the next boundary says of
-   * it once (`newlyLate`).
+   * What the next boundary says once (`newlyLate`) of each checkout whose Git did not list its changed files in time:
+   * each text once, so a later late walk of a checkout does not hide that its listing asked again failed or ran late.
    */
-  readonly late: Map<string, string>;
+  readonly late: Set<string>;
   /**
    * The checkouts a listing asked again off the walks' path (`#listLateAgain`) is waiting for, running or queued, each
    * with the sources it may keep the first-sight text of, by path.
@@ -651,9 +651,9 @@ function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread
   }
   return errors;
 }
-/** What the boundary says of each checkout in `SourceDiscovery.late`, each said once. */
+/** What the boundary says of the checkouts in `SourceDiscovery.late`, each said once. */
 function newlyLate(discovery: SourceDiscovery): string[] {
-  const errors = [...discovery.late.values()];
+  const errors = [...discovery.late];
   discovery.late.clear();
   return errors;
 }
@@ -980,7 +980,7 @@ export class CodeRuleBridge {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
-        late: new Map(), askingAgain: new Map(), listingsAgain: new Set(), nextListingAgain: Promise.resolve(),
+        late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), nextListingAgain: Promise.resolve(),
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1733,7 +1733,7 @@ export class CodeRuleBridge {
    */
   #listLateAgain(discovery: SourceDiscovery, late: SourceScan["lateListings"]): void {
     for (const [checkout, seen] of late) {
-      discovery.late.set(checkout, lateListing(discovery, checkout, LATE_LISTING));
+      discovery.late.add(lateListing(discovery, checkout, LATE_LISTING));
       const asking = discovery.askingAgain.get(checkout);
       if (asking === undefined) this.#startListingAgain(discovery, checkout, new Map(seen));
       else for (const [path, source] of seen) asking.set(path, source);
@@ -1773,7 +1773,7 @@ export class CodeRuleBridge {
     discovery.askingAgain.delete(checkout);
     if (this.#abandoned(discovery)) return;
     if (listing.ended !== "printed") {
-      discovery.late.set(checkout, lateListing(discovery, checkout, listing.ended === "failed" ? FAILED_AGAIN : LATE_AGAIN));
+      discovery.late.add(lateListing(discovery, checkout, listing.ended === "failed" ? FAILED_AGAIN : LATE_AGAIN));
       return;
     }
     const listed = listing.paths.map(path => sessionPath(discovery.root, resolve(checkout, path))).filter(path => seen.has(path));
