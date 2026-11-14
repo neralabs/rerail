@@ -46,7 +46,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../sr
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -319,6 +319,9 @@ describe("Rerail daemon control", () => {
       kill.mockRestore();
       hook.destroy();
       if (processAlive(state.pid)) process.kill(state.pid, "SIGKILL");
+      // The stop answers once the daemon's main thread has exited, while Node counts the daemon as running until its
+      // last thread has: the clean-up removes the home only once nothing this test started runs there.
+      await vi.waitFor(() => expect(runningIn(home)).toEqual([]), { timeout: 5_000, interval: 10 });
     }
   }, 30_000);
 
