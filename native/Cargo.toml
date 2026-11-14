@@ -184,6 +184,7 @@ rerail-metal = { path = "crates/metal" }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
 rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
+rerail-device-metal = { path = "crates/device_metal", default-features = false, features = ["test-hooks"] }
 
 [dev-dependencies]
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
@@ -192,8 +193,22 @@ rerail-simdjson = { path = "crates/simdjson" }
 rerail-python-lean = { path = "crates/python_lean" }
 # The lean ECMAScript parser, measured directly (`tape::tests::ecma_parse_costs`).
 rerail-ecma-lean = { path = "crates/ecma_lean" }
-# Every test build of the engine turns on its crates' test hooks (`test-hooks`).
-rerail-engine = { path = ".", features = ["test-hooks"] }
+# Every test build of the engine turns on its crates' test hooks (`test-hooks`), named here rather than through
+# the engine as its own dev-dependency: that built and linked the engine library (and its cdylib) a second time
+# into every test build (docs/final-shape/notes/t37-edit-loop-time.md).
+rerail-facts = { path = "crates/facts", default-features = false, features = ["test-hooks"] }
+rerail-lang = { path = "crates/lang", default-features = false, features = ["test-hooks"] }
+rerail-lang-ecma = { path = "crates/lang_ecma", default-features = false, features = ["test-hooks"] }
+rerail-lang-json = { path = "crates/lang_json", default-features = false, features = ["test-hooks"] }
+rerail-lang-php = { path = "crates/lang_php", default-features = false, features = ["test-hooks"] }
+rerail-lang-python = { path = "crates/lang_python", default-features = false, features = ["test-hooks"] }
+rerail-lang-rust = { path = "crates/lang_rust", default-features = false, features = ["test-hooks"] }
+rerail-lang-sql = { path = "crates/lang_sql", default-features = false, features = ["test-hooks"] }
+rerail-logic = { path = "crates/logic", default-features = false, features = ["test-hooks"] }
+rerail-rr = { path = "crates/rr", default-features = false, features = ["test-hooks"] }
+rerail-sessions = { path = "crates/sessions", default-features = false, features = ["test-hooks"] }
+rerail-transducer = { path = "crates/transducer", default-features = false, features = ["test-hooks"] }
+rerail-w = { path = "crates/w", default-features = false, features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
 rerail-compiler = { path = "crates/compiler", features = ["test-hooks"] }
 # The parsers' tests, and every executor of a block program (`regex_block`'s tests).
