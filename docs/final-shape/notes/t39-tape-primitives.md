@@ -125,6 +125,36 @@ The M5 was under load 80–160, so these timings come from the M3 Max (load 3, 9
   ancestor of n, at or below the nearest stop node. `precedes` is "same parent, earlier id". Neither
   needs a pass of its own.
 
+### Third pass: line, position lists, and what the summary was really worth (M5, impl/sqlite)
+
+These ran on impl/sqlite on the M5 under load, so compare columns, not absolute numbers. Every
+answer is right.
+
+| | XF | BE | tape part, B a node |
+|---|---|---|---|
+| line, every node (merge with the newlines) | 4.2 | 21.4 | 0.19 (Elias–Fano of the newline offsets) |
+| line, one node (rank) | 27.9 | 56.8 | (the same) |
+| has, one node: codes by rank over the subtree's interval | 18.9 | **23.0** | 0 |
+| has, one node: by preorder steps (the first form) | 16.4 | 46.1 | 0 |
+| has, one node: rank interval, skipping blocks by an exact summary | 17.6 | 22.9 | 0.09–0.23 |
+| has, one node: per-kind position lists (a successor search per kind) | 33.6 | 44.0 | **2.39** |
+| every node of a set: code sweep, a node | 1.5–1.9 | 1.5–1.9 | 0 |
+| every node of a set: per-kind position lists, a node | 0.0–0.2 | 0.0–0.2 | 2.39 |
+| every node of a set: sweep skipping by the exact summary, a node | 0.2 (classes) to 2.0 | the same | 0.09–0.23 |
+
+- **`line` needs a 0.19 B a node index:** the newline offsets as Elias–Fano. A node's line is then
+  a rank. In bulk, starts never decrease in preorder, so it is a merge. No source is needed.
+- **What the second pass credited to the block summary was the loop's shape.** On BE, point `has`
+  wins by scanning codes over the subtree's rank interval: it never searches for a close. That
+  needs no summary. The summary adds nothing for `has`. As a 64-bit filter it skips nothing, because
+  a block holds 40–60 distinct codes, so the filter is mostly ones. So the filter is dropped.
+- **The exact summary pays only for very rare sets:** "every class", at 0.06% of nodes, is 7×
+  faster. Every other set occurs in most blocks. It stays an option for later.
+- **Per-kind position lists cost 2.39 B a node,** as much as the whole BE tape. They make "every node
+  of a kind" 10× faster than a 1.5–1.9 ns sweep, and point `has` slower: a set spans several kinds,
+  so it takes several searches. Under the decision above, they are not part of the tape. The sweep
+  is the thing to make fast (step 3: bit-packed codes compared a block at a time).
+
 ## 4. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
@@ -132,7 +162,8 @@ In order. Each step is measured on all three corpora, every answer checked.
 1. **Primitives, finished.**
    - Done: bulk `has` read backwards; the block filter for point `has`; `within_stop` and `precedes`
      reduced to `nearest` and the parent.
-   - Still to do: `line`.
+   - Done: `line` (0.19 B a node); point `has` by rank interval; the block summary and per-kind
+     lists priced and left out.
    - The block summary, as first planned: A block summary of which codes occur would let point `has` skip a
      block without S, and point `nearest` skip backwards to the last S-node whose subtree covers
      the node. It costs 0.03 B a node as a 64-bit filter a block, or 0.2 B as an exact mask. It is

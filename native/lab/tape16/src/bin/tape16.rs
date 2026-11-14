@@ -1318,9 +1318,11 @@ fn cmd_prim(path: &str) {
         Ok(())
     }).unwrap_or_else(|e| die(&e));
     // Per language: each set's code mask, the wrapper mask, each code's field, the name and body fields.
-    struct Lang { sets: Vec<Vec<bool>>, wrap: Vec<bool>, field_of: Vec<u8>, fields: [u8; 2] }
+    struct Lang { sets: Vec<Vec<bool>>, kinds: Vec<Vec<u16>>, kind_of: Vec<u16>, wrap: Vec<bool>, field_of: Vec<u8>, fields: [u8; 2] }
     let langs: BTreeMap<u8, Lang> = codes.iter().map(|(&tag, c)| (tag, Lang {
         sets: SETS.iter().map(|(_, k)| names.set(tag, c, k)).collect(),
+        kinds: SETS.iter().map(|(_, k)| names.kind_ids(tag, k)).collect(),
+        kind_of: c.table.iter().map(|t| t.0).collect(),
         wrap: names.set(tag, c, WRAP),
         field_of: c.table.iter().map(|t| t.1).collect(),
         fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
@@ -1330,33 +1332,37 @@ fn cmd_prim(path: &str) {
     let mut rows: Vec<String> = Vec::new();
     for (s, _) in SETS {
         for q in ["nearest, every node", "outermost, every node", "has, every node", "nearest, one node", "has, one node",
-            "has, every node, backwards", "has, one node, skipping (exact summary)", "has, one node, skipping (64-bit filter)"] {
+            "has, every node, backwards", "has, one node, skipping (exact summary)", "has, one node, by preorder steps",
+            "has, one node, position lists", "every node of the set, a code sweep (a node)", "every node of the set, position lists (a node)",
+            "every node of the set, a sweep skipping by the exact summary (a node)"] {
             rows.push(format!("{q} ({s})"));
         }
     }
-    rows.extend(["field `name`, one node".into(), "field `body`, one node".into(), "unparen, one node".into()]);
+    rows.extend(["field `name`, one node".into(), "field `body`, one node".into(), "unparen, one node".into(), "line, every node".into(), "line, one node".into()]);
     let nr = rows.len();
     let mut cost = vec![vec![Cost::default(); C.len()]; nr];
     let mut count = vec![vec![0u64; C.len()]; nr];
     let mut wrong = vec![0usize; C.len()];
-    let mut sum_bytes = vec![[0usize; 2]; C.len()];
+    let mut sum_bytes = vec![[0usize; 3]; C.len()];
+    let mut line_bytes = 0usize;
     let (mut nodes, mut files) = (0usize, 0usize);
     // Sets' share of nodes, for the table.
     let mut share = vec![0usize; SETS.len()];
     let mut rng = 0x2545_f491_4f6c_dd1du64;
     #[allow(clippy::too_many_arguments)]
-    fn one<R: Reader>(r: &R, c: usize, tree: &rerail_tape_lab::tree::Tree, code: &[u32], l: &Lang, sample: &[usize], truths: &[(Vec<u32>, Vec<u32>, Vec<bool>)],
-        cost: &mut [Vec<Cost>], count: &mut [Vec<u64>], wrong: &mut [usize], sum_bytes: &mut [[usize; 2]]) {
+    fn one<R: Reader>(r: &R, c: usize, tree: &rerail_tape_lab::tree::Tree, code: &[u32], l: &Lang, lines: &prim::Lines, line_truth: &[u32], sample: &[usize], truths: &[(Vec<u32>, Vec<u32>, Vec<bool>)],
+        cost: &mut [Vec<Cost>], count: &mut [Vec<u64>], wrong: &mut [usize], sum_bytes: &mut [[usize; 3]]) {
         let n = tree.len();
         let ids: Vec<usize> = (0..n).map(|p| r.id_of(p)).collect();
         let pre: HashMap<usize, usize> = ids.iter().enumerate().map(|(p, &id)| (id, p)).collect();
         let to_pre = |x: Option<usize>| x.map_or(NONE, |id| pre[&id] as u32);
         let (mut near, mut flag) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        let sums = [prim::Summary::new(r, l.field_of.len(), true), prim::Summary::new(r, l.field_of.len(), false)];
+        let sums = [prim::Summary::new(r, l.field_of.len(), true)];
         sum_bytes[c][0] += sums[0].bytes();
-        sum_bytes[c][1] += sums[1].bytes();
+        let post = prim::Postings::new(r, &l.kind_of);
+        sum_bytes[c][2] += post.bytes();
         for (k, set) in l.sets.iter().enumerate() {
-            let row = k * 8;
+            let row = k * 12;
             let (tn, to, th) = &truths[k];
             let (_, x) = best3(|| prim::nearest_all(r, set, &mut near));
             wrong[c] += near.iter().zip(tn).filter(|(a, b)| a != b).count();
@@ -1382,15 +1388,37 @@ fn cmd_prim(path: &str) {
             wrong[c] += flag.iter().zip(th).filter(|(a, b)| a != b).count();
             cost[row + 5][c] += x;
             count[row + 5][c] += n as u64;
-            for (j, sum) in sums.iter().enumerate() {
-                let mask = sum.mask(set);
-                let (got, x) = best3(|| sample.iter().map(|&p| prim::has_one_skip(r, sum, &mask, set, ids[p])).collect::<Vec<_>>());
-                wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| *g != th[p]).count();
-                cost[row + 6 + j][c] += x;
-                count[row + 6 + j][c] += sample.len() as u64;
-            }
+            let mask = sums[0].mask(set);
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::has_one_skip(r, &sums[0], &mask, set, ids[p])).collect::<Vec<_>>());
+            wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| *g != th[p]).count();
+            cost[row + 6][c] += x;
+            count[row + 6][c] += sample.len() as u64;
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::has_one_steps(r, set, ids[p])).collect::<Vec<_>>());
+            wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| *g != th[p]).count();
+            cost[row + 7][c] += x;
+            count[row + 7][c] += sample.len() as u64;
+            let lists = post.of_set(&l.kinds[k]);
+            let (got, x) = best3(|| sample.iter().map(|&p| prim::has_one_post(r, &lists, ids[p])).collect::<Vec<_>>());
+            wrong[c] += got.iter().zip(sample).filter(|&(g, &p)| *g != th[p]).count();
+            cost[row + 8][c] += x;
+            count[row + 8][c] += sample.len() as u64;
+            let want: Vec<u32> = (0..n as u32).filter(|&p| set[code[p as usize] as usize]).collect();
+            let mut every = Vec::new();
+            let (_, x) = best3(|| prim::every_sweep(r, set, &mut every));
+            wrong[c] += usize::from(every != want);
+            cost[row + 9][c] += x;
+            count[row + 9][c] += n as u64;
+            let (_, x) = best3(|| prim::every_post(&lists, &mut every));
+            wrong[c] += usize::from(every != want);
+            cost[row + 10][c] += x;
+            count[row + 10][c] += n as u64;
+            let mask = sums[0].mask(set);
+            let (_, x) = best3(|| prim::every_sweep_skip(r, &sums[0], &mask, set, &mut every));
+            wrong[c] += usize::from(every != want);
+            cost[row + 11][c] += x;
+            count[row + 11][c] += n as u64;
         }
-        let base = l.sets.len() * 8;
+        let base = l.sets.len() * 12;
         for (j, &f) in l.fields.iter().enumerate() {
             let (got, x) = best3(|| sample.iter().map(|&p| prim::field_one(r, &l.field_of, f, ids[p])).collect::<Vec<_>>());
             for (g, &p) in got.iter().zip(sample) {
@@ -1403,6 +1431,15 @@ fn cmd_prim(path: &str) {
         let (got, x) = best3(|| sample.iter().map(|&p| prim::unparen_one(r, &l.wrap, ids[p])).collect::<Vec<_>>());
         cost[base + 2][c] += x;
         count[base + 2][c] += sample.len() as u64;
+        let mut lv = Vec::with_capacity(n);
+        let (_, x) = best3(|| prim::lines_all(r, lines, &mut lv));
+        wrong[c] += lv.iter().zip(line_truth).filter(|(a, b)| a != b).count();
+        cost[base + 3][c] += x;
+        count[base + 3][c] += n as u64;
+        let (got_l, x) = best3(|| sample.iter().map(|&p| lines.line(r.start(ids[p])) as u32).collect::<Vec<_>>());
+        wrong[c] += got_l.iter().zip(sample).filter(|&(g, &p)| *g != line_truth[p]).count();
+        cost[base + 4][c] += x;
+        count[base + 4][c] += sample.len() as u64;
         for (g, &p) in got.iter().zip(sample) {
             let mut q = p;
             while l.wrap[code[q] as usize] && tree.size[q] > 1 {
@@ -1427,6 +1464,10 @@ fn cmd_prim(path: &str) {
         for (k, set) in l.sets.iter().enumerate() {
             share[k] += code.iter().filter(|&&c| set[c as usize]).count();
         }
+        let lines = prim::Lines::new(&f.source);
+        line_bytes += lines.bytes();
+        let nl: Vec<u64> = f.source.iter().enumerate().filter(|e| *e.1 == b'\n').map(|e| e.0 as u64).collect();
+        let line_truth: Vec<u32> = tree.nodes.iter().map(|x| nl.partition_point(|&v| v < x.start) as u32).collect();
         // One node in 16, at random.
         let sample: Vec<usize> = (0..n.div_ceil(16)).map(|_| {
             rng ^= rng << 13;
@@ -1435,10 +1476,10 @@ fn cmd_prim(path: &str) {
             (rng % n as u64) as usize
         }).collect();
         // Format 15 has no parent (each step is a search): its point questions on 1 node in 1,024.
-        one(&F15::new(&f.image, lang), 0, &tree, &code, l, &sample[..sample.len().div_ceil(64)], &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
-        one(&XF::<ForLen>::new(&tree, lang), 1, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
-        one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
-        one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&F15::new(&f.image, lang), 0, &tree, &code, l, &lines, &line_truth, &sample[..sample.len().div_ceil(64)], &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&XF::<ForLen>::new(&tree, lang), 1, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         nodes += n;
         files += 1;
         Ok(())
@@ -1448,7 +1489,9 @@ fn cmd_prim(path: &str) {
     println!("| ns a node (every node) or a call (one node, 1 in 16 at random; F15 1 in 1,024); instructions | {} |", C.join(" | "));
     println!("|---|{}", "---|".repeat(C.len()));
     println!("| answers wrong | {} |", wrong.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | "));
-    println!("| summary bytes a node: exact, filter | {} |", sum_bytes.iter().map(|b| format!("{:.3}, {:.3}", b[0] as f64 / nodes as f64, b[1] as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
+    println!("| line index (Elias–Fano of the newlines) bytes a node | {} |", C.iter().map(|_| format!("{:.3}", line_bytes as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
+    println!("| exact block summary (codes in each 256 nodes), bytes a node | {} |", sum_bytes.iter().map(|b| format!("{:.3}", b[0] as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
+    println!("| per-kind position lists, bytes a node | {} |", sum_bytes.iter().map(|b| format!("{:.3}", b[2] as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
     for (i, row) in rows.iter().enumerate() {
         println!("| {row} | {} |", (0..C.len()).map(|c| {
             let d = count[i][c].max(1) as f64;

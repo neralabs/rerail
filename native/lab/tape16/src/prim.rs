@@ -32,6 +32,9 @@ impl Names {
         }
         Names { kinds, fields }
     }
+    pub fn kind_ids(&self, tag: u8, names: &[&str]) -> Vec<u16> {
+        names.iter().flat_map(|n| self.kinds.get(&(tag, n.to_string())).cloned().unwrap_or_default()).collect()
+    }
     pub fn field(&self, tag: u8, name: &str) -> Option<u8> {
         self.fields.get(&(tag, name.to_string())).copied()
     }
@@ -141,9 +144,19 @@ pub fn nearest_one<R: Reader>(r: &R, set: &[bool], id: usize) -> Option<usize> {
     None
 }
 
-/// has for one node: the codes of its subtree read in order until one is in S.
+/// has for one node: the subtree's codes, by rank over its interval, until one is in S (no structure read
+/// inside the loop; on BE no close is searched for).
 #[inline(always)]
 pub fn has_one<R: Reader>(r: &R, set: &[bool], id: usize) -> bool {
+    let lo = r.rank(id) + 1;
+    let end = r.subtree_end(id);
+    let hi = if R::PREORDER_IDS { end } else { r.rank(end) };
+    (lo..hi).any(|k| set[r.code_by_rank(k) as usize])
+}
+
+/// The same by following the reader's preorder steps (`next`), as first measured.
+#[inline(always)]
+pub fn has_one_steps<R: Reader>(r: &R, set: &[bool], id: usize) -> bool {
     let end = r.subtree_end(id);
     let mut q = r.next(id);
     while let Some(c) = q {
@@ -236,9 +249,9 @@ pub fn has_all_back<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
     }
 }
 
-/// Which codes occur in each block of `SUM_BLOCK` nodes (by preorder rank): exact (a bit a code, `words`
-/// words a block) or a 64-bit filter (each code hashed to one bit). Part of the tape when used: its bytes
-/// are counted.
+/// Which codes occur in each block of `SUM_BLOCK` nodes (by preorder rank): a bit a code, `words` words a
+/// block. Part of the tape when used: its bytes are counted. (A 64-bit filter, each code hashed to one bit,
+/// was measured and dropped: a block holds 40–60 distinct codes, so the filter is mostly ones.)
 pub const SUM_BLOCK: usize = 256;
 
 pub struct Summary {
@@ -310,3 +323,239 @@ pub fn has_one_skip<R: Reader>(r: &R, sum: &Summary, mask: &[u64], set: &[bool],
 // Measured and dropped (E12, t39): nearest for one node by scanning backwards with the block summary,
 // to the last S-node covering the node. Common sets (calls, strings) occur in every block, so it read
 // thousands of nodes a call (0.5–10 µs, against 45–150 ns climbing parents).
+
+/// A sorted list, Elias–Fano, with rank (the values below x) and successor (the first value at or above x):
+/// every 64th zero of the high bits is sampled for the select a rank starts from. Used for the source's
+/// newline offsets (`Lines`: a node's line is the newlines before its start) and for the per-kind position
+/// lists. Part of the tape when used: its bytes are counted.
+pub type Lines = EfRank;
+
+pub struct EfRank {
+    m: usize,
+    l: u32,
+    low: crate::inplace::Packed,
+    high: Vec<u64>,
+    nbits: usize,
+    zeros: Vec<u32>,
+}
+
+impl EfRank {
+    /// The newlines of a source (`Lines`). Loading needs no source.
+    pub fn new(source: &[u8]) -> EfRank {
+        let nl: Vec<u64> = source.iter().enumerate().filter(|e| *e.1 == b'\n').map(|e| e.0 as u64).collect();
+        EfRank::of(&nl, source.len() as u64 + 1)
+    }
+    /// Sorted values below `u`.
+    pub fn of(nl: &[u64], u: u64) -> EfRank {
+        let m = nl.len();
+        let l = if u > m.max(1) as u64 { 63 - (u / m.max(1) as u64).leading_zeros() } else { 0 };
+        let low: Vec<u64> = nl.iter().map(|&v| v & ((1u64 << l) - 1)).collect();
+        let nbits = (u >> l) as usize + m + 2;
+        let mut high = vec![0u64; nbits.div_ceil(64) + 2];
+        for (i, &v) in nl.iter().enumerate() {
+            let p = (v >> l) as usize + i;
+            high[p >> 6] |= 1 << (p & 63);
+        }
+        let mut zeros = Vec::new();
+        let mut z = 0usize;
+        for p in 0..nbits {
+            if high[p >> 6] >> (p & 63) & 1 == 0 {
+                if z % 64 == 0 {
+                    zeros.push(p as u32);
+                }
+                z += 1;
+            }
+        }
+        EfRank { m, l, low: crate::inplace::Packed::new_width(&low, l), high, nbits, zeros }
+    }
+    pub fn bytes(&self) -> usize {
+        self.low.bytes() + self.high.len() * 8 + self.zeros.len() * 4 + 8
+    }
+    /// The position of the k-th zero (from 0) of the high bits.
+    #[inline(always)]
+    fn select0(&self, k: usize) -> Option<usize> {
+        let mut p = *self.zeros.get(k / 64)? as usize;
+        let mut r = k % 64;
+        // p is a zero; count r more zeros after it.
+        if r == 0 {
+            return Some(p);
+        }
+        p += 1;
+        loop {
+            if p >= self.nbits {
+                return None;
+            }
+            let w = !self.high[p >> 6] >> (p & 63);
+            let avail = (64 - (p & 63)) as u32;
+            let w = if avail == 64 { w } else { w & ((1u64 << avail) - 1) };
+            let c = w.count_ones() as usize;
+            if r <= c && c > 0 {
+                // The r-th zero (1-based) in w.
+                let mut w = w;
+                for _ in 1..r {
+                    w &= w - 1;
+                }
+                return Some(p + w.trailing_zeros() as usize);
+            }
+            r -= c;
+            p += avail as usize;
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.m
+    }
+    /// Every value in order: one pass over the high bits.
+    #[inline(always)]
+    pub fn for_each(&self, mut f: impl FnMut(u64)) {
+        let mut i = 0usize;
+        for w in 0..self.high.len() {
+            let mut word = self.high[w];
+            while word != 0 && i < self.m {
+                let p = w * 64 + word.trailing_zeros() as usize;
+                f((((p - i) as u64) << self.l) | self.low.get(i));
+                i += 1;
+                word &= word - 1;
+            }
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.m == 0
+    }
+    /// The first value at or above x, if any.
+    #[inline(always)]
+    pub fn succ(&self, x: u64) -> Option<u64> {
+        let (i, mut p) = self.rank_at(x);
+        if i >= self.m {
+            return None;
+        }
+        // Past the bucket's zeros to the i-th one.
+        while self.high[p >> 6] >> (p & 63) & 1 == 0 {
+            p += 1;
+        }
+        Some((((p - i) as u64) << self.l) | self.low.get(i))
+    }
+    #[inline(always)]
+    pub fn line(&self, x: u64) -> usize {
+        self.rank_at(x).0
+    }
+    /// The values below x, and the high-bit position the scan stopped at.
+    #[inline(always)]
+    fn rank_at(&self, x: u64) -> (usize, usize) {
+        let h = (x >> self.l) as usize;
+        let mut p = if h == 0 {
+            0
+        } else {
+            match self.select0(h - 1) {
+                Some(z) => z + 1,
+                None => return (self.m, self.nbits),
+            }
+        };
+        let mut cnt = p - h;
+        let lo = x & ((1u64 << self.l) - 1);
+        while p < self.nbits && self.high[p >> 6] >> (p & 63) & 1 == 1 && self.low.get(cnt) < lo {
+            cnt += 1;
+            p += 1;
+        }
+        (cnt, p)
+    }
+}
+
+/// Every node's line, by preorder: starts never decrease in preorder, so one merge with the newlines.
+pub fn lines_all<R: Reader>(r: &R, lines: &Lines, out: &mut Vec<u32>) {
+    out.clear();
+    // The newlines in order, from the high bits' ones and the low bits.
+    let (mut p, mut i) = (0usize, 0usize);
+    let next = |p: &mut usize, i: usize| -> u64 {
+        while lines.high[*p >> 6] >> (*p & 63) & 1 == 0 {
+            *p += 1;
+        }
+        (((*p - i) as u64) << lines.l) | lines.low.get(i)
+    };
+    let mut nl = if lines.m > 0 { next(&mut p, 0) } else { u64::MAX };
+    let mut id = r.id_of(0);
+    loop {
+        let s = r.start(id);
+        while nl < s {
+            i += 1;
+            p += 1;
+            nl = if i < lines.m { next(&mut p, i) } else { u64::MAX };
+        }
+        out.push(i as u32);
+        match r.next(id) {
+            Some(n) => id = n,
+            None => break,
+        }
+    }
+}
+
+/// Per-kind position lists: for each kind of the language, the preorder ranks of its nodes (Elias–Fano).
+/// The option the "no stored answers" decision prices (t39 §4.2): every node of a kind without a sweep, and
+/// `has` by one successor search a kind of the set.
+pub struct Postings {
+    by_kind: HashMap<u16, EfRank>,
+}
+
+impl Postings {
+    pub fn new<R: Reader>(r: &R, kind_of_code: &[u16]) -> Postings {
+        let mut lists: HashMap<u16, Vec<u64>> = HashMap::new();
+        for k in 0..r.len() {
+            lists.entry(kind_of_code[r.code_by_rank(k) as usize]).or_default().push(k as u64);
+        }
+        let n = r.len() as u64;
+        Postings { by_kind: lists.into_iter().map(|(k, v)| (k, EfRank::of(&v, n))).collect() }
+    }
+    pub fn bytes(&self) -> usize {
+        self.by_kind.values().map(|e| e.bytes() + 4).sum()
+    }
+    /// The lists of a set's kinds.
+    pub fn of_set(&self, kinds: &[u16]) -> Vec<&EfRank> {
+        kinds.iter().filter_map(|k| self.by_kind.get(k)).collect()
+    }
+}
+
+/// has for one node by the position lists: some kind of the set has a node in the subtree's rank interval.
+#[inline(always)]
+pub fn has_one_post<R: Reader>(r: &R, lists: &[&EfRank], id: usize) -> bool {
+    let lo = r.rank(id) + 1;
+    let end = r.subtree_end(id);
+    let hi = if R::PREORDER_IDS { end } else { r.rank(end) };
+    lists.iter().any(|e| e.succ(lo as u64).is_some_and(|v| (v as usize) < hi))
+}
+
+/// Every node of the set, by preorder rank: a sweep of the codes.
+pub fn every_sweep<R: Reader>(r: &R, set: &[bool], out: &mut Vec<u32>) {
+    out.clear();
+    for k in 0..r.len() {
+        if set[r.code_by_rank(k) as usize] {
+            out.push(k as u32);
+        }
+    }
+}
+
+/// The same from the position lists: each list read in order, merged.
+pub fn every_post(lists: &[&EfRank], out: &mut Vec<u32>) {
+    out.clear();
+    for e in lists {
+        e.for_each(|v| out.push(v as u32));
+    }
+    if lists.len() > 1 {
+        out.sort_unstable();
+    }
+}
+
+/// Every node of the set by a code sweep that skips the blocks the summary rules out.
+pub fn every_sweep_skip<R: Reader>(r: &R, sum: &Summary, mask: &[u64], set: &[bool], out: &mut Vec<u32>) {
+    out.clear();
+    let n = r.len();
+    let mut k = 0;
+    while k < n {
+        if k % SUM_BLOCK == 0 && !sum.may(k / SUM_BLOCK, mask) {
+            k += SUM_BLOCK;
+            continue;
+        }
+        if set[r.code_by_rank(k) as usize] {
+            out.push(k as u32);
+        }
+        k += 1;
+    }
+}
