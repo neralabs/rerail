@@ -1,0 +1,21 @@
+.policy "ruff-e722-bare-except" revision 2
+.description "Name the exception types in except clauses instead of a bare except, unless the handler re-raises; a bare except also catches KeyboardInterrupt and SystemExit."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff E722 (pycodestyle): a bare `except:` catches everything, KeyboardInterrupt and SystemExit included.
+// A handler whose body re-raises with a bare `raise` statement of its own is allowed.
+//   try: f()
+//   except: pass            ← E722
+//   except: log(); raise    not reported: the handler re-raises
+#include "python/pyflakes.rr"
+//   bare_except(x, kw)  x is an `except:` clause with no type; kw its `except` keyword
+
+.violation E722(at: loc) code "E722"
+    "Name the exception types this bare except should catch; it also catches KeyboardInterrupt and SystemExit."
+    suppress ruff "E722"
+// Only a `raise` directly in the handler's body counts, as in Ruff; one nested in an `if` does not.
+E722(kw) :- bare_except(x, kw), !reraises(x).
+.decl reraises(x: node)
+reraises(x) :- handler_block(x, b), child(b, r, _), kind(r, "raise_statement"), !child(r, _, 0).

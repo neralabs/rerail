@@ -1,0 +1,17 @@
+.policy "ruff-arg005-unused-lambda-argument" revision 2
+.description "Remove lambda parameters the body never reads, or prefix them with an underscore when the caller passes them anyway."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ARG005 (flake8-unused-arguments): a lambda parameter that the body never reads. Names matching
+// dummy-variable-rgx are left out, and lambdas that call `locals()`.
+//   lambda x: print(1)                  ← ARG005 at x
+//   lambda _: print(1)                  not reported: a dummy name
+#include "python/misc2-args.rr"
+//   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
+
+.violation ARG005(at: node, name: symbol) code "ARG005"
+    "Remove `{name}` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword."
+    suppress ruff "ARG005"
+ARG005(nm, x) :- arg_unused(_, nm, x, "ARG005").

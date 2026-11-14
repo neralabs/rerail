@@ -1,0 +1,26 @@
+.policy "ruff-pyi066-bad-version-info-order" revision 2
+.description "Put the branch for newer Python versions first in stub files that branch on the interpreter version, testing with a greater-or-equal comparison."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI066 (flake8-pyi), stubs only (every file in preview): an if or elif test `sys.version_info < X` in an
+// if chain that has an `else`. Newer versions should come first, with `>=`, so the else holds the old code. As
+// for PYI006, an operand of the test's top-level `and`/`or` counts.
+//   if sys.version_info < (3, 10):    ← PYI066
+//       def f(): ...
+//   else:
+//       def f(x=...): ...
+#include "python/typing.rr"
+
+.violation PYI066(at: node, msg: symbol) code "PYI066" "{msg}"
+    suppress ruff "PYI066"
+PYI066(v, cat("Rewrite `", l, " < ", r, "` as `", l, " >= ", r, "` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first.")) :-
+    old_first(t, v, l, r), t = v.
+PYI066(v, cat("Restructure so a `", l, " >= ", r, "` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour.")) :-
+    old_first(t, v, l, r), t != v.
+// old_first(t, v, l, r): v, the test t or one of its operands, is `l < r` on sys.version_info, with l and r
+// their source text; the chain has an else.
+.decl old_first(t: node, v: node, l: symbol, r: symbol)
+old_first(t, v, l, r) :- branch_test(_, t, "else"), test_part(t, v), version_cmp(v, "whole", "<", _), cmp(v, _, ln, rn),
+    text(ln, l), text(rn, r), in_stub(v).

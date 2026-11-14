@@ -1,0 +1,16 @@
+.policy "ruff-pyi009-pass-statement-stub-body" revision 2
+.description "Use an ellipsis instead of pass as the whole body of a function or class in stub files; stubs only declare types and are never executed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI009 (flake8-pyi), stubs only: a def or class whose whole body is `pass`. A stub writes `...`.
+//   def f(): pass          ← PYI009
+//   class C:
+//       x: int
+//       pass               not this rule: PYI012
+#include "python/typing.rr"
+
+.violation PYI009(at: node) code "PYI009" "Replace this `pass` with `...`; stub bodies are never executed, so the empty body is written as an ellipsis."
+    suppress ruff "PYI009"
+PYI009(s) :- (def_body(_, b) ; class_body(_, b)), body_one(b, s), pass_stmt(s), in_stub(s).

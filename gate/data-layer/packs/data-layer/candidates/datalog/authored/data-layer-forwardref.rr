@@ -1,0 +1,90 @@
+// data-layer-forwardref: fwdref001 (isinstance(annotation, type, ...)), fwdref002 (issubclass(annotation, ...)),
+// fwdref003 (callable(annotation, ...)). The three clauses differ only in the CALL pattern.
+//
+// Each: a call CALL matching the pattern, whose scope S (`inside` stopBy `scope`: S is CALL's nearest ancestor that
+// is a module or a function_definition whose text starts with `def`, i.e. not `async def`; the stop node is tested
+// and ends the walk, and the stop rule is `scope` itself) `has` (stopBy `scope`: not through a nested such def) an
+// assignment ASSIGN `annotation = <x>.annotation` with
+//   - layout after CALL (min 0 breaks): the capture CALL lies wholly after ASSIGN, CALL.start >= ASSIGN.end. This is
+//     exact: matcher/layout.rs `Gap::holds` keeps a `Neighbour::Capture` only on its side of the node, a capture
+//     takes no `edge` (compile/layout.rs), so a capture elsewhere fails the gap, and `min: 0` breaks always holds;
+//   - not inside (stopBy scope) a scope that has (stopBy scope) a guard call `isinstance(annotation, $TYPE[, ...])`
+//     whose argument list has a direct child equal to $TYPE that is a forwardref-type, laid out after ASSIGN
+//     (guard.start >= ASSIGN.end) and before CALL (CALL.start >= guard.end).
+// ASSIGN's nearest scope is S (it is in S, through no nested scope), so the guard is in S through no nested scope.
+// $TYPE is the guard's second argument; `pattern: $TYPE` on another argument compares structure, and
+// forwardref-type is structural, so "some argument equal to $TYPE is a forwardref-type" is "the second argument is
+// one". Patterns: `f(annotation, type)` / `f(annotation, type, $$$REST)` is two or more arguments, the first the
+// identifier `annotation`, the second the identifier `type`; `f(annotation)` / `f(annotation, $$$REST)` is one or
+// more, the first `annotation`. `async def` is `op(f, "async")`.
+// forwardref-type: the identifier ForwardRef, an attribute whose attribute is ForwardRef, or a tuple with a
+// forwardref-type anywhere below it (has stopBy end), which is a tuple with a ForwardRef identifier below it.
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl fwdref_scope_kinds(kind: symbol)
+fwdref_scope_kinds("function_definition"). fwdref_scope_kinds("module").
+.decl fwdref_tuple(kind: symbol)
+fwdref_tuple("tuple").
+
+.decl fwdref_scope(s: node)
+fwdref_scope(s) :- node(_, s, "function_definition", _, _), !op(s, "async").
+fwdref_scope(s) :- node(_, s, "module", _, _).
+
+// call c of `fname`, first argument the identifier `annotation`, k arguments or more.
+.decl fwdref_call(c: node, fname: symbol, args: node)
+fwdref_call(c, f, a) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "identifier", _, _), text(fn, f),
+    field(c, "arguments", a), node(_, a, "argument_list", _, _),
+    child(a, x, 0), node(_, x, "identifier", _, _), text(x, "annotation").
+
+.decl fwdref_target(c: node, clause: symbol)
+fwdref_target(c, "fwdref001") :- fwdref_call(c, "isinstance", a), child(a, t, 1), node(_, t, "identifier", _, _), text(t, "type").
+fwdref_target(c, "fwdref002") :- fwdref_call(c, "issubclass", _).
+fwdref_target(c, "fwdref003") :- fwdref_call(c, "callable", _).
+
+.decl fwdref_type(t: node)
+fwdref_type(t) :- node(_, t, "identifier", _, _), text(t, "ForwardRef").
+fwdref_type(t) :- node(_, t, "attribute", _, _), field(t, "attribute", a), node(_, a, "identifier", _, _), text(a, "ForwardRef").
+fwdref_type(t) :- node(_, t, "tuple", _, _), inside(i, t, fwdref_tuple), node(_, i, "identifier", _, _), text(i, "ForwardRef").
+
+// the guard: isinstance(annotation, T, ...) with T a forwardref-type.
+.decl fwdref_guard(g: node)
+fwdref_guard(g) :- fwdref_call(g, "isinstance", a), child(a, t, 1), fwdref_type(t).
+
+// `annotation = <x>.annotation`.
+.decl fwdref_assign(a: node)
+fwdref_assign(a) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, "annotation"),
+    field(a, "right", r), node(_, r, "attribute", _, _), field(r, "attribute", x), node(_, x, "identifier", _, _),
+    text(x, "annotation").
+
+// fwdref_own(n, s): s is n's nearest scope ancestor, for the nodes the clauses ask about.
+.decl fwdref_asked(n: node)
+fwdref_asked(n) :- fwdref_target(n, _).
+fwdref_asked(n) :- fwdref_guard(n).
+fwdref_asked(n) :- fwdref_assign(n).
+.decl fwdref_anc(n: node, s: node)
+fwdref_anc(n, s) :- fwdref_asked(n), inside(n, s, fwdref_scope_kinds), fwdref_scope(s).
+.decl fwdref_nearer(n: node, s: node)
+fwdref_nearer(n, s) :- fwdref_anc(n, s), fwdref_anc(n, t), inside(t, s, fwdref_scope_kinds).
+.decl fwdref_own(n: node, s: node)
+fwdref_own(n, s) :- fwdref_anc(n, s), !fwdref_nearer(n, s).
+
+// ASSIGN a before CALL c in their scope, and a guard between them.
+.decl fwdref_pair(a: node, c: node)
+fwdref_pair(a, c) :- fwdref_target(c, _), fwdref_own(c, s), fwdref_assign(a), fwdref_own(a, s),
+    node(_, a, _, _, ae), node(_, c, _, cs, _), cs >= ae.
+.decl fwdref_guarded(a: node, c: node)
+fwdref_guarded(a, c) :- fwdref_pair(a, c), fwdref_own(a, s), fwdref_guard(g), fwdref_own(g, s),
+    node(_, a, _, _, ae), node(_, g, _, gs, ge), node(_, c, _, cs, _), gs >= ae, cs >= ge.
+.decl fwdref_hit(c: node)
+fwdref_hit(c) :- fwdref_pair(a, c), !fwdref_guarded(a, c).
+
+violation("data-layer-forwardref", "fwdref001", "FWDREF001", p, l) :- fwdref_target(c, "fwdref001"), fwdref_hit(c),
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
+violation("data-layer-forwardref", "fwdref002", "FWDREF002", p, l) :- fwdref_target(c, "fwdref002"), fwdref_hit(c),
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
+violation("data-layer-forwardref", "fwdref003", "FWDREF003", p, l) :- fwdref_target(c, "fwdref003"), fwdref_hit(c),
+    node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).

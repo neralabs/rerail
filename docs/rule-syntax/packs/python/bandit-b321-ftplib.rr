@@ -1,0 +1,16 @@
+.policy "bandit-b321-ftplib" revision 2
+.description "Avoid opening ftplib.FTP connections; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B321 (its B001 blacklist): a call to ftplib.FTP. (Importing ftplib is B402.)
+//   import ftplib; ftplib.FTP(host)            B321 (and B402 on the import)
+//   ftplib.FTP_TLS(host)                       not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B321(at: node) code "B321"
+    "Replace this FTP connection with SFTP, SCP, or another encrypted protocol; FTP sends credentials in clear text."
+    suppress nosec "B321"
+B321(n) :- blacklisted(n, "B321").

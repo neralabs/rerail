@@ -1,0 +1,29 @@
+.policy "eslint-plugin-vue-no-unused-vars" revision 2
+.description "Remove v-for aliases and slot parameters that the Vue template never uses."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/code.rr"
+//   tvar(e, x, id, k), tbind(r, id), tdestructured(id), vel_name(e, x)
+
+// eslint-plugin-vue's no-unused-vars: a variable a template element declares (a v-for alias, a v-slot, slot-scope or
+// scope parameter) that no template code reads. Positional variables are checked from the last: an unused one
+// before a used one of the same kind is needed for its position and passes, unless it is destructured. A name used as
+// a descendant's tag (<Item> from `v-slot="{ Item }"`) is used. Option ignorePattern: a regex of names to skip.
+//   <li v-for="(item, i) in items">{{ i }}</li>                item passes: i after it is used
+//   <li v-for="(item, i) in items">{{ item }}</li>             i is reported
+//   <comp v-slot="{ a, b }">{{ b }}</comp>                    a is reported: it is destructured
+.violation unused_var(at: node, x: symbol) code "vue/no-unused-vars" "'{x}' is defined but never used."
+    suppress eslint "vue/no-unused-vars"
+unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), !used_after(e, id, k), !tag_use(e, x).
+unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), used_after(e, id, k), tdestructured(id),
+    !tag_use(e, x).
+.decl used(id: node)
+used(id) :- tbind(_, id).
+.decl ignored(x: symbol)
+ignored(x) :- tvar(_, x, _, _), option("ignorePattern", p), match(cat(".*(?:", p, ").*"), x).
+// used_after(e, id, k): a variable of the same kind, declared after id on e, is used.
+.decl used_after(e: node, id: node, k: symbol)
+used_after(e, id, k) :- tvar(e, _, id, k), tvar(e, _, j, k), earlier(id, j), used(j).
+.decl tag_use(e: node, x: symbol)
+tag_use(e, x) :- tvar(e, x, _, _), has(e, c, vel_kind), vel_name(c, x).

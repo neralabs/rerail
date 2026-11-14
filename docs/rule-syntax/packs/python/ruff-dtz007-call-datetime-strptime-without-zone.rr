@@ -1,0 +1,40 @@
+.policy "ruff-dtz007-call-datetime-strptime-without-zone" revision 2
+.description "Make datetimes parsed from text timezone-aware, by parsing a UTC offset or attaching a timezone afterwards; naive datetimes can't be safely compared with aware ones."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ007 (flake8-datetimez): `datetime.datetime.strptime(text, fmt)` whose format has no `%z`, so the
+// result is naive. Fine when the format (a literal, or an f-string's literal text) contains `%z`, when the
+// result goes on to `.astimezone()`, or when it is immediately `.replace(tzinfo=…)`d with a real zone; a
+// `.replace(tzinfo=None)` is reported with its own message. Reported at the strptime call. Only in a file that
+// imports datetime.
+//   datetime.datetime.strptime("x", "%H:%M:%S%Z")                     ← DTZ007: %Z is a name, not an offset
+//   datetime.datetime.strptime("x", "x").replace(tzinfo=None)         ← DTZ007: None
+//   datetime.datetime.strptime("x", "%H:%M:%S%z")                     not reported
+//   datetime.datetime.strptime("x", fmt).replace(tzinfo=timezone.utc) not reported
+#include "python/datetime.rr"
+
+.violation DTZ007(at: node) code "DTZ007"
+    "Make the result aware: parse a UTC offset with `%z`, else chain `.replace(tzinfo=...)` with the text's timezone (`.astimezone()` if it is local time); keep it naive only if that is intended."
+    suppress ruff "DTZ007"
+.violation DTZ007_none(at: node) code "DTZ007"
+    "Pass the timezone the text is in to `tzinfo`, e.g. `datetime.timezone.utc`, instead of `None`; keep `None` only if a naive datetime is intended."
+    suppress ruff "DTZ007"
+DTZ007(c) :- parsed_naive(c), !replaced(c, _).
+DTZ007(c) :- parsed_naive(c), replaced(c, r), !call_kwarg(r, "tzinfo", _).
+DTZ007_none(c) :- parsed_naive(c), replaced(c, r), call_kwarg(r, "tzinfo", v), unparen(v, m), kind(m, "none").
+
+.decl parsed_naive(c: node)
+parsed_naive(c) :- dt_call(c, "datetime.datetime.strptime"), !then_astimezone(c), !offset_format(c).
+.decl offset_format(c: node)
+offset_format(c) :- ruff_arg(c, 1, a), plain_str(a, v), contains("%z", v).
+// An f-string's own literal parts only: Ruff ignores text inside `{…}` interpolations.
+offset_format(c) :- ruff_arg(c, 1, a), fstring(a), dtz_part(a, p), child(p, s, _), kind(s, "string_content"),
+    text(s, t), contains("%z", t).
+.decl dtz_part(a: node, p: node)
+dtz_part(a, a) :- kind(a, "string").
+dtz_part(a, p) :- kind(a, "concatenated_string"), child(a, p, _), kind(p, "string").
+// replaced(c, r): r is `c.replace(…)`.
+.decl replaced(c: node, r: node)
+replaced(c, r) :- ast_up(c, a), attr_of(a, _, "replace"), ast_up(a, r), kind(r, "call"), field(r, "function", a).

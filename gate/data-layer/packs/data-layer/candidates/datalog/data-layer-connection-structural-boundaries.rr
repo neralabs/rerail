@@ -1,0 +1,262 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl cs_decorator_kind(kind: symbol)
+cs_decorator_kind("decorator").
+.decl cs_fdef(kind: symbol)
+cs_fdef("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl cs_all_base(c: node, b: node)
+.decl cs_assign_kind(kind: symbol)
+.decl cs_backend(p: symbol)
+.decl cs_backend_class(s: symbol)
+.decl cs_base(c: node, b: node, name: symbol)
+.decl cs_base_slot(c: node, b: node)
+.decl cs_big_backend(p: symbol)
+.decl cs_class_method(c: node, m: node, mn: symbol)
+.decl cs_class_mode(m: symbol)
+.decl cs_connect_method(s: symbol)
+.decl cs_count_given(d: number, v: symbol)
+.decl cs_count_set(d: number)
+.decl cs_def(n: node, k: symbol, name: symbol)
+.decl cs_doc(d: number, p: symbol)
+.decl cs_entry(e: symbol)
+.decl cs_entry_case(e: symbol)
+.decl cs_entry_issue(e: symbol, issue: symbol)
+.decl cs_first_class(d: number, c: node, name: symbol)
+.decl cs_func(c: node, f: node)
+.decl cs_good_base(s: symbol)
+.decl cs_hit(d: number, issue: symbol, l: number)
+.decl cs_in_method(x: node, m: node)
+.decl cs_last_class(d: number, c: node, name: symbol)
+.decl cs_lifecycle_file(p: symbol)
+.decl cs_lifecycle_method(s: symbol)
+.decl cs_lifecycle_method_ok(d: number, m: node)
+.decl cs_method(d: number, c: node, cn: symbol, m: node, mn: symbol)
+.decl cs_method_start(c: node, mn: symbol, st: number)
+.decl cs_metric_doc(d: number, p: symbol)
+.decl cs_mixin(s: symbol)
+.decl cs_over(d: number, k: number)
+.decl cs_present(p: symbol)
+.decl cs_receiver(o: node, r: node)
+.decl cs_residual(s: symbol)
+.decl cs_role(r: symbol, p: symbol)
+.decl cs_role_default(r: symbol, p: symbol)
+.decl cs_role_given(r: symbol, p: symbol)
+.decl cs_role_key(r: symbol, pointer: symbol)
+.decl cs_role_set(r: symbol)
+.decl cs_self_connect(m: node)
+.decl cs_self_connect_call(c: node)
+.decl cs_sequence(kind: symbol)
+.decl cs_sql_residual(s: symbol)
+.decl cs_sync_target(m: node)
+.decl cs_target(m: node, t: node)
+.decl cs_top(d: number, n: node, k: symbol, name: symbol)
+.decl cs_top_start(d: number, k: symbol, name: symbol, st: number)
+.decl cs_valid(d: number, p: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl line_count(d: number, k: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, line_count
+.output violation
+cs_assign_kind("assignment").
+cs_assign_kind("augmented_assignment").
+cs_backend("impl/mariadb/connection.py").
+cs_backend("impl/mongodb/connection.py").
+cs_backend("impl/neo4j/connection.py").
+cs_backend("impl/postgres/connection.py").
+cs_backend("impl/sqlite/connection.py").
+cs_big_backend("impl/sqlite/connection.py").
+cs_big_backend("impl/postgres/connection.py").
+cs_big_backend("impl/mariadb/connection.py").
+cs_connect_method("connect").
+cs_connect_method("connect_async").
+cs_connect_method("ensure_connected_async").
+cs_connect_method("ensure_connected_sync").
+cs_entry_case("_connection_file_violations").
+cs_entry_case("_sql_connection_violations").
+cs_entry_case("_backend_file_violations").
+cs_entry_case("_lifecycle_violations").
+cs_entry_issue("_connection_file_violations", "CSB001").
+cs_entry_issue("_connection_file_violations", "CSB002").
+cs_entry_issue("_connection_file_violations", "CSB003").
+cs_entry_issue("_sql_connection_violations", "CSB010").
+cs_entry_issue("_sql_connection_violations", "CSB011").
+cs_entry_issue("_sql_connection_violations", "CSB012").
+cs_entry_issue("_sql_connection_violations", "CSB013").
+cs_entry_issue("_backend_file_violations", "CSB020").
+cs_entry_issue("_backend_file_violations", "CSB021").
+cs_entry_issue("_lifecycle_violations", "CSB030").
+cs_entry_issue("_lifecycle_violations", "CSB031").
+cs_entry_issue("_lifecycle_violations", "CSB032").
+cs_entry_issue("_lifecycle_violations", "CSB033").
+cs_good_base("ConnectionPayloadOpaqueMarker").
+cs_good_base("_ConnectionStateCore").
+cs_good_base("_LazyConnectionBase").
+cs_lifecycle_method("__aenter__").
+cs_lifecycle_method("__aexit__").
+cs_lifecycle_method("__enter__").
+cs_lifecycle_method("__exit__").
+cs_mixin("_MariaDBCoreSupportMixin").
+cs_mixin("_MariaDBExecutionSupportMixin").
+cs_mixin("_MariaDBLifecycleExecutionMixin").
+cs_mixin("_MariaDBMetadataSchemaMixin").
+cs_mixin("_MariaDBVersioningMixin").
+cs_mixin("_PostgresBootstrapFeatureMixin").
+cs_mixin("_PostgresCoreSupportMixin").
+cs_mixin("_PostgresExecutionSupportMixin").
+cs_mixin("_PostgresLargeColumnMixin").
+cs_mixin("_PostgresLifecycleExecutionMixin").
+cs_mixin("_PostgresMetadataSchemaMixin").
+cs_mixin("_PostgresVersioningMixin").
+cs_mixin("_SqliteCoreSupportMixin").
+cs_mixin("_SqliteExecutionSupportMixin").
+cs_mixin("_SqliteInstrumentationSupportMixin").
+cs_mixin("_SqliteLargeColumnMixin").
+cs_mixin("_SqliteLifecycleExecutionMixin").
+cs_mixin("_SqliteMetadataSchemaMixin").
+cs_mixin("_SqliteVersioningMixin").
+cs_residual("AsyncSchemaBootstrapEvidence").
+cs_residual("AsyncTableExistsAuthority").
+cs_residual("ReadPlanWorkflow").
+cs_residual("SchemaBootstrapEvidence").
+cs_residual("SingleIntentPlanWorkflow").
+cs_residual("WritePlanWorkflow").
+cs_residual("_ConnectionMetadataMixin").
+cs_residual("_PlanScopeFetchToken").
+cs_residual("_plan_scope_fetch_template").
+cs_residual("_resolve_bootstrap_scope_exists_in_schema_transaction_lazy").
+cs_residual("_resolve_plan_scope_fetch_template").
+cs_residual("execute_read_plan_workflow").
+cs_residual("execute_read_plan_workflow_async").
+cs_residual("execute_single_intent_plan_workflow").
+cs_residual("execute_single_intent_plan_workflow_async").
+cs_residual("execute_write_plan_workflow").
+cs_residual("execute_write_plan_workflow_async").
+cs_role_default("connection", "l2000_connection/connection.py").
+cs_role_default("lifecycle", "l2000_connection/connection_lifecycle.py").
+cs_role_default("sql", "impl/common/l2200_sql_dialect/sql_connection.py").
+cs_role_key("connection", "/connectionPath").
+cs_role_key("lifecycle", "/lifecyclePath").
+cs_role_key("sql", "/sqlPath").
+cs_sequence("pattern_list").
+cs_sequence("tuple_pattern").
+cs_sequence("list_pattern").
+cs_sql_residual("AttributedSqlRenderable").
+cs_sql_residual("ContentStoreManifest").
+cs_sql_residual("PreparedTerminalExecution").
+cs_sql_residual("_DirectGrammarExecutionPlan").
+cs_sql_residual("_DirectGrammarExecutionRequest").
+cs_sql_residual("_LargeColumnHydrationRuntimeStep").
+cs_sql_residual("_PolymorphicCheckReconciliationPlan").
+cs_sql_residual("_PolymorphicRegistryBootstrapRead").
+cs_sql_residual("_SchemaDdlTransaction").
+cs_sql_residual("_SqlDirectLazyContext").
+cs_sql_residual("_annotation_is_nullable").
+cs_sql_residual("_model_field_nullable").
+cs_sql_residual("_sql_types_compatible").
+cs_sql_residual("_sqlcoresupport__flush_polymorphic_metadata_batch_lazy").
+cs_sql_residual("_sqlcoresupport__schema_ensure_model_table_lazy").
+cs_sql_residual("_sqlcoresupport_ensure_polymorphic_columns_exist_lazy").
+cs_sql_residual("_sqlexecution__replay_cached_schema_ddl_effects_lazy").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/connection_lifecycle.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2200_sql_dialect/sql_connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/sqlite/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/postgres/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mariadb/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mongodb/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/neo4j/connection.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+cs_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d).
+cs_valid(d, p) :- cs_doc(d, p), node(d, _, "module", _, _), !tape_syntax_error(d).
+cs_entry(e) :- option_value("entryPoint", e).
+cs_class_mode("first") :- cs_entry(e), (e = "_connection_file_violations" ; e = "_sql_connection_violations").
+cs_class_mode("every") :- cs_entry("_lifecycle_violations").
+cs_class_mode("last") :- cs_entry(e), e != "_connection_file_violations", e != "_sql_connection_violations", e != "_lifecycle_violations".
+cs_role_given(r, p) :- cs_role_key(r, ptr), option_json("parameters", ptr, p), p != "null".
+cs_role_set(r) :- cs_role_given(r, _).
+cs_role(r, p) :- cs_role_given(r, p).
+cs_role(r, p) :- cs_role_default(r, p), !cs_role_set(r).
+cs_metric_doc(d, p) :- cs_valid(d, p), cs_role(_, p).
+cs_metric_doc(d, p) :- cs_valid(d, p), cs_big_backend(p).
+cs_count_given(d, v) :- cs_metric_doc(d, p), e = @rx_replace(@rx_replace(p, "~", "~0"), "/", "~1"), ptr = @concat("/lineCounts/", e), option_json("parameters", ptr, v), v != "null".
+cs_count_set(d) :- cs_count_given(d, _).
+cs_over(d, 900) :- cs_count_given(d, v), match("0*(?:9(?:0[1-9]|[1-9][0-9])|[1-9][0-9]{3,})(?:\\.[0-9]*)?", v).
+cs_over(d, 3000) :- cs_count_given(d, v), match("0*(?:3(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})|[4-9][0-9]{3}|[1-9][0-9]{4,})(?:\\.[0-9]*)?", v).
+cs_over(d, 6000) :- cs_count_given(d, v), match("0*(?:6(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})|[7-9][0-9]{3}|[1-9][0-9]{4,})(?:\\.[0-9]*)?", v).
+cs_over(d, 900) :- cs_metric_doc(d, _), !cs_count_set(d), line_count(d, k), k > 900.
+cs_over(d, 3000) :- cs_metric_doc(d, _), !cs_count_set(d), line_count(d, k), k > 3000.
+cs_over(d, 6000) :- cs_metric_doc(d, _), !cs_count_set(d), line_count(d, k), k > 6000.
+cs_top(d, n, k, s) :- node(d, m, "module", _, _), child(m, n, _), cs_def(n, k, s).
+cs_top(d, n, k, s) :- node(d, m, "module", _, _), child(m, dd, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", n), cs_def(n, k, s).
+cs_def(n, "class", s) :- node(_, n, "class_definition", _, _), field(n, "name", x), text(x, s).
+cs_def(n, "def", s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
+cs_top_start(d, k, s, st) :- cs_top(d, n, k, s), node(_, n, _, st, _).
+cs_last_class(d, c, s) :- cs_class_mode("last"), cs_top(d, c, "class", s), node(_, c, _, st, _), st = max t : { cs_top_start(d, "class", s, t) }.
+cs_last_class(d, c, s) :- cs_class_mode("first"), cs_top(d, c, "class", s), node(_, c, _, st, _), st = min t : { cs_top_start(d, "class", s, t) }.
+cs_last_class(d, c, s) :- cs_class_mode("every"), cs_top(d, c, "class", s).
+cs_first_class(d, c, s) :- cs_top(d, c, "class", s), node(_, c, _, st, _), st = min t : { cs_top_start(d, "class", s, t) }.
+cs_base_slot(c, b) :- node(_, c, "class_definition", _, _), field(c, "superclasses", al), child(al, b, _), !node(_, b, "keyword_argument", _, _), !node(_, b, "dictionary_splat", _, _), !node(_, b, "comment", _, _).
+cs_base_slot(c, x) :- cs_base_slot(c, b), node(_, b, "parenthesized_expression", _, _), child(b, x, _), !node(_, x, "comment", _, _).
+cs_all_base(c, b) :- cs_base_slot(c, b), !node(_, b, "parenthesized_expression", _, _).
+cs_base(c, b, s) :- cs_base_slot(c, b), node(_, b, "identifier", _, _), text(b, s).
+cs_base(c, b, s) :- cs_base_slot(c, b), node(_, b, "attribute", _, _), field(b, "attribute", x), text(x, s).
+cs_class_method(c, m, mn) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, m, _), cs_def(m, "def", mn).
+cs_class_method(c, m, mn) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", m), cs_def(m, "def", mn).
+cs_method(d, c, cn, m, mn) :- cs_last_class(d, c, cn), cs_class_method(c, m, mn).
+cs_method_start(c, mn, st) :- cs_class_method(c, m, mn), node(_, m, _, st, _).
+cs_in_method(x, m) :- cs_method(_, _, _, m, _), inside(x, m, cs_fdef), node(_, x, _, _, _).
+cs_in_method(x, m) :- cs_method(_, _, _, m, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", m), child(dd, dc, _), node(_, dc, "decorator", _, _), inside(x, dc, cs_decorator_kind), node(_, x, _, _, _).
+cs_func(c, f) :- node(_, c, "call", _, _), field(c, "function", f).
+cs_func(c, x) :- cs_func(c, f), node(_, f, "parenthesized_expression", _, _), child(f, x, _), !node(_, x, "comment", _, _).
+cs_receiver(o, o) :- cs_func(_, f), node(_, f, "attribute", _, _), field(f, "object", o).
+cs_receiver(o, x) :- cs_receiver(o, p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
+cs_self_connect_call(c) :- cs_func(c, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s), (s = "connect" ; s = "connect_async"), field(f, "object", o), cs_receiver(o, r), node(_, r, "identifier", _, _), text(r, "self").
+cs_self_connect(m) :- cs_self_connect_call(c), cs_in_method(c, m).
+cs_target(m, t) :- cs_method(_, _, _, m, _), node(_, a, k, _, _), cs_assign_kind(k), inside(a, m, cs_fdef), field(a, "left", t).
+cs_target(m, e) :- cs_target(m, t), node(_, t, k, _, _), cs_sequence(k), child(t, e, _), !node(_, e, "comment", _, _).
+cs_sync_target(m) :- cs_target(m, t), node(_, t, "attribute", _, _), field(t, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(t, "attribute", x), text(x, s), (s = "_conn" ; s = "_cursor" ; s = "_introspector" ; s = "_validator").
+cs_backend_class(s) :- cs_method(_, _, s, _, _), suffix("Connection", s).
+cs_backend_class(s) :- cs_method(_, _, s, _, _), suffix("ConnectionCore", s).
+cs_present(p) :- cs_doc(d, p), node(d, _, "module", _, _).
+cs_lifecycle_file(p) :- cs_role("lifecycle", p), cs_present(p).
+cs_lifecycle_file(p) :- cs_role("connection", p), cs_role("lifecycle", q), !cs_present(q).
+cs_lifecycle_method_ok(d, m) :- cs_entry("_lifecycle_violations"), cs_first_class(d, c, "_ConnectionLifecycleMixin"), cs_method(d, c, _, m, mn), node(_, m, _, st, _), st = min t : { cs_method_start(c, mn, t) }.
+cs_lifecycle_method_ok(d, m) :- cs_entry(e), e != "_lifecycle_violations", cs_method(d, _, _, m, _).
+cs_hit(d, "CSB001", 1) :- cs_role("connection", p), cs_valid(d, p), cs_over(d, 900).
+cs_hit(d, "CSB010", 1) :- cs_role("sql", p), cs_valid(d, p), cs_over(d, 6000).
+cs_hit(d, "CSB020", 1) :- cs_valid(d, p), cs_big_backend(p), cs_over(d, 3000).
+cs_hit(d, "CSB002", l) :- cs_role("connection", p), cs_valid(d, p), cs_top(d, n, _, s), cs_residual(s), line(n, l).
+cs_hit(d, "CSB012", l) :- cs_role("sql", p), cs_valid(d, p), cs_top(d, n, _, s), cs_sql_residual(s), line(n, l).
+cs_hit(d, "CSB021", l) :- cs_valid(d, p), cs_big_backend(p), cs_top(d, n, _, s), cs_mixin(s), line(n, l).
+cs_hit(d, "CSB003", l) :- cs_role("connection", p), cs_valid(d, p), cs_last_class(d, c, "_DatabaseConnectionCore"), cs_base(c, _, s), !cs_good_base(s), line(c, l).
+cs_hit(d, "CSB011", 1) :- cs_role("sql", p), cs_valid(d, p), k = count : { cs_top(d, _, _, _) }, k > 90.
+cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry(e), e != "_sql_connection_violations", k = count : { cs_base(c, _, _) }, k > 6, line(c, l).
+cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry("_sql_connection_violations"), k = count : { cs_all_base(c, _) }, k > 6, line(c, l).
+cs_hit(d, "CSB030", l) :- cs_lifecycle_file(p), cs_valid(d, p), cs_method(d, _, "_ConnectionLifecycleMixin", m, mn), (mn = "__enter__" ; mn = "__aenter__"), cs_lifecycle_method_ok(d, m), cs_self_connect(m), line(m, l).
+cs_hit(d, "CSB031", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), cs_lifecycle_method(mn), line(m, l).
+cs_hit(d, "CSB032", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, "connect_async"), cs_backend_class(cn), cs_sync_target(m), line(m, l).
+cs_hit(d, "CSB033", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), !cs_connect_method(mn), cs_self_connect(m), line(m, l).
+violation("data-layer-connection-structural-boundaries", "connection-structure", code, p, l) :- cs_hit(d, code, l), cs_entry(e), !cs_entry_case(e), doc(d, p, _).
+violation("data-layer-connection-structural-boundaries", "connection-structure", code, p, l) :- cs_hit(d, code, l), cs_entry(e), cs_entry_issue(e, code), doc(d, p, _).

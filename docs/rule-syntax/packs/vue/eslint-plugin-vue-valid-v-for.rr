@@ -1,0 +1,76 @@
+.policy "eslint-plugin-vue-valid-v-for" revision 2
+.description "Write v-for directives with a value, valid aliases and no argument or modifiers, and key components in a loop with the loop variables."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/code.rr"
+//   vdir(e, a, d, arg), vmods(a, m), vval(a, v), vfor_alias(a, i, p), tvar(e, x, id, k), tref(r, x, a)
+
+// eslint-plugin-vue's valid-v-for. On each v-for:
+//   v-for:arg="…"  v-for.mod="…"  v-for=""                no argument, no modifier, a value (a value that is not
+//                                                           `<alias> in <list>` is the parser's error, not this rule's)
+//   (, i) in xs   (v, , i) in xs   (v, {k}) in xs             no empty alias (allowEmptyAlias: true allows them), and
+//                                                           the key and index aliases (slots 1 and 2) must be names
+// and on the element it repeats (a keyless <template> hands the check to each child element):
+//   <my-item v-for="x in xs" />                             a custom component needs :key
+//   <li v-for="x in xs" :key="id" />                        :key must read a variable of this v-for
+.violation valid_v_for(at: node, msg: symbol) code "vue/valid-v-for" "{msg}"
+    suppress eslint "vue/valid-v-for"
+valid_v_for(n, "'v-for' directives require no argument.") :- vfor_dir(_, a), child(a, n, _), kind(n, "directive_value").
+valid_v_for(m, "'v-for' directives require no modifier.") :- vfor_dir(_, a), vmods(a, m).
+valid_v_for(a, "'v-for' directives require that attribute value.") :- vfor_dir(_, a), !has_value(a).
+valid_v_for(v, msg) :- alias_text(a, s), vval(a, v), !option("allowEmptyAlias", "true"), empty_alias(s, w),
+    empty_message(w, msg).
+valid_v_for(p, cat("Invalid alias '", t, "'.")) :- slot(a, p, n), (n = 1 ; n = 2), !kind(p, "identifier"), text(p, t).
+valid_v_for(t, "Custom elements in iteration require 'v-bind:key' directives.") :- checked(_, e), vcustom(e),
+    !vhas_dir(e, "bind", "key"), vel_tag(e, t).
+valid_v_for(k, "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.") :-
+    checked(a, e), vdir(e, k, "bind", "key"), !key_uses(k, a).
+
+.decl vfor_dir(e: node, a: node)
+vfor_dir(e, a) :- vdir(e, a, "for", _).
+.decl has_value(a: node)
+has_value(a) :- vval(a, v), text(v, t), match("[\\s\\S]*\\S[\\s\\S]*", t).
+// alias_text(a, s): what the alias's parentheses hold, as text: "a,,b" of v-for="(a,,b) in xs".
+.decl alias_text(a: node, s: symbol)
+alias_text(a, s) :- vfor_dir(_, a), vval(a, v), text(v, t), match("\\s*\\((?<s>[\\s\\S]*)\\)\\s+(?:in|of)\\s+\\S[\\s\\S]*", t).
+// empty_alias(s, w): alias w (value, key or index) is a hole. A trailing comma ends the list: `(a, b,)` has no index.
+// An item may hold one level of braces or brackets: `({ a, b }, , i)`.
+.decl empty_alias(s: symbol, w: symbol)
+empty_alias(s, "value") :- alias_text(_, s), match("\\s*,[\\s\\S]*", s).
+empty_alias(s, "key") :- alias_text(_, s), match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*,[\\s\\S]*", s).
+empty_alias(s, "index") :- alias_text(_, s),
+    match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*,[\\s\\S]*", s).
+.decl empty_message(w: symbol, msg: symbol)
+empty_message("value", "Name the empty value alias in this v-for, such as `(item, index) in items`.").
+empty_message("key", "Name the empty key alias in this v-for, such as `(value, key) in object`.").
+empty_message("index", "Name the empty index alias in this v-for, such as `(value, key, index) in object`.").
+
+// checked(a, e): checkKey(v-for a, e) runs: e has a, or e is a child element of a checked keyless <template>, unless
+// the child's own v-for reads a's variables (its own v-for then checks it).
+.decl checked(a: node, e: node)
+checked(a, e) :- vfor_dir(e, a).
+checked(a, c) :- checked(a, e), vel_name(e, "template"), !vhas_dir(e, "bind", "key"), vel_parent(c, e),
+    !child_for_uses(a, c).
+.decl child_for_uses(a: node, c: node)
+child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), tref(_, x, b), tvar(e, x, _, "v-for").
+.decl key_uses(k: node, a: node)
+key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), tref(_, x, k), vfor_dir(f, a), tvar(f, x, _, "v-for").
+
+// slot(a, p, n): alias p is written in slot n of v-for a, holes counted: in `(v, , {i})`, {i} is in slot 2. The slot
+// is the number of commas before p at the top of the alias list: the commas between each item and the one before.
+.decl slot(a: node, p: node, n: number)
+slot(a, p, k) :- vfor_alias(a, 0, p), commas(p, k).
+slot(a, p, n + k) :- slot(a, q, n), vfor_pattern(a, l), child(l, q, i), child(l, p, i + 1), commas(p, k).
+.decl commas(p: node, k: number)
+// The commas in the source before p (a single separator the tape leaves out), and the stored ones between p and the
+// item before it (or the list's start): a gap holding a hole is not the implied word, so the tape keeps its commas.
+commas(p, k) :- vfor_alias(_, _, p), item_from(p, l, lo), node(_, p, _, ps, _), structural_before(p, g),
+    x = strlen(g) - strlen(@replace_all(g, ",", "")), y = count : { list_comma(l, s), s >= lo, s < ps }, k = x + y.
+.decl item_from(p: node, l: node, lo: number)
+item_from(p, l, lo) :- vfor_pattern(_, l), child(l, p, 0), node(_, l, _, lo, _).
+item_from(p, l, lo) :- vfor_pattern(_, l), child(l, q, i), child(l, p, i + 1), node(_, q, _, _, lo).
+.stored list_comma "a gap holding a hole is not the implied word, so the tape keeps its commas"
+.decl list_comma(l: node, s: number)
+list_comma(l, s) :- vfor_pattern(_, l), token(l, _, ",", s, _).
+

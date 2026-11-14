@@ -1,0 +1,149 @@
+// tsx/eslint-b-scope: built-in globals as ESLint's core rules reach them through eslint-scope's global variables,
+// `/* global */` comments, and the variables of a scope with every identifier that declares them.
+// For no-new-func, no-new-wrappers, no-obj-calls, radix and symbol-description (globals), and no-redeclare.
+//
+// What a rule gets from this library:
+//   builtin_ref(r, x)        r is a reference to the built-in global x, which nothing in the file defines (ESLint's
+//                            `variable.defs.length === 0`) and no `/* global x:off */` removes
+//   constructed(c, f)        c is `new f(…)` or `new f`, parentheses skipped
+//   member_call(c, o, x)     c calls o.x: `o.x(…)`, `o?.x(…)`, `(o.x)(…)`; x is a plain property name
+//   member_call_static(c, o, x)  the same, also `o["x"](…)` and `` o[`x`](…) `` (getStaticPropertyName)
+//   global_value(n, x)       n has the value of the global x, followed as eslint-utils' ReferenceTracker does
+//                            (the global object, aliases, pass-through expressions); for the names the
+//                            including rule lists in traced_global(x)
+//   global_item(c, x, v, l)  `/* global … */` comment c lists x with setting v ("" for none) on line l
+//   global_off(d, x)         a `/* global x:off */` in document d
+//   var_site(s, x, id)       identifier id declares variable x of eslint-scope scope s by var, a function
+//                            declaration or a parameter
+//   global_scope(s)          s is the global scope's block: a script's program
+//
+// Examples, one per rule:
+//   no-new-func          new Function("a", "return a")       builtin_ref + constructed
+//   no-new-wrappers      new String("a")                      builtin_ref + constructed
+//   symbol-description   Symbol()                             builtin_ref + called (eslint-a-common)
+//   radix                Number.parseInt(s)                   builtin_ref + member_call_static
+//   no-obj-calls         const m = Math; m()                  global_value + called
+//   no-redeclare         function f(a) { var a; }             var_site;  /* global Array */  global_item
+//
+// eslint-scope semantics used here. ESLint adds every built-in (and every environment and `/* global */` name)
+// to the global scope as a variable with no definitions; a declaration of the same name in the file either is
+// that variable (a script's top-level `var Function`, which gives it a definition) or shadows it. Either way the
+// rules here stop reporting: they read only global variables that are still undefined in the file.
+//   new Function("a")                       reported by no-new-func
+//   function f(Function) { Function() }     not: the parameter shadows the global
+//   var g = function Function() { Function() }   not: a function expression's name binds inside it
+//
+// Builds on tsx/eslint-a-globals (free_ref, global_var; through it eslint-a-common's deparen, static_prop, called,
+// call_arg, and names and modules), tsx/values (member, pass_through, env_written), tsx/eslint-a-text (js_comment)
+// and tsx/statements (var_scope, for_head).
+#include "tsx/eslint-a-globals.rr"
+#include "tsx/values.rr"
+#include "tsx/eslint-a-text.rr"
+#include "tsx/statements.rr"
+
+// ---- built-in globals ------------------------------------------------------------------------------------------
+.decl builtin_ref(r: node, x: symbol)
+builtin_ref(r, x) :- free_ref(r, x), docof(r, d), global_var(d, x), !global_off(d, x).
+// global_off(d, x): `/* global Boolean:off */` (or `globals`) removes the global variable x from document d.
+.decl global_off(d: number, x: symbol)
+global_off(d, x) :- global_item(c, x, "off", _), docof(c, d).
+
+// ---- calls ---------------------------------------------------------------------------------------------------------
+.decl constructed(c: node, f: node)
+constructed(c, f) :- kind(c, "new_expression"), field(c, "constructor", f0), deparen(f0, f).
+// member_call(c, o, x): `Number.parseInt(s)`, `Number?.parseInt(s)`, `(Number?.parseInt)(s)`. ESTree's
+// ChainExpression around `Number?.parseInt` sits between the member and the call; it changes nothing here.
+// o is the object as written, parentheses skipped: `(Number).parseInt(s)` gives Number.
+.decl member_call(c: node, o: node, x: symbol)
+member_call(c, o, x) :- called(c, m), kind(m, "member_expression"), field(m, "property", p),
+    kind(p, "property_identifier"), text(p, x), field(m, "object", o0), deparen(o0, o).
+.decl member_call_static(c: node, o: node, x: symbol)
+member_call_static(c, o, x) :- called(c, m), static_prop(m, o, x).
+
+// ---- following a global's value (eslint-utils' ReferenceTracker, global references) ------------------------------
+// global_value(n, x): expression n has the value of the global variable x, for the names the including rule lists
+// in traced_global(x). ReferenceTracker follows a global the file neither defines nor assigns:
+//   Math                                  the global itself
+//   globalThis.Math   window?.["Math"]    a member of the global object (globalThis, self, window, global,
+//                                         when the environment has them)
+//   (a ? b : Math)   a || Math   (0, Math)   Math as T   Math!     what passes the value through unchanged
+//   const m = Math; m      let m; m = Math; m      function f(m = Math) { m }      an alias's references
+//   const { Math: m } = globalThis; m     a key of a pattern destructuring the global object
+// The value "" stands for the global object itself, which is followed the same way.
+.decl traced_global(x: symbol)  // the including rule's names; no rows here
+.decl global_value(n: node, x: symbol)
+global_value(n, x) :- gval(n, x), x != "".
+.decl gval(n: node, x: symbol)
+gval(r, x) :- traced_global(x), builtin_ref(r, x), docof(r, d), !env_written(d, x).
+gval(r, "") :- global_object_name(g), builtin_ref(r, g), docof(r, d), !env_written(d, g).
+gval(m, x) :- gval(o, ""), static_prop(m, o, x), traced_global(x).
+gval(p, v) :- gval(n, v), pass_through(n, p).
+// Aliases: the declarator, assignment or default that stores the value; each read of that variable has it.
+gval(r, v) :- gval(e, v), store(e, s), ref_site(r, s), !field(_, "left", r).
+gval(r, x) :- gval(e, ""), kind(dc, "variable_declarator"), field(dc, "value", e), field(dc, "name", pat),
+    kind(pat, "object_pattern"), member(k, pat, x), traced_global(x), key_site(k, s), ref_site(r, s).
+.decl global_object_name(g: symbol)
+global_object_name("globalThis"). global_object_name("global"). global_object_name("self").
+global_object_name("window").
+// store(e, s): value e is stored in the variable declared at s.   var m = e   m = e   function f(m = e) {}
+.decl store(e: node, s: node)
+store(e, dc) :- kind(dc, "variable_declarator"), field(dc, "value", e), field(dc, "name", n), kind(n, "identifier").
+store(e, s) :- (kind(a, "assignment_expression") ; kind(a, "assignment_pattern")), field(a, "right", e),
+    field(a, "left", l), kind(l, "identifier"), (ref_site(l, s) ; decl_site(_, _, l, _, _), s = l).
+// key_site(k, s): the binding a pattern property declares:  { Math }  { Math: m }  { Math: m = 1 }
+.decl key_site(k: node, s: node)
+key_site(k, k) :- kind(k, "shorthand_property_identifier_pattern").
+key_site(k, s) :- kind(k, "pair_pattern"), field(k, "value", s), kind(s, "identifier").
+key_site(k, s) :- kind(k, "object_assignment_pattern"), field(k, "left", s).
+// ---- `/* global */` comments ---------------------------------------------------------------------------------------
+// global_item(c, x, v, l): block comment c is an ESLint `global` (or `globals`) directive whose list has the item x,
+// with setting v ("" for none, else "readonly", "writable", "off", "true", …), on line l.
+//   /* globals a, b: readonly */        items a (""), b ("readonly")
+//   /*globals foo,⏎    Array */          Array is on the comment's second line
+// Items are separated by commas or white space, and white space around `:` is dropped first, as ESLint's
+// parseStringConfig does. The list is read an item at a time from the left, counting the line breaks passed (a
+// break inside `a:⏎ off` is not counted).
+.decl global_item(c: node, x: symbol, v: symbol, l: number)
+global_item(c, x, v, l + k) :- gitem(c, i, k), item_parts(i, x, v), line(c, l).
+.decl glist(c: node, s: symbol, k: number)  // s is what is left of c's list, k line breaks after c's start
+glist(c, @replace_all(B, "\\s*:\\s*", ":"), @count_matches("\n", P)) :- js_comment(c, "Block", v),
+    match("(?<P>\\s*globals?)(?<B>\\s[\\s\\S]*)", v).
+glist(c, T, k + @count_matches("\n", W)) :- glist(c, s, k), match("(?<W>[\\s,]*)[^\\s,]+(?<T>[\\s\\S]*)", s).
+.decl gitem(c: node, i: symbol, k: number)  // the item i that starts what is left, and its line offset
+gitem(c, I, k + @count_matches("\n", W)) :- glist(c, s, k), match("(?<W>[\\s,]*)(?<I>[^\\s,]+)[\\s\\S]*", s).
+.decl item_parts(i: symbol, x: symbol, v: symbol)  // "b:readonly" is b, "readonly"; "a" is a, ""
+item_parts(i, N, V) :- gitem(_, i, _), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i).
+item_parts(i, i, "") :- gitem(_, i, _), !contains(":", i).
+
+// ---- variables as eslint-scope groups them -------------------------------------------------------------------------
+// var_site(s, x, id): identifier id declares the variable x of scope s with var, a function declaration or a
+// parameter: the declarations that may repeat. eslint-scope's scopes differ from names.rr's in two places:
+// a function's body block is no scope of its own (its functions and vars, and the parameters, share the
+// function's), and a static block is a var scope.
+//   function f(a) { var a; function a() {} }      three identifiers of one variable a of f
+//   var a; class C { static { var a; } }         two variables: the program's and the static block's
+// let, const, class and import never repeat in a file that parses, so they are not sites here.
+.decl var_site(s: node, x: symbol, id: node)
+var_site(s, x, n) :- kind(v, "variable_declarator"), child(d, v, _), kind(d, "variable_declaration"),
+    field(v, "name", n), kind(n, "identifier"), text(n, x), nearest(v, s, var_scope).
+var_site(s, x, p) :- pattern_name(p, x, v), child(d, v, _), kind(d, "variable_declaration"), nearest(v, s, var_scope).
+var_site(s, x, n) :- for_head(f, "var"), field(f, "left", n), kind(n, "identifier"), text(n, x),
+    nearest(f, s, var_scope).
+var_site(s, x, p) :- for_head(f, "var"), field(f, "left", pat), within(p, pat), bound_name(p, x),
+    nearest(f, s, var_scope).
+var_site(s, x, n) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x), nearest(f, b, block_scope),
+    escope_of(b, s).
+var_site(s, x, n) :- kind(f, "generator_function_declaration"), field(f, "name", n), text(n, x),
+    nearest(f, b, block_scope), escope_of(b, s).
+var_site(f, x, p) :- decl_site(f, x, p, "param", "value").
+// escope_of(b, s): block b's declarations belong to scope s: b itself, or the function or static block it is
+// the body of.
+.decl escope_of(b: node, s: node)
+escope_of(b, s) :- kind(b, "statement_block"), field(s, "body", b), kind(s, k), var_scope(k).
+escope_of(b, b) :- kind(b, k), block_scope(k), !body_block(b).
+.decl body_block(b: node)
+body_block(b) :- kind(b, "statement_block"), field(s, "body", b), kind(s, k), var_scope(k).
+// global_scope(s): s is the global scope's own block: a script's program. A module's or CommonJS file's top
+// level is a scope below the global one, which holds only the built-ins and `/* global */` names.
+.decl global_scope(s: node)
+global_scope(p) :- program(d, p), source_type(d, "script").

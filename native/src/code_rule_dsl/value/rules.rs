@@ -3,7 +3,7 @@
 //! rules, against where Bandit 1.8.6 reports them on its own examples in `fixtures/python/value/bandit`
 //! (`fixtures/python/value/generate_bandit.py`).
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 

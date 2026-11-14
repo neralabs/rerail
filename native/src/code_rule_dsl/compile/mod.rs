@@ -1,30 +1,29 @@
-mod arguments;
-mod ast_rule;
-#[cfg(test)]
-mod binding_tests;
-mod binds;
-mod compare;
-pub(crate) mod config;
-mod define;
-mod dialect;
-pub(crate) mod documents;
-mod evidence;
-#[cfg(test)]
-mod examples_tests;
-mod format_args;
-mod import_target;
-mod layout;
-mod nth_child;
-pub(crate) mod options;
-mod order;
-#[cfg(test)]
-mod params_tests;
-mod parse;
-mod resolve;
-mod shared;
-mod transform;
-mod utils;
-mod value;
+pub mod arguments;
+pub mod ast_rule;
+// binding_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod binds;
+pub mod compare;
+pub mod config;
+pub mod define;
+pub mod dialect;
+pub mod documents;
+pub mod evidence;
+// examples_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod format_args;
+// cratify: `import_target` is rerail-lang-ecma's (it mounts it)
+pub mod layout;
+pub mod line_state;
+pub mod nth_child;
+pub mod options;
+pub mod order;
+// params_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod parse;
+pub mod resolve;
+pub mod shared;
+pub mod token_tests;
+pub mod transform;
+pub mod utils;
+pub mod value;
 
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
@@ -36,13 +35,13 @@ use super::matcher::{
     UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
 };
 use super::model::{
-    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
-    RuleMode, ViolationSpec,
+    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexLines,
+    RegexOptions, RegexSource, RuleMode, ViolationSpec,
 };
 use super::soundness::sound_under_errors;
 use super::violations;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
-pub(super) use ast_rule::compile_ast_rule;
+pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
 use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
@@ -56,12 +55,13 @@ use serde_json::{Map, Value, json};
 use shared::SharedTables;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-pub(super) use utils::UtilScope;
+pub use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
-pub(super) fn parse_document(source: &str, format: &str) -> Result<Value> {
+pub fn parse_document(source: &str, format: &str) -> Result<Value> {
     match format {
         "json" => {
             let mut deserializer = serde_json::Deserializer::from_str(source);
@@ -177,7 +177,7 @@ impl<'de> Visitor<'de> for UniqueKeys {
     }
 }
 
-pub(super) fn parse_capabilities(source: &str) -> Result<Capabilities> {
+pub fn parse_capabilities(source: &str) -> Result<Capabilities> {
     let raw: Value = serde_json::from_str(source).map_err(json_error)?;
     let limits = raw
         .get("limits")
@@ -210,7 +210,7 @@ fn limit(limits: &Map<String, Value>, name: &str) -> Result<usize> {
         })
 }
 
-pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
+pub fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     let (include, exclude) = if let Some(value) = value {
         let scope = object(value, "/scope")?;
         reject_unknown(scope, &["include", "exclude"], "/scope")?;
@@ -231,7 +231,7 @@ pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     })
 }
 
-fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
+pub fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
     value
         .get(key)
         .and_then(Value::as_array)
@@ -246,7 +246,7 @@ fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
+pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for (index, pattern) in patterns.iter().enumerate() {
         let glob = GlobBuilder::new(pattern)
@@ -260,13 +260,24 @@ fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
         .map_err(|error| invalid(format!("{path}: {error}")))
 }
 
-/// The code rule's id, scope, clauses and required capabilities.
-pub(super) fn compile_document(
+type CompiledDocument = (
+    String,
+    RuleMode,
+    CodeRuleScope,
+    Vec<CompiledClause>,
+    Value,
+    Option<usize>,
+);
+
+/// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
+pub fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
-) -> Result<(String, RuleMode, CodeRuleScope, Vec<CompiledClause>, Value)> {
+) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
+    // A token test nothing answers on a named-only tape is refused (t31).
+    token_tests::refuse(document)?;
     let root = object(document, "/")?;
     reject_unknown(
         root,
@@ -299,6 +310,32 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
+    let gates = clauses
+        .iter()
+        .filter_map(|clause| clause.get("define")?.get("report_when"))
+        .collect::<Vec<_>>();
+    if gates.len() > 1 {
+        return Err(invalid("report_when must be declared once per document"));
+    }
+    let report_count_gt = gates
+        .first()
+        .copied()
+        .map(|value| {
+            let gate = object(value, "/report_when")?;
+            reject_unknown(gate, &["count"], "/report_when")?;
+            let count = object(
+                gate.get("count")
+                    .ok_or_else(|| invalid("/report_when/count is required"))?,
+                "/report_when/count",
+            )?;
+            reject_unknown(count, &["gt"], "/report_when/count")?;
+            count
+                .get("gt")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| invalid("/report_when/count/gt must be a nonnegative integer"))
+        })
+        .transpose()?;
     let shared = collect_defines(clauses, capabilities)?;
     let defines = Defines {
         utils: &shared,
@@ -348,6 +385,7 @@ pub(super) fn compile_document(
         scope,
         compiled,
         json!({ "ast": ast, "llm": requires_llm }),
+        report_count_gt,
     ))
 }
 
@@ -362,7 +400,7 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "llm", "violation"],
+        &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -502,6 +540,15 @@ fn compile_clause(
                 distinct,
             }
         }
+        "relational" => ClauseKind::Relational(
+            crate::code_rule_dsl::residency::admission::relational::compile::compile(
+                &clause["relational"],
+                &format!("{path}/relational"),
+                capabilities,
+                defines,
+                required_ast,
+            )?,
+        ),
         "llm" => {
             *requires_llm = true;
             ClauseKind::Llm
@@ -518,16 +565,30 @@ fn compile_clause(
         &kind,
         &format!("{path}/violation"),
     )?;
+    #[cfg(any(test, feature = "test-hooks"))]
+    let data_layer = clause.get("relational").and_then(|relational| {
+        crate::code_rule_dsl::waves::relational::compile::compile(
+            relational,
+            &format!("{path}/relational"),
+            capabilities,
+            defines,
+            required_ast,
+        )
+        .ok()
+        .map(std::sync::Arc::new)
+    });
     Ok(CompiledClause {
         id,
         violation,
         kind,
         synthetic: false,
         decision: false,
+        #[cfg(any(test, feature = "test-hooks"))]
+        data_layer,
     })
 }
 
-fn compile_query(
+pub fn compile_query(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,
@@ -535,6 +596,124 @@ fn compile_query(
     required_ast: &mut BTreeSet<(String, String)>,
 ) -> Result<Query> {
     compile_query_as(value, path, capabilities, defines, required_ast, false)
+}
+
+fn compile_regex_options(
+    spec: &Map<String, Value>,
+    path: &str,
+    capabilities: &Capabilities,
+) -> Result<RegexOptions> {
+    let patterns = |value: Option<&Value>, at: &str| -> Result<Vec<Regex>> {
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        let values = value
+            .as_array()
+            .ok_or_else(|| invalid(format!("{at} must be an array")))?;
+        if values.len() > 64 {
+            return Err(invalid(format!("{at} allows at most 64 patterns")));
+        }
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                let at = format!("{at}/{i}");
+                let text = bounded_text(
+                    Some(value),
+                    &at,
+                    "maxRegexPatternBytes",
+                    capabilities.limits.max_regex_pattern_bytes,
+                )?;
+                Regex::new(text).map_err(|error| invalid(format!("{at}: {error}")))
+            })
+            .collect()
+    };
+    let lines = spec
+        .get("lines")
+        .map(|value| -> Result<RegexLines> {
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{path}/regex/lines requires file.content")));
+            }
+            let at = format!("{path}/regex/lines");
+            let value = object(value, &at)?;
+            reject_unknown(
+                value,
+                &[
+                    "include",
+                    "exclude",
+                    "first",
+                    "terminators",
+                    "state",
+                    "indentation",
+                ],
+                &at,
+            )?;
+            let first = match value.get("first") {
+                None => false,
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| invalid(format!("{at}/first must be boolean")))?,
+            };
+            Ok(RegexLines {
+                include: patterns(value.get("include"), &format!("{at}/include"))?,
+                exclude: patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+                first,
+                lf_only: match value.get("terminators").and_then(Value::as_str) {
+                    None if !value.contains_key("terminators") => false,
+                    Some("python") => false,
+                    Some("lf") => true,
+                    _ => return Err(invalid(format!("{at}/terminators must be python or lf"))),
+                },
+                state: value
+                    .get("state")
+                    .map(|v| {
+                        line_state::state(
+                            v,
+                            &format!("{at}/state"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+                indentation: value
+                    .get("indentation")
+                    .map(|v| {
+                        line_state::indentation(
+                            v,
+                            &format!("{at}/indentation"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+            })
+        })
+        .transpose()?;
+    let content = spec
+        .get("content")
+        .map(|v| -> Result<(Vec<Regex>, Vec<Regex>)> {
+            let at = format!("{path}/regex/content");
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{at} requires file.content")));
+            }
+            let value = object(v, &at)?;
+            reject_unknown(value, &["include", "exclude"], &at)?;
+            Ok((
+                patterns(value.get("include"), &format!("{at}/include"))?,
+                patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+            ))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(RegexOptions {
+        include: patterns(spec.get("include"), &format!("{path}/regex/include"))?,
+        exclude: patterns(spec.get("exclude"), &format!("{path}/regex/exclude"))?,
+        content_include: content.0,
+        content_exclude: content.1,
+        lines,
+        paths: spec
+            .get("paths")
+            .map(|value| compile_scope(Some(value)))
+            .transpose()?,
+    })
 }
 
 /// `compile_query`, for a `calls` term's seed query where `seed`: its rules cannot hold `calls`.
@@ -563,7 +742,13 @@ fn compile_query_as(
                 query.get("regex").expect("form exists"),
                 &format!("{path}/regex"),
             )?;
-            reject_unknown(regex, &["source", "pattern"], &format!("{path}/regex"))?;
+            reject_unknown(
+                regex,
+                &[
+                    "source", "pattern", "include", "exclude", "lines", "paths", "content",
+                ],
+                &format!("{path}/regex"),
+            )?;
             let pattern = bounded_text(
                 regex.get("pattern"),
                 &format!("{path}/regex/pattern"),
@@ -587,6 +772,7 @@ fn compile_query_as(
                 regex: Regex::new(pattern)
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
+                options: Box::new(compile_regex_options(regex, path, capabilities)?),
             })
         }
         "file" => {
@@ -606,6 +792,7 @@ fn compile_query_as(
                 ast,
                 &[
                     "language",
+                    "syntax",
                     "rule",
                     "utils",
                     "constraints",
@@ -617,6 +804,16 @@ fn compile_query_as(
                 ],
                 &format!("{path}/ast"),
             )?;
+            let invalid_syntax = match ast.get("syntax") {
+                None => None,
+                Some(Value::String(value)) if value == "valid" => Some(false),
+                Some(Value::String(value)) if value == "invalid" => Some(true),
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{path}/ast/syntax must be valid or invalid"
+                    )));
+                }
+            };
             let language_name = ast
                 .get("language")
                 .and_then(Value::as_str)
@@ -631,7 +828,7 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (host_grammars, grammar) = language_capability(language_name, capabilities)?;
-            use super::language::adapter::{Adapter, SyntaxFeature, SyntaxRules, with_adapter};
+            use super::language::adapter::SyntaxFeature;
             // The documents a file of the language is (`embed`): its own tree, and the program it
             // embeds, if its language embeds one.
             let embedding = Embedding::of(&host_grammars);
@@ -668,34 +865,31 @@ fn compile_query_as(
                 Some(value) => {
                     gate(
                         &format!("{path}/ast/languageOptions"),
-                        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
+                        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::LanguageOptions) },
                     )?;
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_language_options(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_language_options(
                         value,
                         &format!("{path}/ast"),
-                    ))?
+                    ) }?
                 }
             };
             let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_when(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_when(
                         when,
                         &format!("{path}/ast"),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    ))
+                    ) }
                 })
                 .transpose()?
                 .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations, manifests, jsx_runtimes) = with_adapter!(
-                        family,
-                        A => (A::PACKAGES, A::DECLARATION_FILES, A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES)
-                    );
+                    let (packages, declarations, manifests, jsx_runtimes) = { let pack = language_pack::pack(family); (pack.packages(), pack.declaration_files(), pack.package_manifests(), pack.jsx_runtimes()) };
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
@@ -832,7 +1026,21 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
-            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
+            // The query's content (its `ast` with options substituted, and the shared utilities it
+            // reaches): what a lowered fact label is keyed by (`MatchTree::Fact`), so equal queries
+            // lower to equal plans.
+            let source: [u8; 32] = {
+                use sha2::{Digest as _, Sha256};
+                let mut digest = Sha256::new();
+                digest.update(salt.as_bytes());
+                digest.update(serde_json::to_string(ast).map_err(|error| invalid(error.to_string()))?.as_bytes());
+                digest.finalize().into()
+            };
+            let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+                salt,
+                seed,
+                capabilities.limits.max_regex_pattern_bytes,
+            );
             let mut bindable = BTreeSet::new();
             // A query that reaches shared utilities and has no utilities of its own, no transform
             // and no `calls` seed, in a language that embeds no program, compiles them as every
@@ -1034,12 +1242,21 @@ fn compile_query_as(
                     violations::ast_captures(util, &table, &mut summaries, &mut names);
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
+                {
+                    // Share utility summaries with capture ordering; rebuilding them for
+                    // every utility makes a linear chain quadratic during compilation.
+                    let mut captures = scope.captures.borrow_mut();
+                    bindable.extend(captures.binds(&matcher));
+                    for util in table.shared_rules(&query_utils) {
+                        bindable.extend(captures.binds(util));
+                    }
+                }
                 if !matches!(matcher, AstMatcher::Never) {
                     let anchors = Arc::new(AnchorPlan::compile(&matcher));
                     let three_valued = reads_values(&matcher, &mut BTreeSet::new());
-                    let text = (!three_valued)
-                        .then(|| RequiredText::of(&matcher).map(Arc::new))
-                        .flatten();
+                    // Requirements read only source-text tests, never values, through monotone
+                    // connectives: a file missing one fails the rule outright, unknown or not.
+                    let text = RequiredText::of(&matcher).map(Arc::new);
                     matchers.push(GrammarMatcher {
                         language: *language,
                         document: (side == Side::Guest)
@@ -1048,6 +1265,7 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
+                        invalid_syntax,
                         import_target: reads_import_targets(&matcher),
                         three_valued,
                         matcher,
@@ -1062,6 +1280,7 @@ fn compile_query_as(
                             .as_deref()
                             .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
+                        source: (source, *language),
                     });
                 }
             }
@@ -1468,12 +1687,15 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         )));
     }
     Ok(ViolationSpec {
+        input_only: false,
         code: required_str(value, "code", path)?.to_owned(),
         message: required_str(value, "message", path)?.to_owned(),
         anchor,
         message_template: None,
         fix: None,
+        fix_template: None,
         node_regexes: Vec::new(),
+        gap_tests: Vec::new(),
         each: violation
             .get("each")
             .map(|each| non_empty_str(Some(each), &format!("{path}/each")).map(str::to_owned))
@@ -1624,7 +1846,7 @@ impl Embedding {
     }
 }
 
-pub(super) fn refuse_unavailable_semantics(
+pub fn refuse_unavailable_semantics(
     value: &Value,
     path: &str,
     language: CodeRuleLanguage,
@@ -1663,7 +1885,7 @@ pub(super) fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
     gate(
         at,
         match support {
@@ -1678,177 +1900,4 @@ fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
-    use crate::code_rule_dsl::test_support::*;
-    use serde_json::{Value, json};
-
-    #[test]
-    fn a_planned_language_or_capability_is_language_not_supported() {
-        let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
-        let forbid = |language: &str| json!({ "id": "c", "forbid": { "ast": { "language": language, "rule": { "kind": "identifier" } } }, "violation": violation() });
-        for language in crate::code_rule_dsl::language::PLANNED_LANGUAGES {
-            assert_eq!(
-                rejection(compile_document_with(
-                    clause_document(forbid(language)),
-                    &capabilities
-                )),
-                format!(
-                    "language-not-supported: /clauses/0/forbid/ast/language: `{language}` is not supported yet"
-                )
-            );
-        }
-        let mut defined = clause_document(forbid("python"));
-        defined["clauses"] = json!([
-            { "id": "d", "define": { "language": "exemplar", "utils": { "u": { "kind": "identifier" } } } },
-            forbid("python")
-        ]);
-        assert_eq!(
-            rejection(compile_document_with(defined, &capabilities)),
-            "language-not-supported: /clauses/0/define/language: `exemplar` is not supported yet"
-        );
-        assert_eq!(
-            super::unsupported_semantic(
-                super::Support::NotSupportedYet,
-                "/r/calls",
-                "calls",
-                "typescript"
-            )
-            .unwrap_err()
-            .reason,
-            "language-not-supported: /r/calls: `calls` is not supported yet for typescript policies"
-        );
-        assert_eq!(
-            super::unsupported_semantic(super::Support::Refused, "/r/calls", "calls", "typescript")
-                .unwrap_err()
-                .reason,
-            "/r/calls: `calls` is not available for typescript policies"
-        );
-    }
-
-    #[test]
-    fn duplicate_keys_are_rejected_in_json_and_yaml() {
-        // A JSON object keeps the last of two equal keys, so the first term vanished silently.
-        // ast-grep 0.45.3 rejects the rule ("duplicate field `not`").
-        let json_source = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
-            "id": "c",
-            "forbid": {"ast": {"language": "python", "rule":
-                {"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}}},
-            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            json_source.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
-        assert!(
-            reason.starts_with("duplicate key `not` at /clauses/0/forbid/ast/rule at line 4"),
-            "{reason}"
-        );
-        let yaml_source = "format: rerail.policy/v1\nid: p\nrevision: 1\nid: q\nclauses: []\n";
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            yaml_source.to_owned(),
-            "yaml".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
-        assert!(
-            reason.starts_with("invalid YAML: duplicate key `id` at /"),
-            "{reason}"
-        );
-        // Equal keys in different objects are fine.
-        let distinct = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
-            "id": "c",
-            "forbid": {"ast": {"language": "python", "rule":
-                {"kind": "identifier", "not": {"regex": "^a$", "not": {"regex": "^b$"}}}}},
-            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        CodeRuleDslRuntime::compile(
-            distinct.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-    }
-
-    #[test]
-    fn violation_variables_are_validated() {
-        let forbid = json!({ "regex": { "source": "file.content", "pattern": "x" } });
-        let compile = |violation: Value| {
-            compile_document_with(
-                clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation })),
-                &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-            )
-        };
-        let mut variables = violation();
-        variables["variables"] = json!({ "name": "x" });
-        assert!(rejection(compile(variables)).starts_with(
-            "/clauses/0/violation/variables: violation variables are not supported yet"
-        ));
-        let mut empty = violation();
-        empty["variables"] = json!({});
-        assert!(compile(empty).is_ok());
-    }
-
-    fn regex_document(violation: Value) -> Value {
-        clause_document(json!({
-            "id": "c",
-            "forbid": { "regex": { "source": "file.content", "pattern": "x" } },
-            "violation": violation,
-        }))
-    }
-
-    #[test]
-    fn mode_is_required_and_severity_is_unknown() {
-        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        let mut missing = regex_document(violation());
-        missing.as_object_mut().expect("document").remove("mode");
-        let mut non_string = regex_document(violation());
-        non_string["mode"] = json!(1);
-        let mut severity_name = regex_document(violation());
-        severity_name["mode"] = json!("advisory");
-        for document in [missing, non_string, severity_name] {
-            assert_eq!(
-                rejection(compile_document_with(document, &capabilities)),
-                "/mode must equal log, steer, or block"
-            );
-        }
-        let mut with_severity = violation();
-        with_severity["severity"] = json!("error");
-        assert_eq!(
-            rejection(compile_document_with(
-                regex_document(with_severity),
-                &capabilities
-            )),
-            "unknown field `severity` at /clauses/0/violation"
-        );
-    }
-
-    #[test]
-    fn violations_carry_the_rule_mode() {
-        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        for mode in ["log", "steer", "block"] {
-            let mut document = regex_document(violation());
-            document["mode"] = json!(mode);
-            let compiled = compile_document_with(document, &capabilities)
-                .unwrap_or_else(|error| panic!("{}", error.reason));
-            let result = evaluate_file(&compiled, "typescript", "a.ts", "x;\n");
-            assert_violations(&result, 1);
-            assert_eq!(result["violations"][0]["mode"], mode);
-            assert!(result["violations"][0].get("severity").is_none());
-        }
-    }
-
-    /// A constraint may name what a call binds through a cycle of parameterized calls, whichever
-    /// `any` branch the walk collecting the query's metavariables meets first.
-    #[test]
-    fn constraints_on_captures_bound_through_recursive_calls_do_not_depend_on_branch_order() {
-        for branches in recursive_call_branch_orders() {
-            if let Err(error) = compile_typescript_ast(json!({
-                "rule": { "kind": "expression_statement", "any": branches },
-                "constraints": { "X": { "regex": "^g" } },
-                "utils": mutually_recursive_calls(),
-            })) {
-                panic!("{branches}: {}", error.reason);
-            }
-        }
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

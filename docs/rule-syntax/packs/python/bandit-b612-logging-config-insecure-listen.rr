@@ -1,0 +1,17 @@
+.policy "bandit-b612-logging-config-insecure-listen" revision 2
+.description "Pass a verify callback to logging.config.listen; otherwise anyone who can reach the port can push logging config that runs code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B612 (logging_config_insecure_listen): logging.config.listen called without the verify= keyword.
+//   import logging.config
+//   logging.config.listen(9999)                         B612
+//   logging.config.listen(9999, verify=check_sig)       not reported
+//   logging.config.listen(9999, check_sig)              B612: Bandit reads the keyword only
+
+#include "python/security.rr"   // qual_call, kwarg
+
+.violation B612(at: node) code "B612"
+    "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes."
+    suppress nosec "B612"
+B612(c) :- qual_call(c, "logging.config.listen"), !kwarg(c, "verify", _).

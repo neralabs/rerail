@@ -1,0 +1,81 @@
+.policy "data-layer:graphql-plan-ownership" revision 1
+.description "GraphQL consumers use typed plan-scope contracts: no private or reflective access to plan authority, no authority in reusable templates."
+.language python
+.mode block
+.scope dirs "l9750_graphql", "l9900_auto_api"
+.scope tests false
+.on syntax_error report GPO000 at line 1
+// Python linter: scripts/lint_graphql_plan_ownership.py. In each function, the authority names are the parameters
+// annotated with a plan or transaction type, plus every name assigned (anywhere in the same function, in any order)
+// from an expression rooted at one: `b = scope.child()`, `a = b`.
+//   GPO001  `x._private`, x rooted at an authority name
+//   GPO002  getattr(x, …), x rooted at an authority name
+//   GPO003  object.__getattribute__(x, …), likewise
+//   GPO004  in a @reusable_template class body, a field annotated with an authority type
+//   GPO000  the file does not parse (at line 1)
+// An authority type: some identifier-like token of the annotation's text (the linter's [A-Za-z_]\w* over the
+// unparsed annotation, quoted annotations included) is ServerPlan, BaseServerPlan, _GraphQLServerPlan or
+// LazyResult, or ends in Transaction or PlanScope.
+// "Rooted at": the expression's chain of attribute objects and call functions (not subscripts) ends at the name.
+// Each function is its own frame: a nested def does not see the outer one's parameters.
+//   def assemble(scope: AutoApiPlanScope[object]):
+//       return scope._returns                          GPO001
+
+#include "python/ast.rr"      // def_frame, chain_step, sig_param, assign_target, assign_value, assign_ann, unparen
+
+// gpo_type(t): annotation t names an authority type. A token starts at a letter or `_` after a non-word character,
+// or after digits and non-ASCII letters, which cannot start one ("1ServerPlan" holds the token ServerPlan).
+.decl gpo_type(t: node)
+gpo_type(t) :- gpo_annotation(t), text(t, s),
+    match("(?s)(?:|.*\\W)[^\\W_A-Za-z]*(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult)(?:\\W.*)?|.*(?:Transaction|PlanScope)(?:\\W.*)?", s).
+.decl gpo_annotation(t: node)
+gpo_annotation(t) :- sig_param(_, _, _, _, k, t, _), kind(t, _), (k = "posonly" ; k = "pos" ; k = "kwonly").
+gpo_annotation(t) :- assign_ann(_, t).
+
+// gpo_auth(f, x): x is an authority name of function f.
+.decl gpo_auth(f: node, x: symbol)
+gpo_auth(f, x) :- sig_param(f, _, nm, _, k, t, _), (k = "posonly" ; k = "pos" ; k = "kwonly"), gpo_type(t), text(nm, x),
+    kind(f, "function_definition").
+gpo_auth(f, x) :- assign_target(a, t), kind(t, "identifier"), text(t, x), assign_value(a, v), def_frame(a, f),
+    gpo_root(v, y), gpo_auth(f, y).
+// gpo_root(e, x): e's chain ends at the name x. gpo_head walks it from the expressions the checks look at.
+.decl gpo_root(e: node, x: symbol)
+gpo_root(e, x) :- gpo_head(e, r), kind(r, "identifier"), text(r, x).
+.decl gpo_head(e: node, p: node)
+gpo_head(v, v) :- assign_value(_, v).
+gpo_head(o, o) :- kind(a, "attribute"), field(a, "object", o).
+gpo_head(e, e) :- gpo_reflect(_, e, _).
+gpo_head(e, p) :- gpo_head(e, q), chain_step(q, p, how), how != "subscript".
+// gpo_reflect(c, e, code): call c reflects on its first argument e: getattr(e, …) or object.__getattribute__(e, …).
+.decl gpo_reflect(c: node, e: node, code: symbol)
+gpo_reflect(c, e, "GPO002") :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, "getattr"),
+    gpo_first_arg(c, e).
+gpo_reflect(c, e, "GPO003") :- kind(c, "call"), field(c, "function", g), kind(g, "attribute"), field(g, "object", o),
+    kind(o, "identifier"), text(o, "object"), field(g, "attribute", a), text(a, "__getattribute__"), gpo_first_arg(c, e).
+.decl gpo_first_arg(c: node, e: node)
+gpo_first_arg(c, e) :- field(c, "arguments", al), kind(al, "argument_list"), child(al, e0, i), !kind(e0, "comment"),
+    !kind(e0, "keyword_argument"), !kind(e0, "dictionary_splat"),
+    count : { child(al, e1, j), j < i, !kind(e1, "comment"), !kind(e1, "keyword_argument"),
+              !kind(e1, "dictionary_splat") } = 0, unparen(e0, e).
+// gpo_authority(e): e, in function f, is rooted at one of f's authority names.
+.decl gpo_authority(e: node)
+gpo_authority(e) :- gpo_root(e, x), def_frame(e, f), gpo_auth(f, x).
+
+.violation GPO001(at: node, x: symbol) code "GPO001" "reads private plan authority attribute {x}; add a typed public plan-scope contract"
+GPO001(a, x) :- kind(a, "attribute"), field(a, "attribute", t), text(t, x), prefix("_", x), field(a, "object", o),
+    gpo_authority(o).
+.violation GPO002(at: node) code "GPO002" "reflectively dispatches on typed plan authority"
+GPO002(c) :- gpo_reflect(c, e, "GPO002"), gpo_authority(e).
+.violation GPO003(at: node) code "GPO003" "bypasses typed plan authority with object.__getattribute__"
+GPO003(c) :- gpo_reflect(c, e, "GPO003"), gpo_authority(e).
+
+// GPO004: an annotated field directly in the body of a class decorated @reusable_template (bare, dotted or called).
+.violation GPO004(at: node, cx: symbol) code "GPO004" "reusable dataclass {cx} retains a runtime authority field"
+GPO004(a, cx) :- kind(c, "class_definition"), def_name(c, cx), decorator(c, e0), unparen(e0, e1), gpo_dec(e1, e),
+    gpo_last(e, "reusable_template"), stmt(st, c), asgstmt(a, st), assign_ann(a, t), gpo_type(t).
+.decl gpo_dec(e: node, t: node)  // `@d(…)` names d; any other decorator names itself
+gpo_dec(e, t) :- kind(e, "call"), field(e, "function", t).
+gpo_dec(e, e) :- decorator(_, e0), unparen(e0, e), !kind(e, "call").
+.decl gpo_last(e: node, x: symbol)  // a Name's id or an attribute's last name
+gpo_last(e, x) :- kind(e, "identifier"), text(e, x).
+gpo_last(e, x) :- kind(e, "attribute"), field(e, "attribute", a), text(a, x).

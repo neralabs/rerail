@@ -1,0 +1,36 @@
+.policy "ruff-up030-format-literals" revision 2
+.description "Use automatic {} fields instead of explicit positional indices such as {0} and {1} in str.format() calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP030 (pyupgrade): `"…".format(…)` on a str literal whose fields are all explicit indices, with no
+// nested field in a spec. Indices 0, 1, …, n-1 in order become `{}` as they are. Any other order must be a
+// permutation of 0…n-1, and the call must have at least n plain positional arguments and no keywords, so that
+// the arguments can be reordered to match.
+//   "{0} {1}".format(a, b)        ← UP030: "{} {}".format(a, b)
+//   "{1} {0}".format(a, b)        ← UP030: "{} {}".format(b, a)
+//   "{0} {0}".format(a)   "{1} {0}".format(*args)   "{0:<{1}}".format(a, 4)     not reported
+#include "python/pyflakes-format.rr"
+//   format_call(c, v), brace_ok(v), brace_name, brace_arg, brace_nested; call_pos, call_kw, call_kwsplat
+
+.violation UP030(at: node) code "UP030"
+    "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+    suppress ruff "UP030"
+UP030(c) :- format_call(c, v), indexed(v), in_order(v).
+UP030(c) :- format_call(c, v), indexed(v), !in_order(v), permutation(v, n), count : { call_pos(c, _, _) } >= n,
+    !call_kw(c, _, _), !call_kwsplat(c).
+
+// indexed(v): v parses, has fields, every one an index, and none nested in a spec.
+.decl indexed(v: symbol)
+indexed(v) :- brace_ok(v), brace_name(v, _, _, _), !brace_nested(v, _, _, _, _, _),
+    count : { brace_arg(v, _, a), !match("[0-9]+", a) } = 0.
+// index_at(v, r, i): the r-th field of v (from 0) refers to argument i.
+.decl index_at(v: symbol, r: number, i: number)
+index_at(v, r, to_number(a)) :- indexed(v), brace_arg(v, k, a), r = count : { brace_name(v, k2, _, _), k2 < k }.
+.decl in_order(v: symbol)
+in_order(v) :- indexed(v), count : { index_at(v, r, i), r != i } = 0.
+// permutation(v, n): v's n fields name 0 … n-1, each once.
+.decl permutation(v: symbol, n: number)
+permutation(v, n) :- indexed(v), n = count : { index_at(v, _, _) }, count : { index_at(v, _, i), i >= n } = 0,
+    count : { index_at(v, r1, i), index_at(v, r2, i), r1 != r2 } = 0.

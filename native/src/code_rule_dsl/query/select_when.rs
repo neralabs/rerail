@@ -19,7 +19,7 @@ use crate::code_rule_dsl::model::Query;
 
 /// One file of a leaf.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) struct LeafRow {
+pub struct LeafRow {
     /// The leaf could not answer in this file: its witnesses there are unknown.
     pub(in crate::code_rule_dsl) failed: bool,
     /// The file was read around syntax errors; reported `source-partial` if the answer uses it.
@@ -28,7 +28,7 @@ pub(in crate::code_rule_dsl) struct LeafRow {
 }
 
 /// The rows of a plan's leaves.
-pub(in crate::code_rule_dsl) trait Leaves {
+pub trait Leaves {
     /// Row `position` of leaf `leaf` (in `Plan::leaves` order), or `None` past its last row.
     /// `Err` ends the answer with that message.
     fn row(&self, leaf: usize, position: usize) -> Result<Option<LeafRow>, String>;
@@ -43,7 +43,7 @@ pub(in crate::code_rule_dsl) struct Leaf<L> {
 }
 
 /// A query's shape and its leaves.
-pub(in crate::code_rule_dsl) struct Plan<L> {
+pub struct Plan<L> {
     pub(in crate::code_rule_dsl) leaves: Vec<Leaf<L>>,
     /// The query's nodes in pre-order: a `select_when`'s `exists` side follows it directly.
     nodes: Vec<Node>,
@@ -195,7 +195,7 @@ pub(in crate::code_rule_dsl) fn answer<L>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::model::RegexSource;
     use regex::Regex;
@@ -203,6 +203,7 @@ mod tests {
 
     fn leaf() -> Query {
         Query::Regex {
+            options: Default::default(),
             regex: Regex::new("x").unwrap(),
             source: RegexSource::Content,
         }

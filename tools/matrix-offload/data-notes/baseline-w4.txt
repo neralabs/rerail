@@ -1,0 +1,5 @@
+workload w4, load average 125, data load 0.07 s CPU, 13088 documents
+(a) scalar histogram, 22295712 named nodes, 115 kinds, 13088 documents: 0.0202 s CPU (0.91 ns/node, 2.21 GB/s of u16 codes)
+(b) hash group-by on (document, kind): 0.3754 s CPU, 523012 groups (16.8 ns/node)
+checksum (Σ counts) 22295712; kinds data is kinds.bin (u16 per named node, CSR by document)
+total CPU 0.90 s

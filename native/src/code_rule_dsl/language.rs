@@ -27,13 +27,15 @@
 //! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
 //! another family's code.
 
-pub(crate) mod adapter;
+// cratify: `adapter` is rerail-w's (it mounts it)
 
-use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::tree::Tree;
+use rerail_rr_syntax::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::{Manifest, node_range_is_subset_of};
 use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
+    AstGrep,
     language::Language,
     matcher::{Pattern, PatternBuilder, PatternError},
     tree_sitter::{StrDoc, TSLanguage},
@@ -60,23 +62,29 @@ impl Language for GrammarDialect {
     fn expando_char(&self) -> char {
         match self.support() {
             Some(lang) => lang.expando_char(),
-            None => BladeLang.expando_char(),
+            None => OWN_EXPANDO,
         }
     }
 
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
         match self.support() {
             Some(language) => language.pre_process_pattern(query),
-            None => BladeLang.pre_process_pattern(query),
+            None => own_metavariables(query),
         }
     }
 
-    /// Blade's patterns are Forte trees (`blade::forte::tree`), whose kinds are numbered as Blade's
-    /// tapes number them; every other dialect's are tree-sitter trees.
+    /// A dialect whose patterns are its parser's own trees (Blade's, Forte's) builds them so
+    /// (`tape::TreeParser::build_pattern`); every other dialect's are tapes of tree-sitter trees, written as
+    /// documents are: no token the grammar implies (`tape::pattern_doc`, RER-131).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        match self {
-            Self::Blade => BladeLang.build_pattern(builder),
-            _ => builder.build(|source| StrDoc::try_new(source, *self)),
+        match crate::code_rule_dsl::tape::tree_parser(*self).and_then(|parser| parser.build_pattern(builder)) {
+            Some(pattern) => pattern,
+            None => {
+                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
+                let ends = |node: usize| shape.ends.get(node).cloned().flatten();
+                let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
+                builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
+            }
         }
     }
 }
@@ -95,18 +103,57 @@ impl LanguageExt for GrammarDialect {
 }
 
 impl GrammarDialect {
-    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade).
+    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade), or one left out of this
+    /// build (its `lang-*` feature off: `corpus` refuses to run it, so its kinds are never read).
     fn ts_language(self) -> Option<TSLanguage> {
+        if !self.built() {
+            return None;
+        }
         registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
     }
 }
 
-/// Where a dialect's kinds come from: a tree-sitter grammar's symbol table, or the kinds of
-/// Blade's tree (`blade::forte::tree`, Rerail's port of Forte).
+/// The metavariable character of a dialect with no ast-grep language (one Rerail parses itself).
+const OWN_EXPANDO: char = 'µ';
+
+/// A pattern of a dialect Rerail parses itself, its metavariables `OWN_EXPANDO`'s: `$X`, `$_`, `$$X` and `$$$X`
+/// become `µX`, `µ_`, `µµX` and `µµµX`; a `$` before anything else (`$x`, `$$x`, PHP's in a Blade template) stays.
+pub fn own_metavariables(query: &str) -> Cow<'_, str> {
+    let mut processed = String::with_capacity(query.len());
+    let mut dollars = 0;
+    for character in query.chars() {
+        if character == '$' {
+            dollars += 1;
+            continue;
+        }
+        let expando = matches!(character, 'A'..='Z' | '_') || dollars == 3;
+        processed.extend(std::iter::repeat_n(if expando { OWN_EXPANDO } else { '$' }, dollars));
+        dollars = 0;
+        processed.push(character);
+    }
+    processed.extend(std::iter::repeat_n(if dollars == 3 { OWN_EXPANDO } else { '$' }, dollars));
+    Cow::Owned(processed)
+}
+
+/// Where a dialect's kinds come from: a tree-sitter grammar's symbol table, or the kinds of a tree Rerail
+/// builds itself: `.rr` files' (`rerail_rr_syntax::tape`, decision 0061), or a registered parser's
+/// (`tape::TreeParser`, Blade's Forte).
 #[derive(Clone, Copy)]
 enum OwnKinds {
     Grammar(&'static TSLanguage),
-    Blade,
+    /// Its kind names by id, its first anonymous id and its field names by id; the parser, where one
+    /// names more kinds by one (`TreeParser::kind_names`).
+    Own(crate::code_rule_dsl::tape::OwnTable, Option<&'static dyn crate::code_rule_dsl::tape::TreeParser>),
+}
+
+impl OwnKinds {
+    /// A dialect Rerail parses itself: its kind names by id, its first anonymous id, and its field names by id.
+    fn table(self) -> Option<(&'static [&'static str], u16, &'static [&'static str])> {
+        match self {
+            OwnKinds::Grammar(_) => None,
+            OwnKinds::Own(table, _) => Some(table),
+        }
+    }
 }
 
 /// The kind id every grammar gives ERROR (tree-sitter's `ts_builtin_sym_error`); Blade's tree
@@ -118,100 +165,117 @@ const ERROR_ID: u16 = u16::MAX;
 /// holds one grammar: a file's embedded program is a document of its own (`embed`), its kinds its
 /// own grammar's. Rules and tapes read kinds and fields only here.
 #[derive(Clone, Copy)]
-pub(crate) struct KindCatalog {
+pub struct KindCatalog {
     own: OwnKinds,
 }
 
 impl KindCatalog {
     /// The tree-sitter grammar the dialect's files are parsed with; `None` for Blade's.
-    pub(crate) fn grammar(self) -> Option<&'static TSLanguage> {
+    pub fn grammar(self) -> Option<&'static TSLanguage> {
         match self.own {
             OwnKinds::Grammar(grammar) => Some(grammar),
-            OwnKinds::Blade => None,
+            OwnKinds::Own(..) => None,
         }
     }
 
-    pub(crate) fn kind_count(self) -> usize {
+    pub fn kind_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_count(),
-            OwnKinds::Blade => blade_tree::KIND_NAMES.len(),
+            own => own.table().expect("own kinds").0.len(),
         }
     }
 
     /// The id of the named kind called `kind` (0 where there is none).
-    pub(crate) fn kind_id(self, kind: &str) -> u16 {
+    pub fn kind_id(self, kind: &str) -> u16 {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.id_for_node_kind(kind, true),
-            OwnKinds::Blade if kind == "ERROR" => ERROR_ID,
-            OwnKinds::Blade => blade_tree::KIND_NAMES[..usize::from(blade_tree::FIRST_ANONYMOUS)]
-                .iter()
-                .skip(1)
-                .position(|name| *name == kind)
-                .map_or(0, |index| index as u16 + 1),
+            _ if kind == "ERROR" => ERROR_ID,
+            own => {
+                let (names, first_anonymous, _) = own.table().expect("own kinds");
+                names[..usize::from(first_anonymous)]
+                    .iter()
+                    .skip(1)
+                    .position(|name| *name == kind)
+                    .map_or(0, |index| index as u16 + 1)
+            }
         }
     }
 
-    /// The ids a rule's `kind` names: its own, except that `comment` in a Blade template names its
-    /// comments of every kind (`<!-- -->`, `{{-- --}}`, `<!--[if ...]>` and `<!...>`).
-    pub(crate) fn kind_ids(self, kind: &str) -> Vec<u16> {
+    /// The ids a rule's `kind` names: its own, or those its parser names by it (`comment` in a Blade template
+    /// names its comments of every kind: `TreeParser::kind_names`).
+    pub fn kind_ids(self, kind: &str) -> Vec<u16> {
         match self.own {
-            OwnKinds::Blade if kind == "comment" => [
-                "comment",
-                "blade_comment",
-                "conditional_comment",
-                "bogus_comment",
-            ]
-            .into_iter()
-            .map(|kind| self.kind_id(kind))
-            .collect(),
+            OwnKinds::Own(_, Some(parser)) if let Some(names) = parser.kind_names(kind) => {
+                names.iter().map(|kind| self.kind_id(kind)).collect()
+            }
             _ => vec![self.kind_id(kind)],
         }
     }
 
-    pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
+    pub fn kind_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_for_id(id),
-            OwnKinds::Blade if id == ERROR_ID => Some("ERROR"),
-            OwnKinds::Blade => blade_tree::KIND_NAMES
+            _ if id == ERROR_ID => Some("ERROR"),
+            own => own.table().expect("own kinds").0
                 .get(usize::from(id))
                 .copied()
                 .filter(|name| !name.is_empty()),
         }
     }
 
-    pub(crate) fn kind_is_named(self, id: u16) -> bool {
+    pub fn kind_is_named(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_named(id),
-            OwnKinds::Blade => id == ERROR_ID || (id != 0 && id < blade_tree::FIRST_ANONYMOUS),
+            own => id == ERROR_ID || (id != 0 && id < own.table().expect("own kinds").1),
         }
     }
 
     pub(crate) fn kind_is_visible(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_visible(id),
-            OwnKinds::Blade => id != 0 && usize::from(id) < blade_tree::KIND_NAMES.len(),
+            own => id != 0 && usize::from(id) < own.table().expect("own kinds").0.len(),
         }
     }
 
-    pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
+    pub fn kind_is_supertype(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_supertype(id),
-            OwnKinds::Blade => false,
+            OwnKinds::Own(..) => false,
         }
     }
 
-    pub(crate) fn field_count(self) -> usize {
+    /// The concrete kinds under supertype `id`, through nested supertypes: every kind a member of
+    /// it can have (a node's own memberships are a subset; decision 0025).
+    pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        let mut kinds = std::collections::BTreeSet::new();
+        let OwnKinds::Grammar(grammar) = self.own else { return kinds };
+        let (mut pending, mut seen) = (vec![id], std::collections::BTreeSet::from([id]));
+        while let Some(supertype) = pending.pop() {
+            for &kind in grammar.subtypes_for_supertype(supertype) {
+                if grammar.node_kind_is_supertype(kind) {
+                    if seen.insert(kind) {
+                        pending.push(kind);
+                    }
+                } else {
+                    kinds.insert(kind);
+                }
+            }
+        }
+        kinds
+    }
+
+    pub fn field_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_count(),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES.len() - 1,
+            own => own.table().expect("own kinds").2.len() - 1,
         }
     }
 
     /// The id of the field called `name`.
-    pub(crate) fn field_id(self, name: &str) -> Option<u16> {
+    pub fn field_id(self, name: &str) -> Option<u16> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_id_for_name(name).map(|id| id.get()),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES
+            own => own.table().expect("own kinds").2
                 .iter()
                 .skip(1)
                 .position(|field| *field == name)
@@ -219,11 +283,11 @@ impl KindCatalog {
         }
     }
 
-    pub(crate) fn field_name(self, id: u16) -> Option<&'static str> {
+    pub fn field_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_name_for_id(id),
-            OwnKinds::Blade => (id != 0)
-                .then(|| blade_tree::FIELD_NAMES.get(usize::from(id)).copied())
+            own => (id != 0)
+                .then(|| own.table().expect("own kinds").2.get(usize::from(id)).copied())
                 .flatten(),
         }
     }
@@ -245,24 +309,31 @@ impl GrammarDialect {
 
     /// The dialect's kinds and fields: Blade's tree's (Forte, the registry's `parser` `forte`),
     /// else its tree-sitter grammar's.
-    pub(crate) fn kinds(self) -> KindCatalog {
+    pub fn kinds(self) -> KindCatalog {
         KindCatalog {
             own: match self.grammar() {
                 Some(grammar) => OwnKinds::Grammar(grammar),
-                None => OwnKinds::Blade,
+                None if self == GrammarDialect::Rr => {
+                    OwnKinds::Own((rr_tree::KIND_NAMES, rr_tree::FIRST_ANONYMOUS, rr_tree::FIELD_NAMES), None)
+                }
+                // A dialect its language parses itself, else one this build leaves out (no kinds).
+                None => match crate::code_rule_dsl::tape::tree_parser(self) {
+                    Some(parser) => OwnKinds::Own(parser.kinds().unwrap_or((&[""], 1, &[""])), Some(parser)),
+                    None => OwnKinds::Own((&[""], 1, &[""]), None),
+                },
             },
         }
     }
 
-    pub(crate) fn kind_count(self) -> usize {
+    pub fn kind_count(self) -> usize {
         self.kinds().kind_count()
     }
 
-    pub(crate) fn kind_id(self, kind: &str) -> u16 {
+    pub fn kind_id(self, kind: &str) -> u16 {
         self.kinds().kind_id(kind)
     }
 
-    pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
+    pub fn kind_name(self, id: u16) -> Option<&'static str> {
         self.kinds().kind_name(id)
     }
 
@@ -270,12 +341,16 @@ impl GrammarDialect {
         self.kinds().kind_is_named(id)
     }
 
-    pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
+    pub fn kind_is_supertype(self, id: u16) -> bool {
         self.kinds().kind_is_supertype(id)
     }
 
+    pub fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        self.kinds().supertype_kinds(id)
+    }
+
     /// Every dialect, test-only grammars included.
-    pub(crate) fn all() -> &'static [Self] {
+    pub fn all() -> &'static [Self] {
         Self::ALL
     }
 
@@ -285,14 +360,14 @@ impl GrammarDialect {
 }
 
 /// A rule's `pattern`: its source, or a context and the kind of the node it selects there.
-pub(crate) enum PatternSource<'a> {
+pub enum PatternSource<'a> {
     Plain(&'a str),
     Contextual { context: &'a str, selector: &'a str },
 }
 
 /// A rule's pattern compiled for `language`, the grammar of the document its clause reads (an
 /// embedded clause's is its program's: `ast.embedded`).
-pub(crate) fn rule_pattern(
+pub fn rule_pattern(
     source: PatternSource<'_>,
     language: GrammarDialect,
 ) -> Result<Pattern, PatternError> {
@@ -335,13 +410,12 @@ grammar_dialect! {
     Html => SupportLang::Html,
     Css => SupportLang::Css,
     Lua => SupportLang::Lua,
-    Json => SupportLang::Json,
     Go => SupportLang::Go,
 }
 
 impl Via {
     /// The family of the files that embed a program through this embedding.
-    pub(crate) fn host_family(self) -> Family {
+    pub fn host_family(self) -> Family {
         GrammarDialect::ALL
             .iter()
             .find(|dialect| dialect.embeds().iter().any(|&(via, _)| via == self))
@@ -351,11 +425,11 @@ impl Via {
 }
 
 /// The family `Family::of` reads a test-only grammar with.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 
 /// Grammars only tests parse (tape round trips over other shapes); no file or code rule selects them.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
     (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
@@ -365,7 +439,7 @@ const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
 /// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and
 /// event handlers, one TypeScript, TSX or JavaScript program (`embed::TestScript`), so tests
 /// encode, restore and read an embedded ECMAScript program as an embedding language's would be.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const fn test_embeds(dialect: GrammarDialect) -> &'static [(Via, GrammarDialect)] {
     match dialect {
         GrammarDialect::Html => &[
@@ -382,7 +456,19 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
-pub(crate) fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
+/// A fragment grammar the registry declares (decision 0082): its dialect, and its start symbol (`expression`: the
+/// text inside a written `( … )`).
+pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
+    FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
+}
+
+/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
+/// a fragment (decision 0082). A dialect this build leaves out is still a name.
+pub fn is_grammar(name: &str) -> bool {
+    fragment(name).is_some() || DIALECTS.iter().any(|dialect| dialect.label == name)
+}
+
+pub fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
     DIALECTS
         .iter()
         .find(|dialect| dialect.label == label)
@@ -390,26 +476,34 @@ pub(crate) fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
 }
 
 /// A dialect's file label.
-pub(crate) fn label(lang: GrammarDialect) -> Option<&'static str> {
+pub fn label(lang: GrammarDialect) -> Option<&'static str> {
     dialect(lang).map(|dialect| dialect.label)
 }
 
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
-/// longest matching suffix.
-pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
+/// longest matching suffix. A dialect this build leaves out (`GrammarDialect::built`) selects none: its files are
+/// not read, as a planned language's are not.
+pub fn label_of_path(path: &str) -> Option<&'static str> {
     let path = path.to_ascii_lowercase();
     DIALECTS
         .iter()
         .flat_map(|dialect| dialect.suffixes.iter().map(move |suffix| (suffix, dialect)))
         .filter(|(suffix, _)| path.ends_with(**suffix))
         .max_by_key(|(suffix, _)| suffix.len())
+        .filter(|(_, dialect)| dialect.lang.built())
         .map(|(_, dialect)| dialect.label)
 }
 
+/// The label of the dialect `name` names, when this build parses it (`GrammarDialect::built`): a program's
+/// `.language`.
+pub fn label_named(name: &str) -> Option<&'static str> {
+    DIALECTS.iter().find(|dialect| dialect.label == name && dialect.lang.built()).map(|dialect| dialect.label)
+}
+
 /// A dialect's persisted tape tag.
-pub(crate) fn tape_tag(lang: GrammarDialect) -> Option<u8> {
+pub fn tape_tag(lang: GrammarDialect) -> Option<u8> {
     let tag = dialect(lang).map(|dialect| dialect.tape_tag);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let tag = tag.or_else(|| {
         TEST_TAPE_TAGS
             .iter()
@@ -420,12 +514,12 @@ pub(crate) fn tape_tag(lang: GrammarDialect) -> Option<u8> {
 }
 
 /// The dialect a persisted tape tag names.
-pub(crate) fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
+pub fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
     let lang = DIALECTS
         .iter()
         .find(|dialect| dialect.tape_tag == tag)
         .map(|dialect| dialect.lang);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let lang = lang.or_else(|| {
         TEST_TAPE_TAGS
             .iter()
@@ -440,7 +534,7 @@ pub(crate) fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
 pub(crate) const LANGUAGE_NOT_SUPPORTED: &str = "language-not-supported";
 
 /// A `language-not-supported` compile error: its message starts with the code.
-pub(crate) fn language_not_supported(message: impl std::fmt::Display) -> napi::Error {
+pub fn language_not_supported(message: impl std::fmt::Display) -> napi::Error {
     napi::Error::new(
         napi::Status::InvalidArg,
         format!("{LANGUAGE_NOT_SUPPORTED}: {message}"),
@@ -448,7 +542,7 @@ pub(crate) fn language_not_supported(message: impl std::fmt::Display) -> napi::E
 }
 
 impl CodeRuleLanguage {
-    pub(crate) fn parse(name: &str) -> Option<Self> {
+    pub fn parse(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|language| language.name() == name)
@@ -456,7 +550,7 @@ impl CodeRuleLanguage {
 
     /// The language a rule's `language` at `path` names. A language the registry plans is
     /// `language-not-supported`; any other unknown name is `unknown`'s error.
-    pub(crate) fn read(
+    pub fn read(
         name: &str,
         path: &str,
         unknown: impl FnOnce() -> napi::Error,
@@ -476,7 +570,7 @@ impl CodeRuleLanguage {
 /// supported language declares today is still handled wherever a rule is compiled.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Support {
+pub enum Support {
     Supported,
     /// The language has no such thing, or no plan for it: a rule using it is invalid.
     Refused,
@@ -486,7 +580,7 @@ pub(crate) enum Support {
 
 /// A semantic capability a language may support (the registry's `capabilities` keys).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum Semantic {
+pub enum Semantic {
     /// Scope table, bindings and usage: `resolves`, `binds`.
     Scope,
     /// Value decoding and comparison: `value`, `compare`.
@@ -502,11 +596,11 @@ pub(crate) enum Semantic {
 /// The suppressions a family honours (the registry's `suppressions`), one kind per linter
 /// (`suppress`'s table). PHP honours three linters' (a PHP project may run any of them); Blade
 /// templates none: no linter reads a template's `{{-- --}}` comments for directives.
-pub(crate) use crate::code_rule_dsl::suppress::Suppression;
+pub use crate::code_rule_dsl::suppress::kinds::Suppression;
 
 /// The ECMAScript source form that structural `when` gates and scope construction read.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum SourceType {
+pub enum SourceType {
     /// Top-level declarations join the global scope, and top-level `this` is the global object.
     Script,
     /// A module scope; top-level `this` is `undefined`.
@@ -520,8 +614,11 @@ impl SourceType {
     /// `package.json` has `package` as its type (`None`: no manifest), for a query that leaves
     /// `sourceType` to the file: its family's `Adapter::source_type`. `None` where Node reads the
     /// syntax instead (`has_module_syntax`).
-    pub(crate) fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
-        adapter::source_type(label, path, package)
+    pub fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
+        match dialect_by_label(label) {
+            Some(dialect) => base(Family::of(dialect)).source_type(path, package),
+            None => Some(SourceType::Module),
+        }
     }
 
     /// The module system a file has by its extension and its nearest `package.json`'s `type`
@@ -529,14 +626,97 @@ impl SourceType {
     /// each file one: `.mjs` and `.mts` modules, `.cjs` and `.cts` CommonJS, any other file a
     /// module only where `type` is `module`, CommonJS where it is anything else and where there
     /// is no manifest. No syntax is read.
-    pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
-        adapter::Ecma::source_type_by_package_type(path, package)
+    pub fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("mjs" | "mts") => SourceType::Module,
+            Some("cjs" | "cts") => SourceType::CommonJs,
+            _ if package == Some(PackageType::Module) => SourceType::Module,
+            _ => SourceType::CommonJs,
+        }
     }
+}
+
+/// What the tape, the line tables and the file conditions ask of a family (below the semantic packs,
+/// `adapter::pack::LanguagePack`): every family's pack registers as it (`register_base`) as the engine loads.
+pub trait LanguageBase: Send + Sync {
+    /// The text its tree-sitter grammar parses for `source` (a PHP file's view, `php_view`): the same length and
+    /// character boundaries.
+    fn parse_input<'s>(&self, source: &'s str) -> Cow<'s, str>;
+    /// Where its lines end, as its linters count them.
+    fn terminators(&self) -> crate::code_rule_dsl::lines::Terminators;
+    /// The module system of its file at `path` whose nearest manifest has `package` as its type; `None` where
+    /// the syntax decides.
+    fn source_type(&self, path: &str, package: Option<PackageType>) -> Option<SourceType>;
+    /// The kinds of its comment nodes, as a tree walk meets them.
+    fn comment_kinds(&self) -> &'static [&'static str];
+    /// Whether W reads values of its nodes (`ValueRules::SUPPORTED`).
+    fn reads_values(&self) -> bool;
+    /// The module name its file's path gives it (`Adapter::path_module`).
+    fn path_module(&self, path: &str) -> Option<String>;
+    /// A template literal chunk's cooked text, where the family has template literals (`Adapter::cooked_template`).
+    fn cooked_template(&self, chunk: &str) -> Option<String>;
+    /// The module a host sends for its file at `file` (`Adapter::module_path`).
+    fn module_path(&self, file: &std::path::Path) -> Option<serde_json::Value>;
+    /// Whether its files take their module from package markers (`Adapter::PACKAGES`).
+    fn packages(&self) -> bool;
+    /// Whether its files read their nearest `package.json` (`Adapter::PACKAGE_MANIFESTS`).
+    fn package_manifests(&self) -> bool;
+    /// Whether its files are read past a leading byte order mark (`Adapter::STRIPS_BOM`).
+    fn strips_bom(&self) -> bool;
+    /// Whether its ast queries may use `importTarget` (`Adapter::IMPORT_TARGETS`).
+    fn import_targets(&self) -> bool;
+    /// Whether Forte parses its files (`Adapter::PARSED_BY_FORTE`).
+    fn parsed_by_forte(&self) -> bool;
+    /// The kinds of its parenthesized expressions (`ScopeRules::PAREN_KINDS`).
+    fn paren_kinds(&self) -> &'static [&'static str];
+}
+
+/// `family`'s base, where its pack is registered (a family left out of the build has none).
+pub fn registered_base(family: Family) -> Option<&'static dyn LanguageBase> {
+    BASES[family as usize].get().copied()
+}
+
+/// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
+pub fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
+    base(Family::of(dialect)).parse_input(source)
+}
+
+/// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
+pub fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
+    match parse_input(dialect, source) {
+        Cow::Borrowed(_) => dialect.ast_grep(source),
+        Cow::Owned(input) => {
+            let mut doc = StrDoc::new(&input, dialect);
+            // The input has `source`'s length and character boundaries, so every node's range
+            // reads `source`.
+            doc.src = source.to_owned();
+            AstGrep::doc(doc)
+        }
+    }
+}
+
+/// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).
+pub fn is_comment_kind(kind: &str) -> bool {
+    Family::ALL.iter().filter_map(|&family| BASES[family as usize].get()).any(|base| base.comment_kinds().contains(&kind))
+}
+
+static BASES: [std::sync::OnceLock<&'static dyn LanguageBase>; Family::ALL.len()] =
+    [const { std::sync::OnceLock::new() }; Family::ALL.len()];
+
+/// Registers `family`'s base; the first registration holds.
+pub fn register_base(family: Family, base: &'static dyn LanguageBase) {
+    let _ = BASES[family as usize].set(base);
+}
+
+/// `family`'s base (`LanguageBase`).
+pub fn base(family: Family) -> &'static dyn LanguageBase {
+    BASES[family as usize].get().copied().unwrap_or_else(|| panic!("no language registered for {family:?}"))
 }
 
 /// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum PackageType {
+pub enum PackageType {
     /// `"type": "module"`.
     Module,
     /// `"type": "commonjs"`.
@@ -546,7 +726,7 @@ pub(crate) enum PackageType {
 }
 
 impl PackageType {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "module" => Some(Self::Module),
             "commonjs" => Some(Self::CommonJs),
@@ -555,7 +735,7 @@ impl PackageType {
         }
     }
 
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Module => "module",
             Self::CommonJs => "commonjs",
@@ -573,7 +753,7 @@ const COMMONJS_WRAPPER_NAMES: [&str; 5] =
 /// top-level `await` (outside functions and class bodies, `for await` included), or a top-level
 /// `const`, `let` or `class` declaring one of the CommonJS wrapper's names, each of which only
 /// parses as a module.
-pub(crate) fn has_module_syntax<D: ast_grep_core::Doc>(root: &ast_grep_core::Node<'_, D>) -> bool {
+pub fn has_module_syntax<D: ast_grep_core::Doc>(root: &ast_grep_core::Node<'_, D>) -> bool {
     root.children()
         .any(|child| is_module_declaration(&child) || redeclares_commonjs_wrapper(&child))
         || (root.text().contains("meta")
@@ -706,7 +886,7 @@ fn binds_commonjs_wrapper<D: ast_grep_core::Doc>(pattern: &ast_grep_core::Node<'
 
 /// The JSX runtime of an ECMA file (`file.jsxRuntime`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum JsxRuntime {
+pub enum JsxRuntime {
     React,
     /// Another JSX library's.
     Other,
@@ -714,7 +894,7 @@ pub(crate) enum JsxRuntime {
 }
 
 impl JsxRuntime {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "react" => Some(Self::React),
             "other" => Some(Self::Other),
@@ -769,7 +949,7 @@ fn names_package(packages: &[&str], source: &str) -> bool {
 
 /// The JSX runtime a JSX import source (a `@jsxImportSource` pragma, a `jsxImportSource`
 /// compiler option) names: React or a React wrapper, another JSX library, or neither (`None`).
-pub(crate) fn jsx_import_source_runtime(source: &str) -> Option<JsxRuntime> {
+pub fn jsx_import_source_runtime(source: &str) -> Option<JsxRuntime> {
     if names_package(&REACT_JSX_IMPORT_SOURCES, source) {
         Some(JsxRuntime::React)
     } else if names_package(&OTHER_JSX_IMPORT_SOURCES, source) {
@@ -787,7 +967,7 @@ pub(crate) fn jsx_import_source_runtime(source: &str) -> Option<JsxRuntime> {
 /// A pragma naming anything else is no evidence either way (Emotion's `@jsx jsx` renders React), so
 /// `None` where the text names no runtime, and the file's manifest decides
 /// (`Manifest::jsx_runtime`).
-pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
+pub fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
     root: &ast_grep_core::Node<'_, D>,
 ) -> Option<JsxRuntime> {
     if root.text().contains("@jsx") {
@@ -841,40 +1021,133 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 /// `bin: false`, `private: false` and `published: false` included; `nodeVersion` reads
 /// eslint-plugin-n's default range there.
 #[derive(Debug)]
-pub(crate) struct PackageCondition {
+pub struct PackageCondition {
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
-    pub(crate) bin: Option<bool>,
+    pub bin: Option<bool>,
     /// The range the file's configured Node range must, or must not, be a subset of.
-    pub(crate) node_version: Option<NodeVersionCondition>,
+    pub node_version: Option<NodeVersionCondition>,
     /// Names one of which the manifest must list as a dependency of any kind.
-    pub(crate) depends_on: Option<Vec<String>>,
+    pub depends_on: Option<Vec<String>>,
     /// Over the file's path relative to the manifest's folder.
-    pub(crate) path: Option<TextCondition>,
+    pub path: Option<TextCondition>,
     /// Whether the file is in its Next app's server module graph (`Manifest::in_server_graph`).
-    pub(crate) server_graph: Option<bool>,
+    pub server_graph: Option<bool>,
     /// Whether the manifest's `private` is `true` (`Manifest::is_private`).
-    pub(crate) private: Option<bool>,
+    pub private: Option<bool>,
     /// Whether npm publishes the file (`Manifest::publishes`).
-    pub(crate) published: Option<bool>,
+    pub published: Option<bool>,
+}
+
+/// A file's project manifest, as a `package` file condition reads it: the nearest one its language's project
+/// model found for the file (ECMA's `package.json`, `package_manifest::Manifest`), which that language's crate
+/// implements this for. A file without one is read through the registered `no_manifest` where a condition
+/// still holds of it (`nodeVersion`: the configured default).
+pub trait ProjectManifest: std::fmt::Debug + Send + Sync + 'static {
+    /// The manifest as its own type, for its language's crate.
+    fn as_any(&self) -> &dyn std::any::Any;
+    /// Whether `other` is the same manifest (a resident file follows a derived one while its own equals it).
+    fn same(&self, other: &dyn ProjectManifest) -> bool;
+    /// Its content's digest: what a stored result of its file is keyed by.
+    fn digest(&self) -> &[u8; 32];
+    /// Its `type` (an ECMA file's module system, `SourceType::by_package_type`).
+    fn package_type(&self) -> PackageType {
+        PackageType::Unset
+    }
+    /// The JSX runtime its dependencies imply.
+    fn jsx_runtime(&self) -> JsxRuntime {
+        JsxRuntime::Unknown
+    }
+    /// Whether the manifest lists `path` as a bin.
+    fn is_bin(&self, path: &str) -> bool;
+    /// Whether the manifest's configured Node range is a subset of `range`.
+    fn node_range_is_subset_of(&self, range: &Range) -> bool;
+    /// Whether the manifest lists one of `names` as a dependency of any kind.
+    fn depends_on(&self, names: &[String]) -> bool {
+        let _ = names;
+        false
+    }
+    /// `path` relative to the manifest's folder.
+    fn relative_path<'p>(&self, path: &'p str) -> Option<&'p str> {
+        let _ = path;
+        None
+    }
+    /// Whether `path` is in its app's server module graph, where that is known.
+    fn in_server_graph(&self, path: &str) -> Option<bool> {
+        let _ = path;
+        None
+    }
+    /// Whether the manifest is private.
+    fn is_private(&self) -> bool {
+        false
+    }
+    /// Whether the package publishes `path`, where that is known.
+    fn publishes(&self, path: &str) -> Option<bool> {
+        let _ = path;
+        None
+    }
+}
+
+/// A file's manifest, as the workspace holds it.
+pub type FileManifest = std::sync::Arc<dyn ProjectManifest>;
+
+/// Reads a request file's `package` (at `at`), as the language whose project model has manifests registers it.
+pub(crate) type ManifestReader = fn(&serde_json::Value, &str) -> napi::Result<FileManifest>;
+
+static MANIFEST_READER: std::sync::OnceLock<ManifestReader> = std::sync::OnceLock::new();
+
+/// The engine's manifest reader; the first call holds.
+pub fn set_manifest_reader(reader: ManifestReader) {
+    let _ = MANIFEST_READER.set(reader);
+}
+
+/// A request file's `package` at `at`, read by the registered reader; refused where none is registered.
+pub fn read_manifest(value: &serde_json::Value, at: &str) -> napi::Result<FileManifest> {
+    match MANIFEST_READER.get() {
+        Some(read) => read(value, at),
+        None => Err(super::json::invalid(format!("{at}/package is read by no language this build has"))),
+    }
+}
+
+/// Serde's reading of a request file's `package` (`read_manifest`).
+pub fn deserialize_manifest<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<FileManifest>, D::Error> {
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    read_manifest(&value, "files").map(Some).map_err(|error| serde::de::Error::custom(error.reason))
+}
+
+/// Two manifests are equal where they are the same (`ProjectManifest::same`).
+impl PartialEq for dyn ProjectManifest {
+    fn eq(&self, other: &Self) -> bool {
+        self.same(other)
+    }
+}
+
+static NO_MANIFEST: std::sync::OnceLock<&'static dyn ProjectManifest> = std::sync::OnceLock::new();
+
+/// What a file without a manifest answers (registered by the language whose project model has manifests; the
+/// first call holds).
+pub fn set_no_manifest(manifest: &'static dyn ProjectManifest) {
+    let _ = NO_MANIFEST.set(manifest);
 }
 
 /// `nodeVersion`: the file's configured Node range is (`subsetOf`) or is not (`notSubsetOf`) a
 /// subset of `range`, node-semver's `subset`.
 #[derive(Debug)]
-pub(crate) struct NodeVersionCondition {
-    pub(crate) range: Range,
-    pub(crate) subset: bool,
+pub struct NodeVersionCondition {
+    pub range: Range,
+    pub subset: bool,
 }
 
 impl PackageCondition {
-    fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
+    fn holds(&self, path: &str, manifest: Option<&dyn ProjectManifest>) -> bool {
         self.bin
             .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
             && self.node_version.as_ref().is_none_or(|condition| {
-                manifest.map_or_else(
-                    || node_range_is_subset_of(None, &condition.range),
-                    |manifest| manifest.node_range_is_subset_of(&condition.range),
-                ) == condition.subset
+                manifest
+                    .or_else(|| NO_MANIFEST.get().copied())
+                    .is_some_and(|manifest| manifest.node_range_is_subset_of(&condition.range))
+                    == condition.subset
             })
             && self
                 .depends_on
@@ -900,38 +1173,38 @@ impl PackageCondition {
 /// An ast query's `file` condition: every key set must hold, or the query does not apply to the
 /// file.
 #[derive(Debug)]
-pub(crate) struct FileCondition {
+pub struct FileCondition {
     /// Over the path the host sends.
-    pub(crate) path: Option<TextCondition>,
+    pub path: Option<TextCondition>,
     /// TypeScript: whether the path names a declaration file.
-    pub(crate) declaration: Option<bool>,
+    pub declaration: Option<bool>,
     /// Python: over the dotted module path.
-    pub(crate) module: Option<TextCondition>,
+    pub module: Option<TextCondition>,
     /// Python: over the module path's last segment.
-    pub(crate) module_name: Option<TextCondition>,
+    pub module_name: Option<TextCondition>,
     /// Python: over the first segment, only in a package.
-    pub(crate) package: Option<TextCondition>,
+    pub package: Option<TextCondition>,
     /// Python: whether the host supplied a module path.
-    pub(crate) in_package: Option<bool>,
+    pub in_package: Option<bool>,
     /// TypeScript: the file's nearest `package.json` (`file.package`).
-    pub(crate) manifest: Option<PackageCondition>,
+    pub manifest: Option<PackageCondition>,
     /// TypeScript: the JSX runtimes the file's may be one of. Its text can decide it, so it is
     /// checked once the file is read (`run_clause`), not by `holds`.
-    pub(crate) jsx_runtime: Option<Vec<JsxRuntime>>,
+    pub jsx_runtime: Option<Vec<JsxRuntime>>,
     /// Whether the file's text opens with a byte order mark (U+FEFF), which every grammar reads as
     /// whitespace before the program, so no node's text holds it.
-    pub(crate) byte_order_mark: Option<bool>,
+    pub byte_order_mark: Option<bool>,
 }
 
 /// A text condition: `regex` (unanchored, as ast-grep's) must match, `notRegex` must not.
 #[derive(Debug)]
-pub(crate) struct TextCondition {
-    pub(crate) regex: Option<regex::Regex>,
-    pub(crate) not_regex: Option<regex::Regex>,
+pub struct TextCondition {
+    pub regex: Option<regex::Regex>,
+    pub not_regex: Option<regex::Regex>,
 }
 
 impl TextCondition {
-    fn holds(&self, text: &str) -> bool {
+    pub fn holds(&self, text: &str) -> bool {
         self.regex.as_ref().is_none_or(|regex| regex.is_match(text))
             && self
                 .not_regex
@@ -944,11 +1217,11 @@ impl FileCondition {
     /// Whether a file at `path` with this module path, nearest `package.json` and text (`source`)
     /// satisfies the condition, `jsx_runtime` aside. A module path's text condition needs a module
     /// path (`package` one in a package), `notRegex` too.
-    pub(crate) fn holds(
+    pub fn holds(
         &self,
         path: &str,
         module: Option<&ModulePath>,
-        manifest: Option<&Manifest>,
+        manifest: Option<&dyn ProjectManifest>,
         source: &str,
     ) -> bool {
         self.path
@@ -981,7 +1254,7 @@ impl FileCondition {
 }
 
 /// typescript-eslint 8.70.1's declaration-file predicate.
-pub(crate) fn is_declaration_file(path: &str) -> bool {
+pub fn is_declaration_file(path: &str) -> bool {
     let path = path.to_lowercase();
     [".d.ts", ".d.mts", ".d.cts"]
         .iter()
@@ -990,14 +1263,14 @@ pub(crate) fn is_declaration_file(path: &str) -> bool {
 }
 
 /// Ruff's source-type predicate for Python stub files.
-pub(crate) fn is_stub_file(path: &str) -> bool {
+pub fn is_stub_file(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
         .is_some_and(|extension| extension == "pyi")
 }
 
 /// Native symbol ids of every named kind called one of `names`.
-pub(crate) fn kind_ids(
+pub fn kind_ids(
     language: GrammarDialect,
     names: &[&str],
 ) -> std::collections::BTreeSet<u16> {
@@ -1012,7 +1285,7 @@ pub(crate) fn kind_ids(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -1043,35 +1316,6 @@ mod tests {
                 assert_eq!(Family::of(lang), language.family());
             }
         }
-    }
-
-    /// Blade's kinds and fields are its tree's own (`blade::forte::tree`), as the tape encodes
-    /// them: PHP's are its embedded program's, a document of their own. ERROR is a named kind of
-    /// Blade's too (a template's lexer errors).
-    #[test]
-    fn blade_names_its_trees_kinds_and_fields_only() {
-        let blade = GrammarDialect::Blade.kinds();
-        assert!(blade.grammar().is_none());
-        assert_eq!(blade.kind_count(), blade_tree::KIND_NAMES.len());
-        for (id, name) in blade_tree::KIND_NAMES.iter().enumerate().skip(1) {
-            let id = u16::try_from(id).unwrap();
-            assert_eq!(blade.kind_name(id), Some(*name), "{id}");
-            assert_eq!(blade.kind_is_named(id), id < blade_tree::FIRST_ANONYMOUS);
-            if id < blade_tree::FIRST_ANONYMOUS {
-                assert_eq!(blade.kind_id(name), id, "{name}");
-            }
-        }
-        assert_eq!(blade.kind_name(u16::MAX), Some("ERROR"));
-        assert_eq!(blade.kind_id("ERROR"), u16::MAX);
-        assert!(blade.kind_is_named(u16::MAX));
-        for (id, name) in blade_tree::FIELD_NAMES.iter().enumerate().skip(1) {
-            let id = u16::try_from(id).unwrap();
-            assert_eq!(blade.field_id(name), Some(id), "{name}");
-            assert_eq!(blade.field_name(id), Some(*name));
-        }
-        assert_eq!(blade.field_count(), blade_tree::FIELD_NAMES.len() - 1);
-        assert_eq!(blade.kind_id("variable_name"), 0);
-        assert_eq!(blade.field_id("condition"), None);
     }
 
     #[test]
@@ -1178,7 +1422,7 @@ mod tests {
             ("formatArgs", Semantic::FormatArgs),
         ];
         // Every kind's `suppress` key is its registry name.
-        let suppressions = Suppression::ALL.iter().map(|&kind| (kind.key(), kind));
+        let suppressions = Suppression::all().iter().map(|&kind| (kind.key(), kind));
         for (entry, language) in supported.iter().zip(CodeRuleLanguage::ALL) {
             let runs_on = entry["runsOn"].as_array().map_or_else(
                 || {
@@ -1332,8 +1576,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -1412,8 +1655,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has parameters"));
             let function = parameters.parent().expect("parameters have a parent");
             let parameter = parameters
-                .children()
-                .find(|child| child.is_named())
+                .first_named()
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has a parameter"));
             let pattern = parameter
                 .field("pattern")
@@ -1659,8 +1901,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -3011,8 +3252,7 @@ mod tests {
                 .and_then(|module| module.field("body"))
                 .expect("the module has a body");
             let statements = body
-                .children()
-                .filter(|node| node.is_named())
+                .named()
                 .map(|node| node.kind().into_owned())
                 .collect::<Vec<_>>();
             assert_eq!(statements, ["expression_statement", "statement_block"]);

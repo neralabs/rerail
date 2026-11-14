@@ -1,0 +1,24 @@
+.policy "eslint-plugin-vue-require-v-for-key" revision 2
+.description "Add a :key binding to elements (not components) that v-for renders in Vue templates, so Vue can track and reuse each item."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vdir(e, a, d, arg), vhas_dir(e, d, arg), vel_parent(e, p), vel_name(e, x), vcustom(e), vel_tag(e, t)
+
+// eslint-plugin-vue's require-v-for-key: an element with v-for and no `:key` is reported at its start tag, unless it
+// is a custom component (valid-v-for checks those). A <template> or <slot> with v-for and no key passes the check on
+// to its child elements, and so on down. No options.
+//   <li v-for="x in xs">{{ x }}</li>                              reported
+//   <template v-for="x in xs"><li>{{ x }}</li></template>        the <li> is reported
+//   <li v-for="x in xs" :key="x.id" />   <my-item v-for="x in xs" />        not reported
+.violation require_key(at: node) code "vue/require-v-for-key"
+    "Elements in iteration expect to have 'v-bind:key' directives."
+    suppress eslint "vue/require-v-for-key"
+require_key(t) :- checked(e), !vhas_dir(e, "bind", "key"), !passes_on(e), !vcustom(e), vel_tag(e, t).
+// checked(e): checkKey(e) runs: e has v-for, or e's parent is a keyless <template> or <slot> that is checked.
+.decl checked(e: node)
+checked(e) :- vdir(e, _, "for", _).
+checked(e) :- vel_parent(e, p), checked(p), passes_on(p), !vhas_dir(p, "bind", "key").
+.decl passes_on(e: node)
+passes_on(e) :- vel_name(e, x), (x = "template" ; x = "slot").

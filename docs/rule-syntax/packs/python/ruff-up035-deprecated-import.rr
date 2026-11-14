@@ -1,0 +1,23 @@
+.policy "ruff-up035-deprecated-import" revision 2
+.description "Import names from the module that now provides them instead of a deprecated location, such as collections.abc rather than collections or typing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP035 (pyupgrade): a `from m import x` of a name that has moved to a better home, once the target Python
+// has it there: the ABCs from collections (and typing) to collections.abc, typing_extensions' backports to
+// typing, types, warnings or collections.abc, mypy_extensions to typing, typing.io and typing.re to typing and
+// re, pipes.quote to shlex, backports.strenum to enum. The table, one row per name, is generated from the JSON
+// (ruff-up035-deprecated-import.moves.rr). The statement is reported, once.
+//   from collections import Mapping                  ← UP035: collections.abc
+//   from typing_extensions import Literal            ← UP035 from 3.10 (typing has it)
+//   from typing_extensions import override           not reported below 3.12
+#include "python/upgrade-imports.rr"
+//   from_stmt(i, m), from_name(i, a, x, l)       (python/upgrade-imports); target_minor(t) (python/upgrade)
+#include "../packs/python/ruff-up035-deprecated-import.moves.rr"
+//   moved(m, x, clause), move_says(clause, lo, hi, msg)
+
+.violation UP035(at: node, msg: symbol) code "UP035" "{msg}"
+    suppress ruff "UP035"
+UP035(i, msg) :- from_stmt(i, m), from_name(i, _, x, _), moved(m, x, c), move_says(c, lo, hi, s),
+    target_minor(t), lo <= t, t <= hi, msg = @replace_all(@replace_all(s, "\\$NAME", x), "\\$LOWER", @lower(x)).

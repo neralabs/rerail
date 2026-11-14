@@ -1,0 +1,5 @@
+(?<LOCATION>if\ not\ txn\.is_committed\ and\ not\ txn\.is_rolled_back\ and\ not\ txn\.did_publish_branch)
+(?<LOCATION>imported_contract\ =\ imported_contract_fn)
+^AsyncPlanScope$
+^SyncPlanScope$
+else None

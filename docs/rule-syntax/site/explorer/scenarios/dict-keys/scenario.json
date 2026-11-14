@@ -1,0 +1,5 @@
+{
+  "title": "Membership in dict.keys()",
+  "rule": "ruff-sim118-in-dict-keys",
+  "note": "SIM118 flags key in d.keys() (and the same in a for loop): the dict already answers membership and iterates its keys."
+}

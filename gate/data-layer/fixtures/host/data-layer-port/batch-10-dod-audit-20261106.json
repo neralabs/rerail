@@ -1,0 +1,355 @@
+{
+  "format": "rerail.data-layer-batch-ten-dod-audit/v1",
+  "auditedCommit": "9ceb4c8ef7e5ee1ee3a48de7196f4ca61cb1f2b7",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 117,
+  "engineSha256": "464f424955f220cdf8ed74937c93d97cc461e9ba5b19e515f11cc68e86920ba8",
+  "fileSha256": {
+    "scripts/dsl/data_layer_ten/optimizer.py": "45c3e230084b5762de6dcd6af30be3fa5a7d7a2faa710ed58afafb860c5ef29b",
+    "scripts/dsl/data_layer_ten/matching.py": "0012a8cb68bcfc8e6b209ccc37f0a912a0fc01901d3ffd8733aca5131c44806b",
+    "scripts/dsl/data_layer_ten/introspection.py": "2cb76ca0a28d096d3cceaddb966f6b761da16007e7e394e78d6fbc67c04b065d",
+    "src/cli/data-layer-audit.ts": "1f7b37837f2e11b4881b38b820928be17650d0e7c10d97a2e362695ae0bc985f",
+    "conformance/data-layer/batch-ten.ts": "2963b2688afcd72c5938d4d78f59b89ee83a8bb2e6386169d16a021a80c12c35"
+  },
+  "cases": [
+    {
+      "id": "optimizer-invalid-verifier-missing-doc",
+      "rule": "data-layer-plan-optimizer-v2",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/verifier.py",
+          "source": "if True:\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "configuration": {}
+    },
+    {
+      "id": "optimizer-invalid-verifier-stale-doc",
+      "rule": "data-layer-plan-optimizer-v2",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/verifier.py",
+          "source": "if True:\n",
+          "language": "python"
+        },
+        {
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "source": "`scope.stale`\n",
+          "language": "text"
+        }
+      ],
+      "expected": [
+        {
+          "code": "PV2-051",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Doc lists invariant code 'scope.stale' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in impl/common/l2065_plan_core/verifier.py."
+        }
+      ],
+      "configuration": {}
+    },
+    {
+      "id": "optimizer-valid-verifier-missing-doc",
+      "rule": "data-layer-plan-optimizer-v2",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/verifier.py",
+          "source": "pass\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "configuration": {}
+    },
+    {
+      "id": "optimizer-absent-verifier",
+      "rule": "data-layer-plan-optimizer-v2",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "pass\n",
+          "language": "python"
+        }
+      ],
+      "expected": [],
+      "configuration": {}
+    },
+    {
+      "id": "matching-consumer-application-root",
+      "rule": "data-layer-matching-architecture",
+      "files": [
+        {
+          "path": "consumers/probe.py",
+          "source": "import impl.common.hidden\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 1,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ],
+      "configuration": {
+        "applicationRoots": [
+          "consumers"
+        ]
+      }
+    },
+    {
+      "id": "introspection-invalid-approval-configuration",
+      "rule": "data-layer-schema-introspection-data-paths",
+      "files": [],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        }
+      ],
+      "configuration": {
+        "approvedUserSchemaCheckCallsites": [
+          "impl/bad.py:1:table_exists"
+        ]
+      }
+    }
+  ],
+  "observations": [
+    {
+      "id": "optimizer-invalid-verifier-missing-doc",
+      "mode": "snapshot",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "optimizer-invalid-verifier-missing-doc",
+      "mode": "workspace",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "optimizer-invalid-verifier-stale-doc",
+      "mode": "snapshot",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-051",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Doc lists invariant code 'scope.stale' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in impl/common/l2065_plan_core/verifier.py."
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "optimizer-invalid-verifier-stale-doc",
+      "mode": "workspace",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-051",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Doc lists invariant code 'scope.stale' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in impl/common/l2065_plan_core/verifier.py."
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "optimizer-valid-verifier-missing-doc",
+      "mode": "snapshot",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "actual": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "failures": [],
+      "matches": true
+    },
+    {
+      "id": "optimizer-valid-verifier-missing-doc",
+      "mode": "workspace",
+      "configuration": {},
+      "expected": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "actual": [
+        {
+          "code": "PV2-050",
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "line": 1,
+          "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+        }
+      ],
+      "failures": [],
+      "matches": true
+    },
+    {
+      "id": "optimizer-absent-verifier",
+      "mode": "snapshot",
+      "configuration": {},
+      "expected": [],
+      "actual": [],
+      "failures": [],
+      "matches": true
+    },
+    {
+      "id": "optimizer-absent-verifier",
+      "mode": "workspace",
+      "configuration": {},
+      "expected": [],
+      "actual": [],
+      "failures": [],
+      "matches": true
+    },
+    {
+      "id": "matching-consumer-application-root",
+      "mode": "snapshot",
+      "configuration": {
+        "applicationRoots": [
+          "consumers"
+        ]
+      },
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 1,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "matching-consumer-application-root",
+      "mode": "workspace",
+      "configuration": {
+        "applicationRoots": [
+          "consumers"
+        ]
+      },
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 1,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "introspection-invalid-approval-configuration",
+      "mode": "snapshot",
+      "configuration": {
+        "approvedUserSchemaCheckCallsites": [
+          "impl/bad.py:1:table_exists"
+        ]
+      },
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    },
+    {
+      "id": "introspection-invalid-approval-configuration",
+      "mode": "workspace",
+      "configuration": {
+        "approvedUserSchemaCheckCallsites": [
+          "impl/bad.py:1:table_exists"
+        ]
+      },
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "impl/bad.py:1:table_exists: approved schema checks must not be internal impl callsites"
+        }
+      ],
+      "actual": [],
+      "failures": [],
+      "matches": false
+    }
+  ],
+  "classification": {
+    "optimizer-invalid-verifier-missing-doc": "default-rule-defect",
+    "optimizer-invalid-verifier-stale-doc": "default-rule-defect",
+    "optimizer-valid-verifier-missing-doc": "passing-default-control",
+    "optimizer-absent-verifier": "passing-default-control",
+    "matching-consumer-application-root": "unsupported-production-configuration",
+    "introspection-invalid-approval-configuration": "unsupported-production-configuration"
+  },
+  "configurationBoundary": "The application-root and approval cases preserve an original supported configuration that the current public Rerail API cannot express. They show missing configuration support, not a default-configuration parity failure."
+}

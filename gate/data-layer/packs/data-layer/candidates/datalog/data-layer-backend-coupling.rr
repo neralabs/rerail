@@ -1,0 +1,48 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl backend_import_if(kind: symbol)
+backend_import_if("if_statement").
+.decl backend_import_doc(d: number, p: symbol)
+.decl backend_import_first(x: node, c: node)
+.decl backend_import_first_at(x: node, i: number)
+.decl backend_import_module(x: node, m: node)
+.decl backend_import_named(x: node, c: node, i: number)
+.decl backend_import_typing(x: node)
+.decl backend_import_typing_if(i: node)
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl sql_in_nonsql_doc(d: number, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+backend_import_named(x, c, i) :- node(_, x, "import_statement", _, _), child(x, c, i), !node(_, c, "comment", _, _).
+backend_import_first_at(x, i) :- backend_import_named(x, _, _), i = min j : { backend_import_named(x, _, j) }.
+backend_import_first(x, c) :- backend_import_first_at(x, i), backend_import_named(x, c, i).
+backend_import_module(x, m) :- node(_, x, "import_from_statement", _, _), field(x, "module_name", m).
+backend_import_module(x, c) :- backend_import_first(x, c), node(_, c, "dotted_name", _, _).
+backend_import_module(x, m) :- backend_import_first(x, c), node(_, c, "aliased_import", _, _), field(c, "name", m).
+backend_import_typing_if(i) :- node(_, i, "if_statement", _, _), field(i, "condition", c), node(_, c, "identifier", _, _), text(c, "TYPE_CHECKING").
+backend_import_typing(x) :- backend_import_module(x, _), inside(x, i, backend_import_if), backend_import_typing_if(i).
+backend_import_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), match("^api/(?:.*/)?[^/]*\\.py$|^data_layer/(?:.*/)?[^/]*\\.py$|^_internal/(?:.*/)?[^/]*\\.py$|^l[0-9][0-9][0-9][0-9]_[^/]*/(?:.*/)?[^/]*\\.py$|^impl/common/(?:.*/)?[^/]*\\.py$", p), !match("^(?:.*/)?[^/]*l2000_connection/connection_factory\\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\\.py$|^_internal/dynamic_import\\.py$|^api/(?:.*/)?__init__\\.py$|^data_layer/(?:.*/)?__init__\\.py$|^_internal/(?:.*/)?__init__\\.py$|^l[^/]*/(?:.*/)?__init__\\.py$|^impl/common/(?:.*/)?test_[^/]*\\.py$", p).
+violation("data-layer-backend-coupling", "backend-import", "BC001", p, l) :- backend_import_module(x, m), node_text(m, s), match("(?:impl\\.doltdb|impl\\.mariadb|impl\\.mongodb|impl\\.neo4j|impl\\.postgres|impl\\.sqlite)(?s:.*)", s), !backend_import_typing(x), node(d, x, _, _, _), backend_import_doc(d, p), line(x, l).
+sql_in_nonsql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), match("^impl/mongodb[^/]*/(?:.*/)?[^/]*\\.py$|^impl/neo4j[^/]*/(?:.*/)?[^/]*\\.py$", p), !match("^(?:.*/)?[^/]*l2000_connection/connection_factory\\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\\.py$", p).
+violation("data-layer-backend-coupling", "sql-in-nonsql", "BC001", p, l) :- backend_import_module(x, m), node_text(m, s), match("(?s:.*)(?:impl\\.common\\.l2050_sql_clauses|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2100_sql_params|impl\\.common\\.l2250_json_functions|impl\\.common\\.l5200_sql_query|impl\\.common\\.l6200_sql_logged_table|impl\\.common\\.l7250_versioned_sql_query|impl\\.common\\.l9700_sql_graph_query)(?s:.*)", s), !backend_import_typing(x), node(d, x, _, _, _), sql_in_nonsql_doc(d, p), line(x, l).

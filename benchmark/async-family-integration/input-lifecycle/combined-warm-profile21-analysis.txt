@@ -1,0 +1,12 @@
+== Structural analysis
+CPU is attributed cost, not an estimate of recoverable savings. Findings can overlap.
+
+CACHED_TAPE_REBUILD [investigate] input lifecycle
+  CPU: 1.174353 s
+  Evidence: 5725 tape cache hits, 0 misses; restore/core-fact construction: tree-sitter and facts/facts from tape: 5725 calls, 0.147690 own CPU s; tree-sitter and facts/facts from tape/child CSR: 5725 calls, 0.086930 own CPU s; tree-sitter and facts/facts from tape/class postings: 5725 calls, 0.120649 own CPU s; tree-sitter and facts/facts from tape/kind postings: 5725 calls, 0.073172 own CPU s; tree-sitter and facts/facts from tape/node columns: 5725 calls, 0.237689 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.508223 own CPU s. Tape hits do not mean core facts were reused.
+  Action: Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.
+
+IDENTITY_PROJECTION [investigate] input projection
+  CPU: 0.155263 s
+  Evidence: 12535139 node identities, zero scalar node visits, 23777 batch strings
+  Action: Measure identity-map reuse or a narrower identity projection while preserving global node IDs; do not rebuild scalar facts.

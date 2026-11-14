@@ -1,0 +1,17 @@
+.policy "blade-parser-for-else-structure" revision 3
+.description "Give every Blade @forelse loop exactly one @empty directive; it holds what renders when the list is empty."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_block(b, x)   directive block b starts with @x;  blade_directive(d, x)
+
+// stillat/blade-parser's ForElseStructureValidator: a @forelse block needs exactly one @empty among its own
+// directives (the branch that renders for an empty list). Reported at the block:
+//   @forelse($users as $u) {{ $u }} @endforelse                        no @empty: reported
+//   @forelse($xs as $x) … @empty … @empty … @endforelse                two: reported
+//   @forelse($xs as $x) @empty($x->tags) … @endempty @empty none @endforelse
+//                                     one: the inner @empty(…) is a block of its own, not a branch
+.violation forelse(at: node) code "ForElseStructureValidator" "Missing or too many [@empty] directives inside [@forelse]"
+forelse(b) :- blade_block(b, "forelse"), k = count : { child(b, d, _), blade_directive(d, "empty") }, k != 1.

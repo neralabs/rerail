@@ -1,0 +1,8 @@
+sqlite 3.53.2; files 387 (excluded 13 with a source >= 64 KiB or >= 65535 nodes); nodes 809912; source 4365534 B; v7 rec+spans+cps 8.41 B/node; v8 kf+par+size+start+len 10.00 B/node; v9np kf+size+base+off+tail 8.25 B/node (+2 with par)
+| query | v7 ms | v8 ms | v9 ms | parity v7/v8/v9 | answer |
+|---|---|---|---|---|---|
+| has: function_definition has return_statement (stopBy end) | 483.0 | 1211.0 | 1394.3 | true/true/true | 3050 |
+| nthChild 2 of call (sibling chain) | 4910.1 | 1370.7 | 1406.8 | true/true/true | 100,1;157,23263;223,100 |
+| inside: return_statement inside function_definition (parent climb) | 531.4 | 997.7 | 831.4 | true/true/true | 4225 |
+| inside as interval containment (no parent column) | 1005.1 | 1915.6 | 1810.6 | true/true/true | 4225 |
+| span text of every string node | 8810.0 | 1075.8 | 2506.5 | true/true/true | 37582,841933,378163282 |

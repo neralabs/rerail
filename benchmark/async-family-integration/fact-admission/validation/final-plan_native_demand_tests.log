@@ -1,0 +1,8 @@
+
+running 4 tests
+test code_rule_dsl::logic::plan::native_demand::tests::integration_tests::retained_fact_sets_materialize_all_unique_rows_and_do_not_adopt_next_run_inputs ... ok
+test code_rule_dsl::logic::plan::native_demand::tests::integration_tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs ... ok
+test code_rule_dsl::logic::plan::native_demand::tests::tests::same_relation_reuses_keys_and_lifetime_does_not_cross_runs ... ok
+test code_rule_dsl::logic::plan::native_demand::tests::tests::sql_demands_are_read_once_and_cached_without_requiring_native_inputs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3123 filtered out; finished in 5.66s

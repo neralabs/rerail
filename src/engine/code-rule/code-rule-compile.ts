@@ -48,6 +48,17 @@ function capabilitiesJson(): string {
 export const NOT_JSON_REPRESENTABLE = "the document is not JSON representable";
 
 /**
+ * How the engine words its refusal of a code rule that reads a token a tape may leave out (RER-131, t31): a form older
+ * packs were written in, which this engine no longer answers.
+ */
+const READS_LEFT_OUT_TOKEN = "a token test reads a token the tape may leave out";
+
+/** Whether an engine compile error's `reason` is that the rule reads a token a tape may leave out. */
+export function readsLeftOutToken(reason: string): boolean {
+  return reason.startsWith(READS_LEFT_OUT_TOKEN);
+}
+
+/**
  * Compile a schema-valid code rule exactly as the live catalog will (same source text, same bundled capabilities),
  * so a rule the engine rejects never reaches the catalog and fails every later refresh. Code-rule evaluation has
  * no fallback without the engine either, so an unavailable engine refuses the write rather than storing an

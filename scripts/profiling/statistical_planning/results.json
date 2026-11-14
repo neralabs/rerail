@@ -1,0 +1,557 @@
+{
+  "sourceCommit": "fbc6814d5",
+  "spikeSha256": "376031e8cc9025858f764959b489513bb932edf650bc37cbdebb3390b18add59",
+  "python": "3.15.0",
+  "seeds": 32,
+  "unit": "indexed lookups + examined rows + ready guard evaluations; not native VM instructions",
+  "rawReport": "/Users/jeremy/orca/artifacts/async-family-comparison/regression-fixes-d1dc128bb/probing-qualified.json",
+  "prepareCpuMs": 418.263,
+  "inputs": {
+    "synthetic": [
+      {
+        "case": "uniform",
+        "relations": {
+          "a": {
+            "rows": 800,
+            "revision": "b7cf2df2efd4fd25b057013235cbdcbdc630f75a48e53c4526fb4a73990c5d9d"
+          },
+          "b": {
+            "rows": 4000,
+            "revision": "6df3e42f4c2ed2d8fa2cf5b85ee0556efa8fee153f2f8b60b0474f58a2dc89b8"
+          },
+          "c": {
+            "rows": 8,
+            "revision": "ae59f7dd31e9009b490f47d2f3e0e523ad506cab8f33421e6958266f42d9b4b2"
+          }
+        }
+      },
+      {
+        "case": "rare-heavy-tail",
+        "relations": {
+          "a": {
+            "rows": 800,
+            "revision": "b7cf2df2efd4fd25b057013235cbdcbdc630f75a48e53c4526fb4a73990c5d9d"
+          },
+          "b": {
+            "rows": 4600,
+            "revision": "92a43269ee11c17001f115bf7021362ad9e9fdb61bac11b6c766501a585bdf6d"
+          },
+          "c": {
+            "rows": 8,
+            "revision": "ae59f7dd31e9009b490f47d2f3e0e523ad506cab8f33421e6958266f42d9b4b2"
+          }
+        }
+      },
+      {
+        "case": "correlated",
+        "relations": {
+          "a": {
+            "rows": 800,
+            "revision": "b7cf2df2efd4fd25b057013235cbdcbdc630f75a48e53c4526fb4a73990c5d9d"
+          },
+          "b": {
+            "rows": 4000,
+            "revision": "4c0042eb19abafb5765a1135b4c1d72020854e7340d9f7b2900135b7a9ec5f28"
+          },
+          "c": {
+            "rows": 8,
+            "revision": "ae59f7dd31e9009b490f47d2f3e0e523ad506cab8f33421e6958266f42d9b4b2"
+          }
+        }
+      }
+    ],
+    "current-captures": [
+      {
+        "case": "prog_rr_embed_req-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 72480,
+            "revision": "a79317cc6a67866dca81a35618e791e5dce27352a51c0243b0c25cd37f865c30"
+          },
+          "s1": {
+            "rows": 37959,
+            "revision": "bcd5b4a3d836c38eba5a0279f4e7982185ad677884a1a12ed117a831e9ed2700"
+          }
+        }
+      },
+      {
+        "case": "prog_rr_embed_req-20.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 53337,
+            "revision": "9ca27814d05a9f82d95a6815963dd75581b317bf76fc6a5419b7b1e5cb89a50e"
+          },
+          "s1": {
+            "rows": 28235,
+            "revision": "31ab8e61efc9967325c97afcf7b2342d4f86ee79e79a14ac615e8c4d8d87064c"
+          }
+        }
+      },
+      {
+        "case": "prog_type_open__sup6-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3727,
+            "revision": "c54d17edd51de620616183cd610ee9c2668e06cca717eeb01d72136df39b7f00"
+          },
+          "s1": {
+            "rows": 34017,
+            "revision": "74011d20ac6a64508987153fa830a1ba25b15acf2e5652b8114cf8c098104fff"
+          },
+          "s2": {
+            "rows": 10094,
+            "revision": "acfb5f826a896f7931c94358376a0f8d150cee9c44e4453e89eadd1bfd48d283"
+          },
+          "s3": {
+            "rows": 35584,
+            "revision": "e474fa2771ea0b2dbc295b7d6814446fe221f11a87ddd4cdb1314a1bd372c759"
+          }
+        }
+      },
+      {
+        "case": "prog_type_open__sup6-1.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3771,
+            "revision": "3b080408f2946c41655eeeb614ac02f77a768b2afeb0bbac5418c1079dd93220"
+          },
+          "s1": {
+            "rows": 34116,
+            "revision": "6ad0c14527fd070d00811ab9258ab32af2de79887a9c440fdeca4b06ecabcf39"
+          },
+          "s2": {
+            "rows": 10178,
+            "revision": "67764e0205048c4a12a7a311b24b00c8a7df8a53f8cbe44135604511728c3a7a"
+          },
+          "s3": {
+            "rows": 35898,
+            "revision": "c640653a5132b27ce9f836fc4f2df536674882073c69d8d7d67419480a2d446c"
+          }
+        }
+      },
+      {
+        "case": "prog_type_open__sup11-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3727,
+            "revision": "c54d17edd51de620616183cd610ee9c2668e06cca717eeb01d72136df39b7f00"
+          },
+          "s1": {
+            "rows": 34017,
+            "revision": "74011d20ac6a64508987153fa830a1ba25b15acf2e5652b8114cf8c098104fff"
+          },
+          "s2": {
+            "rows": 10094,
+            "revision": "acfb5f826a896f7931c94358376a0f8d150cee9c44e4453e89eadd1bfd48d283"
+          },
+          "s3": {
+            "rows": 35584,
+            "revision": "e474fa2771ea0b2dbc295b7d6814446fe221f11a87ddd4cdb1314a1bd372c759"
+          }
+        }
+      },
+      {
+        "case": "prog_type_open__sup11-1.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3771,
+            "revision": "3b080408f2946c41655eeeb614ac02f77a768b2afeb0bbac5418c1079dd93220"
+          },
+          "s1": {
+            "rows": 34116,
+            "revision": "6ad0c14527fd070d00811ab9258ab32af2de79887a9c440fdeca4b06ecabcf39"
+          },
+          "s2": {
+            "rows": 10178,
+            "revision": "67764e0205048c4a12a7a311b24b00c8a7df8a53f8cbe44135604511728c3a7a"
+          },
+          "s3": {
+            "rows": 35898,
+            "revision": "c640653a5132b27ce9f836fc4f2df536674882073c69d8d7d67419480a2d446c"
+          }
+        }
+      }
+    ],
+    "historical-controls": [
+      {
+        "case": "historical-order/prog_rr_embed_req-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 72480,
+            "revision": "a79317cc6a67866dca81a35618e791e5dce27352a51c0243b0c25cd37f865c30"
+          },
+          "s1": {
+            "rows": 37959,
+            "revision": "bcd5b4a3d836c38eba5a0279f4e7982185ad677884a1a12ed117a831e9ed2700"
+          }
+        }
+      },
+      {
+        "case": "historical-order/prog_rr_embed_req-20.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 53337,
+            "revision": "9ca27814d05a9f82d95a6815963dd75581b317bf76fc6a5419b7b1e5cb89a50e"
+          },
+          "s1": {
+            "rows": 28235,
+            "revision": "31ab8e61efc9967325c97afcf7b2342d4f86ee79e79a14ac615e8c4d8d87064c"
+          }
+        }
+      },
+      {
+        "case": "historical-order/prog_type_open__sup6-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3727,
+            "revision": "c54d17edd51de620616183cd610ee9c2668e06cca717eeb01d72136df39b7f00"
+          },
+          "s1": {
+            "rows": 34017,
+            "revision": "74011d20ac6a64508987153fa830a1ba25b15acf2e5652b8114cf8c098104fff"
+          },
+          "s2": {
+            "rows": 10094,
+            "revision": "acfb5f826a896f7931c94358376a0f8d150cee9c44e4453e89eadd1bfd48d283"
+          },
+          "s3": {
+            "rows": 35584,
+            "revision": "e474fa2771ea0b2dbc295b7d6814446fe221f11a87ddd4cdb1314a1bd372c759"
+          }
+        }
+      },
+      {
+        "case": "historical-order/prog_type_open__sup6-1.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3771,
+            "revision": "3b080408f2946c41655eeeb614ac02f77a768b2afeb0bbac5418c1079dd93220"
+          },
+          "s1": {
+            "rows": 34116,
+            "revision": "6ad0c14527fd070d00811ab9258ab32af2de79887a9c440fdeca4b06ecabcf39"
+          },
+          "s2": {
+            "rows": 10178,
+            "revision": "67764e0205048c4a12a7a311b24b00c8a7df8a53f8cbe44135604511728c3a7a"
+          },
+          "s3": {
+            "rows": 35898,
+            "revision": "c640653a5132b27ce9f836fc4f2df536674882073c69d8d7d67419480a2d446c"
+          }
+        }
+      },
+      {
+        "case": "historical-order/prog_type_open__sup11-0.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3727,
+            "revision": "c54d17edd51de620616183cd610ee9c2668e06cca717eeb01d72136df39b7f00"
+          },
+          "s1": {
+            "rows": 34017,
+            "revision": "74011d20ac6a64508987153fa830a1ba25b15acf2e5652b8114cf8c098104fff"
+          },
+          "s2": {
+            "rows": 10094,
+            "revision": "acfb5f826a896f7931c94358376a0f8d150cee9c44e4453e89eadd1bfd48d283"
+          },
+          "s3": {
+            "rows": 35584,
+            "revision": "e474fa2771ea0b2dbc295b7d6814446fe221f11a87ddd4cdb1314a1bd372c759"
+          }
+        }
+      },
+      {
+        "case": "historical-order/prog_type_open__sup11-1.sqlite",
+        "relations": {
+          "s0": {
+            "rows": 3771,
+            "revision": "3b080408f2946c41655eeeb614ac02f77a768b2afeb0bbac5418c1079dd93220"
+          },
+          "s1": {
+            "rows": 34116,
+            "revision": "6ad0c14527fd070d00811ab9258ab32af2de79887a9c440fdeca4b06ecabcf39"
+          },
+          "s2": {
+            "rows": 10178,
+            "revision": "67764e0205048c4a12a7a311b24b00c8a7df8a53f8cbe44135604511728c3a7a"
+          },
+          "s3": {
+            "rows": 35898,
+            "revision": "c640653a5132b27ce9f836fc4f2df536674882073c69d8d7d67419480a2d446c"
+          }
+        }
+      }
+    ]
+  },
+  "jobs": {
+    "synthetic": {
+      "cases": 3,
+      "oracleCpuMs": 54.523,
+      "budget": {
+        "memoryBytes": 2097152,
+        "seedProbes": 512,
+        "probeWork": 50000
+      },
+      "summary": {
+        "cold/synthetic": {
+          "currentWork": {
+            "medianRegret": 14.933289731850882,
+            "maxRegret": 54.81155015197568,
+            "over2x": 96,
+            "totalWork": 2216032,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.012426422498365,
+            "maxRegret": 2.4224924012158056,
+            "over2x": 32,
+            "totalWork": 231456,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.012426422498365,
+            "maxRegret": 2.4224924012158056,
+            "over2x": 32,
+            "totalWork": 231456,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 14.933289731850882,
+            "maxRegret": 54.81155015197568,
+            "over2x": 64,
+            "totalWork": 1464128,
+            "worseThanCurrent": 0
+          }
+        },
+        "observed-current/synthetic": {
+          "currentWork": {
+            "medianRegret": 14.933289731850882,
+            "maxRegret": 54.81155015197568,
+            "over2x": 96,
+            "totalWork": 2216032,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.012426422498365,
+            "maxRegret": 2.4224924012158056,
+            "over2x": 32,
+            "totalWork": 231456,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.012426422498365,
+            "maxRegret": 2.4224924012158056,
+            "over2x": 32,
+            "totalWork": 231456,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 2.4224924012158056,
+            "over2x": 1,
+            "totalWork": 216948,
+            "worseThanCurrent": 0
+          }
+        }
+      },
+      "modes": {
+        "cold": {
+          "ingestMedianCpuMs": 4.896,
+          "planningMedianCpuMs": 11.625,
+          "accountedMaxBytes": 244672,
+          "maxProbes": 512,
+          "maxProbeWork": 18885,
+          "workIncludingProbes": 1984846
+        },
+        "observed-current": {
+          "ingestMedianCpuMs": 4.9195,
+          "planningMedianCpuMs": 7.5765,
+          "accountedMaxBytes": 244672,
+          "maxProbes": 72,
+          "maxProbeWork": 7506,
+          "workIncludingProbes": 456012
+        }
+      }
+    },
+    "current-captures": {
+      "cases": 6,
+      "oracleCpuMs": 796.005,
+      "budget": {
+        "memoryBytes": 2097152,
+        "seedProbes": 512,
+        "probeWork": 50000
+      },
+      "summary": {
+        "cold/captured": {
+          "currentWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          }
+        },
+        "observed-current/captured": {
+          "currentWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          }
+        }
+      },
+      "modes": {
+        "cold": {
+          "ingestMedianCpuMs": 99.217,
+          "planningMedianCpuMs": 29.33,
+          "accountedMaxBytes": 274432,
+          "maxProbes": 0,
+          "maxProbeWork": 0,
+          "workIncludingProbes": 1601856
+        },
+        "observed-current": {
+          "ingestMedianCpuMs": 99.3025,
+          "planningMedianCpuMs": 29.2025,
+          "accountedMaxBytes": 274432,
+          "maxProbes": 0,
+          "maxProbeWork": 0,
+          "workIncludingProbes": 1601856
+        }
+      }
+    },
+    "historical-controls": {
+      "cases": 6,
+      "oracleCpuMs": 833.274,
+      "budget": {
+        "memoryBytes": 2097152,
+        "seedProbes": 512,
+        "probeWork": 50000
+      },
+      "summary": {
+        "cold/captured": {
+          "currentWork": {
+            "medianRegret": 2.0733013040494166,
+            "maxRegret": 2.0764576457645765,
+            "over2x": 192,
+            "totalWork": 3313376,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 2.0733013040494166,
+            "maxRegret": 2.0764576457645765,
+            "over2x": 192,
+            "totalWork": 3313376,
+            "worseThanCurrent": 0
+          }
+        },
+        "observed-current/captured": {
+          "currentWork": {
+            "medianRegret": 2.0733013040494166,
+            "maxRegret": 2.0764576457645765,
+            "over2x": 192,
+            "totalWork": 3313376,
+            "worseThanCurrent": 0
+          },
+          "marginalWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "correlatedWork": {
+            "medianRegret": 1.0,
+            "maxRegret": 1.0,
+            "over2x": 0,
+            "totalWork": 1601856,
+            "worseThanCurrent": 0
+          },
+          "probedWork": {
+            "medianRegret": 1.5366506520247083,
+            "maxRegret": 2.0764576457645765,
+            "over2x": 96,
+            "totalWork": 2352768,
+            "worseThanCurrent": 0
+          }
+        }
+      },
+      "modes": {
+        "cold": {
+          "ingestMedianCpuMs": 117.329,
+          "planningMedianCpuMs": 38.881,
+          "accountedMaxBytes": 286976,
+          "maxProbes": 512,
+          "maxProbeWork": 3346,
+          "workIncludingProbes": 3418679
+        },
+        "observed-current": {
+          "ingestMedianCpuMs": 117.723,
+          "planningMedianCpuMs": 43.3125,
+          "accountedMaxBytes": 286976,
+          "maxProbes": 512,
+          "maxProbeWork": 12352,
+          "workIncludingProbes": 2741287
+        }
+      }
+    }
+  }
+}

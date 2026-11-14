@@ -1,0 +1,31 @@
+.policy "n-global-require" revision 5
+.description "Keep require() calls at the top level of a module, not inside functions or blocks; nested requires hide dependencies and load synchronously mid-run."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/global-require: a require() call must be at the module's top level. Every ESTree ancestor of
+// the call must be one of the forms a top-level `const x = require("x").y;` or `f(require("x"))` uses:
+// AssignmentExpression, VariableDeclarator, MemberExpression, ExpressionStatement, CallExpression,
+// ConditionalExpression, VariableDeclaration, Program.
+//   const a = require("a"), b = cond ? require("b") : null;      not reported
+//   function f() { require("x") }     reported: a function (and its block)
+//   if (x) { require("x") }           reported: an if statement
+//   export const a = require("a")     reported: an export declaration
+//   const r = require; r("x")         not: only calls of the identifier `require`
+// A require that a local declaration shadows is not reported (`function f(require) { require("x") }`).
+
+#include "tsx/node.rr"   // bare_require, node_ancestor, node_chain
+
+.violation global_require(at: node) code "n/global-require" "Move this require() to the top level of the module."
+    suppress eslint "n/global-require"
+global_require(c) :- bare_require(c, _), node_ancestor(c, a), kind(a, k), !top_form(k).
+// An optional chain is a ChainExpression in ESTree, which is not among them: require?.("x"), require("x")?.y.
+global_require(c) :- bare_require(c, _), (node_chain(c) ; node_ancestor(c, a), node_chain(a)).
+node_estree_kind(c) :- bare_require(c, _).
+
+// top_form(k): the tree-sitter kinds of the accepted ESTree types.
+.decl top_form(k: symbol)
+top_form("assignment_expression"). top_form("augmented_assignment_expression"). top_form("variable_declarator").
+top_form("member_expression"). top_form("subscript_expression"). top_form("expression_statement").
+top_form("call_expression"). top_form("ternary_expression"). top_form("lexical_declaration").
+top_form("variable_declaration"). top_form("program").

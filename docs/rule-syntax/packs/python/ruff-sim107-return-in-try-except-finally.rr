@@ -1,0 +1,23 @@
+.policy "ruff-sim107-return-in-try-except-finally" revision 2
+.description "Don't return from a finally block when the try or except also returns; the finally return silently overrides theirs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM107 (flake8-simplify): a `try` whose body or one of whose `except` clauses has a `return` among
+// its own statements, and whose `finally` does too. The finding is at the first `return` of the `finally`.
+// Returns nested deeper (in an `if` of the body) and the `else` clause do not count.
+//   try:  return 1                ← SIM107 at the finally's return
+//   finally:  return 2
+#include "python/ast.rr"
+//   body_stmt(b, s, i)
+
+.violation SIM107(at: node) code "SIM107"
+    "Remove the `return` from the `finally` block; it silently overrides the `return` in `try` or `except`."
+    suppress ruff "SIM107"
+SIM107(r) :- kind(t, "try_statement"), returns_in(t), child(t, f, _), kind(f, "finally_clause"), child(f, b, _),
+    kind(b, "block"), k = min i : { body_stmt(b, s, i), kind(s, "return_statement") }, body_stmt(b, r, k).
+.decl returns_in(t: node)  // t's body, or one of its except clauses, has a return of its own
+returns_in(t) :- kind(t, "try_statement"), field(t, "body", b), body_stmt(b, s, _), kind(s, "return_statement").
+returns_in(t) :- kind(t, "try_statement"), child(t, x, _), kind(x, "except_clause"), child(x, b, _), kind(b, "block"),
+    body_stmt(b, s, _), kind(s, "return_statement").

@@ -1,0 +1,18 @@
+# corpus: carry: 6 long carries
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask p0 = prev(quote, 63) ^ toggle(digit)
+mask p1 = prev(bs, 62) ^ toggle(alpha)
+mask p2 = prev(ws, 61) ^ toggle(high)
+mask p3 = prev(digit, 60) ^ toggle(nul)
+mask p4 = prev(alpha, 59) ^ toggle(lf)
+mask p5 = prev(high, 58) ^ toggle(op)

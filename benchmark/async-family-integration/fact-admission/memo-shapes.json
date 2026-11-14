@@ -1,0 +1,44 @@
+[
+  {
+    "shape": "original",
+    "rows": 256,
+    "cpu": 0.654554,
+    "wall": 0.9328621251042932,
+    "vmApprox": 7418800,
+    "plan": [
+      [
+        4,
+        0,
+        62,
+        "SEARCH r USING INDEX facts_results_by_plan (plan_digest=?)"
+      ],
+      [
+        16,
+        0,
+        0,
+        "SCAN j VIRTUAL TABLE INDEX 1:"
+      ]
+    ]
+  },
+  {
+    "shape": "demand_first",
+    "rows": 256,
+    "cpu": 0.0026249999999999885,
+    "wall": 0.002626290894113481,
+    "vmApprox": 12000,
+    "plan": [
+      [
+        4,
+        0,
+        0,
+        "SCAN j VIRTUAL TABLE INDEX 1:"
+      ],
+      [
+        9,
+        0,
+        47,
+        "SEARCH r USING INDEX facts_results_by_plan (plan_digest=? AND source_id=? AND fact_schema=? AND path=?)"
+      ]
+    ]
+  }
+]

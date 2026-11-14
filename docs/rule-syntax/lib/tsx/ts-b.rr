@@ -1,0 +1,154 @@
+// tsx/ts-b: TypeScript declarations as typescript-eslint's rules (batch ts-2) see them in its TSESTree, read off
+// tree-sitter's TypeScript grammar. No type checker: every relation here is syntax.
+//
+// What a rule gets from this library:
+//   files
+//     definition_file(d)       d is a declaration file: *.d.ts, *.d.mts, *.d.cts, *.d.<x>.ts (isDefinitionFile)
+//   namespaces and modules
+//     ts_namespace(m)          m is a namespace or module with a name: `namespace A {}`, `module A.B {}`; not
+//                              `module "x" {}` (its id is a Literal) and not `declare global {}`
+//     ts_module_decl(m)        m is any TSModuleDeclaration: those, `declare module "x" {}`, `declare global {}`
+//     ts_declared(m)           m is written with `declare`
+//     estree_at(m, at)         where ESTree's node for declaration m starts: at `declare` when there is one
+//     module_body(m, b)        b is the `{ … }` of module declaration m (ts_module_decl)
+//     module_directive(d)      d is in the directive prologue of a module block: TSESTree gives a namespace's
+//                              body directives as it does a function's (`namespace A { "use strict"; }`)
+//     in_declare(n)            n is (in) a `declare` module or namespace, or another ambient declaration
+//     ambient_block(b)         block b's declarations are ambient: a .d.ts file's program and namespace bodies, and
+//                              the bodies of `declare module`, `declare namespace`, `declare global` and of the
+//                              namespaces within them
+//     ambient_stmt(t, n)       statement t of such a block declares n: `declare const a`, `interface I {}`, …
+//   types
+//     type_ref(r, x)           type_identifier r uses the type name x: a TSTypeReference's plain name (`x: T`,
+//                              `Array<T>`) or a heritage name (`implements T`, `interface I extends T`)
+//     heritage_ref(r)          type_ref r is in `implements …` or an interface's `extends …`
+//     type_global(r, x)        type_ref r names x and nothing in the file declares a type x around it: the lib's
+//                              global type (typescript-eslint's isReferenceToGlobalFunction)
+//   enums
+//     enum_member(e, m, i, x)  m is the i-th member of enum e, with the name x (a string key gives its value)
+//     enum_init(m, v)          member m has the initialiser v: `A = 1`
+//
+// Examples, one per rule:
+//   no-unused-expressions         namespace A { "use strict"; }   (a directive, not reported)
+//   no-namespace                  namespace A {}   (not: declare module "x" {}, declare global {})
+//   prefer-namespace-keyword      module A {}  → namespace A {}
+//   no-unsafe-function-type       let f: Function;   class A implements Function {}   (not: type Function = 1)
+//   prefer-enum-initializers      enum E { A }
+//   prefer-literal-enum-member    enum E { A = f() }
+//
+// Builds on tsx/ts-a (heritage), tsx/modules (string_stmt, not_stmt), tsx/names (ref_site: declarations by name,
+// in the type namespace) and core.
+#include "tsx/ts-a.rr"
+
+// ---- files -------------------------------------------------------------------------------------------------------
+// definition_file(d): typescript-eslint's isDefinitionFile, on the lower-cased file name.
+//   a.d.ts   a.D.MTS   a.d.css.ts       yes;     a.ts   d.ts       no
+.decl definition_file(d: number)
+definition_file(d) :- file_name(d, f), match("(?i).*\\.d\\.(ts|cts|mts|.*\\.ts)", f).
+
+// ---- namespaces and modules --------------------------------------------------------------------------------------
+// tree-sitter writes `namespace A {}` as internal_module and `module A {}` as module; a string name is a `string`
+// child (`declare module "x" {}`), and `declare global {}` is an ambient_declaration holding only a block.
+// `namespace A.B {}` is one TSModuleDeclaration whose id is the qualified name A.B, as in tree-sitter.
+.decl ts_namespace(m: node)
+ts_namespace(m) :- kind(m, "internal_module").
+ts_namespace(m) :- kind(m, "module"), field(m, "name", n), !kind(n, "string").
+.decl ts_module_decl(m: node)
+ts_module_decl(m) :- kind(m, "internal_module") ; kind(m, "module").
+ts_module_decl(a) :- global_block(a).
+// global_block(a): `declare global { }`: an ambient_declaration whose first child is its block (the tape keeps no
+// `global`: the kind and the block imply it).
+.decl global_block(a: node)
+global_block(a) :- kind(a, "ambient_declaration"), child(a, b, 0), kind(b, "statement_block").
+// ts_declared(m): `declare namespace A {}` is an ambient_declaration whose first child is the namespace.
+.decl ts_declared(m: node)
+ts_declared(m) :- kind(a, "ambient_declaration"), child(a, m, 0).
+ts_declared(a) :- global_block(a).
+// estree_at(m, at): ESTree's declaration node includes `declare`; tree-sitter puts it on the wrapper.
+.decl estree_at(m: node, at: node)
+estree_at(m, a) :- kind(a, "ambient_declaration"), child(a, m, 0).
+estree_at(m, m) :- ts_declarable(m), !ts_declared(m).
+// ts_declarable(m): what `declare` may stand before.
+.decl ts_declarable(m: node)
+ts_declarable(m) :- kind(m, k), (k = "internal_module" ; k = "module" ; k = "class_declaration" ;
+    k = "abstract_class_declaration" ; k = "interface_declaration" ; k = "enum_declaration" ;
+    k = "type_alias_declaration" ; k = "function_signature" ; k = "lexical_declaration" ;
+    k = "variable_declaration").
+.decl module_body(m: node, b: node)
+module_body(m, b) :- ts_module_decl(m), field(m, "body", b).
+module_body(a, b) :- global_block(a), child(a, b, 0).
+// module_directive(d): the leading statements of the block that are bare string literals.
+.decl module_directive(d: node)
+module_directive(d) :- module_body(_, b), child(b, d, _), string_stmt(d, _, 1), !module_prologue_ends(b, d).
+.decl module_prologue_ends(b: node, d: node)  // a statement other than a bare string comes before d
+module_prologue_ends(b, d) :- module_body(_, b), child(b, d, _), string_stmt(d, _, 1), child(b, o, _), precedes(o, d),
+    !not_stmt(o), !string_stmt(o, _, 1).
+// in_declare(n): typescript-eslint's isDeclaration climb: n or a module around it is `declare`d.
+//   declare namespace A { namespace B {} }      both A and B
+.decl in_declare(n: node)
+in_declare(n) :- ts_declared(n).
+in_declare(n) :- inside(n, _, "ambient_declaration").
+// ambient_block(b): where typescript-eslint's no-unused-vars counts every declaration as used (it cannot tell what
+// an ambient block exports).
+.decl ambient_block(b: node)
+ambient_block(p) :- program(d, p), definition_file(d).
+ambient_block(b) :- ts_module_decl(m), field(m, "body", b), docof(b, d), definition_file(d).
+ambient_block(b) :- declare_block(b).
+ambient_block(b) :- ts_module_decl(m), field(m, "body", b), declare_block(o), within(m, o).
+.decl declare_block(b: node)  // the body of `declare module "m"`, `declare namespace N` or `declare global`
+declare_block(b) :- ts_module_decl(m), field(m, "body", b), child(a, m, _), kind(a, "ambient_declaration").
+declare_block(b) :- kind(b, "statement_block"), child(a, b, _), kind(a, "ambient_declaration").
+// ambient_stmt(t, n): t is n itself, or the `declare` (or, for `namespace`, expression statement) around it.
+.decl ambient_stmt(t: node, n: node)
+ambient_stmt(t, n) :- child(t, n, _), (kind(t, "ambient_declaration") ; kind(t, "expression_statement")), ambient_kind(n).
+ambient_stmt(n, n) :- ambient_kind(n).
+.decl ambient_kind(n: node)  // a declaration an ambient block holds
+ambient_kind(n) :- kind(n, k), (k = "interface_declaration" ; k = "type_alias_declaration" ; k = "class_declaration" ;
+    k = "abstract_class_declaration" ; k = "function_signature" ; k = "enum_declaration" ; k = "internal_module" ;
+    k = "lexical_declaration" ; k = "variable_declaration").
+ambient_kind(n) :- kind(n, "module"), field(n, "name", i), kind(i, "identifier").
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// tree-sitter writes a type name as type_identifier, both where it is used and where it is declared (`type T`,
+// `interface T`, `<T>`, `infer T`, `[K in …]`); a declared one is its parent's `name`, or infer's child. A qualified
+// `A.B` is a nested_type_identifier whose B is its `name`, so it is never a plain reference. A generic `Map<K>` is a
+// generic_type whose `name` is the reference Map. `typeof F` reads the
+// value F (an identifier), not a type.
+//   let a: T;   Array<T>;   class C implements T {}   interface I extends T {}      each T is a type_ref
+.decl type_ref(r: node, x: symbol)
+type_ref(r, x) :- kind(r, "type_identifier"), text(r, x), child(p, r, _), !kind(p, "infer_type"), !type_name_of(p, r).
+.decl type_name_of(p: node, r: node)  // r is p's `name` field: a declared name, or the B of A.B (not Map of Map<K>)
+type_name_of(p, r) :- field(p, "name", r), kind(r, "type_identifier"), !kind(p, "generic_type").
+.decl heritage_ref(r: node)  // ts-a's heritage entry, when it is a plain name (not `Array<T>`, not `N.T`)
+heritage_ref(r) :- type_ref(r, _), heritage(r).
+// type_global(r, x): names.rr resolves r among the type declarations of enclosing scopes (classes, interfaces,
+// type aliases, imports). Type parameters, `infer U` and mapped `[K in …]` bind in the construct that declares
+// them; enums and namespaces declare a type in their block.
+//   let f: Function;                                  the global
+//   function g<Function>(f: Function) {}              not: the type parameter
+//   import { Function } from "./f"; let f: Function;  not: the import
+.decl type_global(r: node, x: symbol)
+type_global(r, x) :- type_ref(r, x), !ref_site(r, _), !type_bound(r, x).
+.decl type_bound(r: node, x: symbol)  // a type parameter, infer or enum/namespace around r declares x
+type_bound(r, x) :- type_ref(r, x), type_binder(o, x), within(r, o).
+.decl type_binder(o: node, x: symbol)  // o is the region where the type name x it declares is visible
+type_binder(o, x) :- kind(p, "type_parameter"), field(p, "name", n), text(n, x), child(tp, p, _), child(o, tp, _).
+type_binder(o, x) :- kind(i, "infer_type"), child(i, n, 0), text(n, x), nearest(i, o, "conditional_type").
+type_binder(o, x) :- kind(c, "mapped_type_clause"), field(c, "name", n), text(n, x), child(o, c, _).
+type_binder(s, x) :- (kind(e, "enum_declaration") ; ts_namespace(e)), field(e, "name", n), text(n, x),
+    nearest(e, s, block_scope).
+
+// ---- enums -------------------------------------------------------------------------------------------------------
+// tree-sitter's enum_body lists members: a bare property_identifier (or string) for `A`, an enum_assignment for
+// `A = 1`. ESTree numbers members from 0, comments aside.
+.decl enum_member(e: node, m: node, i: number, x: symbol)
+enum_member(e, m, i, x) :- kind(e, "enum_declaration"), field(e, "body", b), enum_item(b, m, i), enum_key(m, x).
+.decl enum_item(b: node, m: node, i: number)
+enum_item(b, m, i) :- kind(b, "enum_body"), child(b, m, _), !kind(m, "comment"),
+    i = count : { child(b, o, _), !kind(o, "comment"), precedes(o, m) }.
+.decl enum_key(m: node, x: symbol)
+enum_key(m, x) :- kind(m, "property_identifier"), text(m, x).
+enum_key(m, x) :- kind(m, "string"), str(m, x).
+enum_key(m, x) :- kind(m, "enum_assignment"), field(m, "name", n), enum_key(n, x).
+.decl enum_init(m: node, v: node)
+enum_init(m, v) :- kind(m, "enum_assignment"), field(m, "value", v).

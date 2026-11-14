@@ -1,0 +1,42 @@
+.policy "eslint-prefer-object-has-own" revision 3
+.description "Use Object.hasOwn() instead of calling hasOwnProperty through Object.prototype or an object literal; it is shorter and clearer."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+#include "layout.rr"
+//   deparen, static_prop, global_at
+
+// ESLint's prefer-object-has-own: `hasOwnProperty.call` read off Object, Object.prototype or `{}`, where the name
+// Object resolves to the global variable at the call (global_at: a script's own top-level `var Object` is that
+// variable; a declaration in scope, `function Object() {}` as an expression around it, or `/* global Object: off */`
+// is not). ES2022's Object.hasOwn says the same.
+//   Object.prototype.hasOwnProperty.call(obj, "a")     ({}).hasOwnProperty.call(obj, "a")     → reported
+//   Object.hasOwnProperty.call(obj, "a")               Object["prototype"][`hasOwnProperty`].call(obj, a)  → reported
+//   foo.hasOwnProperty.call(obj, "a")                  with `const Object = f;` around it      fine
+// The fix replaces the callee with `Object.hasOwn`, not where a comment is inside it; a space goes in front when
+// the token before touches it and is a word (`return{}.hasOwnProperty.call(a, b)`). No options.
+.violation prefer_object_has_own(at: node) code "prefer-object-has-own"
+    "Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'."
+    suppress eslint "prefer-object-has-own"
+    suppress oxlint "prefer-object-has-own"
+    suppress biome "lint/suspicious/noPrototypeBuiltins"
+    fix has_own "Replace with 'Object.hasOwn'."
+prefer_object_has_own(c) :- has_own_call(c, _), global_at(c, "Object").
+global_at_ask("Object").
+
+// has_own_call(c, m): c calls m, which is `x.hasOwnProperty.call` (no chain: ESLint asks node.callee for a
+// MemberExpression) where x is `{}`, Object or `Object.prototype`.
+.decl has_own_call(c: node, m: node)
+has_own_call(c, m) :- kind(c, "call_expression"), field(c, "function", f), deparen(f, m), static_prop(m, h, "call"),
+    deparen(h, hm), static_prop(hm, o, "hasOwnProperty"), deparen(o, x), left_object(x).
+.decl left_object(x: node)
+left_object(x) :- kind(x, "object"), count : { child(x, p, _), !kind(p, "comment") } = 0.
+left_object(x) :- kind(x, "identifier"), text(x, "Object").
+left_object(x) :- static_prop(x, o, "prototype"), deparen(o, i), kind(i, "identifier"), text(i, "Object").
+
+has_own(c) :- has_own_call(c, m), !has(m, _, "comment"), !callee_glued(m) => replace(m, `Object.hasOwn`).
+has_own(c) :- has_own_call(c, m), !has(m, _, "comment"), callee_glued(m) => replace(m, ` Object.hasOwn`).
+.decl callee_glued(m: node)  // the token before m is a word that ends where m starts
+callee_glued(m) :- has_own_call(_, m), touch_before(m, t), match("(?s).*[A-Za-z0-9_$]", t).
+layout_at(m) :- has_own_call(_, m).

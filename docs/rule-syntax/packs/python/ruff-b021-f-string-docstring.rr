@@ -1,0 +1,20 @@
+.policy "ruff-b021-f-string-docstring" revision 2
+.description "Use a plain string literal, not an f-string, for docstrings; Python doesn't treat an f-string as a docstring."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B021 (flake8-bugbear): an f-string where a docstring goes, as the first statement of a module, class or
+// def. Python stores no docstring for it: `__doc__` stays None. Adjacent literals with one f-string among them
+// are an f-string too, and so is a parenthesized one, `(f"doc")`.
+//   def foo():
+//       f"""hello {VARIABLE}!"""      ← B021
+//   def bar():
+//       """hello"""                   not reported
+#include "python/ast.rr"
+
+.violation B021(at: node) code "B021"
+    "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring."
+    suppress ruff "B021"
+B021(s) :- body_of(_, b), body_stmt(b, st, 0), kind(st, "expression_statement"), child(st, s0, 0),
+    !child(st, _, 1), unparen(s0, s), fstring(s).

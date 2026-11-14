@@ -1,0 +1,2472 @@
+{
+  "date": "2026-10-22",
+  "decision": "Keep typed projected columns, actual SQL column demand, deferred consumer preparation, and direct batch import. No alternate execution backend or algorithm flag. End-to-end CPU/peak-memory improvement is not established.",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "baseCommit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+  "build": {
+    "engineOptLevel": 1,
+    "dependenciesOptLevel": 3,
+    "lto": false,
+    "codegenUnits": 256,
+    "features": [
+      "code-rule-profile"
+    ],
+    "allocator": "system-malloc shim",
+    "JEMALLOC_OVERRIDE": "/tmp/librerail_jemalloc_check_shim.dylib",
+    "CARGO_TARGET_DIR": "/tmp/rerail-data-layer-target"
+  },
+  "binaries": {
+    "before": {
+      "sha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+      "localArchive": ".rerail/profiles/typed-facts-20261022/before/engine.node"
+    },
+    "typedIntermediate": {
+      "sha256": "fc2eb43259f1e0c2e4c03979b8f5b00bdc35c03651716ebfa0c97b8bee0df418",
+      "localArchive": ".rerail/profiles/typed-facts-20261022/after/engine.node"
+    },
+    "typedStreaming": {
+      "sha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "localArchive": ".rerail/profiles/typed-facts-20261022/after/final.node"
+    },
+    "memoryInstrumentation": {
+      "sha256": "efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f",
+      "localArchive": ".rerail/profiles/typed-facts-20261022/after/memory.node"
+    }
+  },
+  "trials": {
+    "before-state-one-control-1": {
+      "profileSha256": "0168b98fe4ee7f8d3aacf137337177f51e046c5a956e686b616440d37a56475a",
+      "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3440.315,
+      "compileCpuMs": 342.526,
+      "peakRssBytes": 411713536,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 12164.962458,
+          "cpuMs": 2723.94,
+          "rssBytes": 340681928,
+          "heapUsed": 23675104,
+          "external": 7618209,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 2500.6857910000017,
+          "cpuMs": 714.833,
+          "rssBytes": 298902752,
+          "heapUsed": 23689568,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/before-state-one-control-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3440.315,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 13.032039213755118,
+        "nativePeakRssBytes": 411713536,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 4.800191021967526,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "final-state-one-control-1": {
+      "profileSha256": "bce2a4561e51f70b0d4e6ee6f8cbf28ecbc5be7f516ec299d10dc8486ad3a50a",
+      "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3264.265,
+      "compileCpuMs": 353.747,
+      "peakRssBytes": 484065280,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 11890.906583,
+          "cpuMs": 2588.321,
+          "rssBytes": 348136384,
+          "heapUsed": 23653440,
+          "external": 7618209,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 2897.5981659999998,
+          "cpuMs": 674.108,
+          "rssBytes": 234906560,
+          "heapUsed": 23667904,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/final-state-one-control-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3264.265,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 12.36515536632208,
+        "nativePeakRssBytes": 484065280,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 5.643744030563515,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "before-state-one-control-2": {
+      "profileSha256": "e58bfe783050a12b77d4ec294d6954d0e8ed2752e2d4d5487331e6fc0b4cc7eb",
+      "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3201.5339999999997,
+      "compileCpuMs": 306.045,
+      "peakRssBytes": 421691392,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 8402.377875,
+          "cpuMs": 2498.173,
+          "rssBytes": 340452672,
+          "heapUsed": 23685104,
+          "external": 7618209,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 2596.200834000001,
+          "cpuMs": 701.616,
+          "rssBytes": 302294360,
+          "heapUsed": 23699552,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/before-state-one-control-2/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3201.5339999999997,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 12.127528040941097,
+        "nativePeakRssBytes": 421691392,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 4.916523400191022,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "final-state-one-control-2": {
+      "profileSha256": "97ecf3be385b2fd65d1d05117d7a2de763af97451885ae958b5f41884e77a260",
+      "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3227.5069999999996,
+      "compileCpuMs": 317.985,
+      "peakRssBytes": 481443840,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 9337.623375,
+          "cpuMs": 2568.178,
+          "rssBytes": 346989912,
+          "heapUsed": 23651376,
+          "external": 51225042,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 1874.1219580000015,
+          "cpuMs": 657.948,
+          "rssBytes": 232957296,
+          "heapUsed": 23665880,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/final-state-one-control-2/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3227.5069999999996,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 12.225914716143473,
+        "nativePeakRssBytes": 481443840,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 5.613180515759312,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "before-state-one-control-3": {
+      "profileSha256": "8f1b997395ffa8d982b436637ee4780fad29866dd55c3ec250a14cf3ca30768f",
+      "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3181.518,
+      "compileCpuMs": 297.899,
+      "peakRssBytes": 414973952,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 8455.601334,
+          "cpuMs": 2524.192,
+          "rssBytes": 343942560,
+          "heapUsed": 23579960,
+          "external": 51063042,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 1056.1049999999996,
+          "cpuMs": 655.514,
+          "rssBytes": 305522104,
+          "heapUsed": 23593720,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/before-state-one-control-3/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3181.518,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 12.051706699900373,
+        "nativePeakRssBytes": 414973952,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 4.838204393505253,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "final-state-one-control-3": {
+      "profileSha256": "d5a3ce54bdd6c5e199fdbc41ef6f141afcdea1cd2630a187e019fd73075f7382",
+      "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3154.7470000000003,
+      "compileCpuMs": 306.99,
+      "peakRssBytes": 484589568,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 7928.583041,
+          "cpuMs": 2505.547,
+          "rssBytes": 349627544,
+          "heapUsed": 23627696,
+          "external": 51225042,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 2355.5001250000005,
+          "cpuMs": 647.425,
+          "rssBytes": 229401800,
+          "heapUsed": 23641456,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/final-state-one-control-3/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 1,
+        "bytes": 108562,
+        "checks": [
+          "serverplan_state_tripwires"
+        ],
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 3154.7470000000003,
+        "pythonCpuMs": 263.98900000000003,
+        "nativeToPythonCpuRatio": 11.950297171473053,
+        "nativePeakRssBytes": 484589568,
+        "pythonPeakRssBytes": 85770240,
+        "nativeToPythonRssRatio": 5.649856733524356,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "before-four-1": {
+      "profileSha256": "8a56722fc4acd0f1fc9fac2c98c8b159db713943a69c33d7a0d724afb93e4b0d",
+      "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+      "files": 5,
+      "bytes": 257073,
+      "expected": 44,
+      "actual": 44,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 24695.303,
+      "compileCpuMs": 780.903,
+      "peakRssBytes": 561315840,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 5,
+          "sourceBytes": 257073,
+          "wallMs": 57753.871,
+          "cpuMs": 24034.188,
+          "rssBytes": 451421864,
+          "heapUsed": 25367992,
+          "external": 9086984,
+          "arrayBuffers": 2709940
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 1368.0962080000027,
+          "cpuMs": 658.896,
+          "rssBytes": 476309160,
+          "heapUsed": 25381728,
+          "external": 9087024,
+          "arrayBuffers": 2709940
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-four-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/before-four-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 5,
+        "bytes": 257073,
+        "checks": [
+          "execution_authority_bypass",
+          "impl_direct_execution",
+          "legacy_execution_surfaces",
+          "raw_execute_regression",
+          "serverplan_bypass",
+          "serverplan_dispatch_architecture",
+          "serverplan_quality",
+          "serverplan_state_tripwires",
+          "serverplan_steps",
+          "serverplan_target_architecture"
+        ],
+        "expected": 44,
+        "actual": 44,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 24695.303,
+        "pythonCpuMs": 1428.7969999999998,
+        "nativeToPythonCpuRatio": 17.28398295909076,
+        "nativePeakRssBytes": 561315840,
+        "pythonPeakRssBytes": 116555776,
+        "nativeToPythonRssRatio": 4.815856058476244,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "10f53833f55e4f70cda2ed08696e79a0cba6c69cdf4bbd8b78ae7872c48f237c",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "final-four-control-1": {
+      "profileSha256": "b1d094e4720f16b822361e6841d0ba614dbd851fa2eee9b3d57c801ddbcc9b67",
+      "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "files": 5,
+      "bytes": 257073,
+      "expected": 44,
+      "actual": 44,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 23528.882999999998,
+      "compileCpuMs": 774.182,
+      "peakRssBytes": 570966016,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 5,
+          "sourceBytes": 257073,
+          "wallMs": 58417.83687499999,
+          "cpuMs": 22918.451,
+          "rssBytes": 471295536,
+          "heapUsed": 25344000,
+          "external": 9086984,
+          "arrayBuffers": 2709940
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 1090.8949589999975,
+          "cpuMs": 608.201,
+          "rssBytes": 485353008,
+          "heapUsed": 25357736,
+          "external": 9087024,
+          "arrayBuffers": 2709940
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-four-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/final-four-control-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ],
+      "pythonComparison": {
+        "passed": true,
+        "files": 5,
+        "bytes": 257073,
+        "checks": [
+          "execution_authority_bypass",
+          "impl_direct_execution",
+          "legacy_execution_surfaces",
+          "raw_execute_regression",
+          "serverplan_bypass",
+          "serverplan_dispatch_architecture",
+          "serverplan_quality",
+          "serverplan_state_tripwires",
+          "serverplan_steps",
+          "serverplan_target_architecture"
+        ],
+        "expected": 44,
+        "actual": 44,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "nativeColdCpuMs": 23528.882999999998,
+        "pythonCpuMs": 1428.7969999999998,
+        "nativeToPythonCpuRatio": 16.46761786313941,
+        "nativePeakRssBytes": 570966016,
+        "pythonPeakRssBytes": 116555776,
+        "nativeToPythonRssRatio": 4.898650548214788,
+        "nativeOriginalExitCode": 0,
+        "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+        "retainedReporterContracts": [
+          {
+            "check": "serverplan_state_tripwires",
+            "contract": "generated-artifact freshness and aggregate reporters remain upstream integration contracts",
+            "findings": [
+              {
+                "path": "/private/tmp/rerail-dl-main/scripts/serverplan_return_kinds.json",
+                "line": 1,
+                "code": "SPT-GENERATED-RETURN-KINDS",
+                "message": "generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint"
+              }
+            ]
+          }
+        ],
+        "note": "Native actual findings are reconstructed from the timed run's original expectations and complete FP/FN multisets. The original report is unchanged. CPU excludes native policy compilation. Python includes the source adapter. RSS includes process setup; both runs must use one process for RSS comparison."
+      }
+    },
+    "after-state-one-1": {
+      "profileSha256": "36a8b3bd6126d09c20e6db03b39867ea511cda4fdc37aca21e6ab1e8119b840c",
+      "nativeSha256": "fc2eb43259f1e0c2e4c03979b8f5b00bdc35c03651716ebfa0c97b8bee0df418",
+      "files": 1,
+      "bytes": 108562,
+      "expected": 0,
+      "actual": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 3549.147,
+      "compileCpuMs": 351.62399999999997,
+      "peakRssBytes": 488423424,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 1,
+          "sourceBytes": 108562,
+          "wallMs": 4249.84825,
+          "cpuMs": 2911.909,
+          "rssBytes": 352347624,
+          "heapUsed": 23686128,
+          "external": 7618209,
+          "arrayBuffers": 2458808
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 907.3368329999994,
+          "cpuMs": 635.629,
+          "rssBytes": 233072152,
+          "heapUsed": 23700592,
+          "external": 7618249,
+          "arrayBuffers": 2458808
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-state-one-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/after-state-one-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ]
+    },
+    "after-four-1": {
+      "profileSha256": "0567cc335e0779923d1c96628c787e9cc8f565e4bbae399f120c5e66889c341d",
+      "nativeSha256": "fc2eb43259f1e0c2e4c03979b8f5b00bdc35c03651716ebfa0c97b8bee0df418",
+      "files": 5,
+      "bytes": 257073,
+      "expected": 44,
+      "actual": 44,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "coldCpuMs": 25210.136000000002,
+      "compileCpuMs": 805.943,
+      "peakRssBytes": 558727168,
+      "applyBoundaries": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 5,
+          "sourceBytes": 257073,
+          "wallMs": 63520.167875,
+          "cpuMs": 24551.13,
+          "rssBytes": 457073960,
+          "heapUsed": 25373712,
+          "external": 9086984,
+          "arrayBuffers": 2709940
+        },
+        {
+          "revision": 2,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 1502.4084580000053,
+          "cpuMs": 656.836,
+          "rssBytes": 474686784,
+          "heapUsed": 25387448,
+          "external": 9087024,
+          "arrayBuffers": 2709940
+        }
+      ],
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/suite.ts",
+        "--recording",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/python-four-1/oracle.json",
+        "--output",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/typed-facts-20261022/after-four-1/parity.json",
+        "--allocator",
+        "system-shim",
+        "--policies",
+        "packs/data-layer/candidates/rules",
+        "--batch-files",
+        "32",
+        "--cold-only"
+      ]
+    }
+  },
+  "stateOneMedians": {
+    "before": {
+      "coldCpuMs": 3201.5339999999997,
+      "compileCpuMs": 306.045,
+      "peakRssBytes": 414973952,
+      "globalBoundaryRssBytes": 302294360
+    },
+    "final": {
+      "coldCpuMs": 3227.5069999999996,
+      "compileCpuMs": 317.985,
+      "peakRssBytes": 484065280,
+      "globalBoundaryRssBytes": 232957296
+    }
+  },
+  "method": {
+    "nativeWorkerCount": 1,
+    "ingestionBatchFiles": 32,
+    "timing": "Fresh serial processes. Three alternating before/final pairs for state-one. One ten-rule observation per version, without a statistical speed claim. Tracing, census, external sampling, and SQL capture are off. CPU excludes policy compilation; its CPU is separately recorded. RSS includes process setup.",
+    "scope": "One state rule over one actual 108562-byte file; all ten batch-six rules over five files, 257073 bytes, including required linter metadata. The ten-rule snapshot has 44 findings, including missing-file contracts. Source replay separately covers one positive and one clean source test per rule. This is not the full 50-rule repository run.",
+    "python": "Same pinned files and rule sets, one worker; source oracle captured in python-state-one-1/oracle.json and python-four-1/oracle.json. Python CPU/RSS observations are single trials, not medians.",
+    "allocator": "All matched controls use the same system-malloc jemalloc override shim. Results do not establish production jemalloc RSS.",
+    "deadlines": "Every command bounded at 115 seconds; controller kills workload at 112 seconds."
+  },
+  "storageEvidence": {
+    "beforeQueue": {
+      "runPhase": "cold",
+      "cpuMs": 99.266333,
+      "startUnixUs": 1792690762026144,
+      "accounting": "Inputs coexist before SQL admission. Referenced Arc payloads can also belong to the workspace/document cache; do not sum these categories as exclusive RSS. Syntax size uses the existing cache estimate. Census work is included in this diagnostic span.",
+      "byClause": [
+        {
+          "clause": "state-flow-1",
+          "jobs": 1,
+          "rows": 11272,
+          "rule": "data-layer-serverplan-state-tripwires"
+        },
+        {
+          "clause": "state-flow-project-1",
+          "jobs": 1,
+          "rows": 0,
+          "rule": "data-layer-serverplan-state-tripwires"
+        }
+      ],
+      "jobs": 2,
+      "ownership": {
+        "ownedBytesEstimate": 5713160,
+        "projection": {
+          "heapBytesEstimate": 19624497,
+          "keyBytes": 2089510,
+          "objectEntries": 198758,
+          "stringBytes": 1634347,
+          "values": 210030
+        },
+        "projectionReferences": 11272,
+        "uniqueProjections": 11272,
+        "witnesses": 11272
+      },
+      "snapshotSourceBytesUnique": 108562,
+      "suppliedSyntaxBytesEstimate": 0,
+      "suppliedSyntaxVersions": 0
+    },
+    "finalQueue": {
+      "runPhase": "cold",
+      "cpuMs": 0.044625,
+      "startUnixUs": 1792690720238003,
+      "accounting": "Queue holds unmaterialized consumer descriptions. Referenced Arc payloads can also belong to the workspace/document cache; do not sum these categories as exclusive RSS. Syntax size uses the existing cache estimate. Census work is included in this diagnostic span.",
+      "byClause": [
+        {
+          "clause": "state-flow-1",
+          "jobs": 1,
+          "rows": 0,
+          "rule": "data-layer-serverplan-state-tripwires"
+        },
+        {
+          "clause": "state-flow-project-1",
+          "jobs": 1,
+          "rows": 0,
+          "rule": "data-layer-serverplan-state-tripwires"
+        }
+      ],
+      "deferredInputJobs": 2,
+      "jobs": 2,
+      "ownership": {
+        "ownedBytesEstimate": 0,
+        "projection": {
+          "heapBytesEstimate": 0,
+          "keyBytes": 0,
+          "objectEntries": 0,
+          "stringBytes": 0,
+          "values": 0
+        },
+        "projectionReferences": 0,
+        "sharedSourceBytesReferenced": 0,
+        "typedProjectionBatches": 0,
+        "typedProjectionBytes": 0,
+        "typedProjectionFields": 0,
+        "uniqueProjections": 0,
+        "witnesses": 0
+      },
+      "snapshotSourceBytesUnique": 108562,
+      "suppliedSyntaxBytesEstimate": 0,
+      "suppliedSyntaxVersions": 0
+    },
+    "streamedRows": 11272,
+    "maxBufferedRows": 256,
+    "retainedProjectionRows": 0,
+    "streamRecords": 29,
+    "intermediateTypedCensus": "after-state-one-diagnostic replaces 198758 JSON fields/19624497 heap bytes with typed columns; final streaming no longer retains the complete set. Counters are logical storage estimates, not exclusive RSS."
+  },
+  "nativeMemoryProbe": {
+    "localProfile": ".rerail/profiles/typed-facts-20261022/final-state-memory-boundaries/profile.json",
+    "binary": "memoryInstrumentation",
+    "largestHighWaterGrowth": [
+      {
+        "runPhase": "cold",
+        "phase": "sql-materialize",
+        "name": "descendants",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343954786,
+        "after": {
+          "allocatedBytes": 258326528,
+          "inUseBytes": 115723984,
+          "peakRssBytes": 469565440
+        },
+        "before": {
+          "allocatedBytes": 233160704,
+          "inUseBytes": 104903056,
+          "peakRssBytes": 443973632
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-materialize",
+        "name": "nodes",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343598368,
+        "after": {
+          "allocatedBytes": 220577792,
+          "inUseBytes": 91302016,
+          "peakRssBytes": 427556864
+        },
+        "before": {
+          "allocatedBytes": 212189184,
+          "inUseBytes": 86025600,
+          "peakRssBytes": 417955840
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "descendants",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691344351588,
+        "after": {
+          "allocatedBytes": 266715136,
+          "inUseBytes": 126683680,
+          "peakRssBytes": 478969856
+        },
+        "before": {
+          "allocatedBytes": 258326528,
+          "inUseBytes": 115720176,
+          "peakRssBytes": 469565440
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "producer-prepare",
+        "name": "admitted-session",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+        "startUnixUs": 1792691343325661,
+        "after": {
+          "allocatedBytes": 207994880,
+          "inUseBytes": 81909456,
+          "peakRssBytes": 413663232
+        },
+        "before": {
+          "allocatedBytes": 203800576,
+          "inUseBytes": 73005712,
+          "peakRssBytes": 405684224
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "descendants",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691344396326,
+        "after": {
+          "allocatedBytes": 275103744,
+          "inUseBytes": 137563984,
+          "peakRssBytes": 486850560
+        },
+        "before": {
+          "allocatedBytes": 266715136,
+          "inUseBytes": 126681376,
+          "peakRssBytes": 478969856
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-materialize",
+        "name": "ownership",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343741070,
+        "after": {
+          "allocatedBytes": 228966400,
+          "inUseBytes": 98954928,
+          "peakRssBytes": 437338112
+        },
+        "before": {
+          "allocatedBytes": 228966400,
+          "inUseBytes": 96586192,
+          "peakRssBytes": 434716672
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-materialize",
+        "name": "syntax_rows_1",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343594640,
+        "after": {
+          "allocatedBytes": 212189184,
+          "inUseBytes": 86077984,
+          "peakRssBytes": 417955840
+        },
+        "before": {
+          "allocatedBytes": 207994880,
+          "inUseBytes": 83756960,
+          "peakRssBytes": 415596544
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "ownership",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343872097,
+        "after": {
+          "allocatedBytes": 233160704,
+          "inUseBytes": 101688048,
+          "peakRssBytes": 440713216
+        },
+        "before": {
+          "allocatedBytes": 228966400,
+          "inUseBytes": 100262112,
+          "peakRssBytes": 438484992
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "nodes",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343714232,
+        "after": {
+          "allocatedBytes": 224772096,
+          "inUseBytes": 95096272,
+          "peakRssBytes": 432963584
+        },
+        "before": {
+          "allocatedBytes": 224772096,
+          "inUseBytes": 93946816,
+          "peakRssBytes": 430915584
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "nodes",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343702248,
+        "after": {
+          "allocatedBytes": 220577792,
+          "inUseBytes": 92627888,
+          "peakRssBytes": 429539328
+        },
+        "before": {
+          "allocatedBytes": 220577792,
+          "inUseBytes": 91298208,
+          "peakRssBytes": 427556864
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-materialize",
+        "name": "syntax_rows_0",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343580236,
+        "after": {
+          "allocatedBytes": 207994880,
+          "inUseBytes": 83816656,
+          "peakRssBytes": 415580160
+        },
+        "before": {
+          "allocatedBytes": 207994880,
+          "inUseBytes": 81906960,
+          "peakRssBytes": 413679616
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "input-stream",
+        "name": "syntax_24",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+        "startUnixUs": 1792691343420623,
+        "after": {
+          "allocatedBytes": 207994880,
+          "inUseBytes": 83684976,
+          "peakRssBytes": 412532736
+        },
+        "before": {
+          "allocatedBytes": 203800576,
+          "inUseBytes": 82320448,
+          "peakRssBytes": 410877952
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "ownership",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691343891464,
+        "after": {
+          "allocatedBytes": 233160704,
+          "inUseBytes": 103144448,
+          "peakRssBytes": 442171392
+        },
+        "before": {
+          "allocatedBytes": 233160704,
+          "inUseBytes": 101685744,
+          "peakRssBytes": 440713216
+        }
+      },
+      {
+        "runPhase": "cold",
+        "phase": "sql-index",
+        "name": "body_nodes",
+        "rule": "data-layer-serverplan-state-tripwires",
+        "clause": "state-flow-1",
+        "path": null,
+        "startUnixUs": 1792691344581103,
+        "after": {
+          "allocatedBytes": 279298048,
+          "inUseBytes": 139057728,
+          "peakRssBytes": 488374272
+        },
+        "before": {
+          "allocatedBytes": 275103744,
+          "inUseBytes": 137611280,
+          "peakRssBytes": 486932480
+        }
+      }
+    ],
+    "limitations": "Cumulative process marks and inclusive intervals overlap. macOS allocator statistics cover system-malloc zones; they do not identify rule-exclusive ownership. The absolute stage growth does not prove why baseline peak differs. That difference remains unresolved."
+  },
+  "external": {
+    "localProfile": ".rerail/profiles/typed-facts-20261022/final-four-external/profile.json",
+    "activeSamples": 4985,
+    "sqliteSamples": 4950,
+    "sqliteSamplePercent": 99.29789368104313,
+    "samples": [
+      {
+        "file": "sample-1.txt",
+        "exitCode": 0,
+        "activeNativeSamples": 1616,
+        "subsystems": [
+          {
+            "symbol": "sqlite",
+            "samples": 1616,
+            "percent": 100.0
+          }
+        ],
+        "self": [
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (final.node)",
+            "samples": 371,
+            "percent": 22.96
+          },
+          {
+            "symbol": "sqlite3VdbeExec (final.node)",
+            "samples": 259,
+            "percent": 16.03
+          },
+          {
+            "symbol": "pread (libsystem_kernel.dylib)",
+            "samples": 209,
+            "percent": 12.93
+          },
+          {
+            "symbol": "pwrite (libsystem_kernel.dylib)",
+            "samples": 173,
+            "percent": 10.71
+          },
+          {
+            "symbol": "vdbeRecordCompareInt (final.node)",
+            "samples": 130,
+            "percent": 8.04
+          },
+          {
+            "symbol": "sqlite3VdbeSerialGet (final.node)",
+            "samples": 106,
+            "percent": 6.56
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (final.node)",
+            "samples": 91,
+            "percent": 5.63
+          },
+          {
+            "symbol": "getCellInfo (final.node)",
+            "samples": 82,
+            "percent": 5.07
+          },
+          {
+            "symbol": "sqlite3BtreeNext (final.node)",
+            "samples": 50,
+            "percent": 3.09
+          },
+          {
+            "symbol": "getPageNormal (final.node)",
+            "samples": 16,
+            "percent": 0.99
+          },
+          {
+            "symbol": "balance (final.node)",
+            "samples": 12,
+            "percent": 0.74
+          },
+          {
+            "symbol": "btreeParseCellPtrIndex (final.node)",
+            "samples": 11,
+            "percent": 0.68
+          },
+          {
+            "symbol": "pcache1Fetch (final.node)",
+            "samples": 8,
+            "percent": 0.5
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 8,
+            "percent": 0.5
+          },
+          {
+            "symbol": "sqlite3BtreeInsert (final.node)",
+            "samples": 5,
+            "percent": 0.31
+          },
+          {
+            "symbol": "applyAffinity (final.node)",
+            "samples": 5,
+            "percent": 0.31
+          },
+          {
+            "symbol": "btreeNext (final.node)",
+            "samples": 4,
+            "percent": 0.25
+          },
+          {
+            "symbol": "btreeParseCellPtr (final.node)",
+            "samples": 4,
+            "percent": 0.25
+          },
+          {
+            "symbol": "_platform_memset (libsystem_platform.dylib)",
+            "samples": 4,
+            "percent": 0.25
+          },
+          {
+            "symbol": "vdbeSorterSort (final.node)",
+            "samples": 4,
+            "percent": 0.25
+          },
+          {
+            "symbol": "sqlite3PcacheRelease (final.node)",
+            "samples": 3,
+            "percent": 0.19
+          },
+          {
+            "symbol": "pageFreeArray (final.node)",
+            "samples": 3,
+            "percent": 0.19
+          },
+          {
+            "symbol": "DYLD-STUB$$memcmp (final.node)",
+            "samples": 3,
+            "percent": 0.19
+          },
+          {
+            "symbol": "getAndInitPage (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "walFindFrame (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "pageFindSlot (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3BtreeTableMoveto (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "yy_reduce (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3MemCompare (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "pager_end_transaction (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "_xzm_free (libsystem_malloc.dylib)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "pagerWalFrames (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "editPage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "saveCursorsOnList (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "btreeComputeFreeSpace (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "pageInsertArray (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "allocateBtreePage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "pthread_mutex_lock (libsystem_pthread.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "subjournalPageIfRequired (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$memcpy (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "copyPayload (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvMs4_NtNtNtNtNtCsiDIIaNMmsu2_13rerail_engine13code_rule_dsl7matcher7anchors3sql6readerNtB5_6Reader12record_block (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvMs4_NtNtNtNtNtCsiDIIaNMmsu2_13rerail_engine13code_rule_dsl7matcher7anchors3sql6readerNtB5_6Reader5value (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvMs4_NtNtNtNtNtCsiDIIaNMmsu2_13rerail_engine13code_rule_dsl7matcher7anchors3sql6readerNtB5_6Reader5child (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_value_int64 (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_result_null (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RINvNvMs5_NtCsjm635Ng3rLs_8rusqlite9functionsNtNtBa_16inner_connection15InnerConnection22create_scalar_function18call_boxed_closureNCNvNtNtNtNtNtCsiDIIaNMmsu2_13rerail_engine13code_rule_dsl7matcher7anchors3sql9functions7installs7_0INtNtCsaTNopw4qKPP_4core6option6OptionxEEB2j_ (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ExprCodeTemp (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "moveToChild (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "vdbeSorterCompareInt (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3FkClearTriggerCache (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3VdbeMemMakeWriteable (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "exprAnalyze (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "resolveExprStep (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "clearDatabasePage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "newDatabase (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ExprCodeTarget (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "whereLoopAddBtree (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3VdbeRecordUnpack (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "pcache1FetchStage2 (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvNtNtCsaTNopw4qKPP_4core3str8converts9from_utf8 (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "whereScanNext (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3SelectNew (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ExprListAppendNew (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3Select (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "columnTypeImpl (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3SrcListDelete (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_column_type (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 2000.0
+          }
+        ]
+      },
+      {
+        "file": "sample-2.txt",
+        "exitCode": 0,
+        "activeNativeSamples": 1686,
+        "subsystems": [
+          {
+            "symbol": "sqlite",
+            "samples": 1655,
+            "percent": 98.16
+          },
+          {
+            "symbol": "profiling",
+            "samples": 30,
+            "percent": 1.78
+          },
+          {
+            "symbol": "matching-and-parsing",
+            "samples": 1,
+            "percent": 0.06
+          }
+        ],
+        "self": [
+          {
+            "symbol": "sqlite3VdbeExec (final.node)",
+            "samples": 743,
+            "percent": 44.07
+          },
+          {
+            "symbol": "pwrite (libsystem_kernel.dylib)",
+            "samples": 249,
+            "percent": 14.77
+          },
+          {
+            "symbol": "pread (libsystem_kernel.dylib)",
+            "samples": 247,
+            "percent": 14.65
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (final.node)",
+            "samples": 64,
+            "percent": 3.8
+          },
+          {
+            "symbol": "subjournalPageIfRequired (final.node)",
+            "samples": 62,
+            "percent": 3.68
+          },
+          {
+            "symbol": "sqlite3BtreeNext (final.node)",
+            "samples": 54,
+            "percent": 3.2
+          },
+          {
+            "symbol": "btreeParseCellPtrIndex (final.node)",
+            "samples": 43,
+            "percent": 2.55
+          },
+          {
+            "symbol": "vdbeRecordCompareInt (final.node)",
+            "samples": 32,
+            "percent": 1.9
+          },
+          {
+            "symbol": "_tlv_get_addr (libdyld.dylib)",
+            "samples": 30,
+            "percent": 1.78
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (final.node)",
+            "samples": 29,
+            "percent": 1.72
+          },
+          {
+            "symbol": "getCellInfo (final.node)",
+            "samples": 24,
+            "percent": 1.42
+          },
+          {
+            "symbol": "sqlite3VdbeSerialGet (final.node)",
+            "samples": 22,
+            "percent": 1.3
+          },
+          {
+            "symbol": "moveToRoot (final.node)",
+            "samples": 11,
+            "percent": 0.65
+          },
+          {
+            "symbol": "pcache1Fetch (final.node)",
+            "samples": 10,
+            "percent": 0.59
+          },
+          {
+            "symbol": "newDatabase (final.node)",
+            "samples": 9,
+            "percent": 0.53
+          },
+          {
+            "symbol": "sqlite3FindIndex (final.node)",
+            "samples": 6,
+            "percent": 0.36
+          },
+          {
+            "symbol": "getPageNormal (final.node)",
+            "samples": 4,
+            "percent": 0.24
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 4,
+            "percent": 0.24
+          },
+          {
+            "symbol": "malloc (libsystem_malloc.dylib)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "moveToChild (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3BtreeTableMoveto (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3BtreeInsert (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3FindTable (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "_xzm_xzone_malloc (libsystem_malloc.dylib)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "applyAffinity (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "resolveExprStep (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "<deduplicated_symbol> (libsystem_malloc.dylib)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "_xzm_free (libsystem_malloc.dylib)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "unixRead (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "decodeFlags (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "editPage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "getAndInitPage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "mach_absolute_time (libsystem_kernel.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "balance (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3GetToken (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_blob_open (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_platform_memset (libsystem_platform.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "btreeParseCellPtr (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "allocateBtreePage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "vdbeSorterSort (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "whereScanNext (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "codeAllEqualityTerms (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3WhereBegin (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3Malloc (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3Update (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ExprDeleteNN (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ExprIfFalse (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "tokenExpr (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "yy_reduce (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvNtCsaTNopw4qKPP_4core3fmt5write (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 2000.0
+          }
+        ]
+      },
+      {
+        "file": "sample-3.txt",
+        "exitCode": 0,
+        "activeNativeSamples": 1683,
+        "subsystems": [
+          {
+            "symbol": "sqlite",
+            "samples": 1679,
+            "percent": 99.76
+          },
+          {
+            "symbol": "matching-and-parsing",
+            "samples": 4,
+            "percent": 0.24
+          }
+        ],
+        "self": [
+          {
+            "symbol": "sqlite3VdbeExec (final.node)",
+            "samples": 670,
+            "percent": 39.81
+          },
+          {
+            "symbol": "pread (libsystem_kernel.dylib)",
+            "samples": 244,
+            "percent": 14.5
+          },
+          {
+            "symbol": "sqlite3VdbeSerialGet (final.node)",
+            "samples": 180,
+            "percent": 10.7
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (final.node)",
+            "samples": 92,
+            "percent": 5.47
+          },
+          {
+            "symbol": "sqlite3_column_type (final.node)",
+            "samples": 87,
+            "percent": 5.17
+          },
+          {
+            "symbol": "pwrite (libsystem_kernel.dylib)",
+            "samples": 77,
+            "percent": 4.58
+          },
+          {
+            "symbol": "balance (final.node)",
+            "samples": 41,
+            "percent": 2.44
+          },
+          {
+            "symbol": "sqlite3BtreeNext (final.node)",
+            "samples": 40,
+            "percent": 2.38
+          },
+          {
+            "symbol": "btreeParseCellPtrIndex (final.node)",
+            "samples": 36,
+            "percent": 2.14
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (final.node)",
+            "samples": 32,
+            "percent": 1.9
+          },
+          {
+            "symbol": "getCellInfo (final.node)",
+            "samples": 29,
+            "percent": 1.72
+          },
+          {
+            "symbol": "vdbeSorterCompareInt (final.node)",
+            "samples": 17,
+            "percent": 1.01
+          },
+          {
+            "symbol": "walFindFrame (final.node)",
+            "samples": 10,
+            "percent": 0.59
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 9,
+            "percent": 0.53
+          },
+          {
+            "symbol": "pcache1Fetch (final.node)",
+            "samples": 8,
+            "percent": 0.48
+          },
+          {
+            "symbol": "vdbeRecordCompareInt (final.node)",
+            "samples": 8,
+            "percent": 0.48
+          },
+          {
+            "symbol": "sqlite3_column_int64 (final.node)",
+            "samples": 8,
+            "percent": 0.48
+          },
+          {
+            "symbol": "moveToRoot (final.node)",
+            "samples": 5,
+            "percent": 0.3
+          },
+          {
+            "symbol": "computeCellSize (final.node)",
+            "samples": 4,
+            "percent": 0.24
+          },
+          {
+            "symbol": "sqlite3PcacheRelease (final.node)",
+            "samples": 4,
+            "percent": 0.24
+          },
+          {
+            "symbol": "pcache1FetchStage2 (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "getAndInitPage (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "sqlite3WhereCodeOneLoopStart (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "yy_reduce (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "fsync (libsystem_kernel.dylib)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "keywordCode (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "_RNvMs1_NtCsjm635Ng3rLs_8rusqlite9statementNtB5_9Statement9value_ref (final.node)",
+            "samples": 3,
+            "percent": 0.18
+          },
+          {
+            "symbol": "getPageNormal (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "btreeNext (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "pageInsertArray (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3BtreeInsert (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "sqlite3MemCompare (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "fts5VocabColumnMethod (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "applyAffinity (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "btreeParseCellPtr (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "vdbeSorterSort (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "clearDatabasePage (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "exprAnalyze (final.node)",
+            "samples": 2,
+            "percent": 0.12
+          },
+          {
+            "symbol": "readDbPage (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "cellSizePtrTableLeaf (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$memcpy (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "putVarint64 (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_platform_memset (libsystem_platform.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$_rjem_sdallocx (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvMs_NtNtCsig3tuZwqn9o_14regex_automata3dfa5denseNtB4_7Builder14build_from_nfa (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RINvNtCsjm635Ng3rLs_8rusqlite9functions10sql_resultbECsiDIIaNMmsu2_13rerail_engine (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvXs2_NtNtCsig3tuZwqn9o_14regex_automata4meta8strategyNtB5_4CoreNtB5_8Strategy11search_half (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3SrcListAssignCursors (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3LockAndPrepare (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3VdbeRecordUnpack (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_xzm_free (libsystem_malloc.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_xzm_free_large_huge (libsystem_malloc.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_str_vappendf (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3VdbeMemMakeWriteable (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$bzero (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$memmove (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "<deduplicated_symbol> (libsystem_malloc.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3MemMalloc (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3BtreeCursor (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "subjournalPageIfRequired (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "walChecksumBytes (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "close (libsystem_kernel.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3BtreeOpen (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3FkClearTriggerCache (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3VdbeCreate (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3DbFreeNN (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3Select (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3ColumnsFromExprList (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "malloc_zone_free (libsystem_malloc.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "dbMallocRawFinish (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3RunParser (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3_column_count (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3WalkExprNN (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "DYLD-STUB$$_platform_bzero (libsystem_malloc.dylib)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "sqlite3GetToken (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          },
+          {
+            "symbol": "_RNvMsz_NtNtNtCs3XW7gbOxCtj_5alloc11collections5btree3mapINtB5_8IntoIterNtNtNtCsjm635Ng3rLs_8rusqlite4util10small_cstr12SmallCStringjE10dying_nextCsiDIIaNMmsu2_13rerail_engine (final.node)",
+            "samples": 1,
+            "percent": 0.06
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 2000.0
+          }
+        ]
+      }
+    ],
+    "memorySnapshots": [
+      {
+        "tool": "vmmap",
+        "file": "vmmap-1.txt",
+        "startUnixUs": 1792690802225945,
+        "wallSeconds": 4.738903045654297,
+        "exitCode": 0
+      }
+    ],
+    "limitation": "Sample shares are not exact process CPU fractions. External runs are diagnostics and excluded from controls."
+  },
+  "verification": {
+    "nativeDsl": {
+      "passed": 1234,
+      "ignored": 23,
+      "skipped": "workspace and three large Python shortcut corpus tests, run workspace separately"
+    },
+    "workspaceContextPassed": 67,
+    "workspaceOtherPassed": 127,
+    "publicRuntimePassed": 320,
+    "publicRuntimeSkipped": 2,
+    "sourceReplay": {
+      "nativeSha256": "40779f620f891e498e0c9ec8ba2f51141cd0c47e9b9ab0fc2cff4434703066e2",
+      "nativeCalls": 20,
+      "positiveCalls": 10,
+      "cleanCalls": 10,
+      "missingCoverage": [],
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "profilingTests": 20,
+    "typecheck": "passed",
+    "repoCheck": "final npm run check passed (25 structure checks, TypeScript, boundaries, Windows paths), using isolated index",
+    "memoryInstrumentedReplay": {
+      "nativeSha256": "efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f",
+      "nativeCalls": 20,
+      "positiveCalls": 10,
+      "cleanCalls": 10,
+      "allDifferencesAndFailures": 0
+    },
+    "profileClippy": "passed with all targets",
+    "productionClippy": "passed with all targets; bounded first attempt timed out, retry passed",
+    "formatting": "passed",
+    "sourceManifestReproduction": "Both checked source manifests reconstruct the exact measured workload digest from pinned source, including the required quality linter metadata file and rule ordering."
+  },
+  "excludedExperiments": [
+    {
+      "runs": [
+        "after-ten-1",
+        "after-small-1",
+        "before-small-1",
+        "after-state-1",
+        "native-dsl"
+      ],
+      "reason": "Hit bounded deadline; incomplete results cannot establish speed or parity."
+    },
+    {
+      "runs": [
+        "before-state-one-3"
+      ],
+      "reason": "Evaluation completed but disk filled before parity artifact could be written. Not a valid control."
+    },
+    {
+      "runs": [
+        "after-state-one-1",
+        "after-state-one-2",
+        "after-state-one-3",
+        "after-four-1"
+      ],
+      "reason": "Intermediate implementation, before final schema sharing, compact input witnesses, and streaming. Retained for regression analysis."
+    },
+    {
+      "runs": [
+        "memory-addon-build"
+      ],
+      "reason": "Build exceeded 112 seconds under concurrent check load; isolated retry succeeded in 111.312 seconds."
+    },
+    {
+      "runs": [
+        "final-production-clippy"
+      ],
+      "reason": "Reached bounded deadline without compiler diagnostics; retry passed in 106.08 seconds."
+    }
+  ],
+  "reproduce": {
+    "nativeState": "RERAIL_ENGINE_PATH=/path/to/addon.node python3 scripts/profiling/run.py --source /tmp/rerail-dl-main --selection fixtures/host/data-layer-port/profiling/typed-facts-state-one.json --trace off --cold-only --allocator system-shim --deadline 115 --output /new/profile/directory",
+    "nativeTen": "Use the same command with typed-facts-ten-four.json. Each run needs a new output directory.",
+    "sourceReplayRecording": ".rerail/profiles/cpu-memory-20261021/source-smoke-recording.json",
+    "evidenceDirectory": ".rerail/profiles/typed-facts-20261022"
+  },
+  "limitations": [
+    "No full-repository or full-50-rule performance claim.",
+    "Intermediate logical heap reduction and lower final RSS do not establish a lower process high-water mark.",
+    "The allocator/SQL stage probe identifies where the new execution grows; the baseline peak difference remains unresolved.",
+    "Large regex-group enumeration can still construct a complete regrouping environment before output. Projected SQL columns themselves stream in bounded batches.",
+    "Non-file-partitioned clauses that read source still retain their source snapshots; preparation deferral is not a bound on all workspace source residency."
+  ],
+  "sourceManifests": {
+    "baseline": {
+      "path": ".rerail/profiles/typed-facts-20261022/before/source-hashes.json",
+      "sha256": "a6412a0b6ca5617af869f36734d2e779005453414b401ae73724a0d2a3c07287"
+    },
+    "typedStreaming": {
+      "path": ".rerail/profiles/typed-facts-20261022/after/final-source-hashes.json",
+      "sha256": "01604a719022f041e466a899573cfcac135bce7ef2e96bbefe4709c3ea81ff22"
+    },
+    "memoryInstrumentation": {
+      "path": ".rerail/profiles/typed-facts-20261022/after/memory-source-hashes.json",
+      "sha256": "a7764c3ea503d416cb4e82bd4d9f03ab32fa9e3168d85035274936d3012292ec"
+    }
+  },
+  "installedConfirmation": {
+    "nativeSha256": "efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f",
+    "coldCpuMs": 3204.352,
+    "peakRssBytes": 486998016,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "note": "One untraced confirmation for the addon with the new opt-in memory observations. Timing medians above use the typed-streaming addon before that instrumentation-only addition."
+  }
+}

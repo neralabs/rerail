@@ -1,0 +1,13 @@
+.policy "data-layer:bootstrap-eager-resolve" revision 1
+.description "The bootstrap lazy-SQL report under its eager-resolution profile name (report only)."
+.language python
+.mode log
+.scope include "l3200_metadata/bootstrap_state.py"
+.scope tests false
+// Python linter: scripts/lint_bootstrap_eager_resolve.py, a second entry point onto lint_bootstrap_lazy_sql.py's
+// report: the same file, the same four codes, the same findings (see bootstrap-lazy-sql.rr).
+
+#include "data-layer/boot-lazy-sql.rr"
+
+.violation BLB(at: node, c: symbol, what: symbol) code {c} "bootstrap eager resolution: {what}"
+BLB(at, c, what) :- blb(at, c, what).

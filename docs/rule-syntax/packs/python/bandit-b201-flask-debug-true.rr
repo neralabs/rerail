@@ -1,0 +1,20 @@
+.policy "bandit-b201-flask-debug-true" revision 2
+.description "Don't run a Flask app with debug enabled; the interactive debugger lets anyone who can reach it execute arbitrary code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B201 (flask_debug_true): in a file that has imported something named like flask, a call whose
+// qualified name ends in ".run" with debug=True. Bandit does not check that the receiver is a Flask app.
+//   app = Flask(__name__)
+//   app.run(debug=True)                  B201, on the line of True
+//   app.run(debug=False)                 not reported
+//   server.run(debug=True)               B201 as well, once flask is imported
+// The JSON asked for a receiver bound to flask.Flask(...); Bandit does not (see NOTES-py-bandit.md).
+
+#include "python/security.rr"   // imported_like, qual_call, kwarg, literal, report_at
+
+.violation B201(at: node) code "B201"
+    "Remove debug=True from this run call; the debugger lets anyone who reaches it run arbitrary code."
+    suppress nosec "B201"
+B201(at) :- imported_like(c, "flask"), qual_call(c, q), suffix(".run", q), kwarg(c, "debug", v),
+    literal(v, "str", "True"), report_at(c, v, at).

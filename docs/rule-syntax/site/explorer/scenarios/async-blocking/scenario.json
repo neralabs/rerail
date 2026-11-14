@@ -1,0 +1,5 @@
+{
+  "title": "Blocking sleep in async code",
+  "rule": "ruff-async251-blocking-sleep-in-async-function",
+  "note": "ASYNC251 flags time.sleep inside an async function: it stops the whole event loop. asyncio.sleep, and time.sleep in an ordinary function, are fine."
+}

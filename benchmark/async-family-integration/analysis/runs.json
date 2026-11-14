@@ -1,0 +1,91 @@
+[
+  {
+    "variant": "late",
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/late",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/late.json",
+      "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/late/profile",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/control/late-cache.sqlite",
+      "RERAIL_RR_LIB": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/baseline-rules/lib",
+      "RERAIL_RR_RULE_DIR": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/baseline-rules/packs/python",
+      "RERAIL_CANDIDATE_SPIKE": "typed_ranges"
+    },
+    "cpu": 11.688108,
+    "wall": 53.947573875,
+    "findings": [
+      {
+        "action": "Check the named consumers for candidate restrictions before Projection::of; push only semantically valid demands into producers.",
+        "code": "LATE_PROJECTION",
+        "confidence": "observed",
+        "cpuSeconds": 3.9436139999999966,
+        "evidence": "12535139 scalar node visits; 12535139 identities; 4187794 interned batch strings. Consumer paths: text <- async_open_receiver <- p3_ASYNC230",
+        "location": "input projection"
+      },
+      {
+        "action": "Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.",
+        "code": "CACHED_TAPE_REBUILD",
+        "confidence": "investigate",
+        "cpuSeconds": 1.5405849999999774,
+        "evidence": "5726 tape cache hits, 0 misses; restore/core-fact construction: parse the program/parse each program (4)/facts from tape: 1 calls, 0.000031 own CPU s; parse the program/parse each program (4)/tape restore: 1 calls, 0.000023 own CPU s; tree-sitter and facts/facts from tape: 5725 calls, 0.955908 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.584623 own CPU s. Tape hits do not mean core facts were reused.",
+        "location": "input lifecycle"
+      }
+    ]
+  },
+  {
+    "variant": "current",
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/current",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/current.json",
+      "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/analysis-mode/current/profile",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite"
+    },
+    "cpu": 5.106579,
+    "wall": 19.248584125,
+    "findings": [
+      {
+        "action": "Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.",
+        "code": "CACHED_TAPE_REBUILD",
+        "confidence": "investigate",
+        "cpuSeconds": 1.5463029999999662,
+        "evidence": "5727 tape cache hits, 0 misses; restore/core-fact construction: parse the program/parse each program (4)/facts from tape: 2 calls, 0.000049 own CPU s; parse the program/parse each program (4)/tape restore: 2 calls, 0.000038 own CPU s; tree-sitter and facts/facts from tape: 5725 calls, 0.956977 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.589239 own CPU s. Tape hits do not mean core facts were reused.",
+        "location": "input lifecycle"
+      },
+      {
+        "action": "Measure identity-map reuse or a narrower identity projection while preserving global node IDs; do not rebuild scalar facts.",
+        "code": "IDENTITY_PROJECTION",
+        "confidence": "investigate",
+        "cpuSeconds": 0.4268260000000036,
+        "evidence": "12535139 node identities, zero scalar node visits, 23777 batch strings",
+        "location": "input projection"
+      }
+    ]
+  }
+]

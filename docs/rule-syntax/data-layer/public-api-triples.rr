@@ -1,0 +1,324 @@
+.policy "data-layer:public-api-triples" revision 1
+.description "Exported execution callables come as sync, async and lazy members, each carrying its decorator."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+.budget * { "total": 0 }    // .ratchet-baselines/lint_public_api_triples.json (signed): violations 0
+// Python linter: scripts/lint_public_api_triples.py, default execution scope, over lint_lib/symbol_graph.py. Roots are what
+// data_layer/*.py exports: functions group under (export module, base name); public methods of exported classes,
+// own or inherited, under (class, base name). foo / foo_async / foo_lazy fill the sync / async / lazy slots.
+//   missing_sync, missing_async, missing_lazy, missing_legacy_sync, missing_legacy_async, missing_lazy_decorator,
+//   direct_wrapper_bypasses_lazy_owner, invalid_mixed_lazy_execution_name
+// Improves on the Python linter:
+//   decorators match on the name they resolve to, so `@ls` imported as `legacy_sync as ls` counts;
+//   signature hints read resolved annotation names, string annotations included (the Python linter sees neither);
+//   classes group by qualified name (the Python linter keys by bare class name, merging same-named classes).
+//
+// How to read this file
+//   1. Decorator facts: deco() resolves each decorator; legacy, private, lazy_decorated are flags built on it.
+//   2. Roots: root(owner, f) lists every exported function and public method. member() files each root under
+//      (owner, base name) in its sync / async / lazy slot. A group is all members with the same owner and base.
+//   3. Filters: exempt() removes groups the Python linter skips; surface() keeps only groups that look like execution;
+//      checked() also drops a group that repeats one already reported under another owner.
+//   4. Violations read checked groups: missing slots, missing decorators, a direct wrapper, a mixed name.
+// The Python linter's _validate_groups loop is spread over exempt, live, checked and the violation rules.
+
+#include "python/names.rr"
+#include "python/imports.rr"
+#include "python/calls.rr"
+
+// cdef: class bodies. nearest(f, c, cdef) = "c is the class f is defined in".
+// nonmod: defs and classes. !nearest(f, _, nonmod) = "f is defined at module level".
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl nonmod(kind: symbol)
+nonmod("function_definition"). nonmod("class_definition").
+// The three slots of a triple: foo (sync), foo_async, foo_lazy.
+.decl slot_name(v: symbol)
+slot_name("sync"). slot_name("async"). slot_name("lazy").
+// Public method names never grouped (dunder protocol methods and access-control helpers).
+.decl method_skip(v: symbol)
+method_skip("__aenter__"). method_skip("__aexit__"). method_skip("__enter__").
+method_skip("__exit__"). method_skip("__init__"). method_skip("__repr__").
+method_skip("__str__"). method_skip("authorize_internal_access").
+method_skip("disable_thread_affinity_checks").
+method_skip("get_thread_checks_disabled"). method_skip("set_disable_thread_checks").
+method_skip("validate_legacy_delegates"). method_skip("versioned_read").
+method_skip("versioned_write").
+// Base names that count as execution when a context hint also holds (the Python linter's EXECUTION_BASE_NAMES).
+.decl exec_base(v: symbol)
+exec_base("aggregate"). exec_base("commit"). exec_base("commit_branch").
+exec_base("count"). exec_base("create_branch"). exec_base("cursor_paginate").
+exec_base("cursor_paginate_with_total"). exec_base("delete_by_id").
+exec_base("delete_by_key"). exec_base("delete_by_key_many"). exec_base("delete_many").
+exec_base("execute"). exec_base("execute_one"). exec_base("exists").
+exec_base("find_object_branches"). exec_base("find_object_revisions").
+exec_base("first"). exec_base("fts_search"). exec_base("get_history").
+exec_base("graph"). exec_base("graph_query"). exec_base("insert").
+exec_base("insert_many"). exec_base("insert_many_raw"). exec_base("keyset_paginate").
+exec_base("keyset_paginate_with_total"). exec_base("query").
+exec_base("query_unfiltered"). exec_base("read"). exec_base("read_version").
+exec_base("rollback"). exec_base("search"). exec_base("select_at_revision").
+exec_base("select_many"). exec_base("select_one"). exec_base("table_exists").
+exec_base("traverse"). exec_base("update"). exec_base("update_by_key").
+exec_base("update_by_key_many"). exec_base("update_many"). exec_base("upsert").
+exec_base("upsert_many"). exec_base("vector_search"). exec_base("write").
+exec_base("write_version").
+// Owners that are by design one mode only (the Python linter's _is_mode_specific_transaction_facade list).
+.decl facade(v: symbol)
+facade("LazyVersionedReadTransaction"). facade("LazyVersionedWriteTransaction").
+facade("SyncSessionHandle"). facade("AsyncSessionHandle"). facade("SyncVersionHandle").
+facade("AsyncVersionHandle").
+// Paths of the lazy primitive builders (lazy_* functions), which are not surfaces (Python linter _is_lazy_primitive_builder).
+.decl primitive_path(v: symbol)
+primitive_path("l2055_lazy_result/lazy_reads.py").
+primitive_path("l2055_lazy_result/lazy_writes.py").
+primitive_path("l2055_lazy_result/transform.py").
+// Runtime context classes in these files are internal (Python linter _is_runtime_internal_context).
+.decl ctx_path(v: symbol)
+ctx_path("l2055_lazy_result/execution_context.py").
+ctx_path("l2055_lazy_result/lazy_result.py").
+ctx_path("l2055_lazy_result/lazy_seq.py"). ctx_path("l2055_lazy_result/transform.py").
+.decl ctx_class(v: symbol)
+ctx_class("BatchContext"). ctx_class("EagerContext"). ctx_class("LazyResult").
+ctx_class("LazySeq"). ctx_class("OnAccessContext").
+// Files whose plan/query factories on transaction classes are not triples (Python linter _is_non_triple_transaction_factory).
+.decl factory_path(v: symbol)
+factory_path("l2050_transaction/transaction.py").
+factory_path("l7200_versioned_transactions/versioned_transactions.py").
+
+// Every later decorator test reads deco, so the "resolved name, else text" choice is made once, here.
+// deco_expr(d, e): the expression naming decorator d: `@x(…)` gives x, `@x` gives x itself.
+// deco(f, q): f carries decorator q, the qualified name it resolves to (else its text), with any call stripped.
+.decl deco_expr(d: node, e: node)
+deco_expr(d, e) :- decorator(_, d), kind(d, "call"), field(d, "function", e).
+deco_expr(d, d) :- decorator(_, d), !kind(d, "call").
+.decl deco(f: node, q: symbol)
+// The decorator resolves (through imports and aliases) to qualified name q.
+deco(f, q) :- decorator(f, d), deco_expr(d, e), sym_of(e, q).
+// It does not resolve: fall back to its source text, as the Python linter always does.
+deco(f, t) :- decorator(f, d), deco_expr(d, e), !sym_of(e, _), text(e, t).
+// legacy(f, k): f carries @legacy_sync / @legacy_module_sync (k = "sync") or the async pair. The regex anchors the end
+// of the resolved name, so "pkg.decorators.legacy_sync" matches.
+.decl legacy(f: node, k: symbol)
+legacy(f, "sync")  :- deco(f, q), glob("**{legacy_sync,legacy_module_sync}", q).
+legacy(f, "async") :- deco(f, q), glob("**{legacy_async,legacy_module_async}", q).
+// own_private(f): f is marked internal by @internal_api, @private_api or @private_public_api, compared on the last
+// dotted segment as the Python linter's _is_marked_private_public_api does.
+.decl own_private(f: node)
+own_private(f) :- deco(f, q), match(".*(^|\\.)(internal_api|private_api|private_public_api)", q).
+.decl private(f: node)  // the def's decorators, or its class's
+private(f) :- own_private(f).
+private(f) :- nearest(f, c, cdef), own_private(c).
+// lazy_pipe(f): f (a def or a class) carries a lazy decorator: @lazy, @pure_lazy, or the class mixin decorator.
+.decl lazy_pipe(f: node)
+lazy_pipe(f) :- deco(f, q), match(".*(?:pure_lazy|apply_lazy_to_public_lazy_methods|(^|\\.)lazy$).*", q).
+// lazy_decorated(f): the lazy member is decorated, by itself or by its class's mixin, which covers the public
+// methods named …_lazy (the regex: not starting with _, ending _lazy).
+.decl lazy_decorated(f: node)
+lazy_decorated(f) :- lazy_pipe(f).
+lazy_decorated(f) :- def_name(f, n), match("[^_].*_lazy", n), nearest(f, c, cdef), lazy_pipe(c).
+
+// Used for the Python linter's annotation_names. Only annotations outside the body count: parameters and return type.
+// The Python linter lowercases names before comparing; the regexes that read sig_type use (?i) for the same effect.
+// sig_type(f, x): an annotation in f's signature (not its body) names x, the last segment of what it resolves to.
+.decl sig_type(f: node, x: symbol)
+// Resolved: keep the last segment of the qualified name ("pkg.lazy.LazyResult" → "LazyResult").
+sig_type(f, x) :- annotation(n), within(n, f), field(f, "body", b), !within(n, b), sym_of(n, q),
+    match("(?:.*\\.)?(?<x>[^.]+)", q).
+// Unresolved: a bare identifier's text.
+sig_type(f, x) :- annotation(n), within(n, f), field(f, "body", b), !within(n, b), !sym_of(n, _), kind(n, "identifier"), text(n, x).
+
+// The roots, and their slots.
+// data_layer_module(m): a module file directly in data_layer/, the public package whose exports are the roots.
+.decl data_layer_module(m: symbol)
+data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\\.py", p).
+// root(o, f): f is a root under owner o. Functions: o is the exporting data_layer module (Python linter
+// _scan_exported_module_functions). Methods: o is the exported class's qualified name (_scan_exported_class_methods).
+.decl root(o: symbol, f: node)
+// An exported module-level function, public (no leading _), not defined under _internal/.
+root(m, f) :- data_layer_module(m), exports(m, x, q), public_name(m, x), qualname(f, q), kind(f, "function_definition"),
+    !nearest(f, _, nonmod),
+    def_name(f, n), !prefix("_", n), count : { docof(f, d), doc(d, p, _), prefix("_internal/", p) } = 0.
+// A public method of an exported class, own or inherited (pub_member follows the bases, across files).
+// Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
+// _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
+root(cq, f) :- data_layer_module(m), exports(m, y, cq), public_name(m, y), class_def(c, cq), def_name(c, x), !private(c),
+    !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), contains("Protocol", b) } = 0,
+    pub_member(cq, n, f), !method_skip(n), !private(f).
+// pub_member(cq, n, f): the linter's public_methods_of_class: walking cq and then its bases, the first method named n
+// that is public (no leading _, not a method_skip name) and no property. A skipped member does not hide a base's:
+// when Child overrides Base.read_lazy with a property, Child's read_lazy is Base's (the recording reports
+// Base.read_lazy). Bases are taken as mro_method takes them (any ancestor), less any with a nearer counterpart.
+.decl pub_member(cq: symbol, n: symbol, f: node)
+pub_member(cq, n, f) :- method(cq, n, f), pub_method(n, f).
+pub_member(cq, n, f) :- class_def(_, cq), subclass(cq, b), method(b, n, f), pub_method(n, f),
+    count : { method(cq, n, g), pub_method(n, g) } = 0,
+    count : { subclass(cq, b2), subclass(b2, b), method(b2, n, g2), pub_method(n, g2) } = 0.
+.decl pub_method(n: symbol, f: node)
+pub_method(n, f) :- method(_, n, f), !prefix("_", n), !method_skip(n), !is_property(f).
+// is_property(f): a decorator ending in property, .setter or .deleter (the linter's SymbolInfo.is_property).
+.decl is_property(f: node)
+is_property(f) :- deco(f, q), glob("**{property,.setter,.deleter}", q).
+// mixed(f): the name contains "lazy" and also "sync" or "async" (case-insensitive; "async" contains "sync").
+// Mixed names are not grouped; they are reported by invalid_mixed_lazy_execution_name.
+.decl mixed(f: node)
+mixed(f) :- def_name(f, n), icontains("lazy", n), icontains("sync", n).
+// member(o, b, slot, f): root f is the `slot` member of group (o, b). Base name b strips one _lazy/_async/_sync
+// suffix (the non-greedy `.*?` leaves the suffix to the optional group). The slot comes from the suffix, as in
+// _group_base_name, except that an unsuffixed (or _sync) def with @legacy_async is the async member, as in the Python linter.
+// The suffix tests come before the decorator test (each rule requires the earlier ones to fail), so foo_lazy
+// with @legacy_async stays lazy.
+.decl member(o: symbol, b: symbol, slot: symbol, f: node)
+member(o, b, "lazy", f)  :- grouped(o, b, f, n), suffix("_lazy", n).
+member(o, b, "async", f) :- grouped(o, b, f, n), !suffix("_lazy", n), suffix("_async", n).
+member(o, b, "async", f) :- grouped(o, b, f, n), !suffix("_lazy", n), !suffix("_async", n),
+    legacy(f, "async").
+member(o, b, "sync", f)  :- grouped(o, b, f, n), !suffix("_lazy", n), !suffix("_async", n),
+    !legacy(f, "async").
+// grouped(o, b, f, n): root f, named n, belongs to group (o, b).
+.decl grouped(o: symbol, b: symbol, f: node, n: symbol)
+grouped(o, b, f, n) :- root(o, f), !mixed(f), def_name(f, n), match("(?<b>.*?)(?:_lazy|_async|_sync)?", n).
+// path_of(f, p): the repository path of a member's file, for the path-based exemptions.
+.decl path_of(f: node, p: symbol)
+path_of(f, p) :- member(_, _, _, f), docof(f, d), doc(d, p, _).
+// The Python linter takes next(iter(slots.values())), the first member it happened to insert. The least name is a stable
+// stand-in for that: it decides which member a missing_* finding is anchored at, and the path-based exemptions.
+.decl exemplar(o: symbol, b: symbol, f: node)  // the member with the least name: the Python linter's first slot filled
+exemplar(o, b, f) :- member(o, b, _, f), def_name(f, n), count : { member(o, b, _, g), def_name(g, m), m < n } = 0.
+// lazy_only(o, b): the group has a lazy member and nothing else. A bare foo_lazy is allowed (no missing slots).
+.decl lazy_only(o: symbol, b: symbol)
+lazy_only(o, b) :- member(o, b, "lazy", _), count : { member(o, b, s, _), s != "lazy" } = 0.
+
+// exempt(o, b): one rule per Python linter early return in _validate_groups: _is_non_triple_lifecycle_surface,
+// _is_mode_specific_transaction_facade, _is_non_triple_transaction_factory, _is_lazy_only_bootstrap_group.
+// Owners are compared on their last dotted segment (x), as the Python linter's owner.rsplit(".", 1)[-1].
+// Groups the Python linter never checks.
+.decl lifecycle(owner: symbol, b: symbol)
+lifecycle("CacheTransaction", "commit").  lifecycle("CacheTransaction", "rollback").  lifecycle("BaseMigration", "rollback").
+lifecycle("SchemaTransaction", "execute_ddl").  lifecycle("AsyncSchemaTransaction", "execute_ddl").
+.decl factory_owner(v: symbol)
+factory_owner("ReadTransaction"). factory_owner("WriteTransaction").
+factory_owner("LazyVersionedReadTransaction").
+factory_owner("LazyVersionedWriteTransaction").
+.decl factory_base(v: symbol)
+factory_base("plan"). factory_base("query"). factory_base("query_unfiltered").
+.decl bootstrap_base(v: symbol)
+bootstrap_base("check_ddl_lockdown"). bootstrap_base("column_exists").
+bootstrap_base("physical_table_exists_many").
+bootstrap_base("seal_table_exists_cache").
+// Computed once per group so each exempt rule can reuse it.
+.decl owner_name(o: symbol, b: symbol, x: symbol)  // x: the owner's last dotted segment
+owner_name(o, b, x) :- member(o, b, _, _), match("(?:.*\\.)?(?<x>[^.]+)", o).
+.decl exempt(o: symbol, b: symbol)
+// Lifecycle methods (commit/rollback on caches and migrations, execute_ddl on schema transactions).
+exempt(o, b) :- owner_name(o, b, x), lifecycle(x, b).
+// table_exists on any …Connection.
+exempt(o, b) :- owner_name(o, b, x), suffix("Connection", x), b = "table_exists".
+// One-mode facades: the named list, and any Sync…/Async…/Lazy… transaction or handle class.
+exempt(o, b) :- owner_name(o, b, x), facade(x).
+exempt(o, b) :- owner_name(o, b, x), glob("{Sync,Async,Lazy}**{Transaction,SessionHandle,VersionHandle}", x).
+// Transaction factories: plan/query on the transaction classes, when the group's exemplar is in a factory file.
+exempt(o, b) :- owner_name(o, b, x), factory_owner(x), factory_base(b),
+    exemplar(o, b, e), path_of(e, p), factory_path(p).
+// execute_ddl defined in the schema-transaction file, whatever the owner.
+exempt(o, b) :- exemplar(o, b, e), b = "execute_ddl", path_of(e, "l2000_connection/schema_transaction.py").
+// Lazy-only bootstrap groups: the base or owner says bootstrap, or the base is one of the listed bootstrap probes.
+exempt(o, b) :- lazy_only(o, b), contains("bootstrap", b).
+exempt(o, b) :- lazy_only(o, b), bootstrap_base(b).
+exempt(o, b) :- lazy_only(o, b), owner_name(o, b, x), icontains("bootstrap", x).
+
+// Python linter _looks_execution_surface. A group is enforced only if some member is a surface (see live below).
+// true_lazy(f): named …_lazy, or its signature mentions LazyResult / LazySeq / ServerPlan (_is_true_lazy_surface).
+// surface(f): f looks like an execution surface.
+.decl true_lazy(f: node)
+true_lazy(f) :- member(_, _, "lazy", f).
+true_lazy(f) :- sig_type(f, x), iglob("{lazyresult,lazyseq,serverplan}", x).
+// hint(f): the Python linter's contextual_hint, any one of: the file path names a transaction or graph-query module;
+// the defining class's name mentions connection/query/transaction/versioned; or a signature type is one of the
+// connection, transaction or lazy types.
+.decl hint(f: node)
+hint(f) :- path_of(f, p), glob("**/{graph_query,schema_transaction,transaction,versioned_transactions}**", p).
+hint(f) :- nearest(f, c, cdef), def_name(c, x), iglob("**{connection,query,schematransaction,transaction,versioned}**", x).
+hint(f) :- sig_type(f, x), iglob("{{versioned,}{databaseconnection,readtransaction,writetransaction},{lazyresult,lazyseq,serverplan}}", x).
+// not_surface(f): the Python linter's early `return False` cases: abstract methods, private members, lazy primitive
+// builders (module-level lazy_* in the primitive files), runtime context classes, and chainable builders.
+.decl not_surface(f: node)
+not_surface(f) :- deco(f, q), suffix("abstractmethod", q).
+not_surface(f) :- private(f).
+not_surface(f) :- path_of(f, p), primitive_path(p), !nearest(f, _, cdef), def_name(f, n), prefix("lazy_", n), true_lazy(f).
+not_surface(f) :- path_of(f, p), ctx_path(p), nearest(f, c, cdef), def_name(c, x), ctx_class(x).
+// A chainable builder returns its own class: the return annotation is the class name, optionally quoted and
+// optionally subscripted (`-> "Query[T]"`). The regex captures the bare name; it must equal the class name x.
+not_surface(f) :- field(f, "return_type", r), text(r, t), nearest(f, c, cdef), def_name(c, x),   // chainable builder
+    match("['\"]?(?<x>[A-Za-z_][A-Za-z0-9_]*)(?:\\[.*\\])?['\"]?", t).
+// surface(f): an execution base name with a hint, or a true lazy member, or a legacy-decorated member.
+.decl surface(f: node)
+surface(f) :- member(_, b, _, f), !not_surface(f), exec_base(b), hint(f).
+surface(f) :- member(_, _, _, f), !not_surface(f), true_lazy(f).
+surface(f) :- member(_, _, _, f), !not_surface(f), legacy(f, _).
+
+// Used only by direct_wrapper_bypasses_lazy_owner, to read the names of calls inside a wrapper's body.
+.decl cname(c: node, x: symbol)  // the name a call is made by: `f(…)` or `….f(…)`
+cname(c, x) :- callee(c, n), kind(n, "identifier"), text(n, x).
+cname(c, x) :- callee(c, n), kind(n, "attribute"), field(n, "attribute", a), text(a, x).
+
+// live(o, b): a group that is not exempt and has at least one surface member.
+// checked(o, b): the group is reported; an identical slot set already seen under a lesser owner is not.
+.decl live(o: symbol, b: symbol)
+live(o, b) :- member(o, b, _, f), surface(f), !exempt(o, b).
+// The Python linter walks groups in sorted (owner, base) order and skips a group whose (base, slot → definition) set it has
+// already seen, which happens when two exported classes inherit the same methods. Here: no live group with the same
+// base and a smaller owner name has exactly the same members (the two inner !some blocks test set equality:
+// nothing in o's group is missing from p's, and nothing in p's is missing from o's).
+.decl checked(o: symbol, b: symbol)
+checked(o, b) :- live(o, b), count : { live(p, b), p < o,
+    count : { member(o, b, s, f), !member(p, b, s, f) } = 0, count : { member(p, b, s, f), !member(o, b, s, f) } = 0 } = 0.
+// same_params(f, g): f and the lazy member g of its group take the same parameters, by name and position.
+// Python linter _legacy_decorator_applicable compares the full param_names tuples; this ignores self and cls.
+.decl same_params(f: node, g: node)
+same_params(f, g) :- lazy_pair(f, g), !params_differ(f, g).
+.decl lazy_pair(f: node, g: node)
+lazy_pair(f, g) :- member(o, b, _, f), member(o, b, "lazy", g).
+// params_differ(f, g): one of the two has a parameter (other than self and cls) at a position the other lacks.
+.decl params_differ(f: node, g: node)
+params_differ(f, g) :- lazy_pair(f, g), params(f, x, i), x != "self", x != "cls", !params(g, x, i).
+params_differ(f, g) :- lazy_pair(f, g), params(g, x, i), x != "self", x != "cls", !params(f, x, i).
+
+// missing(o, b, s, at): checked group (o, b) has no member in slot s. Lazy-only groups need no other slot, as in
+// the Python linter's required_slots. The finding is anchored at the exemplar, as the Python linter reports exemplar.path/line.
+.decl missing(o: symbol, b: symbol, s: symbol, at: node)
+missing(o, b, s, e) :- checked(o, b), !lazy_only(o, b), slot_name(s), !member(o, b, s, _), exemplar(o, b, e).
+// One violation per missing slot, so each Python linter issue code is its own finding relation and has its own budget.
+.violation missing_sync(at: node, owner: symbol, base: symbol)  "{owner}.{base} is missing the sync member of the triple"
+missing_sync(e, o, b) :- missing(o, b, "sync", e).
+.violation missing_async(at: node, owner: symbol, base: symbol) "{owner}.{base} is missing the async member of the triple"
+missing_async(e, o, b) :- missing(o, b, "async", e).
+.violation missing_lazy(at: node, owner: symbol, base: symbol)  "{owner}.{base} is missing the lazy member of the triple"
+missing_lazy(e, o, b) :- missing(o, b, "lazy", e).
+
+// The legacy decorators are required only when the sync/async member mirrors the lazy member's parameters.
+.violation missing_legacy_sync(at: node) "{qualname(at)} is public but not decorated with @legacy_sync"
+missing_legacy_sync(f) :- checked(o, b), member(o, b, "sync", f), member(o, b, "lazy", l), same_params(f, l), !legacy(f, "sync").
+.violation missing_legacy_async(at: node) "{qualname(at)} is public but not decorated with @legacy_async"
+missing_legacy_async(f) :- checked(o, b), member(o, b, "async", f), member(o, b, "lazy", l), same_params(f, l), !legacy(f, "async").
+// Every lazy member of a checked group must be lazy-decorated, lazy-only groups included.
+.violation missing_lazy_decorator(at: node)
+    "{qualname(at)} is public but not decorated with @lazy (or mixin apply_lazy_to_public_lazy_methods)"
+missing_lazy_decorator(l) :- checked(o, b), member(o, b, "lazy", l), !lazy_decorated(l).
+
+// A sync/async member of a group that has a lazy member is decorated @direct_legacy… and calls a grammar *_lazy
+// helper directly instead of delegating to the lazy member. The Python linter reports one per group (the first by path and
+// line) and accepts any call name ending _lazy or starting lazy_; this lists the grammar helpers by name.
+.violation direct_wrapper_bypasses_lazy_owner(at: node)
+    "{qualname(at)} uses a direct legacy wrapper despite an available lazy owner; delegate through the lazy member"
+direct_wrapper_bypasses_lazy_owner(f) :- checked(o, b), member(o, b, "lazy", _), member(o, b, s, f), s != "lazy",
+    deco(f, q), match(".*(^|\\.)direct_legacy[^.]*", q),
+    within(c, f), cname(c, x),
+    glob("{grammar_effect_lazy,grammar_rows_lazy,grammar_row_lazy,{execute_grammar,grammar_fetch}**_lazy}", x).
+
+// Every mixed-name root, checked or not: the Python linter reports these before any exemption or surface test.
+.violation invalid_mixed_lazy_execution_name(at: node, owner: symbol)
+    "{qualname(at)} mixes 'lazy' with 'sync' or 'async' in its name. Lazy surfaces must stay execution-mode neutral."
+invalid_mixed_lazy_execution_name(f, o) :- root(o, f), mixed(f).

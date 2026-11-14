@@ -1,0 +1,94 @@
+// tsx/node-package: where a file stands in its npm package, as eslint-plugin-n reads it: the package.json that
+// governs it, whether package.json's `bin` names it, whether npm would publish it, and its shebang.
+//
+// What a rule gets from this library:
+//   pkg_file(d, dir, rel)    document d belongs to the package whose package.json is in dir ("" at the root), at
+//                            path rel from there (the plugin skips a file no package.json governs)
+//   pkg_bin_file(d)          package.json's `bin` (a string, or an object's values) names d, as the plugin's
+//                            isBinFile resolves it: the path itself, without `.js`, or a directory for its index.js
+//   npm_ignored(path)        PROPOSED core input: npm leaves the file out of its package (see below)
+//   pkg_listed(d, opt)       the rule option opt (a list of gitignore patterns, as the `ignore` package reads them)
+//                            matches d's path in its package: hashbang's additionalExecutables
+//   src_shebang(d, t)        d starts with a `#!` line t (after a byte order mark, if any); t keeps a trailing \r
+//   src_env_shebang(d)       d's text starts with "#!/usr/bin/env" (ESLint reads the text without its byte order
+//                            mark)
+//   src_bom(d)               d's shebang comes after a byte order mark
+//   program_start(d, at)     where ESLint's Program node of d starts: its first token (comments and a shebang are
+//                            not part of it), or line 1 of an empty file
+//
+// Examples:
+//   n/hashbang              package.json { "bin": "./bin/cli.js" }: bin/cli.js needs `#!/usr/bin/env node`
+//   n/no-unpublished-bin    { "bin": "x.js", "files": ["lib"] }: x.js is a bin file npm does not publish
+//   n/no-top-level-await    `await f()` at the top of a published module; ignoreBin skips bin files
+//
+// npm_ignored(path) is the plugin's getNpmignore(path).match: with a `files` list in package.json, a file it does
+// not list (README, LICENSE, CHANGELOG, package.json and `main` are always published); else the patterns of the
+// package's .npmignore, else of its .gitignore; and any path outside the package. npm's pattern language is
+// gitignore's, read from those files, so it is native, like the package.json reader; no Datalog here. Until core
+// has it, it is declared here and has no rows (every file counts as published).
+//
+// Builds on core only: doc, package_for, package_field, kind, text, col, first_token, @join, @place.
+
+.decl npm_ignored(path: symbol)
+.input npm_ignored
+
+.decl pkg_file(d: number, dir: symbol, rel: symbol)
+pkg_file(d, "", f) :- doc(d, f, _), package_for(f, "").
+pkg_file(d, dir, substr(f, strlen(dir) + 1, strlen(f) - strlen(dir) - 1)) :- doc(d, f, _), package_for(f, dir),
+    dir != "".
+
+// pkg_bin_target(dir, b): `"bin": "./cli.js"` or `"bin": { "x": "./cli.js" }` in dir/package.json, resolved:
+// dir/cli.js.
+.decl pkg_bin_target(dir: symbol, b: symbol)
+pkg_bin_target(dir, @join(dir, v)) :- package_field(dir, "bin", v).
+pkg_bin_target(dir, @join(dir, v)) :- package_field(dir, k, v), match("bin/[^/]+", k).
+.decl pkg_bin_file(d: number)
+pkg_bin_file(d) :- doc(d, f, _), package_for(f, dir), pkg_bin_target(dir, b),
+    (f = b ; f = cat(b, ".js") ; f = cat(b, "/index") ; f = cat(b, "/index.js")).
+
+// A `#!` line counts only with a line break after it (the plugin's /^(#!.+?)?(\r)?\n/): text follows it.
+.decl src_shebang(d: number, t: symbol)
+src_shebang(d, t) :- node(d, h, "hash_bang_line", _, e), node(d, _, "program", _, pe), pe > e, text(h, t).
+.decl src_bom(d: number)
+// The grammar reads a `#!` line only at the very start of the text, so only a byte order mark can stand before it.
+src_bom(d) :- kind(h, "hash_bang_line"), col(h, c), c > 0, docof(h, d).
+.decl src_env_shebang(d: number)
+src_env_shebang(d) :- src_shebang(d, t), prefix("#!/usr/bin/env", t).
+
+.decl program_start(d: number, at: loc)
+// Its first token starts its first child that is code (not a comment or the `#!` line).
+program_start(d, c) :- kind(p, "program"), docof(p, d), child(p, c, i), program_code(c),
+    i = min j : { child(p, x, j), program_code(x) }.
+program_start(d, @place(f, 1)) :- doc(d, f, _), kind(p, "program"), docof(p, d), count : { child(p, x, _), program_code(x) } = 0.
+.decl program_code(c: node)
+program_code(c) :- child(p, c, _), kind(p, "program"), !kind(c, "comment"), !kind(c, "hash_bang_line").
+
+// pkg_listed(d, opt). gitignore's rules: the last pattern that matches wins, and `!p` re-includes; a pattern with a
+// `/` before its end is anchored at the package root (a leading `/` only anchors), any other matches at any depth;
+// a trailing `/` matches directories only; a matched directory covers everything in it, which no `!` below undoes.
+.decl pkg_listed(d: number, opt: symbol)
+pkg_listed(d, o) :- pkg_file(d, _, rel), gi_on(d, o, rel).
+pkg_listed(d, o) :- pkg_file(d, _, rel), gi_on(d, o, a), prefix(cat(a, "/"), rel).
+.decl gi_path(d: number, o: symbol, p: symbol, dir: number)  // d's path and its directories, for option o
+gi_path(d, o, rel, 0) :- pkg_file(d, _, rel), option_item(o, _, _), gi_option(o).
+gi_path(d, o, a, 1) :- gi_path(d, o, p, _), match("(?<a>.+)/[^/]+", p).
+.decl gi_option(o: symbol)
+gi_option("additionalExecutables").
+.decl gi_pat(o: symbol, i: number, neg: number, body: symbol, anchored: number, dir_only: number)
+gi_pat(o, i, n, b, an, dn) :- gi_option(o), option_item(o, i, raw), gi_neg(raw, n, r1), gi_dir(r1, dn, r2),
+    gi_anchor(r2, an, b).
+.decl gi_neg(raw: symbol, neg: number, rest: symbol)
+gi_neg(r, 1, substr(r, 1, strlen(r) - 1)) :- option_item(_, _, r), prefix("!", r).
+gi_neg(r, 0, r) :- option_item(_, _, r), !prefix("!", r).
+.decl gi_dir(r: symbol, dir_only: number, rest: symbol)
+gi_dir(r, 1, substr(r, 0, strlen(r) - 1)) :- gi_neg(_, _, r), suffix("/", r), r != "/".
+gi_dir(r, 0, r) :- gi_neg(_, _, r), !suffix("/", r).
+.decl gi_anchor(r: symbol, anchored: number, body: symbol)
+gi_anchor(r, 1, substr(r, 1, strlen(r) - 1)) :- gi_dir(_, _, r), prefix("/", r).
+gi_anchor(r, 1, r) :- gi_dir(_, _, r), !prefix("/", r), contains("/", r).
+gi_anchor(r, 0, r) :- gi_dir(_, _, r), !contains("/", r).
+.decl gi_hit(d: number, o: symbol, p: symbol, i: number, neg: number)
+gi_hit(d, o, p, i, n) :- gi_path(d, o, p, dir), gi_pat(o, i, n, b, an, dn), (dn = 0 ; dir = 1),
+    (glob(b, p) ; an = 0, glob(cat("**/", b), p)).
+.decl gi_on(d: number, o: symbol, p: symbol)  // the last pattern matching p is not a `!`
+gi_on(d, o, p) :- gi_hit(d, o, p, i, 0), i = max j : { gi_hit(d, o, p, j, _) }.

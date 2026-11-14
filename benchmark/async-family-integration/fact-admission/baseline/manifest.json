@@ -1,0 +1,11 @@
+{
+  "binary": "/Users/jeremy/orca/artifacts/async-family-comparison/fact-admission-013068e01/baseline-tests",
+  "sha256": "a2f6fb85d1e077af5d4b38779b867a8aec3b399e22b4a7109f2f397945441a2a",
+  "corpus": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+  "environment": {
+    "RUST_MIN_STACK": "67108864",
+    "RERAIL_THREADS": "4",
+    "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/fact-admission-013068e01/baseline/corpus",
+    "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/fact-admission-013068e01/baseline/facts.sqlite"
+  }
+}

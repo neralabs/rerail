@@ -13,7 +13,7 @@ use super::persisted::file_context;
 use super::{ClauseId, FileState, WorkspaceState};
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::invalid;
-use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics};
+use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput, Metrics};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{HashKey, LocalResultPublication, StoredLocalResult};
 use napi::Result;
@@ -53,11 +53,14 @@ pub(super) struct ConsumerRefresh<'a> {
 
 /// Schedules cross-file adapters without normalizing their storage or closure implementations.
 #[derive(Default)]
-pub(super) struct CrossFileScheduler {
+pub struct CrossFileScheduler {
     calls: calls_state::CallsState,
 }
 
 impl CrossFileScheduler {
+    pub(super) fn evaluation_slot(&self) -> Option<crate::code_rule_dsl::calls::EvaluationSlot> {
+        self.calls.evaluation_slot()
+    }
     /// Registers code rule `index`'s `calls` terms. Only a code rule holding one gets synthetic
     /// clauses, so only then is the workspace's copy of it made its own.
     pub(super) fn register(
@@ -65,9 +68,12 @@ impl CrossFileScheduler {
         index: usize,
         code_rule: &mut Arc<CompiledCodeRule>,
     ) -> Result<()> {
-        if code_rule.clauses.iter().any(
-            |clause| matches!(&clause.kind, ClauseKind::Forbid(query) if !query.calls().is_empty()),
-        ) {
+        if code_rule.clauses.iter().any(|clause| {
+            clause
+                .kind
+                .calls_query()
+                .is_some_and(|query| !query.calls().is_empty())
+        }) {
             state
                 .crossfile
                 .calls
@@ -80,8 +86,8 @@ impl CrossFileScheduler {
         state.crossfile.calls.consumers()
     }
 
-    #[cfg(test)]
-    pub(super) fn summary(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn summary(
         state: &WorkspaceState,
         path: &str,
     ) -> Option<Arc<crate::code_rule_dsl::calls::summary::Summary>> {
@@ -247,6 +253,9 @@ impl CrossFileScheduler {
         let Some((view, changed)) = state.crossfile.calls.refresh() else {
             return Ok(evicted);
         };
+        state
+            .dirty_globals
+            .extend(state.crossfile.calls.take_dirty_globals());
         let code_rules = refresh.context.code_rules;
         let mut jobs = Vec::new();
         // Each job's silent terms, recorded with its stamp once the job is done.
@@ -424,8 +433,8 @@ impl CrossFileScheduler {
         state.crossfile.calls.forget(path);
     }
 
-    #[cfg(test)]
-    pub(super) fn calls_state(state: &WorkspaceState) -> &calls_state::CallsState {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn calls_state(state: &WorkspaceState) -> &calls_state::CallsState {
         &state.crossfile.calls
     }
 }

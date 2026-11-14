@@ -1,0 +1,933 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-pure-lazy-runtime-purity",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer pure_lazy_runtime_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "entry",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "scan_paths"
+          },
+          "primaryPaths": {
+            "type": "array",
+            "items": "string",
+            "default": []
+          }
+        }
+      }
+    },
+    {
+      "id": "pure-runtime-state",
+      "relational": {
+        "inputs": {
+          "raw_strings": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$STRING"
+                      },
+                      {
+                        "regex": "(?i)^[ru]*[\"']"
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "function_definition",
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "assignment",
+                              "has": {
+                                "field": "left",
+                                "kind": "identifier",
+                                "regex": "^__all__$"
+                              },
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "transform": {
+                    "DECODED": {
+                      "substring": {
+                        "source": "$STRING",
+                        "value": true,
+                        "startChar": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "project": {
+                "value": "capture.DECODED.text"
+              }
+            }
+          },
+          "syntax_gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "strings",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"value\" FROM (SELECT __path,__start,__end,value FROM raw_strings)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",\"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",\"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "attributes",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"attr\",\"object\",\"object_text\" FROM (SELECT n.*,n.attribute_source AS attr,n.object_id AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",\"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",\"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"callee_id\",\"callee_kind\",\"full_callee\",\"callee\",\"receiver\" FROM (SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_id LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ]
+            ]
+          },
+          {
+            "name": "arguments",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"ordinal\",\"text\",\"kind\",NULL AS \"line\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"return_type_start\",NULL AS \"return_type_end\",NULL AS \"return_type_kind\",NULL AS \"alias_source\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",NULL AS \"name_id\",NULL AS \"left_id\",NULL AS \"right_id\",\"value_id\",\"type_id\",\"function_id\",\"arguments_id\",\"object_id\",\"attribute_id\",\"body_id\",\"parameters_id\",\"return_type_id\",\"alias_id\",\"module_name_id\",\"call\",\"position\" FROM (SELECT n.__path,n.__start,n.__end,n.id,n.parent,n.edge_parent,n.ordinal,n.text,n.kind,n.line,n.parent_start,n.parent_end,n.parent_kind,n.ancestor_start,n.ancestor_end,n.ancestor_kind,n.name_start,n.name_end,n.name_kind,n.name_source,n.left_start,n.left_end,n.left_kind,n.right_start,n.right_end,n.right_kind,n.value_start,n.value_end,n.value_kind,n.type_start,n.type_end,n.type_kind,n.function_start,n.function_end,n.function_kind,n.arguments_start,n.arguments_end,n.arguments_kind,n.object_start,n.object_end,n.object_kind,n.object_source,n.attribute_start,n.attribute_end,n.attribute_kind,n.attribute_source,n.body_start,n.body_end,n.body_kind,n.parameters_start,n.parameters_end,n.parameters_kind,n.return_type_start,n.return_type_end,n.return_type_kind,n.alias_source,n.module_name_start,n.module_name_end,n.module_name_kind,n.module_name_source,n.name_id,n.left_id,n.right_id,n.value_id,n.type_id,n.function_id,n.arguments_id,n.object_id,n.attribute_id,n.body_id,n.parameters_id,n.return_type_id,n.alias_id,n.module_name_id,c.id AS call,row_number() OVER(PARTITION BY c.__path,c.id ORDER BY n.__start)-1 AS position FROM calls c JOIN nodes n ON n.__path=c.__path AND n.parent=CASE WHEN c.arguments_kind='generator_expression' THEN c.id ELSE c.arguments_id END AND (c.arguments_kind!='generator_expression' OR n.id=c.arguments_id) WHERE n.kind NOT IN ('comment','keyword_argument','list_splat','dictionary_splat'))",
+            "indexes": [
+              [
+                "__path",
+                "call",
+                "position"
+              ]
+            ]
+          },
+          {
+            "name": "keywords",
+            "query": "SELECT \"__path\",\"call\",NULL AS \"keyword\",\"keyword_start\",\"name\",\"value\",\"__start\",\"__end\",\"text\",\"kind\" FROM (SELECT c.__path,c.id AS call,k.id AS keyword,k.__start AS keyword_start,kn.text AS name,v.id AS value,v.__start,v.__end,v.text,v.kind FROM calls c JOIN nodes k ON k.__path=c.__path AND k.parent=c.arguments_id AND k.kind='keyword_argument' JOIN nodes kn ON kn.__path=k.__path AND kn.id=k.name_id JOIN nodes v ON v.__path=k.__path AND v.id=k.value_id)",
+            "indexes": [
+              [
+                "__path",
+                "call",
+                "name"
+              ],
+              [
+                "__path",
+                "value"
+              ]
+            ]
+          },
+          {
+            "name": "returns",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"value\",\"expr_kind\",\"expr_text\",\"fn\" FROM (SELECT n.*,v.id AS value,v.kind AS expr_kind,v.text AS expr_text,o.fn FROM nodes n JOIN nodes v ON v.__path=n.__path AND v.parent=n.id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='return_statement')",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "value"
+              ]
+            ]
+          },
+          {
+            "name": "assignments",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",\"right_start\",\"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"target\",\"target_kind\",\"target_text\",\"value\",\"expr_kind\",\"expr_text\",\"fn\" FROM (SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_id LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='assignment')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "target_text"
+              ],
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "value"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",NULL AS \"kind\",NULL AS \"text\",\"name\",NULL AS \"annotation\",NULL AS \"position\" FROM (SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,p.type_id AS annotation,\n row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_id JOIN nodes n ON n.__path=p.__path AND n.id=CASE WHEN p.kind='identifier' THEN p.id ELSE (SELECT child.id FROM nodes child WHERE child.__path=p.__path AND child.parent=p.id AND child.ordinal=0 AND child.kind='identifier' LIMIT 1) END\n WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "declarations",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",\"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",\"body_start\",\"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\" FROM (SELECT n.*,n.name_source name,coalesce(w.__start,n.__start) region_start FROM nodes n LEFT JOIN nodes w ON w.__path=n.__path AND w.id=n.parent AND w.kind='decorated_definition' WHERE n.kind IN ('function_definition','class_definition'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "declaration_links",
+            "query": "SELECT \"__path\",\"id\",\"lexical_parent\" FROM (WITH RECURSIVE parent(__path,root,node) AS (SELECT __path,id,parent FROM declarations UNION ALL SELECT p.__path,p.root,n.parent FROM parent p JOIN nodes n ON n.__path=p.__path AND n.id=p.node WHERE n.kind NOT IN ('function_definition','class_definition')) SELECT p.__path,p.root id,d.id lexical_parent FROM parent p JOIN declarations d ON d.__path=p.__path AND d.id=p.node)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "lexical_parent"
+              ]
+            ]
+          },
+          {
+            "name": "declaration_contexts",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",\"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",\"body_start\",\"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\" FROM (WITH RECURSIVE qualified(__path,id,qualname,lexical_parent) AS (SELECT d.__path,d.id,d.name,NULL FROM declarations d WHERE NOT EXISTS(SELECT 1 FROM declaration_links link WHERE link.__path=d.__path AND link.id=d.id) UNION ALL SELECT d.__path,d.id,q.qualname||'.'||d.name,q.id FROM qualified q JOIN declaration_links link ON link.__path=q.__path AND link.lexical_parent=q.id JOIN declarations d ON d.__path=link.__path AND d.id=link.id) SELECT d.*,q.qualname,q.lexical_parent FROM declarations d JOIN qualified q ON q.__path=d.__path AND q.id=d.id)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ],
+              [
+                "__path",
+                "qualname",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "decorator_names",
+            "query": "SELECT \"__path\",\"fn\",\"decorator\",NULL AS \"node\",\"name\" FROM (WITH RECURSIVE walk(__path,fn,decorator,node) AS (\n        SELECT f.__path,f.id,d.id,x.id FROM declarations f JOIN nodes wrapper ON wrapper.__path=f.__path AND wrapper.id=f.parent AND wrapper.kind='decorated_definition' JOIN nodes d ON d.__path=wrapper.__path AND d.parent=wrapper.id AND d.kind='decorator' JOIN nodes x ON x.__path=d.__path AND x.parent=d.id\n        UNION ALL SELECT w.__path,w.fn,w.decorator,c.callee_id FROM walk w JOIN calls c ON c.__path=w.__path AND c.id=w.node)\n        SELECT w.__path,w.fn,w.decorator,w.node,coalesce(a.attr,n.text) name FROM walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node LEFT JOIN attributes a ON a.__path=n.__path AND a.id=n.id WHERE n.kind IN ('identifier','attribute'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "expression_roots",
+            "query": "SELECT \"__path\",\"expression\",NULL AS \"id\",\"name\",\"through_call\" FROM (WITH RECURSIVE root(__path,expression,node,through_call) AS (SELECT __path,id,id,0 FROM nodes UNION ALL SELECT r.__path,r.expression,c.id,r.through_call OR n.kind='call' FROM root r JOIN nodes n ON n.__path=r.__path AND n.id=r.node JOIN nodes c ON c.__path=n.__path AND c.id=CASE WHEN n.kind='attribute' THEN n.object_id WHEN n.kind='subscript' THEN n.value_id WHEN n.kind='call' THEN n.function_id WHEN n.kind IN ('parenthesized_expression','type') THEN (SELECT child.id FROM nodes child WHERE child.__path=n.__path AND child.parent=n.id AND child.ordinal=0 LIMIT 1) END) SELECT r.__path,r.expression,n.id,n.text name,r.through_call FROM root r JOIN nodes n ON n.__path=r.__path AND n.id=r.node WHERE n.kind='identifier')",
+            "indexes": [
+              [
+                "__path",
+                "expression"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "bound_names",
+            "query": "SELECT \"__path\",\"assignment\",NULL AS \"id\",\"name\" FROM (WITH RECURSIVE bound(__path,assignment,node) AS (SELECT __path,id,target FROM assignments UNION ALL SELECT b.__path,b.assignment,c.id FROM bound b JOIN nodes n ON n.__path=b.__path AND n.id=b.node JOIN nodes c ON c.__path=n.__path AND c.parent=n.id WHERE n.kind IN ('tuple','list','pattern_list','tuple_pattern','list_pattern')) SELECT b.__path,b.assignment,n.id,n.text name FROM bound b JOIN nodes n ON n.__path=b.__path AND n.id=b.node WHERE n.kind='identifier')",
+            "indexes": [
+              [
+                "__path",
+                "assignment"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "call_edges",
+            "query": "SELECT \"__path\",\"caller\",\"target\" FROM (SELECT DISTINCT c.__path,o.fn caller,t.id target FROM calls c JOIN ownership o ON o.__path=c.__path AND o.id=c.id JOIN declaration_contexts owner ON owner.__path=o.__path AND owner.id=o.fn JOIN expression_roots root ON root.__path=c.__path AND root.expression=c.callee_id JOIN declaration_contexts t ON t.__path=c.__path AND t.kind='function_definition' AND t.name=c.callee\n        WHERE (c.callee_kind='identifier' AND (t.lexical_parent IS NULL OR t.lexical_parent=owner.lexical_parent) OR c.callee_kind='attribute' AND root.name IN ('self','cls') AND t.lexical_parent=owner.lexical_parent)\n        AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=c.__path AND n.kind='lambda' AND n.__start<c.__start AND n.__end>=c.__end)\n        AND (root.name IN ('self','cls') OR NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=c.__path AND p.fn=o.fn AND p.name=root.name) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=c.__path AND a.fn=o.fn AND b.name=root.name)))",
+            "indexes": [
+              [
+                "__path",
+                "caller"
+              ],
+              [
+                "__path",
+                "target"
+              ]
+            ]
+          },
+          {
+            "name": "primary_paths",
+            "query": {
+              "$option": "primaryPaths",
+              "escape": "sql",
+              "map": " UNION ALL SELECT {} path",
+              "join": "",
+              "template": "SELECT '' path WHERE 0{}"
+            },
+            "indexes": [
+              [
+                "path"
+              ]
+            ]
+          },
+          {
+            "name": "file_modules",
+            "query": "SELECT \"__path\",\"module\" FROM (SELECT __path,replace(CASE WHEN __path GLOB '*/__init__.py' THEN substr(__path,1,length(__path)-12) ELSE substr(__path,1,length(__path)-3) END,'/','.') module FROM nodes WHERE kind='module')",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "call_imports",
+            "query": "SELECT \"__path\",\"fn\",\"import_kind\",\"local\",\"target\" FROM (SELECT n.__path,own.fn,n.kind import_kind,coalesce(x.alias_source,x.name_source,x.text) local,CASE WHEN substr(n.module_name_source,1,1)='.' THEN rx_replace(m.module||CASE WHEN n.__path GLOB '*/__init__.py' THEN '.__init__' ELSE '' END,'(?:\\.[^.]+){'||length(rx_extract(n.module_name_source,'^\\.*',0))||'}$','')||'.'||rx_replace(n.module_name_source,'^\\.+','') ELSE n.module_name_source END||'.'||coalesce(x.name_source,x.text) target FROM nodes n JOIN file_modules m ON m.__path=n.__path JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN nodes x ON x.__path=n.__path AND x.parent=n.id AND x.kind IN ('dotted_name','aliased_import') AND x.id IS NOT n.module_name_id WHERE n.kind='import_from_statement' UNION ALL SELECT n.__path,own.fn,n.kind import_kind,coalesce(x.alias_source,rx_extract(coalesce(x.name_source,x.text),'^[^.]+',0)),coalesce(x.name_source,x.text) FROM nodes n JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN nodes x ON x.__path=n.__path AND x.parent=n.id AND x.kind IN ('dotted_name','aliased_import') WHERE n.kind='import_statement')",
+            "indexes": [
+              [
+                "__path",
+                "local"
+              ]
+            ]
+          },
+          {
+            "name": "qualified_functions",
+            "query": "SELECT \"__path\",\"id\",\"qualified\" FROM (SELECT f.__path,f.id,m.module||'.'||f.qualname qualified FROM declaration_contexts f JOIN file_modules m ON m.__path=f.__path WHERE f.kind='function_definition')",
+            "indexes": [
+              [
+                "qualified"
+              ]
+            ]
+          },
+          {
+            "name": "purity_call_edges",
+            "query": "SELECT \"__path\",\"caller\",\"target_path\",\"target\" FROM (SELECT e.__path,e.caller,e.__path target_path,e.target FROM call_edges e UNION SELECT c.__path,o.fn,t.__path,t.id FROM calls c JOIN ownership o ON o.__path=c.__path AND o.id=c.id LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver JOIN call_imports imp ON imp.__path=c.__path AND imp.local=CASE WHEN c.callee_kind='identifier' THEN c.callee ELSE receiver.text END AND (imp.fn IS NULL OR imp.fn=o.fn) JOIN qualified_functions t ON t.qualified=imp.target||CASE WHEN c.callee_kind='attribute' THEN '.'||c.callee ELSE '' END WHERE (c.callee_kind='identifier' OR c.callee_kind='attribute' AND receiver.kind='identifier') AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=c.__path AND p.fn=o.fn AND p.name=imp.local) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=c.__path AND a.fn=o.fn AND b.name=imp.local) AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=c.__path AND n.kind='lambda' AND n.__start<c.__start AND n.__end>=c.__end) AND NOT(imp.fn IS NULL AND EXISTS(SELECT 1 FROM call_imports local WHERE local.__path=imp.__path AND local.fn=o.fn AND local.local=imp.local)))",
+            "indexes": [
+              [
+                "__path",
+                "caller"
+              ]
+            ]
+          },
+          {
+            "name": "function_flags",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",\"body_start\",\"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\",\"explicit\",\"legacy\",\"surface\" FROM (SELECT f.*,EXISTS(SELECT 1 FROM decorator_names d WHERE d.__path=f.__path AND d.fn=f.id AND d.name IN ('pure_lazy','lazy')) explicit,\n        EXISTS(SELECT 1 FROM decorator_names d WHERE d.__path=f.__path AND d.fn=f.id AND d.name IN ('legacy_sync','legacy_async','legacy_module_sync','legacy_module_async')) legacy,\n        EXISTS(SELECT 1 FROM ownership o JOIN classes c ON c.__path=o.__path AND c.id=o.cls JOIN assignments a ON a.__path=c.__path JOIN nodes parent ON parent.__path=a.__path AND parent.id=a.parent WHERE o.__path=f.__path AND o.id=f.id AND a.target_kind='identifier' AND a.target_text='__pure_lazy_surface__' AND a.expr_kind='true' AND parent.parent=c.body_id) surface\n        FROM declaration_contexts f WHERE f.kind='function_definition' AND NOT EXISTS(SELECT 1 FROM declaration_contexts later WHERE later.__path=f.__path AND later.qualname=f.qualname AND later.kind='function_definition' AND later.__start>f.__start))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "lexical_parent",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "direct_colored_functions",
+            "query": "SELECT \"__path\",\"id\",NULL AS \"color\" FROM (WITH RECURSIVE colored(__path,id,color) AS (\n        SELECT __path,id,'pure' FROM function_flags WHERE explicit\n        UNION SELECT f.__path,f.id,'owner' FROM function_flags f WHERE f.name GLOB '*_lazy' AND EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name IN ('conn','connection','owner','session','tx','txn')) AND EXISTS(SELECT 1 FROM calls c WHERE c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end AND c.callee IN ('ddl_effect_lazy','grammar_effect_lazy','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy')) UNION SELECT e.target_path,e.target,c.color FROM colored c JOIN purity_call_edges e ON e.__path=c.__path AND e.caller=c.id JOIN function_flags f ON f.__path=e.target_path AND f.id=e.target WHERE NOT f.legacy) SELECT __path,id,max(color) color FROM colored GROUP BY __path,id)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "admitted_files",
+            "query": "SELECT \"__path\" FROM (SELECT __path FROM direct_colored_functions\n        UNION SELECT __path FROM nodes WHERE kind='module' AND rx_matches(text,'pure_lazy|__pure_lazy_surface__|_lazy')\n        UNION SELECT __path FROM declarations WHERE name IN ('create_embedding_ref_class','create_embedding_vector_class','register_permissions','register_table'))",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "class_catalog",
+            "query": "SELECT \"__path\",\"id\",NULL AS \"qualname\",\"qualified\",\"class_key\" FROM (SELECT c.__path,c.id,c.qualname,m.module||'.'||c.qualname qualified,\n        row_number() OVER(ORDER BY c.__path,c.id) class_key\n        FROM declaration_contexts c JOIN file_modules m ON m.__path=c.__path WHERE c.kind='class_definition'\n        AND (EXISTS(SELECT 1 FROM admitted_files a WHERE a.__path=c.__path) OR NOT EXISTS(SELECT 1 FROM admitted_files)))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "qualified"
+              ],
+              [
+                "class_key"
+              ]
+            ]
+          },
+          {
+            "name": "class_bases",
+            "query": "SELECT \"child_key\",\"parent_key\",\"ordinal\" FROM (SELECT child.class_key child_key,parent.class_key parent_key,base.ordinal\n        FROM class_catalog child JOIN file_modules module ON module.__path=child.__path\n        JOIN nodes args ON args.__path=child.__path AND args.parent=child.id AND args.kind='argument_list'\n        JOIN nodes base ON base.__path=args.__path AND base.parent=args.id AND base.kind IN ('identifier','attribute')\n        JOIN class_catalog parent ON parent.qualified=CASE WHEN base.kind='identifier' THEN\n          coalesce((SELECT imp.target FROM call_imports imp WHERE imp.__path=child.__path AND imp.fn IS NULL AND imp.local=base.text AND imp.import_kind='import_from_statement'),module.module||'.'||base.text)\n        ELSE coalesce((SELECT imp.target||'.'||base.attribute_source FROM call_imports imp WHERE imp.__path=child.__path AND imp.fn IS NULL AND imp.local=base.object_source AND imp.import_kind='import_statement'),rx_replace(base.text,'\\s+','')) END)",
+            "indexes": [
+              [
+                "child_key",
+                "ordinal"
+              ]
+            ]
+          },
+          {
+            "name": "method_demands",
+            "query": "SELECT \"__path\",\"caller\",\"call\",\"name\",\"class_key\" FROM (SELECT c.__path,o.fn caller,c.id call,c.callee name,cls.class_key\n        FROM calls c JOIN ownership o ON o.__path=c.__path AND o.id=c.id\n        JOIN function_flags f ON f.__path=o.__path AND f.id=o.fn\n        JOIN class_catalog cls ON cls.__path=f.__path AND cls.id=f.lexical_parent\n        LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver\n        WHERE c.__start>=f.body_start AND c.__end<=f.body_end\n        AND (c.callee_kind='attribute' AND receiver.kind='identifier' AND receiver.text IN ('self','cls')\n          OR c.callee_kind='identifier'\n          AND NOT EXISTS(SELECT 1 FROM function_flags global WHERE global.__path=c.__path AND global.lexical_parent IS NULL AND global.name=c.callee)\n          AND NOT EXISTS(SELECT 1 FROM call_imports imp WHERE imp.__path=c.__path AND imp.local=c.callee AND (imp.fn IS NULL OR imp.fn=f.id))\n          AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=c.__path AND p.fn=f.id AND p.name=c.callee)\n          AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=c.__path AND a.fn=f.id AND b.name=c.callee))\n        AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=c.__path AND n.kind='lambda' AND n.__start<c.__start AND n.__end>=c.__end))",
+            "indexes": [
+              [
+                "__path",
+                "call"
+              ]
+            ]
+          },
+          {
+            "name": "inherited_edges",
+            "query": "SELECT \"__path\",\"caller\",\"target_path\",\"target\" FROM (WITH RECURSIVE search(__path,caller,call,name,class_key,route,seen) AS (\n        SELECT __path,caller,call,name,class_key,'',','||class_key||',' FROM method_demands\n        UNION ALL SELECT s.__path,s.caller,s.call,s.name,b.parent_key,s.route||printf('%08d',b.ordinal),s.seen||b.parent_key||','\n        FROM search s JOIN class_bases b ON b.child_key=s.class_key\n        WHERE instr(s.seen,','||b.parent_key||',')=0 AND NOT EXISTS(\n          SELECT 1 FROM class_catalog cls JOIN function_flags own ON own.__path=cls.__path AND own.lexical_parent=cls.id\n          WHERE cls.class_key=s.class_key AND own.name=s.name))\n        SELECT __path,caller,target_path,target FROM (\n          SELECT s.__path,s.caller,s.call,f.__path target_path,f.id target,\n            row_number() OVER(PARTITION BY s.__path,s.call ORDER BY s.route) chosen\n          FROM search s JOIN class_catalog cls ON cls.class_key=s.class_key\n          JOIN function_flags f ON f.__path=cls.__path AND f.lexical_parent=cls.id AND f.name=s.name)\n        WHERE chosen=1)",
+            "indexes": [
+              [
+                "__path",
+                "caller"
+              ]
+            ]
+          },
+          {
+            "name": "complete_purity_edges",
+            "query": "SELECT \"__path\",\"caller\",\"target_path\",\"target\" FROM (SELECT * FROM purity_call_edges UNION SELECT * FROM inherited_edges)",
+            "indexes": [
+              [
+                "__path",
+                "caller"
+              ]
+            ]
+          },
+          {
+            "name": "colored_functions",
+            "query": "SELECT \"__path\",\"id\",\"color\" FROM (WITH RECURSIVE colored(__path,id,color) AS (\n        SELECT __path,id,'pure' FROM function_flags WHERE explicit\n        UNION SELECT f.__path,f.id,'owner' FROM function_flags f WHERE f.name GLOB '*_lazy' AND EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name IN ('conn','connection','owner','session','tx','txn')) AND EXISTS(SELECT 1 FROM calls c WHERE c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end AND c.callee IN ('ddl_effect_lazy','grammar_effect_lazy','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy')) UNION SELECT e.target_path,e.target,c.color FROM colored c JOIN complete_purity_edges e ON e.__path=c.__path AND e.caller=c.id JOIN function_flags f ON f.__path=e.target_path AND f.id=e.target WHERE NOT f.legacy) SELECT __path,id,max(color) color FROM colored GROUP BY __path,id)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "active_functions",
+            "query": {
+              "$option": "entryPoint",
+              "cases": {
+                "scan_source": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",\"body_start\",\"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\",\"explicit\",\"legacy\",\"surface\",\"strict\",\"color\" FROM (SELECT f.*,0 strict,'pure' color FROM function_flags f WHERE EXISTS(SELECT 1 FROM function_flags a WHERE a.__path=f.__path AND a.region_start<=f.region_start AND a.__end>=f.__end AND EXISTS(SELECT 1 FROM decorator_names d WHERE d.__path=a.__path AND d.fn=a.id AND d.name='pure_lazy')) AND NOT rx_matches(f.__path,'/tests/') AND EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.kind='module' AND rx_matches(n.text,'pure_lazy|@lazy|__pure_lazy_surface__')))"
+              },
+              "default": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",\"body_start\",\"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\",\"explicit\",\"legacy\",\"surface\",\"strict\",\"color\" FROM (SELECT f.*,NOT f.explicit strict,c.color FROM function_flags f JOIN colored_functions c ON c.__path=f.__path AND c.id=f.id WHERE NOT EXISTS(SELECT 1 FROM primary_paths) OR f.__path IN (SELECT path FROM primary_paths))"
+            },
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "return_contracts",
+            "query": "SELECT \"__path\",\"id\" FROM (WITH RECURSIVE annotation(__path,fn,id) AS (\n        SELECT __path,id,return_type_id FROM functions WHERE return_type_start IS NOT NULL\n        UNION ALL SELECT a.__path,a.fn,n.id FROM annotation a JOIN nodes parent ON parent.__path=a.__path AND parent.id=a.id JOIN nodes n ON n.__path=a.__path AND n.parent=a.id\n        WHERE NOT (parent.kind IN ('generic_type','subscript') AND rx_matches(parent.text,'^(?:type|Type)\\s*\\[')))\n        SELECT DISTINCT a.__path,a.fn id FROM annotation a JOIN nodes n ON n.__path=a.__path AND n.id=a.id\n        WHERE n.kind IN ('identifier','attribute') AND coalesce(n.attribute_source,n.text) IN ('BatchContext','ReadTransaction','SyncDatabaseConnection','SyncSqlConnection','WriteTransaction'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "passthrough",
+            "query": "SELECT \"__path\",\"id\",\"value\" FROM (SELECT c.__path,c.id,coalesce(a.id,c.id) value FROM calls c LEFT JOIN arguments a ON a.__path=c.__path AND a.call=c.id AND a.position=1 AND c.callee_kind='identifier' AND c.callee='cast' AND (SELECT count(*) FROM arguments x WHERE x.__path=c.__path AND x.call=c.id)=2)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "module_bindings",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",\"right_start\",\"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"target\",\"target_kind\",\"target_text\",\"value\",\"expr_kind\",\"expr_text\",\"fn\",\"name\" FROM (SELECT a.*,b.name FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id JOIN nodes e ON e.__path=a.__path AND e.id=a.parent JOIN nodes parent ON parent.__path=e.__path AND parent.id=e.parent WHERE e.kind='expression_statement' AND parent.kind='module')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "binding_values",
+            "query": "SELECT \"__path\",\"binding\",\"value\",\"kind\" FROM (WITH RECURSIVE value(__path,binding,node) AS (\n      SELECT __path,id,value FROM module_bindings WHERE value IS NOT NULL\n      UNION ALL SELECT v.__path,v.binding,child.id FROM value v JOIN nodes n ON n.__path=v.__path AND n.id=v.node JOIN nodes child ON child.__path=n.__path AND child.parent=n.id AND child.ordinal=0 WHERE n.kind='parenthesized_expression')\n      SELECT v.__path,v.binding,n.id value,n.kind FROM value v JOIN nodes n ON n.__path=v.__path AND n.id=v.node WHERE n.kind!='parenthesized_expression')",
+            "indexes": [
+              [
+                "__path",
+                "binding"
+              ]
+            ]
+          },
+          {
+            "name": "contextvars",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT a.__path,a.name FROM module_bindings a JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id JOIN calls c ON c.__path=v.__path AND c.id=v.value WHERE c.callee='ContextVar')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "runtime_sources",
+            "query": "SELECT \"__path\",NULL AS \"id\",\"name\" FROM (WITH RECURSIVE runtime(__path,id,name) AS (\n        SELECT f.__path,f.id,f.name FROM functions f JOIN return_contracts r ON r.__path=f.__path AND r.id=f.id\n        UNION SELECT f.__path,f.id,f.name FROM functions f JOIN returns r ON r.__path=f.__path AND r.fn=f.id LEFT JOIN passthrough pass ON pass.__path=r.__path AND pass.id=r.value JOIN calls c ON c.__path=r.__path AND c.id=coalesce(pass.value,r.value) JOIN expression_roots root ON root.__path=c.__path AND root.expression=c.callee_id JOIN contextvars v ON v.__path=root.__path AND v.name=root.name WHERE c.callee='get'\n        UNION SELECT f.__path,f.id,f.name FROM functions f JOIN returns r ON r.__path=f.__path AND r.fn=f.id JOIN calls c ON c.__path=r.__path AND c.id=r.value JOIN runtime old ON old.__path=c.__path AND old.name=c.callee) SELECT * FROM runtime)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "runtime_calls",
+            "query": "SELECT \"__path\",\"id\" FROM (SELECT c.__path,c.id FROM calls c JOIN expression_roots root ON root.__path=c.__path AND root.expression=c.callee_id WHERE c.callee='get' AND EXISTS(SELECT 1 FROM contextvars v WHERE v.__path=c.__path AND v.name=root.name) OR EXISTS(SELECT 1 FROM runtime_sources h WHERE h.__path=c.__path AND h.name=c.callee AND (c.callee_kind='identifier' OR root.name IN ('self','cls'))))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "opaque_calls",
+            "query": "SELECT \"__path\",\"id\",\"payload_field\" FROM (SELECT DISTINCT c.__path,c.id,coalesce((SELECT field.name FROM keywords k JOIN calls payload ON payload.__path=k.__path AND payload.id=k.value JOIN keywords field ON field.__path=payload.__path AND field.call=payload.id WHERE k.__path=c.__path AND k.call=c.id AND k.name='payload' AND field.name IN ('conn','connection','context','fn','handle','tx','txn') ORDER BY field.__start LIMIT 1),'handle') payload_field FROM calls c WHERE c.callee IN ('_queue_handle_entry_lazy') OR c.callee='LazyOperation' AND EXISTS(SELECT 1 FROM keywords k JOIN calls payload ON payload.__path=k.__path AND payload.id=k.value JOIN keywords field ON field.__path=payload.__path AND field.call=payload.id WHERE k.__path=c.__path AND k.call=c.id AND k.name='payload' AND field.name IN ('conn','connection','context','fn','handle','tx','txn')))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "opaque_locals",
+            "query": "SELECT \"__path\",\"fn\",\"name\",\"since\",\"payload_field\" FROM (WITH RECURSIVE opaque_local(__path,fn,name,since,payload_field) AS (\n        SELECT a.__path,a.fn,b.name,a.__start,o.payload_field FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id LEFT JOIN passthrough pass ON pass.__path=a.__path AND pass.id=a.value JOIN opaque_calls o ON o.__path=a.__path AND o.id=coalesce(pass.value,a.value)\n        UNION SELECT a.__path,a.fn,b.name,a.__start,old.payload_field FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id JOIN opaque_local old ON old.__path=a.__path AND old.fn=a.fn AND old.name=a.expr_text AND old.since<a.__start WHERE a.expr_kind='identifier') SELECT * FROM opaque_local)",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name",
+                "since"
+              ]
+            ]
+          },
+          {
+            "name": "opaque_values",
+            "query": "SELECT \"__path\",\"id\",\"payload_field\" FROM (SELECT __path,id,payload_field FROM opaque_calls UNION SELECT n.__path,n.id,o.payload_field FROM nodes n JOIN ownership owner ON owner.__path=n.__path AND owner.id=n.id JOIN opaque_locals o ON o.__path=n.__path AND o.fn=owner.fn AND o.name=n.text AND o.since<n.__start WHERE n.kind='identifier' UNION SELECT c.__path,c.id,o.payload_field FROM calls c JOIN arguments a ON a.__path=c.__path AND a.call=c.id AND a.position=0 JOIN opaque_locals o ON o.__path=a.__path AND o.name=a.text AND o.since<c.__start JOIN ownership owner ON owner.__path=c.__path AND owner.id=c.id AND owner.fn=o.fn WHERE c.callee IN ('queue_single','queue_sequence') AND a.kind='identifier')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "tainted_locals",
+            "query": "SELECT \"__path\",\"fn\",\"name\",\"since\" FROM (WITH RECURSIVE taint(__path,fn,name,since) AS (\n        SELECT a.__path,f.id,b.name,a.__start FROM active_functions f JOIN assignments a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE EXISTS(SELECT 1 FROM attributes attr JOIN expression_roots root ON root.__path=attr.__path AND root.expression=attr.object JOIN parameters p ON p.__path=root.__path AND p.fn=f.id AND p.name=root.name WHERE attr.__path=a.__path AND attr.__start>=a.right_start AND attr.__end<=a.right_end AND attr.attr IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn') AND NOT (f.surface AND root.name='self')) OR EXISTS(SELECT 1 FROM calls c JOIN arguments first ON first.__path=c.__path AND first.call=c.id AND first.position=0 JOIN arguments second ON second.__path=c.__path AND second.call=c.id AND second.position=1 JOIN strings s ON s.__path=second.__path AND s.__start=second.__start JOIN expression_roots root ON root.__path=first.__path AND root.expression=first.id JOIN parameters p ON p.__path=f.__path AND p.fn=f.id AND p.name=root.name WHERE c.__path=a.__path AND c.id=a.value AND c.callee_kind='identifier' AND c.callee='getattr' AND s.value IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn') AND NOT(f.surface AND root.name='self')) OR EXISTS(SELECT 1 FROM runtime_calls r WHERE r.__path=a.__path AND r.id=a.value) OR EXISTS(SELECT 1 FROM opaque_values r WHERE r.__path=a.__path AND r.id=a.value)\n UNION SELECT a.__path,f.id,b.name,a.__start FROM taint t JOIN active_functions f ON f.__path=t.__path AND f.id=t.fn JOIN assignments a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end AND a.__start>t.since JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id JOIN nodes n ON n.__path=a.__path AND n.__start>=a.right_start AND n.__end<=a.right_end AND n.kind='identifier' AND n.text=t.name) SELECT * FROM taint)",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name",
+                "since"
+              ]
+            ]
+          },
+          {
+            "name": "protected_accesses",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",NULL AS \"detail\",\"through_call\" FROM (SELECT f.__path,f.id fn,a.id,a.__start,a.__end,a.attr detail,r.through_call FROM active_functions f JOIN attributes a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end JOIN expression_roots r ON r.__path=a.__path AND r.expression=a.object WHERE a.attr IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn') AND NOT (f.surface AND r.name='self') AND (EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=r.name) OR EXISTS(SELECT 1 FROM tainted_locals t WHERE t.__path=f.__path AND t.fn=f.id AND t.name=r.name AND t.since<a.__start)))",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "dynamic_accesses",
+            "query": "SELECT \"__path\",\"fn\",\"id\",NULL AS \"__start\",NULL AS \"__end\",\"detail\" FROM (SELECT f.__path,f.id fn,c.id,c.__start,c.__end,s.value detail FROM active_functions f JOIN calls c ON c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end JOIN arguments first ON first.__path=c.__path AND first.call=c.id AND first.position=0 JOIN arguments second ON second.__path=c.__path AND second.call=c.id AND second.position=1 JOIN strings s ON s.__path=second.__path AND s.__start=second.__start JOIN expression_roots root ON root.__path=first.__path AND root.expression=first.id WHERE c.callee_kind='identifier' AND c.callee='getattr' AND s.value IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn') AND (f.strict OR NOT (f.surface AND root.name='self') AND (EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=root.name) OR EXISTS(SELECT 1 FROM tainted_locals t WHERE t.__path=f.__path AND t.fn=f.id AND t.name=root.name AND t.since<c.__start))))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "frozen_classes",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT DISTINCT c.__path,c.name FROM classes c JOIN decorator_names d ON d.__path=c.__path AND d.fn=c.id JOIN calls call ON call.__path=d.__path AND call.parent=d.decorator JOIN keywords k ON k.__path=call.__path AND k.call=call.id WHERE d.name='dataclass' AND k.name='frozen' AND k.kind='true')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "global_calls",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"return_type_id\",\"return_type_start\",\"return_type_end\",\"return_type_kind\",\"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"callee_id\",\"callee_kind\",\"full_callee\",\"callee\",\"receiver\",\"managed\" FROM (SELECT c.*,EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name='name') AND NOT EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name='register_with_manager' AND k.kind='false') AND (c.callee='ObjectCache' AND EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name='max_entries' AND k.kind!='none') OR c.callee IN ('LocalMetadataCache','WeakLocalMetadataCache') AND EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND (k.name='max_entries' AND k.kind!='none' OR k.name='invalidation_policy' AND k.kind IN ('identifier','attribute') AND coalesce((SELECT a.attr FROM attributes a WHERE a.__path=k.__path AND a.id=k.value),k.text)!='MANUAL')) OR c.callee='IdentityTokenCache' AND EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name='max_strong_entries' AND k.kind!='none') AND EXISTS(SELECT 1 FROM keywords k JOIN attributes a ON a.__path=k.__path AND a.id=k.value WHERE k.__path=c.__path AND k.call=c.id AND k.name='invalidation_policy' AND a.attr='BOUNDED_IDENTITY_TOKENS')) managed FROM calls c)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "mutated_globals",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT DISTINCT b.__path,b.name FROM module_bindings b JOIN calls c ON c.__path=b.__path JOIN nodes r ON r.__path=c.__path AND r.id=c.receiver WHERE c.callee IN ('add','append','clear','discard','extend','pop','popitem','remove','set','setdefault','update') AND r.kind='identifier' AND r.text=b.name UNION SELECT DISTINCT b.__path,b.name FROM module_bindings b JOIN assignments a ON a.__path=b.__path JOIN nodes target ON target.__path=a.__path AND target.id=a.target JOIN expression_roots root ON root.__path=target.__path AND root.expression=target.id WHERE target.kind IN ('subscript','attribute') AND root.name=b.name)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "global_state",
+            "query": "SELECT \"__path\",\"name\",\"category\",\"mutable\",\"managed\" FROM (WITH RECURSIVE referenced_names(__path,name) AS (\n      SELECT used.__path,used.text FROM nodes used\n      CROSS JOIN module_bindings a ON a.__path=used.__path AND a.name=used.text\n      CROSS JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id\n      CROSS JOIN nodes value ON value.__path=v.__path AND value.id=v.value\n      WHERE used.kind='identifier' AND value.kind IN ('dictionary','list','set')\n        AND EXISTS(SELECT 1 FROM active_functions f WHERE f.__path=used.__path AND used.__start>=f.body_start AND used.__end<=f.body_end)\n      GROUP BY used.__path,used.text),\n      immutable_walk(__path,binding,root,node) AS (\n      SELECT a.__path,a.id,v.value,v.value FROM module_bindings a JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id JOIN nodes n ON n.__path=v.__path AND n.id=v.value WHERE n.kind IN ('dictionary','list','set') AND (a.__path,a.name) IN (SELECT __path,name FROM referenced_names)\n      UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w\n      JOIN nodes n ON n.__path=w.__path AND n.id=w.node AND (n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression'))\n      JOIN nodes child ON child.__path=n.__path AND child.parent=n.id WHERE child.kind!='comment'\n      UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w\n      JOIN nodes n ON n.__path=w.__path AND n.id=w.node AND n.kind='call'\n      JOIN calls c ON c.__path=n.__path AND c.id=n.id AND c.callee IN ('MappingProxyType','frozenset','tuple') AND c.callee NOT IN ('tuple','frozenset')\n      JOIN nodes child ON child.__path=n.__path AND child.id IN (SELECT a.id FROM arguments a WHERE a.__path=c.__path AND a.call=c.id) WHERE child.kind!='comment'),\n      static_lookups AS (SELECT w.__path,w.binding FROM immutable_walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node LEFT JOIN calls c ON c.__path=n.__path AND c.id=n.id\n        GROUP BY w.__path,w.binding HAVING sum(CASE WHEN n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression','integer','float','true','false','none','ellipsis','concatenated_string') OR n.kind='string' AND NOT rx_matches(n.text,'(?i)^[rbu]*f') OR n.kind='call' AND c.callee IN ('MappingProxyType','frozenset','tuple') THEN 0 ELSE 1 END)=0 AND count(*)>1)\n      SELECT a.__path,a.name,CASE WHEN c.id IS NOT NULL THEN CASE WHEN c.managed THEN 'managed-memoization-cache' ELSE 'runtime-object' END WHEN m.name IS NOT NULL THEN 'mutated-cache-or-registry' WHEN static.binding IS NOT NULL THEN 'mutable-static-table' ELSE 'mutable-cache-or-registry' END category,CASE WHEN m.name IS NOT NULL OR v.kind IN ('dictionary','dictionary_comprehension','list','list_comprehension','set','set_comprehension','generator_expression') THEN 1 ELSE 0 END mutable,coalesce(c.managed,0) managed FROM module_bindings a LEFT JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id LEFT JOIN global_calls c ON c.__path=v.__path AND c.id=v.value LEFT JOIN mutated_globals m ON m.__path=a.__path AND m.name=a.name LEFT JOIN static_lookups static ON static.__path=a.__path AND static.binding=a.id WHERE m.name IS NOT NULL OR v.kind IN ('dictionary','dictionary_comprehension','list','list_comprehension','set','set_comprehension','generator_expression') OR c.id IS NOT NULL AND c.callee NOT IN ('MappingProxyType','NewType','ParamSpec','TypeVar','TypeVarTuple','frozenset','load_python_module','tuple') AND NOT (c.callee='compile' AND rx_matches(c.full_callee,'^(?:re|_re)\\.') OR c.callee='getLogger' AND c.callee_kind='attribute') AND NOT EXISTS(SELECT 1 FROM frozen_classes f WHERE f.__path=c.__path AND f.name=c.callee))",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "global_uses",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"name\",\"mutable\",NULL AS \"managed\" FROM (SELECT f.__path,f.id fn,n.id,n.__start,n.__end,n.text name,g.mutable,g.managed FROM global_state g JOIN expression_roots root ON root.__path=g.__path AND root.name=g.name JOIN nodes n ON n.__path=root.__path AND n.id=root.expression AND n.kind='identifier' JOIN active_functions f ON f.__path=n.__path AND n.__start>=f.body_start AND n.__end<=f.body_end LEFT JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.parent WHERE n.kind='identifier' AND NOT coalesce((parent.kind IN ('attribute','keyword_argument','function_definition','class_definition','default_parameter','typed_parameter','typed_default_parameter') AND n.id=parent.name_id OR parent.kind='attribute' AND n.id=parent.attribute_id),0) AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=n.text) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=f.__path AND a.fn=f.id AND b.name=n.text))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "global_receivers",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"name\",NULL AS \"mutable\",\"managed\" FROM (SELECT f.__path,f.id fn,n.id,g.name,g.mutable,g.managed FROM global_state g JOIN expression_roots r ON r.__path=g.__path AND r.name=g.name AND NOT r.through_call JOIN nodes n ON n.__path=r.__path AND n.id=r.expression JOIN active_functions f ON f.__path=n.__path AND n.__start>=f.body_start AND n.__end<=f.body_end WHERE 1 AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=g.name) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=f.__path AND a.fn=f.id AND b.name=g.name))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "return_events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",\"allowed\" FROM (SELECT f.__path,f.id fn,r.id,r.__start,r.__end,\n        CASE WHEN allowed.id IS NOT NULL THEN NULL WHEN opaque.id IS NOT NULL THEN 'PLP-010' WHEN dynamic.id IS NOT NULL THEN 'PLP-002'\n        WHEN contract.id IS NOT NULL AND runtime.id IS NOT NULL THEN 'PLP-003'\n        WHEN EXISTS(SELECT 1 FROM protected_accesses a WHERE a.__path=f.__path AND a.fn=f.id AND a.__start>=v.__start AND a.__end<=v.__end) OR wrapper.id IS NOT NULL AND EXISTS(SELECT 1 FROM runtime_calls c JOIN nodes n ON n.__path=c.__path AND n.id=c.id WHERE c.__path=f.__path AND n.__start>=v.__start AND n.__end<=v.__end) THEN CASE WHEN wrapper.id IS NOT NULL THEN 'PLP-004' ELSE 'PLP-003' END\n        WHEN EXISTS(SELECT 1 FROM tainted_locals t JOIN nodes n ON n.__path=t.__path AND n.kind='identifier' AND n.text=t.name AND n.__start>t.since WHERE t.__path=f.__path AND t.fn=f.id AND n.__start>=v.__start AND n.__end<=v.__end) THEN 'PLP-005'\n        WHEN v.kind NOT IN ('call','subscript') AND EXISTS(SELECT 1 FROM global_uses g WHERE g.__path=f.__path AND g.fn=f.id AND g.__start>=v.__start AND g.__end<=v.__end) THEN 'PLP-008' END issue,\n        CASE WHEN opaque.id IS NOT NULL THEN opaque.payload_field ELSE coalesce(dynamic.detail,'return') END detail,allowed.id IS NOT NULL allowed\n        FROM active_functions f JOIN returns r ON r.__path=f.__path AND r.__start>=f.body_start AND r.__end<=f.body_end JOIN nodes v ON v.__path=r.__path AND v.id=r.value LEFT JOIN passthrough pass ON pass.__path=v.__path AND pass.id=v.id\n        LEFT JOIN calls allowed ON allowed.__path=r.__path AND allowed.id=coalesce(pass.value,v.id) AND allowed.callee_kind='identifier' AND allowed.callee IN ('build_internal_permission_query_request','enqueue_lazy_plan_intent','next_lazy_plan_ref','publish_pending_lazy_ref','publish_pending_lazy_ref_for_txn') LEFT JOIN opaque_values opaque ON opaque.__path=r.__path AND opaque.id=coalesce(pass.value,v.id) LEFT JOIN dynamic_accesses dynamic ON dynamic.__path=r.__path AND dynamic.fn=f.id AND dynamic.id=v.id LEFT JOIN return_contracts contract ON contract.__path=f.__path AND contract.id=f.id LEFT JOIN runtime_calls runtime ON runtime.__path=v.__path AND runtime.id=coalesce(pass.value,v.id) LEFT JOIN calls wrapper ON wrapper.__path=v.__path AND wrapper.id=v.id AND wrapper.callee IN ('of','from_value','resolved') AND rx_matches(wrapper.full_callee,'^(?:LazyResult|LazySeq)\\.'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "call_events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",\"allowed\" FROM (SELECT f.__path,f.id fn,c.id,c.__start,c.__end,\n        CASE WHEN c.callee_kind='identifier' AND c.callee IN ('build_internal_permission_query_request','enqueue_lazy_plan_intent','next_lazy_plan_ref','publish_pending_lazy_ref','publish_pending_lazy_ref_for_txn') THEN NULL WHEN dynamic.id IS NOT NULL THEN 'PLP-002' WHEN EXISTS(SELECT 1 FROM keywords k JOIN global_uses g ON g.__path=k.__path AND g.fn=f.id AND g.__start>=k.__start AND g.__end<=k.__end WHERE k.__path=c.__path AND k.call=c.id AND k.name IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn','conn','connection','context','cursor','session','tx','txn')) THEN 'PLP-008' WHEN global.name IS NOT NULL THEN CASE WHEN EXISTS(SELECT 1 FROM contextvars ctx WHERE ctx.__path=c.__path AND ctx.name=global.name) THEN 'PLP-008' WHEN NOT (global.managed AND '.'||c.callee IN ('.get','.get_for_key','.get_or_compute','.get_with_generation','.set','.set_for_key','.token_for')) AND NOT (c.__path='l1000_cache/schema_generation.py' AND global.name='_callback_registry' AND c.callee IN ('contains','register','version')) THEN 'PLP-009' END END issue,\n        coalesce(dynamic.detail,global.name||'.'||c.callee,'call') detail,(c.callee_kind='identifier' AND c.callee IN ('build_internal_permission_query_request','enqueue_lazy_plan_intent','next_lazy_plan_ref','publish_pending_lazy_ref','publish_pending_lazy_ref_for_txn')) OR dynamic.id IS NOT NULL OR global.name IS NOT NULL allowed\n        FROM active_functions f JOIN calls c ON c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end LEFT JOIN dynamic_accesses dynamic ON dynamic.__path=c.__path AND dynamic.fn=f.id AND dynamic.id=c.id LEFT JOIN global_receivers global ON global.__path=c.__path AND global.fn=f.id AND global.id=c.receiver)",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "attribute_events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",NULL AS \"allowed\" FROM (SELECT f.__path,f.id fn,a.id,a.__start,a.__end,'PLP-001' issue,a.attr detail,0 allowed FROM active_functions f JOIN attributes a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end WHERE a.attr IN ('_base_txn','_conn','_cursor','_read_txn','_schema_txn','_session','_sql_conn','_transaction','_tx','_txn','_write_txn') AND NOT (f.surface AND a.object_text='self' AND a.attr IN ('_base_txn','_plan','_plan_mixin','_txn')) AND (f.strict OR EXISTS(SELECT 1 FROM protected_accesses p WHERE p.__path=a.__path AND p.fn=f.id AND p.id=a.id AND NOT p.through_call)))"
+          },
+          {
+            "name": "global_events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",NULL AS \"allowed\" FROM (SELECT g.__path,g.fn,g.id,g.__start,g.__end,'PLP-009' issue,g.name detail,0 allowed FROM global_uses g WHERE g.mutable UNION ALL SELECT n.__path,g.fn,n.id,n.__start,n.__end,'PLP-009',g.name||'[]',0 FROM nodes n JOIN nodes value ON value.__path=n.__path AND value.parent=n.id AND value.ordinal=0 JOIN global_receivers g ON g.__path=value.__path AND g.id=value.id WHERE n.kind='subscript')"
+          },
+          {
+            "name": "events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",NULL AS \"allowed\" FROM (SELECT * FROM return_events WHERE issue IS NOT NULL OR allowed UNION ALL SELECT * FROM call_events WHERE issue IS NOT NULL OR allowed UNION ALL SELECT * FROM attribute_events UNION ALL SELECT * FROM global_events)",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "visible_events",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"issue\",\"detail\",NULL AS \"allowed\",\"qualname\" FROM (SELECT e.*,f.qualname FROM events e JOIN active_functions f ON f.__path=e.__path AND f.id=e.fn WHERE e.issue IS NOT NULL AND (f.color='pure' OR e.issue IN ('PLP-001','PLP-002','PLP-003','PLP-004','PLP-005')) AND NOT EXISTS(SELECT 1 FROM events ancestor WHERE ancestor.__path=e.__path AND ancestor.fn=e.fn AND ancestor.id!=e.id AND ancestor.__start<=e.__start AND ancestor.__end>=e.__end) AND NOT EXISTS(SELECT 1 FROM calls cast_call JOIN arguments type ON type.__path=cast_call.__path AND type.call=cast_call.id AND type.position=0 WHERE cast_call.__path=e.__path AND cast_call.callee_kind='identifier' AND cast_call.callee='cast' AND (SELECT count(*) FROM arguments a WHERE a.__path=cast_call.__path AND a.call=cast_call.id)=2 AND type.__start<=e.__start AND type.__end>=e.__end))"
+          },
+          {
+            "name": "export_names",
+            "query": "SELECT \"__path\",\"module\",\"name\",\"target_module\",\"target_name\" FROM (SELECT m.__path,m.module,coalesce(x.alias_source,x.name_source,x.text) name,n.module_name_source target_module,coalesce(x.name_source,x.text) target_name FROM file_modules m JOIN nodes n ON n.__path=m.__path AND n.kind='import_from_statement' JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.parent AND parent.kind='module' JOIN nodes x ON x.__path=n.__path AND x.parent=n.id AND x.kind IN ('dotted_name','aliased_import') AND x.id IS NOT n.module_name_id UNION ALL SELECT m.__path,m.module,f.name,NULL,NULL FROM file_modules m JOIN function_flags f ON f.__path=m.__path AND f.lexical_parent IS NULL)",
+            "indexes": [
+              [
+                "module",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "exported_functions",
+            "query": "SELECT \"__path\",\"id\",\"__start\",\"__end\",\"qualname\" FROM (WITH RECURSIVE exported(module,name) AS (\n        SELECT e.module,e.name FROM export_names e WHERE e.__path GLOB 'data_layer/*.py' AND NOT rx_matches(substr(e.__path,12),'/') AND e.name NOT GLOB '_*' AND (NOT EXISTS(SELECT 1 FROM module_bindings b WHERE b.__path=e.__path AND b.name='__all__') OR EXISTS(SELECT 1 FROM module_bindings b JOIN strings s ON s.__path=b.__path AND s.__start>=b.right_start AND s.__end<=b.right_end WHERE b.__path=e.__path AND b.name='__all__' AND s.value=e.name))\n        UNION SELECT e.target_module,e.target_name FROM exported old JOIN export_names e ON e.module=old.module AND e.name=old.name WHERE e.target_module IS NOT NULL)\n        SELECT DISTINCT f.__path,f.id,f.__start,f.__end,f.qualname FROM exported e JOIN file_modules m ON m.module=e.module JOIN function_flags f ON f.__path=m.__path AND f.name=e.name AND f.lexical_parent IS NULL WHERE f.name GLOB '*_lazy' AND f.name NOT GLOB '_*' AND NOT f.explicit AND (NOT EXISTS(SELECT 1 FROM primary_paths) OR f.__path IN (SELECT path FROM primary_paths)))"
+          },
+          {
+            "name": "diagnostics",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"issue\",\"identity\",\"detail\",\"qualname\",\"fn\",\"node\" FROM (SELECT __path,__start,__end,issue,fn||':'||id identity,detail,qualname,fn,id node FROM visible_events UNION ALL SELECT f.__path,f.__start,f.__end,'PLP-006',f.id||':contract','contract',f.qualname,f.id,f.id FROM active_functions f JOIN return_contracts c ON c.__path=f.__path AND c.id=f.id WHERE f.color='pure' UNION ALL SELECT __path,__start,__end,'PLP-007',id||':export','export',qualname,id,id FROM exported_functions)"
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_source": "WITH global_context AS (\n      SELECT d.__path,d.identity,g.name,k.name sink,row_number() OVER(PARTITION BY d.__path,d.identity ORDER BY g.__start,k.keyword_start) chosen\n      FROM diagnostics d JOIN global_uses g ON g.__path=d.__path AND g.fn=d.fn AND g.__start>=d.__start AND g.__end<=d.__end\n      LEFT JOIN keywords k ON k.__path=d.__path AND k.call=d.node AND g.__start>=k.__start AND g.__end<=k.__end)\n      SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.qualname,\n      CASE d.issue\n        WHEN 'PLP-001' THEN 'pure-lazy functions must not access runtime attribute '||quote(d.detail)\n        WHEN 'PLP-002' THEN 'pure-lazy functions must not dynamically access runtime attribute '||quote(d.detail)\n        WHEN 'PLP-003' THEN 'pure-lazy functions must not return runtime-bound handles or containers'\n        WHEN 'PLP-004' THEN 'pure-lazy functions must not return resolved lazy wrappers containing runtime-bound state'\n        WHEN 'PLP-005' THEN 'pure-lazy functions must not return locals derived from runtime-bound state'\n        WHEN 'PLP-006' THEN 'pure-lazy functions must not declare runtime-handle return types'\n        WHEN 'PLP-007' THEN 'exported public *_lazy functions must be decorated with @pure_lazy'\n        WHEN 'PLP-008' THEN CASE WHEN n.kind='return_statement' THEN 'pure-lazy functions must not return module-level runtime state '||quote(context.name)\n          WHEN context.sink IS NOT NULL THEN 'pure-lazy functions must not pass module-level runtime state '||quote(context.name)||' into runtime sink '||quote(context.sink)\n          ELSE 'pure-lazy functions must not read ambient module-level runtime state '||quote(context.name) END\n        WHEN 'PLP-009' THEN 'pure-lazy global cache/state access requires signed allowlist for '||quote(rx_extract(d.detail,'^[^.\\[]+',0))||' ('||coalesce(global.category,'unknown-global-state')||') via '||quote(CASE WHEN substr(d.detail,-2)='[]' THEN '[]' WHEN instr(d.detail,'.')>0 THEN substr(d.detail,instr(d.detail,'.')) ELSE 'read' END)\n        WHEN 'PLP-010' THEN 'pure-lazy functions must not construct LazyOperation payloads with runtime field '||quote(d.detail) END message,\n      CASE WHEN d.issue='PLP-009' THEN 'global='||rx_extract(d.detail,'^[^.\\[]+',0)||' category='||coalesce(global.category,'unknown-global-state')||' access='||CASE WHEN substr(d.detail,-2)='[]' THEN '[]' WHEN instr(d.detail,'.')>0 THEN substr(d.detail,instr(d.detail,'.')) ELSE 'read' END END stable_scope\n      FROM diagnostics d JOIN nodes n ON n.__path=d.__path AND n.id=d.node LEFT JOIN global_context context ON context.__path=d.__path AND context.identity=d.identity AND context.chosen=1 LEFT JOIN global_state global ON global.__path=d.__path AND global.name=rx_extract(d.detail,'^[^.\\[]+',0) WHERE issue!='PLP-007'"
+          },
+          "default": "WITH global_context AS (\n      SELECT d.__path,d.identity,g.name,k.name sink,row_number() OVER(PARTITION BY d.__path,d.identity ORDER BY g.__start,k.keyword_start) chosen\n      FROM diagnostics d JOIN global_uses g ON g.__path=d.__path AND g.fn=d.fn AND g.__start>=d.__start AND g.__end<=d.__end\n      LEFT JOIN keywords k ON k.__path=d.__path AND k.call=d.node AND g.__start>=k.__start AND g.__end<=k.__end)\n      SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.qualname,\n      CASE d.issue\n        WHEN 'PLP-001' THEN 'pure-lazy functions must not access runtime attribute '||quote(d.detail)\n        WHEN 'PLP-002' THEN 'pure-lazy functions must not dynamically access runtime attribute '||quote(d.detail)\n        WHEN 'PLP-003' THEN 'pure-lazy functions must not return runtime-bound handles or containers'\n        WHEN 'PLP-004' THEN 'pure-lazy functions must not return resolved lazy wrappers containing runtime-bound state'\n        WHEN 'PLP-005' THEN 'pure-lazy functions must not return locals derived from runtime-bound state'\n        WHEN 'PLP-006' THEN 'pure-lazy functions must not declare runtime-handle return types'\n        WHEN 'PLP-007' THEN 'exported public *_lazy functions must be decorated with @pure_lazy'\n        WHEN 'PLP-008' THEN CASE WHEN n.kind='return_statement' THEN 'pure-lazy functions must not return module-level runtime state '||quote(context.name)\n          WHEN context.sink IS NOT NULL THEN 'pure-lazy functions must not pass module-level runtime state '||quote(context.name)||' into runtime sink '||quote(context.sink)\n          ELSE 'pure-lazy functions must not read ambient module-level runtime state '||quote(context.name) END\n        WHEN 'PLP-009' THEN 'pure-lazy global cache/state access requires signed allowlist for '||quote(rx_extract(d.detail,'^[^.\\[]+',0))||' ('||coalesce(global.category,'unknown-global-state')||') via '||quote(CASE WHEN substr(d.detail,-2)='[]' THEN '[]' WHEN instr(d.detail,'.')>0 THEN substr(d.detail,instr(d.detail,'.')) ELSE 'read' END)\n        WHEN 'PLP-010' THEN 'pure-lazy functions must not construct LazyOperation payloads with runtime field '||quote(d.detail) END message,\n      CASE WHEN d.issue='PLP-009' THEN 'global='||rx_extract(d.detail,'^[^.\\[]+',0)||' category='||coalesce(global.category,'unknown-global-state')||' access='||CASE WHEN substr(d.detail,-2)='[]' THEN '[]' WHEN instr(d.detail,'.')>0 THEN substr(d.detail,instr(d.detail,'.')) ELSE 'read' END END stable_scope\n      FROM diagnostics d JOIN nodes n ON n.__path=d.__path AND n.id=d.node LEFT JOIN global_context context ON context.__path=d.__path AND context.identity=d.identity AND context.chosen=1 LEFT JOIN global_state global ON global.__path=d.__path AND global.name=rx_extract(d.detail,'^[^.\\[]+',0)"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "name_start",
+            "name_end",
+            "name_kind",
+            "name_source",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "value_start",
+            "value_end",
+            "value_kind",
+            "type_start",
+            "type_end",
+            "type_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "arguments_start",
+            "arguments_end",
+            "arguments_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_start",
+            "attribute_end",
+            "attribute_kind",
+            "attribute_source",
+            "body_start",
+            "body_end",
+            "body_kind",
+            "parameters_start",
+            "parameters_end",
+            "parameters_kind",
+            "return_type_start",
+            "return_type_end",
+            "return_type_kind",
+            "alias_source",
+            "module_name_start",
+            "module_name_end",
+            "module_name_kind",
+            "module_name_source",
+            "name_id",
+            "left_id",
+            "right_id",
+            "value_id",
+            "type_id",
+            "function_id",
+            "arguments_id",
+            "object_id",
+            "attribute_id",
+            "body_id",
+            "parameters_id",
+            "return_type_id",
+            "alias_id",
+            "module_name_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "value",
+            "type",
+            "function",
+            "arguments",
+            "object",
+            "attribute",
+            "body",
+            "parameters",
+            "return_type",
+            "alias",
+            "module_name"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "requireNonemptyInput": "syntax_gate",
+        "message": "message"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

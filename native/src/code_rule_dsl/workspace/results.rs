@@ -5,7 +5,6 @@ use super::crossfile::CrossFileScheduler;
 use super::ingest::{candidate_dispatch, make_file};
 use super::persisted::{candidate_catalog, restore_complete_results};
 use super::{CandidateSets, ClauseId, FileState, WorkspaceState};
-use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::{
     coverage, evaluation_json, failure, file_language, result_order, violation_from_witness,
 };
@@ -17,7 +16,7 @@ use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, UNREAD};
 use napi::Result;
 use rayon::prelude::*;
 use serde_json::{Value, json};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -26,17 +25,17 @@ use std::time::Duration;
 
 // Per-thread so concurrently running tests cannot perturb each other's counts. A result page task
 // computes on the thread that runs it, so a test that runs the task observes its own counts.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
-    pub(super) static RESULT_PAGE_WITNESSES_VISITED: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_WITNESSES_VISITED: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
     /// Files whose violations a complete result rendered, and complete results that sorted theirs.
-    pub(super) static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn count(counter: &'static std::thread::LocalKey<Cell<usize>>, amount: usize) {
     counter.set(counter.get() + amount);
 }
@@ -119,6 +118,10 @@ pub(super) fn profile_result(
     }
     let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;
     value.as_object_mut().expect("workspace result").insert(
+        "phaseClock".to_owned(),
+        crate::code_rule_dsl::phase_clock::snapshot(),
+    );
+    value.as_object_mut().expect("workspace result").insert(
         "workspaceProfile".to_owned(),
         json!({
             "lineIndexNanoseconds": metrics.line_index_nanoseconds,
@@ -127,6 +130,10 @@ pub(super) fn profile_result(
             "astMatchNanoseconds": metrics.ast_match_nanoseconds,
             "serializationNanoseconds": serialization.as_nanos() as u64,
             "astMatcherCalls": metrics.ast_matcher_calls,
+            "pythonAstParses": metrics.python_ast_parses,
+            "pythonAstModuleWalks": metrics.python_ast_module_walks,
+            "syntaxLoads": metrics.syntax_loads,
+            "relationalMaterializations": metrics.relational_materializations,
             "storageRetries": metrics.storage_retries,
             "storageRetryWaitNanoseconds": metrics.storage_retry_wait_nanoseconds,
             "storageUnpublishedFiles": metrics.storage_unpublished_files,
@@ -159,7 +166,7 @@ pub(super) fn profile_result(
         .map_err(json_error)
 }
 
-pub(super) struct ResultPageIndex {
+pub struct ResultPageIndex {
     revision: u32,
     /// Each violation as the pages serialize it, in result order. Serialized once when the index is
     /// built, which holds the JSON alone rather than the witnesses it renders.
@@ -232,7 +239,7 @@ pub(super) fn evicted_file_states(
     if evicted.is_empty() {
         return Ok(Vec::new());
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_PAGE_EVICTED_RESTORES, evicted.len());
     let storage = state
         .storage
@@ -243,14 +250,21 @@ pub(super) fn evicted_file_states(
         .flat_map(|(_, key, stamped)| std::iter::once(*key).chain(*stamped))
         .collect::<Vec<_>>();
 
-    #[cfg(test)]
-    if super::TEST_EVICTED_READ_FAILURE.get() {
-        return Err(invalid("injected evicted-result storage failure"));
-    }
-    let results = storage
-        .store
-        .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
-        .map_err(|error| invalid(error.to_string()))?;
+    let catalog = candidate_catalog(&state.code_rules)?;
+    #[cfg(any(test, feature = "test-hooks"))]
+    let injected = super::TEST_EVICTED_READ_FAILURE.get();
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let injected = false;
+    // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
+    // resident file: the stored results remain, so a later read answers them (O22).
+    let results = (!injected)
+        .then(|| {
+            storage
+                .store
+                .local_check_results_by_key(&keys, catalog)
+                .ok()
+        })
+        .flatten();
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -282,6 +296,17 @@ pub(super) fn evicted_file_states(
                     file.witnesses.insert(id, Vec::new());
                 }
             }
+            let Some(results) = &results else {
+                for &id in file.candidates.regex.iter().chain(&file.candidates.ast) {
+                    if !file.witnesses.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", super::STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                    }
+                }
+                file.transient_failure = true;
+                return Ok(file);
+            };
             let mut persisted = results
                 .get(&key)
                 .map_or_else(Vec::new, |results| results.to_vec());
@@ -312,8 +337,10 @@ fn reporting_ast_candidates<'a>(
 ) -> impl Iterator<Item = ClauseId> + 'a {
     file.witnesses.keys().copied().filter(|id| {
         matches!(
-            code_rules[id.0].clauses[id.1].kind,
-            ClauseKind::Forbid(Query::Ast { .. })
+            &code_rules[id.0].clauses[id.1].kind,
+            ClauseKind::Forbid(Query::Ast { matchers, .. })
+                if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
+                    .is_some_and(|grammar| grammar.invalid_syntax.is_none())
         )
     })
 }
@@ -400,7 +427,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             let code_rule = &state.code_rules[id.0];
             let clause = &code_rule.clauses[id.1];
             for witness in file_witnesses {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 count(&RESULT_PAGE_WITNESSES_VISITED, 1);
                 witnesses.push((code_rule, clause, witness));
             }
@@ -439,19 +466,33 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             }
         }
     }
+    let mut counts = std::collections::HashMap::<&str, usize>::new();
+    for (rule, _, _) in &witnesses {
+        *counts.entry(rule.id.as_str()).or_default() += 1;
+    }
+    for (&index, global) in &state.global_results {
+        *counts
+            .entry(state.code_rules[index].id.as_str())
+            .or_default() += global.violations.len();
+    }
+    let allowed = |rule: &crate::code_rule_dsl::model::CompiledCodeRule| {
+        rule.report_count_gt
+            .is_none_or(|maximum| counts.get(rule.id.as_str()).copied().unwrap_or(0) > maximum)
+    };
     // Each witness's violation is rendered and serialized on the worker pool, one at a time, so the
     // index never holds the violations as JSON values.
-    let mut entries = WORK_POOL.install(|| {
-        witnesses
-            .par_iter()
-            .map(|&(code_rule, clause, witness)| {
-                page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
-            })
-            .collect::<Result<Vec<_>>>()
-    })?;
+    let mut entries = witnesses
+        .par_iter()
+        .filter(|&&(rule, _, _)| allowed(rule))
+        .map(|&(code_rule, clause, witness)| {
+            page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
     for (&index, global) in &state.global_results {
         for violation in &global.violations {
-            entries.push(page_entry(violation)?);
+            if allowed(&state.code_rules[index]) {
+                entries.push(page_entry(violation)?);
+            }
         }
         for item in &global.failures {
             let mut item = item.clone();
@@ -461,7 +502,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             failures.push(item);
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_PAGE_SORTS, 1);
     entries.sort_by(|left, right| {
         (&left.0, left.1, &left.2, &left.3).cmp(&(&right.0, right.1, &right.2, &right.3))
@@ -549,6 +590,7 @@ impl Rendered {
                     + violation.path.capacity()
                     + violation.code.capacity()
                     + violation.id.capacity()
+                    + violation.rule_id.capacity()
                     + violation.json.capacity()
             })
             .sum()
@@ -557,6 +599,7 @@ impl Rendered {
 
 /// One violation serialized, with the fields results are ordered by (`result_order`).
 pub(super) struct RenderedViolation {
+    rule_id: String,
     path: String,
     start: u64,
     code: String,
@@ -570,6 +613,7 @@ impl RenderedViolation {
         let (path, start, code, id) = result_order(violation);
         let json = serde_json::to_string(violation).map_err(json_error)?;
         Ok(Self {
+            rule_id: violation["ruleId"].as_str().unwrap_or_default().to_owned(),
             path: path.to_owned(),
             start,
             code: code.to_owned(),
@@ -597,7 +641,7 @@ fn rendering_key(code_rules: u64, file: &FileState) -> u64 {
 
 /// `file`'s reported violations, serialized, in result order.
 fn render(state: &WorkspaceState, file: &FileState) -> Result<Vec<RenderedViolation>> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_RENDERS, 1);
     let mut violations = Vec::new();
     for (&id, witnesses) in file.witnesses.iter() {
@@ -705,7 +749,15 @@ pub(super) fn serialize_result(
         clauses: reported_clauses(state),
         ..Evaluation::default()
     };
-    let delta = state.storage.is_some() && !replaced_paths.is_empty() && !complete;
+    // Crossing a rule-wide ceiling changes reports in unchanged and evicted files too.
+    // A complete result replaces the host's entire previous result at either transition.
+    let delta = state.storage.is_some()
+        && !replaced_paths.is_empty()
+        && !complete
+        && state
+            .code_rules
+            .iter()
+            .all(|rule| rule.report_count_gt.is_none());
     let code_rules = {
         let mut hasher = DefaultHasher::new();
         for code_rule in &state.code_rules {
@@ -805,8 +857,29 @@ pub(super) fn serialize_result(
         .flat_map(Rendering::violations)
         .chain(&global_violations)
         .collect::<Vec<_>>();
+    if state
+        .code_rules
+        .iter()
+        .any(|rule| rule.report_count_gt.is_some())
+    {
+        let mut counts = std::collections::HashMap::<&str, usize>::new();
+        for violation in &violations {
+            *counts.entry(violation.rule_id.as_str()).or_default() += 1;
+        }
+        let blocked = state
+            .code_rules
+            .iter()
+            .filter(|rule| {
+                rule.report_count_gt.is_some_and(|maximum| {
+                    counts.get(rule.id.as_str()).copied().unwrap_or(0) <= maximum
+                })
+            })
+            .map(|rule| rule.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        violations.retain(|violation| !blocked.contains(violation.rule_id.as_str()));
+    }
     if !ordered || !global_violations.is_empty() {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         count(&RESULT_SORTS, 1);
         violations.sort_by(|a, b| a.order().cmp(&b.order()));
     }
@@ -851,252 +924,4 @@ pub(super) fn serialize_result(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
-    use super::super::storage::StorageContext;
-    use super::super::tests::{WORKSPACE_TEST_SLOT, result_page};
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
-    use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
-    use crate::code_rule_dsl::test_support::{CAPABILITIES, violation};
-    use crate::content_store::{ContentStore, GitTree, HashKey};
-    use napi::Task;
-    use serde_json::{Value, json};
-    use std::sync::Arc;
-
-    /// A workspace over a fresh registration of `root` in `store`, holding `code_rule`.
-    fn stored_workspace(
-        store: &Arc<ContentStore>,
-        root: &str,
-        code_rule: &str,
-    ) -> CodeRuleDslWorkspace {
-        let root_tree = HashKey::git_sha1([7; 20]);
-        store
-            .put_git_trees_bulk(&[GitTree {
-                id: root_tree,
-                prefix: String::new(),
-                entries: Vec::new(),
-            }])
-            .unwrap();
-        let snapshot = store
-            .put_snapshot(
-                root_tree,
-                1,
-                HashKey::sha256(b"rerail-grammars-v1"),
-                i64::from(TAPE_FORMAT_VERSION),
-            )
-            .unwrap();
-        let owner = format!("coverage-test:{root}:{}", std::process::id());
-        let workspace_id = store
-            .open_workspace(root, "repository", &owner, snapshot, 1, i64::MAX)
-            .unwrap();
-        let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.state.lock().unwrap().storage = Some(StorageContext {
-            store: Arc::clone(store),
-            repository: None,
-            repository_prefix: String::new(),
-            workspace_id,
-            snapshot_id: snapshot,
-            owner,
-            secret_names: Default::default(),
-            _maintenance: None,
-        });
-        let compiled =
-            CodeRuleDslRuntime::compile(code_rule.to_owned(), "json".into(), CAPABILITIES.into())
-                .unwrap();
-        workspace.add_code_rule(&compiled, None).unwrap();
-        workspace
-    }
-
-    fn apply(workspace: &CodeRuleDslWorkspace, files: &Value) -> Value {
-        let mut task = WorkspaceApplyTask {
-            state: Arc::clone(&workspace.state),
-            closed: Arc::clone(&workspace.closed),
-            request_json: json!({ "revision": 1, "files": files, "removed": [] }).to_string(),
-            request_buffer: None,
-            request_direct: None,
-        };
-        serde_json::from_str(&task.compute().unwrap()).unwrap()
-    }
-
-    #[test]
-    fn coverage_reports_a_broken_files_partial_clause_cold_warm_and_paged() {
-        let _slot = WORKSPACE_TEST_SLOT.lock();
-        let directory = std::env::temp_dir().join(format!(
-            "rerail-coverage-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
-        let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
-        let ast = |id: &str, language: &str, rule: Value| json!({ "id": id, "forbid": { "ast": { "language": language, "rule": rule } }, "violation": violation() });
-        let code_rule = json!({
-            "format": "rerail.policy/v1", "id": "covered", "revision": 1,
-            "mode": "steer",
-            "scope": { "include": ["**/*"], "exclude": [] },
-            "clauses": [
-                ast("print", "python", json!({ "pattern": "print($A)" })),
-                ast("clean", "typescript", json!({ "kind": "debugger_statement" })),
-            ],
-        })
-        .to_string();
-        let files =
-            json!([{ "path": "broken.py", "language": "python", "source": "print(3)\ndef (:\n" }]);
-        let expected = json!([
-            { "ruleId": "covered", "clauseId": "print", "status": "partial", "reasons": [
-                { "code": "source-partial", "count": 1, "paths": ["broken.py"] },
-            ] },
-            { "ruleId": "covered", "clauseId": "clean", "status": "complete", "reasons": [] },
-        ]);
-
-        let cold = stored_workspace(&store, "/coverage", &code_rule);
-        let result = apply(&cold, &files);
-        assert_eq!(result["evaluation"]["coverage"], expected, "{result}");
-        cold.close();
-
-        let warm = stored_workspace(&store, "/coverage", &code_rule);
-        let result = apply(&warm, &files);
-        let restored = warm
-            .state
-            .lock()
-            .unwrap()
-            .files
-            .values()
-            .map(|file| file.restored_local_results)
-            .sum::<usize>();
-        assert!(restored > 0, "the file's results are restored");
-        assert_eq!(result["evaluation"]["coverage"], expected, "{result}");
-        let page: Value =
-            serde_json::from_str(&result_page(&warm, 0, 64 * 1024 * 1024).unwrap()).unwrap();
-        assert_eq!(page["coverage"], expected, "{page}");
-        warm.close();
-        drop(store);
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    /// A file no clause read is reported once, by path and reason, cold, restored and paged: one
-    /// whose syntax errors failed every clause (`syntax`), one whose every clause ran out of work
-    /// (`budget`). A file any clause read is not.
-    #[test]
-    fn blind_files_are_reported_by_reason_cold_warm_and_paged() {
-        let _slot = WORKSPACE_TEST_SLOT.lock();
-        let directory = std::env::temp_dir().join(format!(
-            "rerail-blind-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
-        let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
-        // Unsound under syntax errors: a broken file fails it `source-incomplete`.
-        let code_rule = json!({
-            "format": "rerail.policy/v1", "id": "blind", "revision": 1,
-            "mode": "steer",
-            "scope": { "include": ["**/*"], "exclude": [] },
-            "clauses": [{ "id": "unguarded", "violation": violation(), "forbid": { "ast": {
-                "language": "typescript",
-                "rule": { "kind": "debugger_statement",
-                    "not": { "follows": { "kind": "import_statement", "stopBy": "end" } } } } } }],
-        })
-        .to_string();
-        let files = json!([
-            { "path": "broken.ts", "language": "typescript", "source": "function f( {\n  debugger;\n" },
-            { "path": "ok.ts", "language": "typescript", "source": "debugger;\n" },
-        ]);
-        // Its error regions cover most of it: the parser did not read it (`UNREAD`).
-        let syntax = json!({ "clauses": 1, "message": "file did not parse",
-            "path": "broken.ts", "reason": "syntax", "folded": [["blind", "unguarded"]] });
-
-        let cold = stored_workspace(&store, "/blind", &code_rule);
-        let result = apply(&cold, &files);
-        assert_eq!(result["blindFiles"], json!([syntax]), "{result}");
-        assert_eq!(
-            result["evaluation"]["violations"].as_array().unwrap().len(),
-            1
-        );
-        cold.close();
-
-        let warm = stored_workspace(&store, "/blind", &code_rule);
-        let result = apply(&warm, &files);
-        assert_eq!(result["blindFiles"], json!([syntax]), "{result}");
-        let page: Value =
-            serde_json::from_str(&result_page(&warm, 0, 64 * 1024 * 1024).unwrap()).unwrap();
-        assert_eq!(page["blindFiles"], json!([syntax]), "{page}");
-        warm.close();
-
-        // New content, so no stored result answers it.
-        let starved = stored_workspace(&store, "/blind-budget", &code_rule);
-        let files = json!([files[0], { "path": "ok.ts", "language": "typescript",
-            "source": "debugger;\ndebugger;\n" }]);
-        super::super::TEST_CLAUSE_WORK_BUDGET.set(Some(0));
-        let result = apply(&starved, &files);
-        super::super::TEST_CLAUSE_WORK_BUDGET.set(None);
-        assert_eq!(
-            result["blindFiles"],
-            json!([syntax, { "clauses": 1, "message": "clause work budget exceeded",
-                "path": "ok.ts", "reason": "budget", "folded": [["blind", "unguarded"]] }]),
-            "{result}"
-        );
-        starved.close();
-        drop(store);
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    /// A complete result after an edit renders the edited file's violations alone and sorts none:
-    /// unchanged files' renderings are kept, in path order, and the result is a fresh
-    /// workspace's.
-    #[test]
-    fn an_edit_renders_only_its_file_and_keeps_result_order() {
-        use super::{RESULT_RENDERS, RESULT_SORTS};
-        let _slot = WORKSPACE_TEST_SLOT.lock();
-        let code_rule = json!({
-            "format": "rerail.policy/v1", "id": "rendered", "revision": 1,
-            "mode": "steer",
-            "scope": { "include": ["**/*"], "exclude": [] },
-            "clauses": [
-                { "id": "print", "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }, "violation": violation() },
-                { "id": "call", "forbid": { "ast": { "language": "python", "rule": { "kind": "call" } } }, "violation": violation() },
-            ],
-        })
-        .to_string();
-        let compiled =
-            CodeRuleDslRuntime::compile(code_rule, "json".into(), CAPABILITIES.into()).unwrap();
-        let file = |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
-        let files = [
-            file("b.py", "print(1)\nf()\n"),
-            file("a.py", "print(2)\n"),
-            file("c/d.py", "g(print(3))\n"),
-        ];
-        let run = |workspace: &CodeRuleDslWorkspace, revision: u32, files: &[Value]| -> Value {
-            let mut task = WorkspaceApplyTask {
-                state: Arc::clone(&workspace.state),
-                closed: Arc::clone(&workspace.closed),
-                request_json: json!({ "revision": revision, "files": files, "removed": [] })
-                    .to_string(),
-                request_buffer: None,
-                request_direct: None,
-            };
-            serde_json::from_str(&task.compute().unwrap()).unwrap()
-        };
-        let mut workspace = CodeRuleDslWorkspace::new();
-        workspace.add_code_rule(&compiled, None).unwrap();
-        run(&workspace, 1, &files);
-        let edited = file("b.py", "x = 1\nprint(1)\nf()\n");
-        RESULT_RENDERS.set(0);
-        RESULT_SORTS.set(0);
-        let result = run(&workspace, 2, std::slice::from_ref(&edited));
-        assert_eq!((RESULT_RENDERS.get(), RESULT_SORTS.get()), (1, 0));
-        let mut fresh = CodeRuleDslWorkspace::new();
-        fresh.add_code_rule(&compiled, None).unwrap();
-        let expected = run(&fresh, 1, &[files[1].clone(), edited, files[2].clone()]);
-        assert_eq!(
-            result["evaluation"]["violations"],
-            expected["evaluation"]["violations"]
-        );
-        assert_eq!(
-            result["evaluation"]["violations"].as_array().unwrap().len(),
-            8
-        );
-        workspace.close();
-        fresh.close();
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

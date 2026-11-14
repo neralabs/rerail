@@ -1,0 +1,1422 @@
+{
+  "format": "rerail.sql-shape-spikes/v1",
+  "baselineCommit": "e45dd638ae230664cf76a09add174dc6b97d6451",
+  "workload": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 5,
+    "bytes": 1026452,
+    "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043"
+  },
+  "measurement": {
+    "metric": "process user + system CPU per phase; compilation separate",
+    "repetitions": 3,
+    "roundOrder": [
+      "normal",
+      "reverse",
+      "normal"
+    ],
+    "deadlineSeconds": 115,
+    "tracing": false,
+    "sameAddon": true,
+    "allocator": "system-malloc-shim",
+    "nativeWorkers": 4,
+    "build": {
+      "engineOptimization": 1,
+      "dependencyOptimization": 3,
+      "lto": "thin",
+      "codegenUnits": 256,
+      "features": [
+        "code-rule-profile"
+      ]
+    },
+    "host": {
+      "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+      "cpu": "arm",
+      "python": "3.14.7",
+      "logicalCpus": 18,
+      "loadAverageStart": [
+        46.4267578125,
+        45.484375,
+        46.85205078125
+      ],
+      "loadAverageEnd": [
+        49.7275390625,
+        46.22119140625,
+        47.08837890625
+      ]
+    },
+    "sourceSha256": {
+      "native/src/code_rule_dsl/relational/producer.rs": "e9737a45fdcad887031b9bcff7ac55194e0b45f577178655080f6bd2db12cfc8",
+      "native/src/code_rule_dsl/relational/producer/completed.rs": "11816ad88db3ad73b8007d1782f96aa6ed9c37266954ccafe11183f60137d057",
+      "native/src/code_rule_dsl/relational/table.rs": "870d211ae54e56f1cf7970ed1c06e0ccc7fcc5f8c606f767081c3fb830f0ffc4",
+      "scripts/profiling/sql_shape_spikes.py": "9de2e2f400a6333394292907fb28cf4da31ecc4264183e7f10e80e5f1358dda2"
+    }
+  },
+  "variants": {
+    "baseline": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-baseline-1/profile.json",
+          "coldCpuMs": 2965.959,
+          "editCpuMs": 1191.815,
+          "peakRssMiB": 656.921875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-baseline-2/profile.json",
+          "coldCpuMs": 2946.1240000000003,
+          "editCpuMs": 1120.613,
+          "peakRssMiB": 641.015625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-baseline-3/profile.json",
+          "coldCpuMs": 2986.024,
+          "editCpuMs": 1179.673,
+          "peakRssMiB": 661.671875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2965.959,
+        "editCpuMs": 1179.673,
+        "peakRssMiB": 656.921875
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": 0.0,
+        "editCpuMs": 0.0,
+        "peakRssMiB": 0.0
+      }
+    },
+    "method-index": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-method-index-1/profile.json",
+          "coldCpuMs": 2836.7349999999997,
+          "editCpuMs": 1064.012,
+          "peakRssMiB": 620.625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:70a885513ca5096d7a71196fbd913d3cc3d36bba3fbd09289ab1bfb4c72d5da7"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-method-index-2/profile.json",
+          "coldCpuMs": 2750.4649999999997,
+          "editCpuMs": 992.9739999999999,
+          "peakRssMiB": 603.703125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:70a885513ca5096d7a71196fbd913d3cc3d36bba3fbd09289ab1bfb4c72d5da7"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-method-index-3/profile.json",
+          "coldCpuMs": 2822.196,
+          "editCpuMs": 1010.539,
+          "peakRssMiB": 656.109375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:70a885513ca5096d7a71196fbd913d3cc3d36bba3fbd09289ab1bfb4c72d5da7"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2822.196,
+        "editCpuMs": 1010.539,
+        "peakRssMiB": 620.625
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.04847100044201558,
+        "editCpuMs": -0.143373629810973,
+        "peakRssMiB": -0.05525295530766117
+      }
+    },
+    "owner-first": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-owner-first-1/profile.json",
+          "coldCpuMs": 2841.6679999999997,
+          "editCpuMs": 1050.5220000000002,
+          "peakRssMiB": 663.15625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:68d1d613c188a2bd54aa410a3f8fca0d818469aa266d6ec99679722ef7d467ef"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-owner-first-2/profile.json",
+          "coldCpuMs": 2740.711,
+          "editCpuMs": 992.3040000000001,
+          "peakRssMiB": 655.5,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:68d1d613c188a2bd54aa410a3f8fca0d818469aa266d6ec99679722ef7d467ef"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-owner-first-3/profile.json",
+          "coldCpuMs": 2856.375,
+          "editCpuMs": 1048.1979999999999,
+          "peakRssMiB": 655.171875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:68d1d613c188a2bd54aa410a3f8fca0d818469aa266d6ec99679722ef7d467ef"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2841.6679999999997,
+        "editCpuMs": 1048.1979999999999,
+        "peakRssMiB": 655.5
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.04190583888718624,
+        "editCpuMs": -0.11145037650264111,
+        "peakRssMiB": -0.002164450681445218
+      }
+    },
+    "joins": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-joins-1/profile.json",
+          "coldCpuMs": 2856.165,
+          "editCpuMs": 1018.653,
+          "peakRssMiB": 659.765625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:da9eb223ae8271c970c8934231405c0f0f2bd66661e2aaaed50564a336a34b8b"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-joins-2/profile.json",
+          "coldCpuMs": 2776.794,
+          "editCpuMs": 982.255,
+          "peakRssMiB": 618.109375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:da9eb223ae8271c970c8934231405c0f0f2bd66661e2aaaed50564a336a34b8b"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-joins-3/profile.json",
+          "coldCpuMs": 2799.365,
+          "editCpuMs": 984.475,
+          "peakRssMiB": 652.28125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:da9eb223ae8271c970c8934231405c0f0f2bd66661e2aaaed50564a336a34b8b"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2799.365,
+        "editCpuMs": 984.475,
+        "peakRssMiB": 652.28125
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.05616867933777914,
+        "editCpuMs": -0.16546788813510183,
+        "peakRssMiB": -0.007064196180101345
+      }
+    },
+    "return-bounds": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-return-bounds-1/profile.json",
+          "coldCpuMs": 2943.237,
+          "editCpuMs": 1120.094,
+          "peakRssMiB": 646.921875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:d3c7f6bb2d516dcd402ca66f24051525a209af3dde1af8b80da6c4a86cea9337"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-return-bounds-2/profile.json",
+          "coldCpuMs": 2997.54,
+          "editCpuMs": 1120.255,
+          "peakRssMiB": 610.921875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:d3c7f6bb2d516dcd402ca66f24051525a209af3dde1af8b80da6c4a86cea9337"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-return-bounds-3/profile.json",
+          "coldCpuMs": 2882.864,
+          "editCpuMs": 1082.435,
+          "peakRssMiB": 658.640625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:d3c7f6bb2d516dcd402ca66f24051525a209af3dde1af8b80da6c4a86cea9337"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2943.237,
+        "editCpuMs": 1120.094,
+        "peakRssMiB": 646.921875
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.007660928556328606,
+        "editCpuMs": -0.05050467375281109,
+        "peakRssMiB": -0.015222510287086988
+      }
+    },
+    "projections": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-projections-1/profile.json",
+          "coldCpuMs": 2848.58,
+          "editCpuMs": 1116.83,
+          "peakRssMiB": 602.03125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:5ef5b933afac2ecb72132946acd30806b93de16a9b3f65d013fbba40903dd3d6"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-projections-2/profile.json",
+          "coldCpuMs": 2815.2419999999997,
+          "editCpuMs": 1093.639,
+          "peakRssMiB": 633.78125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:5ef5b933afac2ecb72132946acd30806b93de16a9b3f65d013fbba40903dd3d6"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-projections-3/profile.json",
+          "coldCpuMs": 2767.528,
+          "editCpuMs": 1097.473,
+          "peakRssMiB": 654.75,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:5ef5b933afac2ecb72132946acd30806b93de16a9b3f65d013fbba40903dd3d6"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2815.2419999999997,
+        "editCpuMs": 1097.473,
+        "peakRssMiB": 633.78125
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.05081560466614676,
+        "editCpuMs": -0.06968032666679669,
+        "peakRssMiB": -0.035225840211212334
+      }
+    },
+    "roots-union-all": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-union-all-1/profile.json",
+          "coldCpuMs": 3062.2329999999997,
+          "editCpuMs": 1171.728,
+          "peakRssMiB": 605.703125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:95e4278fad277170b192e6fce9615282e58465dacdd78c72983b9bd3f0427722"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-union-all-2/profile.json",
+          "coldCpuMs": 2961.697,
+          "editCpuMs": 1197.037,
+          "peakRssMiB": 617.84375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:95e4278fad277170b192e6fce9615282e58465dacdd78c72983b9bd3f0427722"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-union-all-3/profile.json",
+          "coldCpuMs": 3026.592,
+          "editCpuMs": 1203.4560000000001,
+          "peakRssMiB": 653.84375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:95e4278fad277170b192e6fce9615282e58465dacdd78c72983b9bd3f0427722"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 3026.592,
+        "editCpuMs": 1197.037,
+        "peakRssMiB": 617.84375
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": 0.020442966339049295,
+        "editCpuMs": 0.014719333238957022,
+        "peakRssMiB": -0.05948671598125732
+      }
+    },
+    "roots-materialized": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-materialized-1/profile.json",
+          "coldCpuMs": 3242.341,
+          "editCpuMs": 1296.414,
+          "peakRssMiB": 630.5625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:38196da7a1a3062ee73c508c5e256e121fb28c9d50baaf876abe306e75cc5d73"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-materialized-2/profile.json",
+          "coldCpuMs": 3125.54,
+          "editCpuMs": 1271.695,
+          "peakRssMiB": 641.75,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:38196da7a1a3062ee73c508c5e256e121fb28c9d50baaf876abe306e75cc5d73"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-materialized-3/profile.json",
+          "coldCpuMs": 3130.904,
+          "editCpuMs": 1299.9119999999998,
+          "peakRssMiB": 656.21875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:38196da7a1a3062ee73c508c5e256e121fb28c9d50baaf876abe306e75cc5d73"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 3130.904,
+        "editCpuMs": 1296.414,
+        "peakRssMiB": 641.75
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": 0.05561270401917229,
+        "editCpuMs": 0.09896047464000612,
+        "peakRssMiB": -0.023095402326189896
+      }
+    },
+    "roots-unpivot": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-unpivot-1/profile.json",
+          "coldCpuMs": 3179.4500000000003,
+          "editCpuMs": 1305.712,
+          "peakRssMiB": 664.390625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:1c94595cf2ca7704e22b2d4811d1b68a153d9a09a1d7bfe04cedae1e7fb6a86b"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-unpivot-2/profile.json",
+          "coldCpuMs": 3073.56,
+          "editCpuMs": 1239.7659999999998,
+          "peakRssMiB": 617.0625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:1c94595cf2ca7704e22b2d4811d1b68a153d9a09a1d7bfe04cedae1e7fb6a86b"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-roots-unpivot-3/profile.json",
+          "coldCpuMs": 3080.2749999999996,
+          "editCpuMs": 1247.059,
+          "peakRssMiB": 657.234375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:1c94595cf2ca7704e22b2d4811d1b68a153d9a09a1d7bfe04cedae1e7fb6a86b"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 3080.2749999999996,
+        "editCpuMs": 1247.059,
+        "peakRssMiB": 657.234375
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": 0.03854267709027659,
+        "editCpuMs": 0.057122609401079716,
+        "peakRssMiB": 0.0004757034464715204
+      }
+    },
+    "virtual": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-virtual-1/profile.json",
+          "coldCpuMs": 2417.429,
+          "editCpuMs": 988.547,
+          "peakRssMiB": 455.125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-virtual-2/profile.json",
+          "coldCpuMs": 2382.382,
+          "editCpuMs": 986.172,
+          "peakRssMiB": 411.71875,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-virtual-3/profile.json",
+          "coldCpuMs": 2411.6479999999997,
+          "editCpuMs": 1012.883,
+          "peakRssMiB": 446.078125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:209ac482588515ce6bf571bc8b4cd3e3ee93d21fdb2b48d3ff26d0c4bbac4125"
+          },
+          "completedOutput": "virtual"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2411.6479999999997,
+        "editCpuMs": 988.547,
+        "peakRssMiB": 446.078125
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.18689098534403215,
+        "editCpuMs": -0.162016084118226,
+        "peakRssMiB": -0.3209571153343006
+      }
+    },
+    "combined-sql": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-sql-1/profile.json",
+          "coldCpuMs": 2548.009,
+          "editCpuMs": 835.468,
+          "peakRssMiB": 606.3125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-sql-2/profile.json",
+          "coldCpuMs": 2536.616,
+          "editCpuMs": 827.058,
+          "peakRssMiB": 649.125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "table"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-sql-3/profile.json",
+          "coldCpuMs": 2589.1380000000004,
+          "editCpuMs": 865.5899999999999,
+          "peakRssMiB": 605.453125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "table"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 2548.009,
+        "editCpuMs": 835.468,
+        "peakRssMiB": 606.3125
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.1409156363928159,
+        "editCpuMs": -0.291780010223172,
+        "peakRssMiB": -0.07704017315605449
+      }
+    },
+    "combined-virtual": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-virtual-1/profile.json",
+          "coldCpuMs": 1952.0359999999998,
+          "editCpuMs": 698.7460000000001,
+          "peakRssMiB": 395.28125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-virtual-2/profile.json",
+          "coldCpuMs": 2079.7980000000002,
+          "editCpuMs": 717.639,
+          "peakRssMiB": 440.765625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-combined-virtual-3/profile.json",
+          "coldCpuMs": 1996.1490000000001,
+          "editCpuMs": 740.2040000000001,
+          "peakRssMiB": 451.59375,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:7505d3bc94270d157ee8506c106af4713471cdadf3a11e899bf482582b92cc74"
+          },
+          "completedOutput": "virtual"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 1996.1490000000001,
+        "editCpuMs": 717.639,
+        "peakRssMiB": 440.765625
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.3269802448381788,
+        "editCpuMs": -0.3916627743450939,
+        "peakRssMiB": -0.32904407392431556
+      }
+    },
+    "best": {
+      "runs": [
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-best-1/profile.json",
+          "coldCpuMs": 2010.724,
+          "editCpuMs": 709.2460000000001,
+          "peakRssMiB": 390.25,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:8d1bf7f9dc27d3b41562d859461ed1f78e76c1f31a593416b6b31c81ff7db462"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-best-2/profile.json",
+          "coldCpuMs": 1990.973,
+          "editCpuMs": 669.384,
+          "peakRssMiB": 394.953125,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:8d1bf7f9dc27d3b41562d859461ed1f78e76c1f31a593416b6b31c81ff7db462"
+          },
+          "completedOutput": "virtual"
+        },
+        {
+          "profile": ".rerail/profiles/sql-shape-spikes/bench-best-3/profile.json",
+          "coldCpuMs": 1982.324,
+          "editCpuMs": 684.5600000000001,
+          "peakRssMiB": 427.0625,
+          "nativeSha256": "e31b41722896b6767536ec19460329fca41c6f1f3292bf8af49100bbc2981124",
+          "policyDigests": {
+            "data-layer-serverplan-quality": "sha256:8d1bf7f9dc27d3b41562d859461ed1f78e76c1f31a593416b6b31c81ff7db462"
+          },
+          "completedOutput": "virtual"
+        }
+      ],
+      "median": {
+        "coldCpuMs": 1990.973,
+        "editCpuMs": 684.5600000000001,
+        "peakRssMiB": 394.953125
+      },
+      "relativeToBaseline": {
+        "coldCpuMs": -0.3287253802227206,
+        "editCpuMs": -0.41970359582697914,
+        "peakRssMiB": -0.39878219917703306
+      }
+    }
+  },
+  "additionalBaselineControl": {
+    "coldCpuMs": 2995.6929999999998,
+    "editCpuMs": 1184.625,
+    "includedInMedians": false
+  },
+  "preferredVariants": [
+    "method-index",
+    "return-bounds",
+    "projections"
+  ],
+  "preferredCompletedOutput": "virtual",
+  "roots": "original",
+  "diagnostics": {
+    "baseline": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-baseline/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 165338125,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 75425625,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 180920792,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 120100207,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 671.2089180000002,
+        "sql-materialize": 1478.2314210000004,
+        "producer-prepare": 40.449042,
+        "sql-index": 245.09583800000001,
+        "syntax-prepare": 12.201833,
+        "input-kind-index": 6.357126,
+        "producer-wave": 5.666834,
+        "syntax-owners": 6.458917999999999,
+        "producer-stage": 4.8581259999999995,
+        "sql-input": 2.5345409999999995,
+        "sql-analyze": 40.799002999999985,
+        "sql-result": 0.6866249999999999
+      },
+      "allColumnReads": 19104471,
+      "incomplete": 0
+    },
+    "method-index": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-method-index/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 2184125,
+          "vmSteps": 77066,
+          "frameLookups": 483,
+          "frameNext": 747,
+          "frameColumns": 3162,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 75466042,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 191285083,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 117687750,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 683.9369989999999,
+        "sql-materialize": 1358.333339000002,
+        "producer-prepare": 36.895958,
+        "sql-index": 256.38971899999996,
+        "syntax-prepare": 12.435667,
+        "input-kind-index": 6.505416000000002,
+        "producer-wave": 6.375541,
+        "syntax-owners": 6.420707999999999,
+        "producer-stage": 5.356374999999999,
+        "sql-analyze": 41.845591,
+        "sql-input": 2.6602079999999995,
+        "sql-result": 0.611627
+      },
+      "allColumnReads": 17828004,
+      "incomplete": 0
+    },
+    "return-bounds": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-return-bounds/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 168465792,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 3053625,
+          "vmSteps": 74254,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 183279208,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 124048001,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 695.436208,
+        "sql-materialize": 1445.6656760000003,
+        "producer-prepare": 39.094667,
+        "sql-index": 256.12353999999993,
+        "syntax-prepare": 12.509917,
+        "producer-wave": 6.353583,
+        "input-kind-index": 6.828665000000001,
+        "syntax-owners": 6.4009990000000005,
+        "producer-stage": 5.450292,
+        "sql-analyze": 42.97996599999999,
+        "sql-input": 2.730289,
+        "sql-result": 0.6439560000000001
+      },
+      "allColumnReads": 19104471,
+      "incomplete": 0
+    },
+    "projections": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-projections/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 152620458,
+          "vmSteps": 8106148,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 70856375,
+          "vmSteps": 8761456,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 97611373,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 1150888,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 132688626,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 716.926748,
+        "sql-materialize": 1311.0509249999984,
+        "producer-prepare": 40.805125,
+        "sql-index": 252.36364199999983,
+        "syntax-prepare": 13.363624000000002,
+        "input-kind-index": 7.149829000000002,
+        "producer-wave": 6.431167,
+        "syntax-owners": 7.097250000000001,
+        "producer-stage": 5.496208,
+        "sql-input": 2.9530490000000005,
+        "sql-analyze": 41.66149199999999,
+        "sql-result": 0.628251
+      },
+      "allColumnReads": 12065495,
+      "incomplete": 0
+    },
+    "roots-union-all": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-roots-union-all/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 170577583,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 74363292,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 185852167,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 129523708,
+          "vmSteps": 5859093,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 0
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 708.5269170000001,
+        "sql-materialize": 1538.9614230000002,
+        "sql-index": 262.1782490000002,
+        "producer-prepare": 40.071625,
+        "syntax-prepare": 13.238833999999999,
+        "producer-wave": 6.46325,
+        "input-kind-index": 6.867959000000001,
+        "syntax-owners": 6.085877,
+        "producer-stage": 5.3195,
+        "sql-analyze": 43.86512000000004,
+        "sql-input": 2.610086,
+        "sql-result": 0.6556679999999999
+      },
+      "allColumnReads": 19104471,
+      "incomplete": 0
+    },
+    "roots-materialized": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-roots-materialized/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 168361625,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 76024667,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 183180584,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 339959834,
+          "vmSteps": 17072271,
+          "frameLookups": 0,
+          "frameNext": 227906,
+          "frameColumns": 4330214,
+          "sorts": 0
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 733.1187080000001,
+        "sql-materialize": 1545.457188000001,
+        "producer-prepare": 40.726875,
+        "sql-index": 264.95283499999994,
+        "syntax-prepare": 13.659082,
+        "input-kind-index": 6.98117,
+        "producer-wave": 6.624416,
+        "syntax-owners": 6.51479,
+        "producer-stage": 5.653250000000001,
+        "sql-input": 2.5356650000000003,
+        "sql-analyze": 43.713344999999954,
+        "sql-result": 0.5546679999999999
+      },
+      "allColumnReads": 21721232,
+      "incomplete": 0
+    },
+    "roots-unpivot": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-roots-unpivot/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 175232084,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 76299125,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 184422333,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 235352625,
+          "vmSteps": 17905056,
+          "frameLookups": 0,
+          "frameNext": 227906,
+          "frameColumns": 2878244,
+          "sorts": 0
+        }
+      },
+      "nativeSpanCpuMs": {
+        "producer-publish": 717.4956679999999,
+        "sql-materialize": 1562.2641540000004,
+        "producer-prepare": 36.821625,
+        "sql-index": 257.188914,
+        "syntax-prepare": 13.278583000000001,
+        "producer-wave": 6.913,
+        "input-kind-index": 6.714169,
+        "syntax-owners": 6.031873999999999,
+        "producer-stage": 5.698124999999999,
+        "sql-analyze": 41.290164000000054,
+        "sql-input": 2.501916,
+        "sql-result": 0.6218729999999999
+      },
+      "allColumnReads": 20269262,
+      "incomplete": 0
+    },
+    "virtual": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-virtual/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 168924708,
+          "vmSteps": 8105665,
+          "frameLookups": 366302,
+          "frameNext": 468339,
+          "frameColumns": 1302980,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 76305084,
+          "vmSteps": 8758689,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 187417582,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 4697280,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 123957376,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "sql-materialize": 1537.6494140000004,
+        "producer-prepare": 39.030916,
+        "sql-index": 255.13991799999988,
+        "producer-publish": 19.438416,
+        "syntax-prepare": 12.99221,
+        "producer-wave": 6.825542,
+        "input-kind-index": 6.995333999999998,
+        "producer-stage": 5.962166,
+        "syntax-owners": 7.121834000000001,
+        "sql-analyze": 41.93073600000001,
+        "sql-input": 2.6460809999999997,
+        "sql-result": 0.68221
+      },
+      "allColumnReads": 20076727,
+      "incomplete": 0
+    },
+    "best": {
+      "profile": ".rerail/profiles/sql-shape-spikes/profile-best/sql/profile.json",
+      "stages": {
+        "self_stores": {
+          "cpuNs": 1927541,
+          "vmSteps": 77549,
+          "frameLookups": 483,
+          "frameNext": 747,
+          "frameColumns": 3162,
+          "sorts": 0
+        },
+        "integer_returns": {
+          "cpuNs": 2721000,
+          "vmSteps": 77021,
+          "frameLookups": 1333,
+          "frameNext": 1904,
+          "frameColumns": 5491,
+          "sorts": 273
+        },
+        "py_names": {
+          "cpuNs": 89486083,
+          "vmSteps": 7494380,
+          "frameLookups": 84740,
+          "frameNext": 175454,
+          "frameColumns": 1150888,
+          "sorts": 0
+        },
+        "rootCollection": {
+          "cpuNs": 118514543,
+          "vmSteps": 10332593,
+          "frameLookups": 1406,
+          "frameNext": 1397485,
+          "frameColumns": 1713453,
+          "sorts": 85
+        }
+      },
+      "nativeSpanCpuMs": {
+        "sql-materialize": 1036.9566770000006,
+        "producer-prepare": 41.29025,
+        "sql-index": 240.90099799999987,
+        "producer-publish": 19.501208000000002,
+        "syntax-prepare": 12.595084,
+        "producer-wave": 6.336958,
+        "input-kind-index": 6.705337999999997,
+        "syntax-owners": 6.225665,
+        "producer-stage": 5.15925,
+        "sql-input": 2.5963749999999997,
+        "sql-analyze": 41.05950099999996,
+        "sql-result": 0.597292
+      },
+      "allColumnReads": 11761284,
+      "incomplete": 0
+    }
+  },
+  "validation": {
+    "upstream": {
+      "method-index": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-method-index.json"
+      },
+      "projections": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-projections.json"
+      },
+      "roots-union-all": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-roots-union-all.json"
+      },
+      "roots-materialized": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-roots-materialized.json"
+      },
+      "roots-unpivot": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-roots-unpivot.json"
+      },
+      "return-bounds": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-return-bounds.json"
+      },
+      "virtual": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-virtual.json"
+      },
+      "combined": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-combined.json"
+      },
+      "best": {
+        "upstreamCases": 200,
+        "positive": 135,
+        "clean": 65,
+        "differences": 0,
+        "report": ".rerail/profiles/sql-shape-spikes/oracle-best.json"
+      }
+    },
+    "preferredProductionGates": [
+      {
+        "cases": 80,
+        "positive": 57,
+        "clean": 23,
+        "transitions": 0,
+        "baselineCompleted": "table",
+        "candidateCompleted": "virtual",
+        "report": ".rerail/profiles/sql-shape-spikes/gates-best-0.json"
+      },
+      {
+        "cases": 80,
+        "positive": 44,
+        "clean": 36,
+        "transitions": 0,
+        "baselineCompleted": "table",
+        "candidateCompleted": "virtual",
+        "report": ".rerail/profiles/sql-shape-spikes/gates-best-80.json"
+      },
+      {
+        "cases": 59,
+        "positive": 29,
+        "clean": 30,
+        "transitions": 177,
+        "baselineCompleted": "table",
+        "candidateCompleted": "virtual",
+        "report": ".rerail/profiles/sql-shape-spikes/gates-best-160.json"
+      }
+    ],
+    "producerShape": ".rerail/profiles/sql-shape-spikes/producer-shape/profile.json",
+    "checks": {
+      "typecheckAndRepositoryGates": "passed",
+      "profileClippy": "passed, -D warnings",
+      "productionClippy": "passed, -D warnings",
+      "rustFormat": "passed",
+      "licenses": "passed",
+      "profilingTools": "passed",
+      "nativeSqlPlanTests": "3 passed",
+      "producerGate": "5 passed",
+      "nativeCompletedDifferentialTests": "3 passed",
+      "existingNativeTests": "406 passed in virtual-adapter suite"
+    }
+  },
+  "limits": [
+    "Fixed five-file CPU reference workload and optimization-level-1 addon, not a universal production speedup.",
+    "Projection spike keeps full logical width and NULLs unused cells; no shared derived-fact cache.",
+    "Dense posting offsets depend on maximum ordinal; no composite path posting key.",
+    "Virtual publication is profile-only; shipped policy and production defaults unchanged.",
+    "Instrumented diagnostic CPU is separate from benchmark medians."
+  ],
+  "externalSample": {
+    "profile": ".rerail/profiles/sql-shape-spikes/sample-best/profile.json",
+    "tool": "macOS sample",
+    "trace": "on",
+    "includedInBenchmarks": false,
+    "caveat": "Two short samples provide directional attribution; trace writes consume samples.",
+    "samples": [
+      {
+        "file": "sample-1.txt",
+        "captureSeconds": 1,
+        "exitCode": 0,
+        "activeNativeSamples": 719,
+        "parkedThreadSamples": 10006,
+        "topSelf": [
+          {
+            "symbol": "sqlite3VdbeExec (rerail-sql-shape-spikes.node)",
+            "samples": 89,
+            "percent": 12.38
+          },
+          {
+            "symbol": "write (libsystem_kernel.dylib)",
+            "samples": 86,
+            "percent": 11.96
+          },
+          {
+            "symbol": "sqlite3VdbeSerialGet (rerail-sql-shape-spikes.node)",
+            "samples": 48,
+            "percent": 6.68
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 26,
+            "percent": 3.62
+          },
+          {
+            "symbol": "_RNvMs0_NtNtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational6syntax6packedNtB5_6Fields3get (rerail-sql-shape-spikes.node)",
+            "samples": 22,
+            "percent": 3.06
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational8producer7READERS0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1A_6option6OptionQIB2f_INtNtB1A_4cell4CelljEEEEE9call_onceBe_ (rerail-sql-shape-spikes.node)",
+            "samples": 21,
+            "percent": 2.92
+          },
+          {
+            "symbol": "_xzm_free (libsystem_malloc.dylib)",
+            "samples": 21,
+            "percent": 2.92
+          },
+          {
+            "symbol": "_RNvNtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational6source6charge (rerail-sql-shape-spikes.node)",
+            "samples": 19,
+            "percent": 2.64
+          },
+          {
+            "symbol": "_RNvXs3_NtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational6syntaxNtB5_5UnionNtB5_6Source6column (rerail-sql-shape-spikes.node)",
+            "samples": 16,
+            "percent": 2.23
+          },
+          {
+            "symbol": "_RNvXs3_NtNtCsaTNopw4qKPP_4core4hash3sipINtB5_6HasherNtB5_11Sip13RoundsENtB7_6Hasher5writeCs4W6Hj6fk9U3_13rerail_engine (rerail-sql-shape-spikes.node)",
+            "samples": 16,
+            "percent": 2.23
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl6budget14STEP_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1s_6option6OptionQIB27_INtNtB1s_4cell4CellmEEEEE9call_onceBc_ (rerail-sql-shape-spikes.node)",
+            "samples": 15,
+            "percent": 2.09
+          },
+          {
+            "symbol": "_RINvMs2_NtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl4tapeNtB6_7TapeDoc18restore_with_linesNCNvNtNtB8_4eval5query17restore_file_tape0EBa_ (rerail-sql-shape-spikes.node)",
+            "samples": 15,
+            "percent": 2.09
+          }
+        ]
+      },
+      {
+        "file": "sample-2.txt",
+        "captureSeconds": 1,
+        "exitCode": 0,
+        "activeNativeSamples": 808,
+        "parkedThreadSamples": 11312,
+        "topSelf": [
+          {
+            "symbol": "write (libsystem_kernel.dylib)",
+            "samples": 116,
+            "percent": 14.36
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail-sql-shape-spikes.node)",
+            "samples": 82,
+            "percent": 10.15
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail-sql-shape-spikes.node)",
+            "samples": 53,
+            "percent": 6.56
+          },
+          {
+            "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+            "samples": 46,
+            "percent": 5.69
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 32,
+            "percent": 3.96
+          },
+          {
+            "symbol": "_RINvNtCsaTNopw4qKPP_4core3ptr9drop_glueNtNtNtCs7Rr53kNC6BC_8rusqlite5types6to_sql11ToSqlOutputECs4W6Hj6fk9U3_13rerail_engine (rerail-sql-shape-spikes.node)",
+            "samples": 26,
+            "percent": 3.22
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 24,
+            "percent": 2.97
+          },
+          {
+            "symbol": "DYLD-STUB$$memcmp (rerail-sql-shape-spikes.node)",
+            "samples": 22,
+            "percent": 2.72
+          },
+          {
+            "symbol": "_RNvXs3_NtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational6syntaxNtB5_5UnionNtB5_6Source6column (rerail-sql-shape-spikes.node)",
+            "samples": 15,
+            "percent": 1.86
+          },
+          {
+            "symbol": "sqlite3BtreeTableMoveto (rerail-sql-shape-spikes.node)",
+            "samples": 15,
+            "percent": 1.86
+          },
+          {
+            "symbol": "sqlite3VdbeSerialGet (rerail-sql-shape-spikes.node)",
+            "samples": 14,
+            "percent": 1.73
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtNtCs4W6Hj6fk9U3_13rerail_engine13code_rule_dsl10relational8producer7READERS0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1A_6option6OptionQIB2f_INtNtB1A_4cell4CelljEEEEE9call_onceBe_ (rerail-sql-shape-spikes.node)",
+            "samples": 12,
+            "percent": 1.49
+          }
+        ]
+      }
+    ]
+  }
+}

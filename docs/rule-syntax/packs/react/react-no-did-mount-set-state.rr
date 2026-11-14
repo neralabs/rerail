@@ -1,0 +1,22 @@
+.policy "react-no-did-mount-set-state" revision 2
+.description "Avoid calling setState directly in componentDidMount; it triggers a second render before the browser paints."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-did-mount-set-state: this.setState(…) inside a method, property or class field named componentDidMount,
+// unless it sits in a nested function (the default mode, "allow-in-func"; "disallow-in-func" is not in the JSON).
+//   componentDidMount() { this.setState({ a: 1 }); }                       reported, at the callee
+//   componentDidMount() { fetch(u).then(() => this.setState({ a: 1 })); }  not: inside a callback
+// Any key named componentDidMount counts, in a component or not, and an arrow is a function here as any other.
+// The plugin makes the rule a no-op where settings name React 16.3 or later; with no version set (the
+// recording) it assumes the latest and checks.
+#include "tsx/react-class.rr"
+//   set_state_in(f, x)  f calls this.setState in a member keyed x, in no function nested in the member
+
+.violation no_did_mount_set_state(at: node)
+    code "react/no-did-mount-set-state"
+    "Initialize this state in the constructor or set it from a later callback; keep it here only when it depends on measuring the rendered DOM, such as a tooltip's position."
+    suppress eslint "react/no-did-mount-set-state"
+    suppress oxlint "no-did-mount-set-state"
+no_did_mount_set_state(f) :- set_state_in(f, "componentDidMount"), docof(f, d), react_doc(d).

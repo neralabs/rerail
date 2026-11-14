@@ -32,7 +32,7 @@ const gitConfig = join(userHome, ".gitconfig");
 writeFileSync(gitConfig, "[user]\n\tname = Rerail test\n\temail = test@rerail.invalid\n");
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = gitConfig;
-// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
+// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v4.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
 // Every experimental feature starts off, whatever the shell running the tests turned on (`RERAIL_EXPERIMENTAL=1`, or

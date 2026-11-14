@@ -1,0 +1,21 @@
+.policy "ruff-up033-lru-cache-with-maxsize-none" revision 2
+.description "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP033 (pyupgrade): a decorator `@functools.lru_cache(maxsize=None)`, with that one keyword and nothing
+// else. Python 3.9 added `functools.cache`, the same unbounded cache; below a 3.9 target the rule is off. The
+// finding is at the parenthesised arguments, where Ruff's range starts.
+//   @functools.lru_cache(maxsize=None)        ← UP033
+//   @lru_cache(user_func, maxsize=None)       not reported
+#include "python/upgrade.rr"
+//   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
+
+.violation UP033(at: node) code "UP033"
+    "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call."
+    suppress ruff "UP033"
+UP033(al) :- targets(9), decorator(_, c), kind(c, "call"), field(c, "function", f),
+    sym_at(f, "functools.lru_cache"), field(c, "arguments", al),
+    count : { child(al, a, _), !kind(a, "comment") } = 1, child(al, k, _), kind(k, "keyword_argument"),
+    field(k, "name", n), text(n, "maxsize"), field(k, "value", v), kind(v, "none").

@@ -664,4 +664,4 @@ impl NpmPublication {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

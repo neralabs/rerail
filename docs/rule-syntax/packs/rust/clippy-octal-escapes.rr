@@ -1,0 +1,27 @@
+.policy "clippy-octal-escapes" revision 2
+.description "Avoid a null escape followed by digits in Rust string literals; Rust has no octal escapes, so it yields a NUL then digits, not the intended character."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   octal_escape(e)   a `\0` escape followed by an octal digit, in a string or byte-string literal
+//   in_macro_def(n), transcribed(n)   in a macro_rules!, in its transcriber
+//   format_string(s)   println!'s format string;   opaque_macro(m)   concat!, stringify!, env!, include*!
+
+// Clippy's octal_escapes (suspicious): `\0` then octal digits, which C reads as one octal escape and Rust
+// as a NUL followed by digits.
+//   "\033[0m"   b"\033[0m"   "\0\03" (the second)   "Text-\055\077" (both)   reported, at the escape
+//   println!("{}", "\033")   vec!["\033"]   a macro_rules! transcriber's "\033"
+//   "\\033"     "\0\0"      "\0\\01"   r"\033"   c"\033"   '\0'              not reported
+//   println!("\033[0m")   write!(f, "\033")   concat!("\033")   a macro_rules! matcher
+// Clippy reads literal expressions: a format string is parsed by format_args! instead, and concat!,
+// stringify!, env! and include*! take their literals at expansion. A macro_rules! body is read as written,
+// once, whether the macro is used or not.
+.violation octal_escapes(at: node) code "octal_escapes"
+    "Replace this \\0 escape with the intended character, e.g. \\x1b for \\033, or \\x00 then the digits if NUL was meant."
+    suppress clippy "clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"
+octal_escapes(e) :- octal_escape(e), (!in_macro_def(e) ; transcribed(e)), child(s, e, _), !format_string(s),
+    !in_opaque(e).
+.decl in_opaque(e: node)
+in_opaque(e) :- octal_escape(e), inside(e, m, "macro_invocation"), opaque_macro(m).

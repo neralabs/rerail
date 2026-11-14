@@ -1,0 +1,40 @@
+.policy "ruff-pyi058-generator-return-from-iter-method" revision 2
+.description "Annotate a simple iteration method as returning an iterator, not a generator; the kind of iterator it returns is an implementation detail."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI058 (flake8-pyi), every file: a plain (not async) `__iter__(self)` annotated to return `Generator`, or
+// `__aiter__(self)` returning `AsyncGenerator`, from typing, typing_extensions or collections.abc. Bare, or with
+// all its parameters (three for Generator, two for AsyncGenerator) where every one after the first is None or
+// Any: then nothing is ever sent, and `Iterator[Y]` says the same. Outside stubs only a body that just yields
+// counts (plain_body). Reported at the method name.
+//   def __iter__(self) -> Generator[int, None, None]: ...     ← PYI058: write `Iterator[int]`
+#include "python/typing.rr"
+
+.violation PYI058(at: node, msg: symbol) code "PYI058" "{msg}"
+    suppress ruff "PYI058"
+PYI058(n, m) :- pyi_method(_, f, x), !is_async(f), count : { sig_param(f, p, nm, i, pk, a, d) } = 1, first_param(f, _, _),
+    returns(f, t), gen(x, g, k, m), iter_head(t, g), (!tsub(t, _, _, _) ; tsub_n(t, k), !sent(t)), plain_body(f),
+    field(f, "name", n).
+// sent(t): a parameter after the first is not None or Any.
+.decl sent(t: node)
+sent(t) :- tsub(t, _, i, a), i > 0, !kind(a, "none"), !typing_sym(a, "Any").
+.decl gen(x: symbol, g: symbol, k: number, msg: symbol)  // method, generator type, its parameter count
+gen("__iter__", "Generator", 3, "Annotate `__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`.").
+gen("__aiter__", "AsyncGenerator", 2, "Annotate `__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`.").
+// plain_body(f): in a stub, any body; elsewhere, one that only yields: each statement is `pass`, a string or
+// `...`, `yield …` / `yield from …`, or a `return` that returns nothing (or None) once a yield has run.
+//   yield 1; return 5        not reported: the generator returns a value
+//   for x in xs: yield x     not reported: Ruff reads only these simple bodies
+.decl plain_body(f: node)
+plain_body(f) :- returns(f, _), in_stub(f).
+plain_body(f) :- returns(f, _), !in_stub(f), def_body(f, b), count : { body_stmt(b, s, i), !plain_stmt(b, s, i) } = 0.
+.decl plain_stmt(b: node, s: node, i: number)
+plain_stmt(b, s, i) :- body_stmt(b, s, i), pass_stmt(s).
+plain_stmt(b, s, i) :- body_stmt(b, s, i), kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1),
+    unparen(e0, e), (plain_str(e, _) ; kind(e, "ellipsis") ; kind(e, "yield")).
+plain_stmt(b, s, i) :- body_stmt(b, s, i), kind(s, "return_statement"), !value_after_yield(b, s, i).
+.decl value_after_yield(b: node, s: node, i: number)  // return statement s returns a value, after a yield
+value_after_yield(b, s, i) :- body_stmt(b, s, i), child(s, v0, 0), unparen(v0, v), !kind(v, "none"),
+    body_stmt(b, y, j), j < i, kind(y, "expression_statement"), child(y, e0, 0), unparen(e0, e), kind(e, "yield").

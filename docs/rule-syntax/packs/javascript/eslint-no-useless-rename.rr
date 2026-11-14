@@ -1,0 +1,49 @@
+.policy "eslint-no-useless-rename" revision 7
+.description "Don't rename a destructured property, import or export to its own name; the rename adds noise and changes nothing."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-b-objects.rr"
+//   deparen, value, id_value, module_name
+
+// ESLint's no-useless-rename: a rename to the same name.
+//   const { a: a } = o;   ({ "b": b = 1 } = o);   function f({ c: c }) {}   → reported; fix { a }, { b = 1 }, { c }
+//   import { x as x } from "m";   import { "y" as y } from "m";            → reported; fix import { x }, …
+//   export { z as z };   export { z as "z" } from "m";                     → reported; fix export { z }
+//   const { a: b } = o;   const { [a]: a } = o;   import { x as y } from "m"  fine
+// Options, each default false: ignoreDestructuring, ignoreImport, ignoreExport.
+// The fix keeps only the second name (with its default). None when a comment would go, or when the name is
+// parenthesised before a default, which a shorthand cannot hold: `({ a: (a) = 1 } = o)`.
+.violation no_useless_rename(at: node, what: symbol, x: symbol) code "no-useless-rename"
+    "{what} {x} unnecessarily renamed."
+    suppress eslint "no-useless-rename"
+    suppress oxlint "no-useless-rename"
+    suppress biome "lint/complexity/noUselessRename"
+    fix shorten "Remove the rename."
+no_useless_rename(p, "Destructuring assignment", x) :- renamed_key(p, x, _), !option("ignoreDestructuring", "true").
+no_useless_rename(s, "Import", x) :- kind(s, "import_specifier"), field(s, "name", a), field(s, "alias", b),
+    module_name(a, x), id_value(b, x), !option("ignoreImport", "true").
+no_useless_rename(s, "Export", x) :- kind(s, "export_specifier"), field(s, "name", a), field(s, "alias", b),
+    module_name(a, x), module_name(b, x), !option("ignoreExport", "true").
+
+// renamed_key(p, x, v): pattern property p is `x: x` or `x: x = d`, its key not computed; v is what stays.
+// A literal key counts by its value, `"x": x`; ESTree drops parentheses, so `x: (x)` counts too. Names compare
+// as ESTree's, escapes decoded: `\u0061: a` is `a: a`.
+.decl renamed_key(p: node, x: symbol, v: node)
+renamed_key(p, x, v) :- kind(p, "pair_pattern"), field(p, "key", k), key_text(k, x), field(p, "value", w),
+    deparen(w, v), name_of(v, x).
+.decl key_text(k: node, x: symbol)
+key_text(k, x) :- kind(k, "property_identifier"), id_value(k, x).
+key_text(k, x) :- (kind(k, "string") ; kind(k, "number")), value(k, x).
+.decl name_of(v: node, x: symbol)  // the identifier v binds, with or without a default
+name_of(v, x) :- kind(v, "identifier"), id_value(v, x).
+name_of(v, x) :- kind(v, "assignment_pattern"), field(v, "left", l), deparen(l, i), kind(i, "identifier"), id_value(i, x).
+
+shorten(p, _, _) :- renamed_key(p, _, v), !comment_lost(p, v), !paren_left(v), text(v, t) => replace(p, `$t`).
+shorten(s, w, _) :- (w = "Import", field(s, "alias", v) ; w = "Export", field(s, "name", v)),
+    no_useless_rename(s, w, _), !comment_lost(s, v), text(v, t) => replace(s, `$t`).
+.decl comment_lost(p: node, v: node)  // a comment in p outside v
+comment_lost(p, v) :- no_useless_rename(p, _, _), (renamed_key(p, _, v) ; field(p, _, v)), has(p, c, "comment"),
+    !within(c, v).
+.decl paren_left(v: node)
+paren_left(v) :- kind(v, "assignment_pattern"), field(v, "left", l), kind(l, "parenthesized_expression").

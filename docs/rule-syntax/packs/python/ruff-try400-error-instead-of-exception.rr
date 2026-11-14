@@ -1,0 +1,19 @@
+.policy "ruff-try400-error-instead-of-exception" revision 2
+.description "Use the exception logging method instead of error when logging inside an exception handler; it records the traceback."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY400 (tryceratops): `logger.error(…)` in an except handler, which drops the traceback that
+// `logger.exception(…)` would log. `exc_info=True` (or `exc_info=sys.exc_info()`) keeps it, so is not reported.
+//   except ValueError:
+//       logging.error("failed")                  ← TRY400
+//       self.logger.error("failed")              ← TRY400: the name looks like a logger
+//       logger.error("failed", exc_info=True)    not reported
+#include "python/exceptions.rr"
+//   exc_handler_log(x, c, level), exc_info_kw(c)
+
+.violation TRY400(at: node) code "TRY400"
+    "Call `exception(...)` instead of `error(...)` so the traceback of the handled exception is logged. Leave it if this object is not a logger or the traceback is intentionally omitted."
+    suppress ruff "TRY400"
+TRY400(c) :- exc_handler_log(_, c, "error"), !exc_info_kw(c).

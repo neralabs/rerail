@@ -1,0 +1,26 @@
+.policy "ruff-pyi020-quoted-annotation-in-stub" revision 2
+.description "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI020 (flake8-pyi), stubs only: a quoted type. Stubs resolve forward references, so quotes are never
+// needed. Every type context counts (annotations, `X: TypeAlias = …`, cast, TypeVar bounds, a generic's
+// arguments anywhere), but not `Literal["x"]` or `Annotated[T, "meta"]`'s metadata. A quote inside a quoted
+// annotation is reported too.
+//   def f(x: "int") -> list["str"]: ...     ← PYI020 twice
+//   x: Literal["a"]                          fine
+#include "python/typing.rr"
+
+.violation PYI020(at: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
+    suppress ruff "PYI020"
+PYI020(s) :- quoted(s), type_ctx(s), in_stub(s).
+// The parsed contents of a string annotation (`"list['int']"`): its quoted parts, at any depth.
+PYI020(q) :- quoted(s), type_ctx(s), in_stub(s), parsed_within(s, q), quoted(q).
+.decl quoted(s: node)  // a str literal, adjacent pieces counted once at the whole
+quoted(s) :- plain_str(s, _), !inside_concat(s).
+.decl inside_concat(s: node)
+inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
+.decl parsed_within(s: node, q: node)
+parsed_within(s, q) :- str_node(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
+parsed_within(s, q) :- parsed_within(s, p), quoted(p), parsed_within(p, q).

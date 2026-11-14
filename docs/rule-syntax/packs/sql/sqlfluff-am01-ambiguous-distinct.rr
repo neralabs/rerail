@@ -1,0 +1,14 @@
+.policy "sqlfluff-am01-ambiguous-distinct" revision 2
+.description "Avoid DISTINCT in a SQL SELECT that already has GROUP BY; the grouping already makes the rows unique."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AM01 (ambiguous.distinct). SELECT DISTINCT in a query that also has GROUP BY:
+//   select distinct a from b group by a          reported at DISTINCT
+//   select a from b group by a                   fine
+
+#include "sql/syntax.rr"
+
+.violation AM01(at: node) code "AM01" "Ambiguous use of 'DISTINCT' in a 'SELECT' statement with 'GROUP BY'."
+    suppress sqlfluff "AM01", "L021", "all", "ambiguous", "ambiguous.distinct", "core"
+AM01(k) :- block(_, s, f), child(s, k, _), kind(k, "keyword_distinct"), child(f, g, _), kind(g, "group_by").

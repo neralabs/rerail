@@ -1,0 +1,26 @@
+.policy "clippy-precedence" revision 4
+.description "Parenthesize arithmetic used as an operand of a shift or bitwise operator in Rust; the precedence is easy to misread."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   binary(e, op, l, r)   e is `l op r`;   arith_op, shift_op, bitwise_op   the operator classes
+
+// Clippy's precedence (complexity): arithmetic as an operand of a shift or a bitwise operator, with no
+// parentheses to show that it binds first. Reported at the outer expression.
+//   1 << 2 + 3   1 + 2 << 3   3 & 5 - 2   1 + 2 & 3 * 4        reported
+//   (1 << 2) + 3   1 << (2 + 3)   1 << 2 << 3   0x0F00 & 0x00F0 << 4   not reported (the last is
+//   precedence_bits': a shift under a bitwise operator)
+// And a method call on a closure with a return type, which applies to the closure, not its block:
+//   |x: W| -> _ { x }.clone()      reported           |x: W| { x }.clone()   not reported
+.violation precedence(at: node, msg: symbol) code "precedence" "{msg}"
+    suppress clippy "clippy::precedence", "clippy::all", "clippy::complexity", "warnings"
+precedence(e, m) :- binary(e, op, l, r), (shift_op(op), m = "Add parentheses around the arithmetic in this shift, e.g. (a + b) << c, to make the order explicit." ;
+    bitwise_op(op), m = "Add parentheses around the arithmetic in this bitwise expression, e.g. (a + b) & mask, to make the order explicit."),
+    (arith(l) ; arith(r)).
+precedence(c, "Wrap this closure in parentheses so it's clear the method call applies to the closure, not its body.") :-
+    kind(c, "call_expression"), field(c, "function", f), kind(f, "field_expression"), field(f, "value", k),
+    kind(k, "closure_expression"), field(k, "return_type", _).
+.decl arith(e: node)  // an arithmetic binary expression, not parenthesized
+arith(e) :- binary(e, op, _, _), arith_op(op).

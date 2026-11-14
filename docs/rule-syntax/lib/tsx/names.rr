@@ -1,0 +1,375 @@
+// tsx/names: TypeScript and JavaScript bindings, references and symbols across files.
+// Lexical scope after eslint-scope (var hoists to its function; let/const/class/function bind in their block;
+// values and types are separate namespaces). Cross-file: import specifiers resolve to documents, exports follow
+// `export … from` and `export *` chains. A bare package specifier stops at the package: "react-router-dom#Link".
+//
+// What a rule gets from this library (the "interface" section below):
+//   ref_site(r, site)     identifier r refers to the declaration at site, in this file
+//   sym_of(n, q)          identifier or member chain n denotes the exported symbol q, across files
+//   global_ref(r, x)      r names a global (window, process, …) that nothing in the file declares
+//   exports(m, x, q)      module m exports name x, which is symbol q
+//   jsx_tag_ref(r)        r is a component tag `<Row/>`, a value reference here (typescript-eslint's view; espree
+//                         makes none, so a rule following plain ESLint excludes these)
+//   spec_name(n, x)       an import or export list's name n reads x: `a`, or the value of a string `"a-b"`
+//   plus binding filters (site_used, site_only, …) that mirror ESLint's scope-manager questions.
+//
+// Symbols are written "module#name": "react#useState", "src/ui/button#Button". Two names in two files are the
+// same thing exactly when they have the same symbol, so cross-file rules join on that string.
+//
+// Builds on core only: kind/field/child/text from the tape, nearest/within for scopes, the tsconfig and file
+// readers for module resolution. No type checker: resolution is by name, following declarations and imports.
+//
+// Reading the code: a bare name in an atom is a variable, `_` matches anything, `!atom` is negation, and
+// `nearest(n, a, set)` is "a is the closest ancestor of n whose kind is in set" (set names a unary relation of kinds).
+
+// Scopes, as relations of node kinds (used as the `set` argument of nearest/within_stop).
+// fn_scope: where `var` declarations and parameters live. `var x` inside an `if` inside f belongs to f.
+.decl fn_scope(kind: symbol)
+fn_scope("program"). fn_scope("function_declaration"). fn_scope("function_expression").
+fn_scope("arrow_function"). fn_scope("method_definition").
+fn_scope("generator_function_declaration"). fn_scope("generator_function").
+// `class C { static { var a; } }`: a static block is a var scope of its own, as in eslint-scope.
+fn_scope("class_static_block").
+// block_scope: where let, const, class and function declarations live. `{ let x }` is invisible outside the braces;
+// `for (let i …)` binds i in the for statement; `catch (e)` binds e in the catch clause.
+.decl block_scope(kind: symbol)
+block_scope("program"). block_scope("statement_block"). block_scope("for_statement").
+block_scope("for_in_statement"). block_scope("catch_clause").
+block_scope("class_body"). block_scope("switch_body").
+// A class expression scopes its own name (below), heritage included: `(class D extends D {})` reads its own D.
+block_scope("class").
+
+// ---- declarations ------------------------------------------------------------------------------------------------
+// decl_site(scope, name, site, form, space): the site that declares name in scope; space is "value" or "type".
+// The site is the node a reference will be linked to: the declarator for variables, the declaration for functions
+// and classes, the identifier for parameters, the specifier for imports. form says which construct it was.
+// space exists because TypeScript keeps two namespaces: `type T = …` and `const T = …` can coexist, and
+// `let x: T` looks T up among types while `f(T)` looks it up among values.
+.decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol)
+// `var x = 1` anywhere in function f (even inside an if or a loop) declares x in f: var is function-scoped.
+decl_site(s, x, d, "var", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
+    text(n, x), child(v, d, _), kind(v, "variable_declaration"), nearest(d, s, fn_scope).
+// `let x` and `const x` (both are lexical_declaration) declare x in the innermost block. Form "let" covers const.
+decl_site(s, x, d, "let", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
+    text(n, x), child(v, d, _), kind(v, "lexical_declaration"), nearest(d, s, block_scope).
+// The declaration a declarator sits in is its parent: `var f = () => { let x }` declares x with let, not var.
+// `const { a, b: c } = obj` declares a and c where a plain `const a` would: the declaration's kind decides, var
+// in the function, let and const in the block.
+decl_site(s, x, p, "pattern", "value") :- pattern_name(p, x, d), child(v, d, _), kind(v, "variable_declaration"),
+    nearest(d, s, fn_scope).
+decl_site(s, x, p, "pattern", "value") :- pattern_name(p, x, d), child(v, d, _), kind(v, "lexical_declaration"),
+    nearest(d, s, block_scope).
+// `function f() {}` declares f in its enclosing block (ES2015 block-level functions, as eslint-scope models them).
+// It is hoisted within that block: a call above the declaration still resolves to it.
+decl_site(s, x, f, "function", "value") :- kind(f, "function_declaration"), field(f, "name", n), text(n, x),
+    nearest(f, s, block_scope).
+// `class C {}` declares C twice: as a value (the constructor, `new C()`) and as a type (`let c: C`).
+decl_site(s, x, c, "class", sp)     :- kind(c, "class_declaration"), field(c, "name", n), text(n, x),
+    nearest(c, s, block_scope), (sp = "value" ; sp = "type").
+// `const f = function g() { g(); }`: g is bound inside the function only (eslint-scope's function-expression-name
+// scope, which sits outside the parameters). A parameter or var named g in the function shadows it, so then there
+// is no row: both would declare g in the same scope here.
+decl_site(f, x, f, "function", "value") :- kind(f, k), (k = "function_expression" ; k = "generator_function"),
+    field(f, "name", n), text(n, x), !fn_own_name(f, x).
+// `const C = class D { m() { D } }`: D is bound inside the class only (its heritage and body), as eslint-scope's
+// class scope binds it.
+decl_site(c, x, c, "class", sp) :- kind(c, "class"), field(c, "name", n), text(n, x), (sp = "value" ; sp = "type").
+// fn_own_name(f, x): function f has a parameter or a var named x.
+.decl fn_own_name(f: node, x: symbol)
+fn_own_name(f, x) :- field(f, "parameters", ps), within(p, ps), nearest(p, f, fn_scope), param_name(p, x).
+fn_own_name(f, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x), child(v, d, _),
+    kind(v, "variable_declaration"), nearest(d, f, fn_scope).
+// `for (const x of xs)`, `for (let [k, v] in o)`: tree-sitter has no declarator here; the loop's "left" field is the
+// name or pattern, and the loop is its block scope. `for (var k in o)` declares k in the function. `for (k in o)`
+// with no keyword declares nothing: k is an assignment to an outer name. The site is the identifier, as for params.
+decl_site(l, x, n, "let", "value") :- for_binding(l, n, x), (op(l, "let") ; op(l, "const")).
+decl_site(s, x, n, "var", "value") :- for_binding(l, n, x), op(l, "var"), nearest(l, s, fn_scope).
+.decl for_binding(l: node, n: node, x: symbol)
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", n), kind(n, "identifier"), text(n, x).
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", pat), within(n, pat), bound_name(n, x),
+    nearest(n, f, fn_scope), nearest(l, f, fn_scope).
+// `type T = …` and `interface I {}` declare only in the type namespace; they vanish at runtime.
+decl_site(s, x, t, "type", "type")   :- kind(t, k), (k = "type_alias_declaration" ; k = "interface_declaration"),
+    field(t, "name", n), text(n, x), nearest(t, s, block_scope).
+// Parameters: in `function f(a, c = g(d), { e, h: [i] })` a, c, e and i are declared with the function itself as
+// scope. Default values (`g(d)`) and keys (`h`) are not: they are references, or no names at all. A name inside a
+// function nested in a default (`f(k = (j) => j)`) belongs to that function, hence nearest(p, f, fn_scope).
+decl_site(f, x, p, "param", "value") :- kind(f, k), fn_scope(k), field(f, "parameters", ps), within(p, ps),
+    nearest(p, f, fn_scope), param_name(p, x).
+// `x => x`: an arrow function's single bare parameter sits in its own field.
+decl_site(f, x, p, "param", "value") :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+// `catch (e)` and `catch ({ message })` declare in the catch clause, which is the block scope of its body's names.
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", par), within(p, par),
+    nearest(p, f, fn_scope), nearest(c, f, fn_scope), bound_name(p, x).
+// param_name(p, x): p binds x as a parameter: listed directly, the pattern of a TypeScript `a: T = v` parameter, or a
+// name a destructuring pattern or a default's left side binds (bound_name).
+.decl param_name(p: node, x: symbol)
+// tree-sitter writes `undefined` as a kind of its own, also where it is a parameter: `function f(undefined) {}`.
+param_name(p, x) :- param_id(p), text(p, x), child(ps, p, _), kind(ps, "formal_parameters").
+param_name(p, x) :- param_id(p), text(p, x), field(par, "pattern", p), kind(par, k),
+    (k = "required_parameter" ; k = "optional_parameter").
+.decl param_id(p: node)
+param_id(p) :- kind(p, "identifier") ; kind(p, "undefined").
+param_name(p, x) :- bound_name(p, x).
+// `import { a } from "m"` declares a for the whole file, in both namespaces: an import can bring in a value,
+// a type, or both, and without the other file we cannot tell which.
+decl_site(s, x, sp, "import", "value") :- import_binding(sp, x, _, _), nearest(sp, s, "program").
+decl_site(s, x, sp, "import", "type")  :- import_binding(sp, x, _, _), nearest(sp, s, "program").
+// pattern_name: in `const { a, b: [c] } = obj`, a and c are bound; b is a property key, not a binding.
+// a appears as shorthand_property_identifier_pattern, c as a plain identifier; keys sit in a "key" field.
+.decl pattern_name(p: node, x: symbol, d: node)  // a name bound by destructuring in declarator d
+pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), kind(pat, k),
+    (k = "object_pattern" ; k = "array_pattern"), within(p, pat), bound_name(p, x),
+    nearest(p, f, fn_scope), nearest(d, f, fn_scope).   // not a parameter of a function in a default
+// bound_name(p, x): p is a name in a binding position of a pattern: directly in an object or array pattern, a pair's
+// value, a default's left side or a rest. Keys and default values are not: in `{ a: b = c }` only b is bound, and in
+// `{ a = g(c) }` c's parent is no pattern node. (Callers rule out patterns in functions nested inside a default.)
+.decl bound_name(p: node, x: symbol)
+bound_name(p, x) :- kind(p, pk), (pk = "shorthand_property_identifier_pattern" ; pk = "identifier"), text(p, x),
+    child(par, p, _), kind(par, k), binding_parent(k), !field(par, "key", p), !field(par, "right", p).
+.decl binding_parent(kind: symbol)
+binding_parent("object_pattern"). binding_parent("array_pattern"). binding_parent("pair_pattern").
+binding_parent("object_assignment_pattern"). binding_parent("assignment_pattern"). binding_parent("rest_pattern").
+
+// ---- references --------------------------------------------------------------------------------------------------
+// ref(r, x, space): node r uses the name x and looks it up in namespace space.
+// In `const y = x + 1`: x is a value ref; y is not (it is the declared name). In `let v: Props`: Props is a type ref.
+.decl ref(r: node, x: symbol, space: symbol)
+// A plain identifier that is not itself being declared (not a parameter site, not the "name" of a declaration).
+ref(r, x, "value") :- kind(r, "identifier"), text(r, x), !decl_site(_, x, r, _, _), !field(_, "name", r),
+    !type_qualifier(r).
+// `foo.Foo` and `a.b.C` in a type: the leftmost name is a namespace, looked up among types, so a parameter or
+// variable `foo` (a value only) does not shadow an imported or declared namespace `foo`.
+ref(r, x, "type")  :- type_qualifier(r), text(r, x).
+.decl type_qualifier(r: node)
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", r), kind(r, "identifier").
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", m), kind(m, "nested_identifier"),
+    within(r, m), kind(r, "identifier"), !field(_, "property", r).
+// `undefined` is its own node kind, not an identifier; it is a reference to the global (or to a parameter or
+// variable a sloppy script names undefined) like any other name.
+ref(r, "undefined", "value") :- kind(r, "undefined"), !decl_site(_, _, r, _, _).
+// Type names in annotations: `x: Props`, `Array<Item>`. Not the T of `N.T`, a member of the namespace N.
+ref(r, x, "type")  :- kind(r, "type_identifier"), text(r, x), !qualified_name(r).
+.decl qualified_name(r: node)  // r is the member name of a qualified type `N.T` or `a.b.T`
+qualified_name(r) :- kind(q, "nested_type_identifier"), field(q, "name", r).
+// A JSX tag that names a component, `<Row/>` (not an intrinsic `<div/>`): the value Row. typescript-eslint's scope
+// manager references these; espree's eslint-scope references no JSX names at all, so a rule that follows plain
+// ESLint excludes jsx_tag_ref. Closing tags repeat the name and are no second reference; `<A.B/>` is a member
+// chain whose A is an ordinary identifier already.
+ref(r, x, "value") :- jsx_tag_ref(r), text(r, x).
+.decl jsx_tag_ref(r: node)
+jsx_tag_ref(r) :- kind(r, "identifier"), field(o, "name", r),
+    (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), !match("[a-z].*", r).
+// `{ a }` in an object literal reads the variable a: shorthand `{ a }` means `{ a: a }`.
+ref(r, x, "value") :- kind(r, "shorthand_property_identifier"), text(r, x).
+// `({ a } = obj)` assigns the variable a: a shorthand pattern that declares nothing is a (write) reference.
+ref(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, x), !decl_site(_, x, r, _, _).
+// Lookup: from the innermost scope outwards, to the first that declares the name in its namespace.
+// look(r, x, sp, s): scope s is on r's search path, and no scope nearer to r declared x. Each scope is reached
+// via nearest, so the climb is a chain of tape lookups, one step per enclosing scope.
+// Example: `let x; function f() { x }` starts at f's body block, finds no x, climbs to f, then to program: found.
+.decl look(r: node, x: symbol, sp: symbol, s: node)
+// lex_scope: every scope, block or function. The climb walks one chain through both kinds, innermost first, so
+// `function f(fs) { fs }` stops at f and `{ let fs; fs }` at the block: the outer `fs` is never reached.
+.decl lex_scope(kind: symbol)
+lex_scope(k) :- fn_scope(k) ; block_scope(k).
+// Start at the innermost scope around r.
+look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, lex_scope).
+// Step outwards only while the current scope does not declare x; so the inner declaration shadows outer ones.
+look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
+
+// ==== interface ===================================================================================================
+// ref_site(r, site): reference r resolves to declaration site. The lookup above stops at the first scope that
+// declares the name, and this joins that scope with its declaration.
+// In `import { Link } from "x"; <Link/>`, the use of Link has ref_site to the import specifier.
+.decl ref_site(r: node, site: node)
+ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
+// site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern" | "catch").
+// Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
+.decl site_form(site: node, form: symbol)
+site_form(d, f) :- decl_site(_, _, d, f, _).
+// binding_value(site, v): the initialiser of a variable. `const R = BrowserRouter` gives v = the BrowserRouter
+// identifier, so rules can see through simple aliases.
+.decl binding_value(site: node, v: node)
+binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "let", _).
+binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "var", _).
+// global_ref(r, "window"): r is a value reference with no declaration in the file, and the name is a known global
+// (from the environment tables in es_global). Undeclared names that are not globals match neither relation.
+.decl global_ref(r: node, x: symbol)  // a reference no file-local declaration binds, to a declared global
+global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
+
+// directive_global(d, "jQuery") for a file with `/* global jQuery */`: ESLint treats such names as declared.
+// No rules here: rows come from a native comment reader (comments are not on the syntax tape).
+.decl directive_global(d: number, x: symbol)  // names from `/* global */` comments (native comment reader)
+
+// ---- imports and exports -----------------------------------------------------------------------------------------
+// import_binding(site, local, source, imported): imported is "default", "*" or the exported name.
+// The forms, with the row each produces:
+//   import { a } from "m"           (spec, "a", "m", "a")
+//   import { a as b } from "m"      (spec, "b", "m", "a")        local name differs from the exported name
+//   import D from "m"               (clause, "D", "m", "default")
+//   import * as NS from "m"         (ns, "NS", "m", "*")         NS is the module object, see ns_target
+.decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
+import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), spec_name(n, x),
+    local_of(sp, l), source_of(sp, m).
+// spec_name(n, x): a name in an import or export list, an identifier or (ES2022) a string, `{ "a-b" as c }`,
+// read as its value.
+.decl spec_name(n: node, x: symbol)
+spec_name(n, x) :- (field(sp, "name", n) ; field(sp, "alias", n)), (kind(sp, "import_specifier") ;
+    kind(sp, "export_specifier")), (kind(n, "string"), str(n, x) ; !kind(n, "string"), text(n, x)).
+// Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
+import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
+    text(id, l), source_of(c, m).
+import_binding(ns, l, m, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), text(id, l), source_of(ns, m).
+// local_of: the name a specifier binds in this file: the alias if there is one (`a as b` binds b), else the name.
+.decl local_of(sp: node, l: symbol)
+local_of(sp, l) :- field(sp, "alias", a), text(a, l).
+local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l).
+// source_of: the module specifier string of the enclosing import statement, without quotes: "./util", "react".
+.decl source_of(n: node, m: symbol)
+source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
+
+// target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
+// Resolution, in the order TypeScript tries it:
+//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
+//   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
+//   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
+// So target(d, "./util", "src/util") and target(d, "react", "react").
+.decl target(d: number, spec: symbol, t: symbol)
+// Relative: `import "../c"` from src/a/b.ts joins to src/c, then tries src/c.ts, src/c.tsx, src/c/index.ts, ….
+target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
+    base = @join(@dir(p), s), resolve_base(base, t).
+// tsconfig paths: find the tsconfig governing the file, substitute the `*` of a matching pattern into its target.
+target(d, s, t) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
+    tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(dir, sub), t).
+// Bare package: neither relative nor matched by a paths pattern. The package is opaque (no node_modules reading),
+// so symbols from it are just "react#useState" and rules match on those names.
+target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !prefix(".", s), !path_mapped(d, s).
+// path_mapped(d, s): some tsconfig paths pattern for d's tsconfig matches s, so s is not a package name.
+// Needed as its own relation so the bare-package rule can negate it.
+.decl path_mapped(d: number, s: symbol)
+path_mapped(d, s) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
+    tsconfig_path(dir, pat, to), @glob_sub(pat, to, s) != "".
+// resolve_base(base, module): the first existing file among base's candidate names, as a module name.
+// TypeScript lets imports omit the extension and lets a directory stand for its index file.
+.decl resolve_base(base: symbol, t: symbol)  // base, base.ts, base.tsx, …, base/index.*
+// Read backwards from the files that exist: b is a file's path with one candidate ending removed.
+resolve_base(b, m) :- doc(_, f, m), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0,
+    b = substr(f, 0, k), f = cat(b, ext).
+.decl ts_ext(e: symbol)
+ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
+ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
+// import_spec(i, s): statement i names module s. Covers `import … from "s"` and `export … from "s"`, since a
+// re-export has to resolve its source the same way an import does.
+.decl import_spec(i: node, s: symbol)
+import_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
+
+// exports(m, x, q): module m exports x, which is symbol q.
+// Three ways a name gets exported, one rule each:
+//   export function f() {} / export const x = 1 / export default …  -> q is m's own symbol "m#f"
+//   export { y as x } from "./other"                               -> q is whatever ./other's y is
+//   export * from "./other"                                        -> every name ./other exports, except default
+// The last two recurse through exports, so a chain of barrel files (index.ts re-exporting index.ts …) resolves to
+// the module that really defines the name.
+.decl exports(m: symbol, x: symbol, q: symbol)
+exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), exported_decl(e, x).
+exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), export_from(e, s, y, x),
+    target(d, s, t), symbol(t, y, q).
+// `export *` never re-exports `default` (ECMAScript rule), hence x != "default".
+exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), star_export(e, s),
+    target(d, s, t), exports(t, x, q), x != "default".
+// exported_decl(e, x): the export statement e exports a local name x (no `from`).
+.decl exported_decl(e: node, x: symbol)  // export function f / export const x / export default
+// `export function f`, `export class C`, `export const x`: the name of the attached declaration.
+exported_decl(e, x) :- field(e, "declaration", d), def_of(d, x).
+// `export default <expression>`: exported under the name "default".
+exported_decl(e, "default") :- child(e, v, _), field(e, "value", v).
+// `export { a, b as c }` with no source: exports a and c.
+exported_decl(e, x) :- !field(e, "source", _), child(e, c, _), kind(c, "export_clause"), child(c, s, _),
+    kind(s, "export_specifier"), export_name(s, x).
+// def_of(d, x): the name declared by declaration d, for the declaration kinds that can follow `export`.
+.decl def_of(d: node, x: symbol)
+def_of(d, x) :- kind(d, k),
+    (k = "function_declaration" ; k = "class_declaration" ; k = "interface_declaration" ; k = "type_alias_declaration"),
+    field(d, "name", n), text(n, x).
+// `export const a = 1, b = 2` declares a and b: one row per declarator.
+def_of(d, x) :- kind(d, "lexical_declaration"), child(d, v, _), kind(v, "variable_declarator"), field(v, "name", n), text(n, x).
+// export_from(e, s, y, x): e re-exports s's name y under the name x.
+.decl export_from(e: node, s: symbol, y: symbol, x: symbol)  // export { y as x } from "s"
+export_from(e, s, y, x) :- field(e, "source", src), str(src, s), child(e, c, _), kind(c, "export_clause"),
+    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), spec_name(n, y), export_name(sp, x).
+// export_name: the name the outside world sees: the alias if present (`y as x` -> x), else the name itself.
+.decl export_name(sp: node, x: symbol)
+export_name(sp, x) :- field(sp, "alias", a), spec_name(a, x).
+export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, x).
+// star_export: an export statement with a source and no `{ … }` clause is `export * from "s"` (or `export * as
+// ns from "s"`). An import statement has a source too and is never one.
+.decl star_export(e: node, s: symbol)  // export * from "s"
+star_export(e, s) :- kind(e, "export_statement"), field(e, "source", src), str(src, s),
+    count : { child(e, c, _), kind(c, "export_clause") } = 0.
+
+// symbol(t, x, q): name x of resolved target t is symbol q.
+// Workspace module: follow its exports (possibly through re-exports to another file).
+// Not a workspace module (a package): stop and name it directly, "react-router-dom#Link".
+.decl symbol(t: symbol, x: symbol, q: symbol)  // what name x of target t is: followed in the workspace, opaque outside it
+symbol(t, x, q) :- exports(t, x, q).
+symbol(t, x, @qname(t, x)) :- symbol_query(t, x), !doc(_, _, t).
+// symbol_query(t, x): the (target, name) pairs asked about: re-exports, imports and namespace members. The rule
+// above needs them, since there t and x would otherwise appear only under `!`.
+.decl symbol_query(t: symbol, x: symbol)
+symbol_query(t, y) :- kind(e, "export_statement"), docof(e, d), export_from(e, s, y, _), target(d, s, t).
+symbol_query(t, x) :- import_binding(sp, _, s, x), x != "*", docof(sp, d), target(d, s, t).
+symbol_query(t, x) :- ns_target(o, t), field(n, "object", o), field(n, "property", p), text(p, x).
+
+// sym_of(n, q): an identifier or member chain denotes q.
+// The main relation rules use: `sym_of(tag, "react-router-dom#BrowserRouter")` matches the tag however the
+// router was imported, renamed or re-exported. Four cases:
+.decl sym_of(n: node, q: symbol)
+// 1. An imported name: `import { Link as L } from "./nav"; L` -> follow ./nav's export Link to its symbol.
+sym_of(n, q) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*",
+    docof(n, d), target(d, s, t), symbol(t, x, q).
+// 2. A member of a namespace import: `import * as RR from "react-router"; RR.Routes` -> "react-router#Routes".
+sym_of(n, q) :- kind(n, "member_expression"), field(n, "object", o), ns_target(o, t),
+    field(n, "property", p), text(p, x), symbol(t, x, q).
+// 3. A name declared at the top level of this file: `function App() {}; App` -> "src/app#App". This is the same
+// symbol other files get when they import App, so cross-file joins meet here.
+sym_of(n, @qname(m, x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d), doc(d, _, m).
+// 4. As 2, where the grammar calls the chain nested_identifier: type position (`RR.Props`), some JSX tag forms.
+sym_of(n, q) :- kind(n, "nested_identifier"), field(n, "object", o), ns_target(o, t),
+    field(n, "property", p), text(p, x), symbol(t, x, q).
+.decl ns_target(o: node, t: symbol)  // `import * as RR from "m"`: RR names module m
+ns_target(o, t) :- ref_site(o, sp), import_binding(sp, _, s, "*"), docof(o, d), target(d, s, t).
+// top_level(site, x): site declares x in the file's top scope, other than by import (imports are case 1).
+.decl top_level(site: node, x: symbol)
+top_level(site, x) :- decl_site(s, x, site, f, "value"), kind(s, "program"), f != "import".
+
+// Binding filters (rerail.policy/v1 `binding` keys, after ESLint's scope manager).
+// These answer the questions ESLint rules ask of a variable: where it occurs, whether it is used, whether it is
+// declared once. They exist so JSON rules with `binding` keys translate to one atom each.
+// site_occurrence(site, o): every node that mentions the variable: its declared name and each reference to it.
+.decl site_occurrence(site: node, o: node)  // a definition name or reference of the variable
+site_occurrence(d, o) :- decl_site(_, _, d, _, _), field(d, "name", o).
+site_occurrence(d, r) :- ref_site(r, d).
+// site_used: at least one reference resolves to the site (the opposite of "unused variable").
+.decl site_used(site: node)
+site_used(d) :- ref_site(_, d).
+// site_only: no other declaration of the same name in the same scope and namespace (`var x; var x;` fails it).
+.decl site_only(site: node)  // the variable's one declaration in its scope
+site_only(d) :- decl_site(s, x, d, _, sp), count : { decl_site(s, x, o, _, sp), o != d } = 0.
+// site_destructured_value: in `const { a } = obj`, a's value is obj.a: the declarator has an initialiser.
+.decl site_destructured_value(site: node)  // a destructured name carries its element's value
+site_destructured_value(p) :- pattern_name(p, _, d), field(d, "value", _).
+// global_directives(n, "eslint"): n's name is declared by a `/* global */` comment in its file, so ESLint
+// treats it as defined even though no code declares it.
+.decl global_directives(n: node, tool: symbol)  // `/* global a, b */` comments declare n's name
+global_directives(n, "eslint") :- ref(n, x, "value"), docof(n, d), directive_global(d, x).
+// imported_sym(n, q): like sym_of, restricted to names that reach their symbol through an import in this file.
+.decl imported_sym(n: node, q: symbol)
+imported_sym(n, q) :- sym_of(n, q), ref_site(n, sp), import_binding(sp, _, _, _).
+
+// es_global(x): names that exist without a declaration: "window", "document", "Promise", "process", ….
+// No rules here; the facts are generated and shipped with the library.
+.decl es_global(x: symbol)  // shipped as facts, generated from ESLint's and TypeScript's lib tables

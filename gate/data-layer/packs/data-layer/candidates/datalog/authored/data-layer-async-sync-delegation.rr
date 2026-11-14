@@ -1,0 +1,821 @@
+// data-layer-async-sync-delegation: every clause authored (the converter gaps all 13: the `^async\b` regex on
+// for/with, the sourceGate regex on the module's text, `budget`, and `compare` over captures and transforms).
+// Read from the policy (candidates/rules-ast/data-layer-async-sync-delegation.json) with W's semantics
+// (ast-grep-config: one environment, a relation binds from the FIRST related node that matches, no backtracking).
+//
+// Options from the converter's facts: sourceGate (default true) through `option_on("sourceGate")` (the gate below);
+// oracleAnalyzer (default false) is read by no clause.
+//
+// Shared readings of the policy's matchers:
+// - `syntax: valid`: !tape_syntax_error(d); the scope is the converter's in_scope/out_scope.
+// - `regex "^async\b"` on a function_definition / for_statement / with_statement: its `async` token, op(n, "async");
+//   `regex "^def\b"` on a function_definition: no `async` token.
+// - A regex on an identifier is a test on its text (`text`); `regex "_lazy$"` on an attribute is the same test on its
+//   `attribute` identifier (an attribute's text ends with it). Regexes on other nodes (types, return types, the
+//   module) read `node_text`, the node's full source text.
+// - "Real statements" of a block (the policy's `$_`, not a comment, not a docstring): its named children other than
+//   comments and the docstring, an expression_statement whose child is a string or concatenated_string of W's type
+//   str (`value: {type: str}`: `value_type_of(x, "str")`) and which is the block's first non-comment named child
+//   (`nthChild 1, ofRule not comment`; `child` holds no Python comments, so that is its first `child`). W's value of
+//   an f-string with a replacement field is Unknown, not false, and stays unknown under the policy's `not`; here it
+//   has no `value_type_of` row, so such a first statement counts as real (a three-valued verdict two-valued).
+// - `pattern $X` reusing a bound capture is W's text equality; it is read here as the same node (two functions of
+//   identical text in one class body are not told apart).
+// - `inside … stopBy <kind>` is the nearest enclosing node of that kind (`nearest`); `has … stopBy
+//   function_definition` is every descendant whose nearest enclosing function_definition is the node; `stopBy end`
+//   every descendant (`has`).
+// - A capture's text with white space removed (the policy's `replace \s by ""`) is `@replace_all(t, "\\s", "")`
+//   over its `node_text` (W's `replace` transform over the capture's source text).
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared (asd_: async-sync-delegation) -----------------------------------------------------------------------
+
+.decl asd_fdef(kind: symbol)
+asd_fdef("function_definition").
+.decl asd_class(kind: symbol)
+asd_class("class_definition").
+
+// The source gate, every clause's: the module (or, `inside … stopBy end`, a module around the node) matches the
+// option's regex. sourceGate true: `async\ def|_async|__aenter__|__aexit__|run_in_executor|to_thread|
+// tracked_run_in_executor|tracked_to_thread|legacy_async|legacy_module_async|pure_lazy|resolve_async` over the
+// module's text, a search for one of these literals; false: `(?s).*`, which every module matches.
+.decl asd_gate(d: number)
+asd_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s),
+    (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ;
+     contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ;
+     contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ;
+     contains("pure_lazy", s) ; contains("resolve_async", s)).
+asd_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
+
+// A document a clause reports in.
+.decl asd_doc(d: number, p: symbol)
+asd_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), asd_gate(d).
+
+// `filePath notRegex "(?:^|/)(?:tests|conform)/|(?:^|/)impl/browser/"`.
+.decl asd_test_path(p: symbol)
+asd_test_path(p) :- doc(_, p, _),
+    (prefix("tests/", p) ; prefix("conform/", p) ; prefix("impl/browser/", p) ;
+     contains("/tests/", p) ; contains("/conform/", p) ; contains("/impl/browser/", p)).
+
+// A function's name.
+.decl asd_fname(f: node, s: symbol)
+asd_fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, s).
+
+// A str literal.
+.decl asd_strlit(x: node)
+asd_strlit(x) :- node(_, x, "string", _, _), value_type_of(x, "str").
+asd_strlit(x) :- node(_, x, "concatenated_string", _, _), value_type_of(x, "str").
+
+// A named child of its parent before s (`child` has no comments: W's `ofRule not comment` counts none).
+.decl asd_noncomment_before(s: node)
+asd_noncomment_before(s) :- child(b, s, i), child(b, _, j), j < i.
+
+.decl asd_docstring(s: node)
+asd_docstring(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), asd_strlit(x), !asd_noncomment_before(s).
+
+// s is a real statement of b.
+.decl asd_real(b: node, s: node)
+asd_real(b, s) :- child(b, s, _), !node(_, s, "comment", _, _), !asd_docstring(s).
+
+.decl asd_real_count(b: node, k: number)
+asd_real_count(b, k) :- node(_, b, "block", _, _), k = count : { asd_real(b, _) }.
+
+// s is a real statement of f's body; f's body holds exactly k of them.
+.decl asd_body_real(f: node, s: node)
+asd_body_real(f, s) :- node(_, f, "function_definition", _, _), field(f, "body", b), asd_real(b, s).
+.decl asd_body_count(f: node, k: number)
+asd_body_count(f, k) :- node(_, f, "function_definition", _, _), field(f, "body", b), asd_real_count(b, k).
+
+// f is the definition of a decorated_definition with a decorator `@nm` / `@x.nm` (plain) or `@nm(…)` / `@x.nm(…)`
+// (call): the policy's decorator tests, `has stopBy neighbor` from the decorator.
+.decl asd_deco_expr(e: node, nm: symbol)
+asd_deco_expr(e, nm) :- node(_, e, "identifier", _, _), text(e, nm).
+asd_deco_expr(e, nm) :- node(_, e, "attribute", _, _), field(e, "attribute", a), node(_, a, "identifier", _, _), text(a, nm).
+.decl asd_deco_plain(f: node, nm: symbol)
+asd_deco_plain(f, nm) :- field(dd, "definition", f), node(_, dd, "decorated_definition", _, _),
+    child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), asd_deco_expr(e, nm).
+.decl asd_deco_call(f: node, nm: symbol)
+asd_deco_call(f, nm) :- field(dd, "definition", f), node(_, dd, "decorated_definition", _, _),
+    child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), node(_, e, "call", _, _),
+    field(e, "function", g), asd_deco_expr(g, nm).
+.decl asd_deco(f: node, nm: symbol)
+asd_deco(f, nm) :- asd_deco_plain(f, nm).
+asd_deco(f, nm) :- asd_deco_call(f, nm).
+
+// b5-common-3 (b5-common-2 is its negation): an abstract method or a stub body (one real statement: pass, `...`,
+// `raise NotImplementedError(…)`).
+.decl asd_stub(f: node)
+asd_stub(f) :- asd_deco(f, "abstractmethod").
+asd_stub(f) :- asd_body_count(f, 1), asd_body_real(f, s), asd_stub_stmt(s).
+.decl asd_stub_stmt(s: node)
+asd_stub_stmt(s) :- node(_, s, "pass_statement", _, _).
+asd_stub_stmt(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), node(_, x, "ellipsis", _, _).
+asd_stub_stmt(s) :- node(_, s, "raise_statement", _, _), child(s, c, _), node(_, c, "call", _, _),
+    field(c, "function", g), node(_, g, "identifier", _, _), text(g, "NotImplementedError").
+
+// A capture's text with white space removed: W's `replace` transform (`\s` by "") over the node's source text.
+.decl asd_compact(n: node, s: symbol)
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_thin(_, n), node_text(n, t).
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_lazy_thin(_, n), node_text(n, t).
+
+// Children in order without arithmetic in a recursion: the first, the next after x, the last.
+.decl asd_first_child(p: node, x: node)
+asd_first_child(p, x) :- child(p, x, 0).
+.decl asd_next_child(p: node, x: node, y: node)
+asd_next_child(p, x, y) :- child(p, x, i), j = i + 1, child(p, y, j).
+.decl asd_last_child(p: node, x: node)
+asd_last_child(p, x) :- child(p, x, i), !asd_has_child_after(p, i).
+.decl asd_has_child_after(p: node, i: number)
+asd_has_child_after(p, i) :- child(p, _, i), j = i + 1, child(p, _, j).
+
+// The nearest class of f, and that class's body block.
+.decl asd_class_of(f: node, c: node, bc: node)
+asd_class_of(f, c, bc) :- node(_, f, "function_definition", _, _), nearest(f, c, asd_class), field(c, "body", bc).
+
+// x is a direct child of a class body at i, and g its function_definition (x itself, or a decorated_definition's
+// definition).
+.decl asd_member(bc: node, i: number, g: node)
+asd_member(bc, i, g) :- child(bc, g, i), node(_, g, "function_definition", _, _).
+asd_member(bc, i, g) :- child(bc, x, i), node(_, x, "decorated_definition", _, _), field(x, "definition", g),
+    node(_, g, "function_definition", _, _).
+
+// A class at the top level: its parent is the module, or a decorated_definition whose parent is the module.
+.decl asd_top_class(c: node)
+asd_top_class(c) :- node(_, c, "class_definition", _, _), child(m, c, _), node(_, m, "module", _, _).
+asd_top_class(c) :- node(_, c, "class_definition", _, _), child(dd, c, _), node(_, dd, "decorated_definition", _, _),
+    child(m, dd, _), node(_, m, "module", _, _).
+
+// ---- sync-delegation (A) and no-await (B): b5-common-1 ----------------------------------------------------------
+// f is an `async def` (name nm) in a reported document at path p.
+.decl sync_delegation_fn(f: node, p: symbol, nm: symbol)
+sync_delegation_fn(f, p, nm) :- node(d, f, "function_definition", _, _), op(f, "async"), asd_doc(d, p), asd_fname(f, nm).
+
+// `has … stopBy function_definition`: n is below f, not below a nested function_definition.
+.decl sync_delegation_own(f: node, n: node)
+sync_delegation_own(f, n) :- sync_delegation_fn(f, _, _), nearest(n, f, asd_fdef).
+
+// An await, an `async for` or an `async with` of f's own.
+.decl sync_delegation_awaits(f: node)
+sync_delegation_awaits(f) :- sync_delegation_own(f, n), node(_, n, "await", _, _).
+sync_delegation_awaits(f) :- sync_delegation_own(f, n), node(_, n, "for_statement", _, _), op(n, "async").
+sync_delegation_awaits(f) :- sync_delegation_own(f, n), node(_, n, "with_statement", _, _), op(n, "async").
+
+// The body is no real statement, or stub setup ending in an unsupported raise (stub-setup, unsupported-raise).
+.decl sync_delegation_unsupported(s: node)
+sync_delegation_unsupported(s) :- node(_, s, "raise_statement", _, _), child(s, x, _), node(_, x, "identifier", _, _),
+    (text(x, "NotImplementedError") ; text(x, "RuntimeError")).
+sync_delegation_unsupported(s) :- node(_, s, "raise_statement", _, _), child(s, x, _), node(_, x, "call", _, _),
+    field(x, "function", g), node(_, g, "identifier", _, _), (text(g, "NotImplementedError") ; text(g, "RuntimeError")).
+
+// stub-setup (recursive through `if`).
+.decl sync_delegation_setup(s: node)
+sync_delegation_setup(s) :- node(_, s, "pass_statement", _, _).
+sync_delegation_setup(s) :- node(_, s, "delete_statement", _, _).
+sync_delegation_setup(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), node(_, x, "assignment", _, _).
+sync_delegation_setup(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), node(_, x, "ellipsis", _, _).
+// An if_statement whose consequence has a real statement, and none of whose direct block children (its
+// consequence; elif and else are clauses, not blocks) has a real statement that is neither setup nor an
+// unsupported raise. The `not has` of the recursion is written as a chain over the block's children ("every child
+// so far is fine"), which is positive.
+sync_delegation_setup(s) :- node(_, s, "if_statement", _, _), field(s, "consequence", b), asd_real(b, _),
+    sync_delegation_blk_ok(b).
+.decl sync_delegation_stmt_ok(x: node)
+sync_delegation_stmt_ok(x) :- child(b, x, _), node(_, b, "block", _, _), !asd_real(b, x).
+sync_delegation_stmt_ok(x) :- sync_delegation_setup(x).
+sync_delegation_stmt_ok(x) :- sync_delegation_unsupported(x).
+// blk_upto(b, x): x and every child of b before it are fine.
+.decl sync_delegation_blk_upto(b: node, x: node)
+sync_delegation_blk_upto(b, x) :- node(_, b, "block", _, _), asd_first_child(b, x), sync_delegation_stmt_ok(x).
+sync_delegation_blk_upto(b, y) :- sync_delegation_blk_upto(b, x), asd_next_child(b, x, y), sync_delegation_stmt_ok(y).
+.decl sync_delegation_blk_ok(b: node)
+sync_delegation_blk_ok(b) :- sync_delegation_blk_upto(b, x), asd_last_child(b, x).
+
+// A real statement follows s in its block.
+.decl sync_delegation_followed(s: node)
+sync_delegation_followed(s) :- child(b, s, i), asd_real(b, y), child(b, y, j), j > i.
+
+.decl sync_delegation_stub_body(f: node)
+sync_delegation_stub_body(f) :- sync_delegation_fn(f, _, _), asd_body_count(f, 0).
+sync_delegation_stub_body(f) :- sync_delegation_fn(f, _, _), field(f, "body", b), child(b, s, _),
+    sync_delegation_unsupported(s), !sync_delegation_followed(s), !sync_delegation_body_other(b).
+.decl sync_delegation_body_other(b: node)
+sync_delegation_body_other(b) :- asd_real(b, x), !sync_delegation_setup(x), !sync_delegation_unsupported(x).
+
+// _on_last_unsubscribe / start / stop whose body has only pass, assignments to local targets and static returns.
+.decl sync_delegation_toggle(f: node)
+sync_delegation_toggle(f) :- sync_delegation_fn(f, _, nm), (nm = "_on_last_unsubscribe" ; nm = "start" ; nm = "stop"),
+    field(f, "body", b), !sync_delegation_toggle_other(b).
+.decl sync_delegation_toggle_other(b: node)
+sync_delegation_toggle_other(b) :- asd_real(b, x), !sync_delegation_toggle_ok(x).
+.decl sync_delegation_toggle_ok(x: node)
+sync_delegation_toggle_ok(x) :- node(_, x, "pass_statement", _, _).
+sync_delegation_toggle_ok(x) :- node(_, x, "expression_statement", _, _), child(x, a, _), node(_, a, "assignment", _, _), field(a, "left", l), sync_delegation_local(l).
+sync_delegation_toggle_ok(x) :- node(_, x, "expression_statement", _, _), child(x, a, _), node(_, a, "augmented_assignment", _, _), field(a, "left", l), sync_delegation_local(l).
+sync_delegation_toggle_ok(x) :- node(_, x, "return_statement", _, _), !sync_delegation_return_dynamic(x).
+.decl sync_delegation_return_dynamic(x: node)
+sync_delegation_return_dynamic(x) :- node(_, x, "return_statement", _, _), child(x, v, _), !sync_delegation_static(v).
+
+// local-target: an identifier, `self.x`, or a pattern list every element of which is one (a chain over the
+// elements, as above).
+.decl sync_delegation_local(n: node)
+sync_delegation_local(n) :- node(_, n, "identifier", _, _).
+sync_delegation_local(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "self").
+sync_delegation_local(n) :- sync_delegation_plist(n), !child(n, _, _).
+sync_delegation_local(n) :- sync_delegation_plist(n), sync_delegation_local_upto(n, x), asd_last_child(n, x).
+.decl sync_delegation_plist(n: node)
+sync_delegation_plist(n) :- node(_, n, "pattern_list", _, _).
+sync_delegation_plist(n) :- node(_, n, "tuple_pattern", _, _).
+sync_delegation_plist(n) :- node(_, n, "list_pattern", _, _).
+.decl sync_delegation_local_upto(n: node, x: node)
+sync_delegation_local_upto(n, x) :- sync_delegation_plist(n), asd_first_child(n, x), sync_delegation_local(x).
+sync_delegation_local_upto(n, y) :- sync_delegation_local_upto(n, x), asd_next_child(n, x, y), sync_delegation_local(y).
+
+// static-return (`regex (?i)^[rub]*f` on a string: an f prefix); a tuple, list, set or dictionary every element
+// (entry) of which is static (a chain, as above).
+.decl sync_delegation_static(n: node)
+sync_delegation_static(n) :- node(_, n, "integer", _, _).
+sync_delegation_static(n) :- node(_, n, "float", _, _).
+sync_delegation_static(n) :- node(_, n, "true", _, _).
+sync_delegation_static(n) :- node(_, n, "false", _, _).
+sync_delegation_static(n) :- node(_, n, "none", _, _).
+sync_delegation_static(n) :- node(_, n, "ellipsis", _, _).
+sync_delegation_static(n) :- node(_, n, "identifier", _, _).
+sync_delegation_static(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p).
+sync_delegation_static(n) :- node(_, n, "concatenated_string", _, _), !sync_delegation_fpart(n).
+sync_delegation_static(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "self").
+sync_delegation_static(n) :- sync_delegation_coll(n), !child(n, _, _).
+sync_delegation_static(n) :- sync_delegation_coll(n), sync_delegation_static_upto(n, x), asd_last_child(n, x).
+.decl sync_delegation_fpart(n: node)
+sync_delegation_fpart(n) :- node(_, n, "concatenated_string", _, _), child(n, c, _), node(_, c, "string", _, _),
+    strprefix(c, p), contains("f", p).
+.decl sync_delegation_coll(n: node)
+sync_delegation_coll(n) :- node(_, n, "tuple", _, _).
+sync_delegation_coll(n) :- node(_, n, "list", _, _).
+sync_delegation_coll(n) :- node(_, n, "set", _, _).
+sync_delegation_coll(n) :- node(_, n, "dictionary", _, _).
+.decl sync_delegation_static_elem(x: node)
+sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "tuple", _, _), sync_delegation_static(x).
+sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "list", _, _), sync_delegation_static(x).
+sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "set", _, _), sync_delegation_static(x).
+sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "dictionary", _, _), node(_, x, "pair", _, _),
+    field(x, "key", a), sync_delegation_static(a), field(x, "value", b), sync_delegation_static(b).
+sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "dictionary", _, _), node(_, x, "dictionary_splat", _, _),
+    child(x, a, _), sync_delegation_static(a).
+.decl sync_delegation_static_upto(n: node, x: node)
+sync_delegation_static_upto(n, x) :- sync_delegation_coll(n), asd_first_child(n, x), sync_delegation_static_elem(x).
+sync_delegation_static_upto(n, y) :- sync_delegation_static_upto(n, x), asd_next_child(n, x, y), sync_delegation_static_elem(y).
+
+// A call to a `_lazy` function (identifier, or attribute whose attribute ends `_lazy`), and a safe call.
+.decl sync_delegation_lazy_call(c: node)
+sync_delegation_lazy_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, s), suffix("_lazy", s).
+sync_delegation_lazy_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _),
+    field(g, "attribute", a), text(a, s), suffix("_lazy", s).
+.decl sync_delegation_safe_call(c: node)
+sync_delegation_safe_call(c) :- sync_delegation_lazy_call(c).
+sync_delegation_safe_call(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _),
+    (text(g, "JSONResponse") ; text(g, "_attach_auto_api_hook_registry") ; text(g, "cast")).
+// f calls a `_lazy` function and nothing but lazy and safe calls (`has stopBy end`: nested functions too).
+.decl sync_delegation_lazy_only(f: node)
+sync_delegation_lazy_only(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), sync_delegation_lazy_call(c), !sync_delegation_eager(f).
+.decl sync_delegation_eager(f: node)
+sync_delegation_eager(f) :- sync_delegation_fn(f, _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _), !sync_delegation_safe_call(c).
+
+// b5-common-5: the exempt paths and names.
+.decl sync_delegation_exempt(f: node)
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/tests/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("tests/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/conform/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("conform/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("__", nm), suffix("__", nm).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/browser/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/browser/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l1500_llm/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l1500_llm/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("async_executor.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("async_executor.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("connection.py", p), contains("/l2000_connection/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("connection.py", p), contains("/l2000_connection/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("schema_transaction.py", p), contains("/l2000_connection/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("schema_transaction.py", p), contains("/l2000_connection/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("transaction.py", p), contains("/l2050_transaction/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("transaction.py", p), contains("/l2050_transaction/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("backend_operations.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("backend_operations.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l2060_query_builder/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l2060_query_builder/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l4000_permissions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l4000_permissions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l4200_event_pipeline/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l4200_event_pipeline/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("l4170_inbound_bridge/process.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("l4170_inbound_bridge/process.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("l4170_inbound_bridge/handler.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("l4170_inbound_bridge/handler.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l2090_response/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l2070_batching/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l2090_response/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l2070_batching/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), suffix("l2200_notification/notification_channel.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), suffix("l2200_notification/notification_channel.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l2080_lazy_orm/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l2080_lazy_orm/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l5100_fts/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l5100_fts/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l7000_versioned_schema/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l7200_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l7000_versioned_schema/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l7200_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l9700_graph_query/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/api/", p), contains("/l9750_graphql/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l9700_graph_query/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("api/", p), contains("/l9750_graphql/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l7245_versioned_backends/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l7245_versioned_backends/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l7125_versioned_txn_side_effects/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l7125_versioned_txn_side_effects/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l7248_sparse_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l7248_sparse_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l7300_sql_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l7300_sql_versioned_transactions/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l2200_sql_dialect/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l2200_sql_dialect/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l2070_server_plan/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l2070_server_plan/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l1550_llm_providers/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l1570_llm_client/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l1550_llm_providers/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l1570_llm_client/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l1590_llm_test_fixtures/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l1590_llm_test_fixtures/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l8000_admin/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l8000_admin/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l8000_managed/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l8000_managed/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l2550_storage_backend/backend.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/l1595_llm_cache/storage_backends.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l2550_storage_backend/backend.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/l1595_llm_cache/storage_backends.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/read_through/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/read_through/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/mongodb/schema_mixin.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/neo4j/schema_mixin.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/mongodb/schema_mixin.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/neo4j/schema_mixin.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), suffix("transaction.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), suffix("transaction.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), suffix("connection.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), suffix("connection.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("versioned_read_transaction", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("versioned_write_transaction", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("versioned_read_transaction", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("versioned_write_transaction", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("versioned_transaction_sparse", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("versioned_transaction_sparse", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), suffix("query.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), suffix("query.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), suffix("backend_operations.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), suffix("backend_operations.py", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("/fts/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("/fts/", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("graph_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("graph_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("versioned_write_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("versioned_write_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), contains("/impl/", p), contains("versioned_read_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), prefix("impl/", p), contains("versioned_read_query", p).
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), (nm = "versioned_read_async" ; nm = "versioned_write_async" ; nm = "_check_task_affinity").
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l2550_storage_backend/azure_backend.py", p), nm = "get_stats_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l2550_storage_backend/s3_backend.py", p), nm = "get_stats_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l7300_cross_branch/permission_expression_compiler.py", p), nm = "_needs_permission_where_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l7300_cross_branch/permission_expression_compiler.py", p), nm = "compile_permission_where_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l7350_revision_graph/revision_graph.py", p), nm = "has_any_parent_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/l1595_llm_cache/cache_manager.py", p), nm = "get_stats_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/l1595_llm_cache/proxy_server.py", p), nm = "_get_client".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/l1595_llm_cache/proxy_server.py", p), nm = "clear_cache".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/l1595_llm_cache/write_back_queue.py", p), nm = "start".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l1500_llm/provider.py", p), nm = "cancel_completion_batch".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l1500_llm/provider.py", p), nm = "close".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l1500_llm/provider.py", p), nm = "get_completion_batch".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l1500_llm/provider.py", p), nm = "list_models".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l1500_llm/watchers.py", p), nm = "start_async_processing".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/connection.py", p), nm = "_read_storage_chunk_manifest_rows_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/connection.py", p), nm = "_set_statement_timeout_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/connection.py", p), nm = "close_async_driver_connection".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/connection_provider.py", p), nm = "_acquire_async_context_impl".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/schema_transaction.py", p), nm = "_enter_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/schema_transaction.py", p), nm = "_exit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2000_connection/schema_transaction.py", p), nm = "execute_ddl_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2050_transaction/transaction.py", p), nm = "cancel_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2070_batching/executor.py", p), nm = "_run_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2070_batching/server_plan.py", p), nm = "_enter_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2070_batching/server_plan.py", p), nm = "_exit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2080_lazy_orm/lazy_row.py", p), nm = "update_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2200_notification/polling_channel.py", p), nm = "_do_subscribe".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2200_notification/polling_channel.py", p), nm = "_do_unsubscribe".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4000_permissions/permission_scheme.py", p), nm = "check_permission_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4000_permissions/rbac_permission_lookup.py", p), nm = "_async_empty_dict_row_list".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4100_queue/insert_auth.py", p), nm = "activate_queue_insert_token_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4100_queue/insert_auth.py", p), nm = "revoke_queue_insert_authorization_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "count".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "delete_by_id".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "enqueue_message".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "execute".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "execute_one".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "insert".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "invoke_handler".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "select_one".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4170_inbound_bridge/process.py", p), nm = "update".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/bridges/hook_generator.py", p), nm = "start".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/bridges/hook_generator.py", p), nm = "stop".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/bridges/subscription_generator.py", p), nm = "start".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/bridges/subscription_generator.py", p), nm = "stop".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/dispatcher.py", p), nm = "_dispatch_event".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4200_event_pipeline/persistent_metrics.py", p), nm = "start".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4300_ipc/handlers.py", p), nm = "handle_force_gc".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4300_ipc/handlers.py", p), nm = "handle_get_metrics".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4300_ipc/handlers.py", p), nm = "handle_get_server_info".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l4300_ipc/handlers.py", p), nm = "handle_ping".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l5000_subscriptions/dispatcher.py", p), nm = "dispatch_graph_event_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l5200_vector_index/embedding_auto_queue.py", p), nm = "_enqueue_embedding_auto_queue_for_row_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l5200_vector_index/embedding_auto_queue.py", p), nm = "_enqueue_embedding_auto_queue_for_rows_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l7000_versioned_schema/versioned_connection.py", p), nm = "_drain_pending_versioned_fts_rebuilds_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l7200_versioned_transactions/versioned_transactions.py", p), nm = "_cleanup_versioned_context_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l9750_graphql/executor.py", p), nm = "_execute_graphql_subscription".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l9900_auto_api/exception_handlers.py", p), nm = "_handle_auto_api_response_error".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l9900_auto_api/exception_handlers.py", p), nm = "_handle_db_permission_error".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l9900_auto_api/exception_handlers.py", p), nm = "_handle_security_error".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l9900_auto_api/rest_router.py", p), nm = "rest_type_catalog_properties".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("logged_table.py", p), nm = "_create_triggers_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("scripts/benchmark_auto_api_batch_refs.py", p), nm = "connection_disposer".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("scripts/benchmark_auto_api_batch_refs.py", p), nm = "connection_factory".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/common/l8000_managed/permission/audit.py", p), nm = "cleanup_old_entries_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/backend_operations.py", p), nm = "create_staged_commit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/connection.py", p), nm = "close_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/transaction.py", p), nm = "commit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/transaction.py", p), nm = "rollback_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/versioned_read_transaction_sparse.py", p), nm = "find_object_branches_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/versioned_read_transaction_sparse.py", p), nm = "find_object_revisions_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/versioned_read_transaction_sparse.py", p), nm = "get_history_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/versioned_read_transaction_sparse.py", p), nm = "select_at_revision_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/mongodb/versioned_read_transaction_sparse.py", p), nm = "select_one_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/backend_operations.py", p), nm = "create_staged_commit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/query.py", p), nm = "delete_all_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/query.py", p), nm = "delete_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/transaction.py", p), nm = "commit_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/transaction.py", p), nm = "rollback_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/versioned_read_transaction_sparse.py", p), nm = "find_object_branches_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/versioned_read_transaction_sparse.py", p), nm = "find_object_revisions_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/versioned_read_transaction_sparse.py", p), nm = "get_history_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/versioned_read_transaction_sparse.py", p), nm = "select_at_revision_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("impl/neo4j/versioned_read_transaction_sparse.py", p), nm = "select_one_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "delete_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "exists_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "get_metadata_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "get_stats_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "iter_content_hashes_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "retrieve_async".
+sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage_backend/memory_backend.py", p), nm = "store_async".
+
+// b5-common-1: an async def with no await of its own, not a stub, not a stub body, not a lifecycle toggle, not
+// lazy-only, not a @legacy_async / @legacy_module_async wrapper, not exempt.
+.decl sync_delegation_core(f: node, p: symbol, nm: symbol)
+sync_delegation_core(f, p, nm) :- sync_delegation_fn(f, p, nm), !sync_delegation_awaits(f), !asd_stub(f),
+    !sync_delegation_stub_body(f), !sync_delegation_toggle(f), !sync_delegation_lazy_only(f),
+    !asd_deco(f, "legacy_async"), !asd_deco(f, "legacy_module_async"), !sync_delegation_exempt(f).
+
+// Its name ends `_async`, and it calls (of its own) the name less `_async`: an identifier, or an attribute's
+// attribute (SYNC_CALL eq SYNC_BASE, SYNC_BASE = ASYNC_NAME with `_async$` removed).
+.decl sync_delegation_delegates(f: node)
+sync_delegation_delegates(f) :- sync_delegation_core(f, _, nm), suffix("_async", nm), sync_delegation_own(f, c),
+    node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, s), nm = cat(s, "_async").
+sync_delegation_delegates(f) :- sync_delegation_core(f, _, nm), suffix("_async", nm), sync_delegation_own(f, c),
+    node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a),
+    text(a, s), nm = cat(s, "_async").
+
+violation("data-layer-async-sync-delegation", "sync-delegation", "A", p, l) :- sync_delegation_delegates(f), sync_delegation_core(f, p, _), line(f, l).
+violation("data-layer-async-sync-delegation", "no-await", "B", p, l) :- sync_delegation_core(f, p, _), !sync_delegation_delegates(f), line(f, l).
+
+// ---- wrapper-shape (C) ------------------------------------------------------------------------------------------
+// Pairs: f (ASYNC_FN) in its nearest class c, s (SYNC_FN) the FIRST member of c's body (a function, or a decorated
+// one's definition) named PAIR_BASE, as the first `inside` binds it.
+// dunder: f named __aenter__ / __aexit__, PAIR_BASE __enter__ / __exit__.
+.decl wrapper_shape_base(f: node, base: symbol)
+wrapper_shape_base(f, "__enter__") :- asd_fname(f, "__aenter__").
+wrapper_shape_base(f, "__exit__") :- asd_fname(f, "__aexit__").
+// public: f named <base>_async, not starting with `_`.
+.decl wrapper_shape_pub_base(f: node, base: symbol)
+wrapper_shape_pub_base(f, b) :- asd_fname(f, nm), suffix("_async", nm), !prefix("_", nm), k = strlen(nm) - 6, b = substr(nm, 0, k).
+
+.decl wrapper_shape_cand(f: node, kind: symbol, c: node, i: number, s: node)
+wrapper_shape_cand(f, "dunder", c, i, s) :- wrapper_shape_base(f, b), asd_class_of(f, c, bc), asd_member(bc, i, s), asd_fname(s, b).
+wrapper_shape_cand(f, "public", c, i, s) :- wrapper_shape_pub_base(f, b), asd_class_of(f, c, bc), asd_member(bc, i, s), asd_fname(s, b).
+.decl wrapper_shape_pair(f: node, kind: symbol, c: node, s: node)
+wrapper_shape_pair(f, k, c, s) :- wrapper_shape_cand(f, k, c, i, s), i = min j : { wrapper_shape_cand(f, k, c, j, _) }.
+
+// The pair's document is reported in, and not a test path.
+.decl wrapper_shape_doc(f: node, p: symbol)
+wrapper_shape_doc(f, p) :- node(d, f, "function_definition", _, _), asd_doc(d, p), !asd_test_path(p).
+
+// thin (b5-common-10): a `def` whose body is one real statement, a return or expression statement whose child is a
+// call of h (an identifier or attribute), or an `async def` whose one statement awaits such a call. (The policy's
+// legacy-boundary alternative binds the same h: the boundary call's own function.)
+.decl wrapper_shape_call_of(x: node, h: node)
+wrapper_shape_call_of(x, h) :- node(_, x, "call", _, _), field(x, "function", h), node(_, h, "identifier", _, _).
+wrapper_shape_call_of(x, h) :- node(_, x, "call", _, _), field(x, "function", h), node(_, h, "attribute", _, _).
+.decl wrapper_shape_stmt(s: node)
+wrapper_shape_stmt(s) :- node(_, s, "return_statement", _, _).
+wrapper_shape_stmt(s) :- node(_, s, "expression_statement", _, _).
+.decl wrapper_shape_thin(f: node, h: node)
+wrapper_shape_thin(f, h) :- node(_, f, "function_definition", _, _), !op(f, "async"), asd_body_count(f, 1), asd_body_real(f, s),
+    wrapper_shape_stmt(s), child(s, x, _), wrapper_shape_call_of(x, h).
+wrapper_shape_thin(f, h) :- node(_, f, "function_definition", _, _), op(f, "async"), asd_body_count(f, 1), asd_body_real(f, s),
+    wrapper_shape_stmt(s), child(s, w, _), node(_, w, "await", _, _), child(w, x, _), wrapper_shape_call_of(x, h).
+.decl wrapper_shape_is_thin(f: node)
+wrapper_shape_is_thin(f) :- wrapper_shape_thin(f, _).
+// The helper family: its text without white space, less `_async` / `_sync` at the end.
+.decl wrapper_shape_family(f: node, fam: symbol)
+wrapper_shape_family(f, fam) :- wrapper_shape_thin(f, h), asd_compact(h, s), suffix("_async", s), k = strlen(s) - 6, fam = substr(s, 0, k).
+wrapper_shape_family(f, fam) :- wrapper_shape_thin(f, h), asd_compact(h, s), suffix("_sync", s), k = strlen(s) - 5, fam = substr(s, 0, k).
+wrapper_shape_family(f, s) :- wrapper_shape_thin(f, h), asd_compact(h, s), !suffix("_async", s), !suffix("_sync", s).
+
+// Parameters (b5-common-52, b5-common-55): a callback parameter, a transaction parameter.
+.decl wrapper_shape_param(f: node, x: node)
+wrapper_shape_param(f, x) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, x, _).
+.decl wrapper_shape_callback(f: node)
+wrapper_shape_callback(f) :- wrapper_shape_param(f, x), node(_, x, "identifier", _, _), (text(x, "callback") ; text(x, "fn")).
+wrapper_shape_callback(f) :- wrapper_shape_param(f, x), node(_, x, "typed_parameter", _, _),
+    child(x, y, _), node(_, y, "identifier", _, _), (text(y, "callback") ; text(y, "fn")).
+wrapper_shape_callback(f) :- wrapper_shape_param(f, x), node(_, x, "typed_default_parameter", _, _),
+    child(x, y, _), node(_, y, "identifier", _, _), (text(y, "callback") ; text(y, "fn")).
+wrapper_shape_callback(f) :- wrapper_shape_param(f, x), node(_, x, "typed_parameter", _, _),
+    field(x, "type", t), node_text(t, s), contains("Callable", s).
+wrapper_shape_callback(f) :- wrapper_shape_param(f, x), node(_, x, "typed_default_parameter", _, _),
+    field(x, "type", t), node_text(t, s), contains("Callable", s).
+.decl wrapper_shape_txn(f: node)
+wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "identifier", _, _),
+    (text(x, "base_txn") ; text(x, "read_txn") ; text(x, "tx") ; text(x, "txn") ; text(x, "vtxn") ; text(x, "write_txn")).
+wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "typed_parameter", _, _),
+    field(x, "type", t), node_text(t, s), contains("Transaction", s).
+wrapper_shape_txn(f) :- wrapper_shape_param(f, x), node(_, x, "typed_default_parameter", _, _),
+    field(x, "type", t), node_text(t, s), contains("Transaction", s).
+
+// A call `x._raise_async_not_supported(…)` anywhere below f (`has stopBy end`, nested functions included).
+.decl wrapper_shape_unsupported(f: node)
+wrapper_shape_unsupported(f) :- node(_, f, "function_definition", _, _), inside(c, f, asd_fdef), node(_, c, "call", _, _),
+    field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), node(_, a, "identifier", _, _),
+    text(a, "_raise_async_not_supported").
+
+// b5-common-46: a public callback pair.
+.decl wrapper_shape_cb(f: node, s: node)
+wrapper_shape_cb(f, s) :- wrapper_shape_pair(f, "public", _, s), wrapper_shape_doc(f, _), !asd_stub(f), !asd_stub(s),
+    wrapper_shape_callback(f), !asd_deco(f, "legacy_async"), !asd_deco(s, "legacy_sync"),
+    !wrapper_shape_unsupported(f), !wrapper_shape_unsupported(s).
+wrapper_shape_cb(f, s) :- wrapper_shape_pair(f, "public", _, s), wrapper_shape_doc(f, _), !asd_stub(f), !asd_stub(s),
+    wrapper_shape_callback(s), !asd_deco(f, "legacy_async"), !asd_deco(s, "legacy_sync"),
+    !wrapper_shape_unsupported(f), !wrapper_shape_unsupported(s).
+
+// Dunder pairs and callback pairs: the sync side is not thin; or it is and the async side is not; or both are and
+// their helper families differ.
+.decl wrapper_shape_shape(f: node, s: node)
+wrapper_shape_shape(f, s) :- wrapper_shape_pair(f, "dunder", _, s), wrapper_shape_doc(f, _).
+wrapper_shape_shape(f, s) :- wrapper_shape_cb(f, s).
+.decl wrapper_shape_bad(f: node)
+wrapper_shape_bad(f) :- wrapper_shape_shape(f, s), !wrapper_shape_is_thin(s).
+wrapper_shape_bad(f) :- wrapper_shape_shape(f, s), wrapper_shape_is_thin(s), !wrapper_shape_is_thin(f).
+wrapper_shape_bad(f) :- wrapper_shape_shape(f, s), wrapper_shape_family(s, a), wrapper_shape_family(f, b), a != b.
+
+// b5-common-55: a public transaction pair with a `<base>_lazy` sibling, neither side a callback.
+.decl wrapper_shape_lazy_sibling(c: node, nm: symbol, g: node)
+wrapper_shape_lazy_sibling(c, nm, g) :- wrapper_shape_pair(f, "public", c, _), wrapper_shape_pub_base(f, b), nm = cat(b, "_lazy"),
+    field(c, "body", bc), asd_member(bc, _, g), asd_fname(g, nm).
+.decl wrapper_shape_tx(f: node, c: node, s: node)
+wrapper_shape_tx(f, c, s) :- wrapper_shape_pair(f, "public", c, s), wrapper_shape_doc(f, _), !wrapper_shape_callback(f),
+    !wrapper_shape_callback(s), !asd_stub(f), !asd_stub(s), wrapper_shape_txn(f), wrapper_shape_has_lazy(f), !wrapper_shape_legacy_triple(f).
+wrapper_shape_tx(f, c, s) :- wrapper_shape_pair(f, "public", c, s), wrapper_shape_doc(f, _), !wrapper_shape_callback(f),
+    !wrapper_shape_callback(s), !asd_stub(f), !asd_stub(s), wrapper_shape_txn(s), wrapper_shape_has_lazy(f), !wrapper_shape_legacy_triple(f).
+.decl wrapper_shape_has_lazy(f: node)
+wrapper_shape_has_lazy(f) :- wrapper_shape_pair(f, "public", c, _), wrapper_shape_pub_base(f, b), nm = cat(b, "_lazy"), wrapper_shape_lazy_sibling(c, nm, _).
+// b5-common-57: @legacy_async f, @legacy_sync s, and a lazy surface among the `<base>_lazy` members (b5-common-61/62).
+.decl wrapper_shape_legacy_triple(f: node)
+wrapper_shape_legacy_triple(f) :- wrapper_shape_pair(f, "public", c, s), asd_deco(f, "legacy_async"), asd_deco(s, "legacy_sync"),
+    wrapper_shape_pub_base(f, b), nm = cat(b, "_lazy"), wrapper_shape_lazy_sibling(c, nm, g), wrapper_shape_lazy_surface(g).
+.decl wrapper_shape_lazy_surface(g: node)
+// A @lazy / @pure_lazy definition with no return type, or one naming LazyResult, LazySeq or ServerPlan.
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), (asd_deco(g, "lazy") ; asd_deco(g, "pure_lazy")), !field(g, "return_type", _).
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, _, g), (asd_deco(g, "lazy") ; asd_deco(g, "pure_lazy")), field(g, "return_type", t),
+    node_text(t, x), (contains("LazyResult", x) ; contains("LazySeq", x) ; contains("ServerPlan", x)).
+// A `…_lazy` definition returning LazyResult that calls a grammar_*_lazy builder.
+wrapper_shape_lazy_surface(g) :- wrapper_shape_lazy_sibling(_, nm, g), suffix("_lazy", nm), field(g, "return_type", t),
+    node_text(t, x), contains("LazyResult", x), inside(c, g, asd_fdef), node(_, c, "call", _, _), field(c, "function", h),
+    node(_, h, "identifier", _, _),
+    (text(h, "grammar_effect_lazy") ; text(h, "grammar_row_lazy") ; text(h, "grammar_rows_lazy") ; text(h, "grammar_value_lazy")).
+
+// lazy-thin (b5-common-64, -101): resolving a `…_lazy(…)` plan, z the `_lazy` function (SYNC_LAZY / ASYNC_LAZY).
+// x resolves z (b5-common-71 for a def, -87 for an async def).
+.decl wrapper_shape_lazy_fn(c: node, z: node)
+wrapper_shape_lazy_fn(c, z) :- node(_, c, "call", _, _), field(c, "function", z), node(_, z, "identifier", _, _), text(z, s), suffix("_lazy", s).
+wrapper_shape_lazy_fn(c, z) :- node(_, c, "call", _, _), field(c, "function", z), node(_, z, "attribute", _, _),
+    field(z, "attribute", a), text(a, s), suffix("_lazy", s).
+// `<lazy call>.resolve` (or resolve_async) as an attribute node r.
+.decl wrapper_shape_resolve_attr(r: node, m: symbol, z: node)
+wrapper_shape_resolve_attr(r, m, z) :- node(_, r, "attribute", _, _), field(r, "attribute", a), node(_, a, "identifier", _, _), text(a, m),
+    (m = "resolve" ; m = "resolve_async"), field(r, "object", o), wrapper_shape_lazy_fn(o, z).
+.decl wrapper_shape_resolves(mode: symbol, x: node, z: node)
+wrapper_shape_resolves("sync", x, z) :- node(_, x, "call", _, _), field(x, "function", r), wrapper_shape_resolve_attr(r, "resolve", z).
+wrapper_shape_resolves("async", x, z) :- node(_, x, "call", _, _), field(x, "function", r), wrapper_shape_resolve_attr(r, "resolve_async", z).
+wrapper_shape_resolves("sync", x, z) :- wrapper_shape_named_call(x, "run_in_legacy_execution_boundary", args), child(args, r, _),
+    wrapper_shape_resolve_attr(r, "resolve", z).
+wrapper_shape_resolves("async", x, z) :- wrapper_shape_named_call(x, "run_in_legacy_execution_boundary_async", args), child(args, r, _),
+    wrapper_shape_resolve_attr(r, "resolve_async", z).
+// `_resolve_legacy_result_sync(… lambda: z(…) …)`: the first such lambda below the arguments (`has stopBy end`).
+wrapper_shape_resolves(mode, x, z) :- wrapper_shape_legacy_lambda(mode, x, st, z), st = min t : { wrapper_shape_legacy_lambda(mode, x, t, _) }.
+.decl wrapper_shape_legacy_lambda(mode: symbol, x: node, start: number, z: node)
+wrapper_shape_legacy_lambda("sync", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_sync", args),
+    inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+wrapper_shape_legacy_lambda("async", x, st, z) :- wrapper_shape_named_call(x, "_resolve_legacy_result_async", args),
+    inside(lam, args, wrapper_shape_argk), node(_, lam, "lambda", st, _), field(lam, "body", bd), wrapper_shape_lazy_fn(bd, z).
+.decl wrapper_shape_argk(kind: symbol)
+wrapper_shape_argk("argument_list").
+.decl wrapper_shape_named_call(x: node, fnm: symbol, args: node)
+wrapper_shape_named_call(x, fnm, args) :- node(_, x, "call", _, _), field(x, "function", g), node(_, g, "identifier", _, _), text(g, fnm),
+    field(x, "arguments", args).
+
+// A statement resolving z: a return / expression statement whose child resolves it (def), or awaits a call that
+// does (async def).
+.decl wrapper_shape_resolving(mode: symbol, s: node, z: node)
+wrapper_shape_resolving("sync", s, z) :- wrapper_shape_stmt(s), child(s, x, _), wrapper_shape_resolves("sync", x, z).
+wrapper_shape_resolving("async", s, z) :- wrapper_shape_stmt(s), child(s, w, _), node(_, w, "await", _, _), child(w, x, _),
+    wrapper_shape_resolves("async", x, z).
+.decl wrapper_shape_mode(f: node, mode: symbol)
+wrapper_shape_mode(f, "sync") :- node(_, f, "function_definition", _, _), !op(f, "async").
+wrapper_shape_mode(f, "async") :- node(_, f, "function_definition", _, _), op(f, "async").
+
+.decl wrapper_shape_lazy_thin(f: node, z: node)
+// One real statement resolving it.
+wrapper_shape_lazy_thin(f, z) :- wrapper_shape_mode(f, md), asd_body_count(f, 1), asd_body_real(f, s), wrapper_shape_resolving(md, s, z).
+// One real statement, a try with no else or finally whose body is one real statement and has a statement resolving
+// it. (The policy's test of each except clause's `body` field is vacuous: except_clause has no `body` field in
+// tree-sitter-python, so `not has except_clause…` always holds in W.)
+wrapper_shape_lazy_thin(f, z) :- wrapper_shape_mode(f, md), asd_body_count(f, 1), asd_body_real(f, s), node(_, s, "try_statement", _, _),
+    !wrapper_shape_try_tail(s), field(s, "body", tb), asd_real_count(tb, 1), child(tb, y, _), wrapper_shape_resolving(md, y, z).
+// Two real statements, one resolving it followed (later, any distance) by an expression statement calling an
+// identifier or attribute.
+wrapper_shape_lazy_thin(f, z) :- wrapper_shape_mode(f, md), asd_body_count(f, 2), field(f, "body", b), child(b, y, i),
+    wrapper_shape_resolving(md, y, z), child(b, e, j), j > i, node(_, e, "expression_statement", _, _), child(e, x, _),
+    wrapper_shape_call_of(x, _).
+.decl wrapper_shape_try_tail(s: node)
+wrapper_shape_try_tail(s) :- node(_, s, "try_statement", _, _), child(s, x, _), node(_, x, "else_clause", _, _).
+wrapper_shape_try_tail(s) :- node(_, s, "try_statement", _, _), child(s, x, _), node(_, x, "finally_clause", _, _).
+.decl wrapper_shape_is_lazy_thin(f: node)
+wrapper_shape_is_lazy_thin(f) :- wrapper_shape_lazy_thin(f, _).
+.decl wrapper_shape_lazy_name(f: node, s: symbol)
+wrapper_shape_lazy_name(f, s) :- wrapper_shape_lazy_thin(f, z), asd_compact(z, s).
+
+wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), !wrapper_shape_is_lazy_thin(s).
+wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), wrapper_shape_is_lazy_thin(s), !wrapper_shape_is_lazy_thin(f).
+wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), wrapper_shape_lazy_name(s, a), wrapper_shape_lazy_name(f, b), a != b.
+
+violation("data-layer-async-sync-delegation", "wrapper-shape", "C", p, l) :- wrapper_shape_bad(f), wrapper_shape_doc(f, p), line(f, l).
+
+// ---- the legacy clauses (C): legacy_sync, legacy_async, legacy_module_sync, legacy_module_async -----------------
+// Per decorator dv: its counterpart decorator cv, the suffix the base drops (`_sync$`, `_async$`, none) and the
+// counterpart's suffix on the base (LEGACY_COUNTERPART).
+.decl legacy_variant(dv: symbol, cv: symbol, drop: symbol, cp: symbol)
+legacy_variant("legacy_sync", "legacy_async", "_sync", "_async").
+legacy_variant("legacy_async", "legacy_sync", "_async", "").
+legacy_variant("legacy_module_sync", "legacy_module_async", "", "_async").
+legacy_variant("legacy_module_async", "legacy_module_sync", "_async", "").
+
+// f is decorated `@dv` or `@x.dv` (not the call form: the clauses' first test), named nm, base b.
+.decl legacy_fn(f: node, dv: symbol, b: symbol)
+legacy_fn(f, dv, b) :- legacy_variant(dv, _, drop, _), asd_deco_plain(f, dv), asd_fname(f, nm), drop != "",
+    suffix(drop, nm), k = strlen(nm) - strlen(drop), b = substr(nm, 0, k).
+legacy_fn(f, dv, nm) :- legacy_variant(dv, _, drop, _), asd_deco_plain(f, dv), asd_fname(f, nm), drop != "", !suffix(drop, nm).
+legacy_fn(f, dv, nm) :- legacy_variant(dv, _, "", _), asd_deco_plain(f, dv), asd_fname(f, nm).
+
+// At the module's top level: its decorated_definition's parent is the module m.
+.decl legacy_top(f: node, m: node)
+legacy_top(f, m) :- legacy_fn(f, _, _), field(dd, "definition", f), child(m, dd, _), node(_, m, "module", _, _).
+
+// A method (b5-common-133 and its variants): its nearest class c is at the top level, it is not a query builder
+// (named query, query_sync, query_unfiltered or query_unfiltered_sync with a return type naming Query), and c has
+// no lazy builder factory (b5-common-134: a @lazy / @pure_lazy member named <base>_lazy whose return type names
+// none of LazyResult, LazySeq, ServerPlan).
+.decl legacy_method(f: node, dv: symbol, b: symbol, c: node)
+legacy_method(f, dv, b, c) :- legacy_fn(f, dv, b), nearest(f, c, asd_class), asd_top_class(c), !legacy_query(f), !legacy_factory(f, c, b).
+.decl legacy_query(f: node)
+legacy_query(f) :- legacy_fn(f, _, _), asd_fname(f, nm),
+    (nm = "query" ; nm = "query_sync" ; nm = "query_unfiltered" ; nm = "query_unfiltered_sync"),
+    field(f, "return_type", t), node_text(t, s), contains("Query", s).
+.decl legacy_factory(f: node, c: node, b: symbol)
+legacy_factory(f, c, b) :- legacy_fn(f, _, b), nearest(f, c, asd_class), nm = cat(b, "_lazy"), field(c, "body", bc),
+    child(bc, x, _), node(_, x, "decorated_definition", _, _), field(x, "definition", g), asd_fname(g, nm),
+    (asd_deco(g, "lazy") ; asd_deco(g, "pure_lazy")), field(g, "return_type", t), node_text(t, s),
+    !contains("LazyResult", s), !contains("LazySeq", s), !contains("ServerPlan", s).
+
+// valid-lazy-binding over a scope o (a module, or a class; `ob` the node whose direct children are its
+// statements): the name's last rebinding `nm = x` (x an identifier, no later such rebinding of nm among o's
+// statements) is to itself or absent, and o has a @lazy / @pure_lazy definition named nm; or it is to another
+// name x valid in o. (The recursion's REBIND_SCOPE is the same scope o.)
+.decl legacy_scope(o: node, ob: node)
+legacy_scope(o, o) :- node(_, o, "module", _, _).
+legacy_scope(o, ob) :- node(_, o, "class_definition", _, _), field(o, "body", ob).
+.decl legacy_rebind(o: node, i: number, nm: symbol, x: symbol)
+legacy_rebind(o, i, nm, x) :- legacy_scope(o, ob), child(ob, s, i), node(_, s, "expression_statement", _, _), child(s, a, _),
+    node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, nm),
+    field(a, "right", r), node(_, r, "identifier", _, _), text(r, x).
+.decl legacy_last_rebind(o: node, nm: symbol, x: symbol)
+legacy_last_rebind(o, nm, x) :- legacy_rebind(o, i, nm, x), !legacy_later_rebind(o, i, nm).
+.decl legacy_later_rebind(o: node, i: number, nm: symbol)
+legacy_later_rebind(o, i, nm) :- legacy_rebind(o, i, nm, _), legacy_rebind(o, j, nm, _), j > i.
+.decl legacy_rebound(o: node, nm: symbol)
+legacy_rebound(o, nm) :- legacy_last_rebind(o, nm, _).
+.decl legacy_lazydef(o: node, nm: symbol)
+legacy_lazydef(o, nm) :- legacy_scope(o, ob), child(ob, x, _), node(_, x, "decorated_definition", _, _), field(x, "definition", g),
+    asd_fname(g, nm), (asd_deco(g, "lazy") ; asd_deco(g, "pure_lazy")).
+.decl legacy_valid(o: node, nm: symbol)
+legacy_valid(o, nm) :- legacy_lazydef(o, nm), !legacy_rebound(o, nm).
+legacy_valid(o, nm) :- legacy_lazydef(o, nm), legacy_last_rebind(o, nm, nm).
+legacy_valid(o, nm) :- legacy_last_rebind(o, nm, x), x != nm, legacy_valid(o, x).
+
+// o holds an identifier named nm (`has stopBy end`), and nm is valid there.
+.decl legacy_lazy_ok(o: node, nm: symbol)
+legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(d, o, "module", _, _), node(d, i, "identifier", _, _), text(i, nm).
+legacy_lazy_ok(o, nm) :- legacy_valid(o, nm), node(_, o, "class_definition", _, _), inside(i, o, asd_class), node(_, i, "identifier", _, _), text(i, nm).
+
+// missing-lazy: a top-level wrapper whose module has no valid <base>_lazy; a method of a Connection /
+// SessionHandle / VersionHandle class with none in its class.
+.decl legacy_missing_lazy(f: node, dv: symbol)
+legacy_missing_lazy(f, dv) :- legacy_fn(f, dv, b), legacy_top(f, m), nm = cat(b, "_lazy"), !legacy_lazy_ok(m, nm).
+legacy_missing_lazy(f, dv) :- legacy_method(f, dv, b, c), field(c, "name", cn), text(cn, s),
+    (suffix("Connection", s) ; suffix("SessionHandle", s) ; suffix("VersionHandle", s)), nm = cat(b, "_lazy"), !legacy_lazy_ok(c, nm).
+
+// The counterpart: a decorated member of o named <base><cp>, decorated `@cv` in any form (b5-common-141/-147/…).
+.decl legacy_has_counterpart(o: node, cv: symbol, nm: symbol)
+legacy_has_counterpart(o, cv, nm) :- legacy_scope(o, ob), child(ob, x, _), node(_, x, "decorated_definition", _, _), field(x, "definition", g),
+    asd_fname(g, nm), asd_deco(g, cv).
+.decl legacy_counterpart(f: node, cv: symbol, nm: symbol)
+legacy_counterpart(f, cv, nm) :- legacy_fn(f, dv, b), legacy_variant(dv, cv, _, cp), nm = cat(b, cp).
+// CLASS_OTHER: Sync… ↔ Async…, else the name itself.
+.decl legacy_class_other(c: node, o: symbol)
+legacy_class_other(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", n), text(n, s), prefix("Sync", s),
+    k = strlen(s) - 4, o = cat("Async", substr(s, 4, k)).
+legacy_class_other(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", n), text(n, s), prefix("Async", s),
+    k = strlen(s) - 5, o = cat("Sync", substr(s, 5, k)).
+legacy_class_other(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", n), text(n, s), !prefix("Sync", s), !prefix("Async", s).
+
+.decl legacy_missing_pair(f: node, dv: symbol)
+legacy_missing_pair(f, dv) :- legacy_top(f, m), legacy_fn(f, dv, _), legacy_counterpart(f, cv, nm), !legacy_has_counterpart(m, cv, nm).
+legacy_missing_pair(f, dv) :- legacy_method(f, dv, _, c), legacy_counterpart(f, cv, nm), !legacy_has_counterpart(c, cv, nm),
+    !legacy_other_class_pair(f).
+// A top-level class of the module named CLASS_OTHER holding the counterpart.
+.decl legacy_other_class_pair(f: node)
+legacy_other_class_pair(f) :- legacy_method(f, _, _, c), legacy_class_other(c, o), legacy_counterpart(f, cv, nm),
+    node(d, c, _, _, _), node(d, c2, "class_definition", _, _), asd_top_class(c2), field(c2, "name", n2), text(n2, o),
+    legacy_has_counterpart(c2, cv, nm).
+
+.decl legacy_doc(f: node, p: symbol)
+legacy_doc(f, p) :- legacy_fn(f, _, _), node(d, f, _, _, _), asd_doc(d, p).
+violation("data-layer-async-sync-delegation", "legacy_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_sync"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_sync"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_async"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_async"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_sync"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_sync"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_async"), legacy_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_async"), legacy_doc(f, p), line(f, l).
+
+// ---- mixed-name (C) ---------------------------------------------------------------------------------------------
+// A function whose name has `lazy` and `sync` (or `async`), any case, outside tests/ and conform/
+// (`^(?:.*/)?tests/.*$|^(?:.*/)?conform/.*$`).
+violation("data-layer-async-sync-delegation", "mixed-name", "C", p, l) :- node(d, f, "function_definition", _, _), asd_doc(d, p),
+    !prefix("tests/", p), !prefix("conform/", p), !contains("/tests/", p), !contains("/conform/", p),
+    asd_fname(f, nm), icontains("lazy", nm), icontains("sync", nm), line(f, l).
+
+// ---- escape-hatch (C, budget lte 0 per path and line) -----------------------------------------------------------
+// A thread-pool call: `to_thread(…)`, `run_in_executor(…)`, … or `x.to_thread(…)`, … (the identifier list's
+// `asyncio.to_thread` names no identifier). Each (path, line) with one is a finding.
+.decl escape_hatch_call(c: node, d: number)
+escape_hatch_call(c, d) :- node(d, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _),
+    (text(g, "run_in_executor") ; text(g, "to_thread") ; text(g, "tracked_run_in_executor") ; text(g, "tracked_to_thread")).
+escape_hatch_call(c, d) :- node(d, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _),
+    field(g, "attribute", a), node(_, a, "identifier", _, _),
+    (text(a, "run_in_executor") ; text(a, "to_thread") ; text(a, "tracked_run_in_executor") ; text(a, "tracked_to_thread")).
+// The allowed functions, by file (their nearest function_definition: `inside … stopBy function_definition`).
+.decl escape_hatch_exempt(c: node)
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "delete_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "exists_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "get_metadata_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "get_stats_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "iter_content_hashes_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "retrieve_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "store_async").
+escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/sqlite/native_async_wrapper.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "_run_sqlite_call_in_thread").
+violation("data-layer-async-sync-delegation", "escape-hatch", "C", p, l) :- escape_hatch_call(c, d), asd_doc(d, p), !asd_test_path(p),
+    !escape_hatch_exempt(c), line(c, l).

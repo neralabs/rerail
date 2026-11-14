@@ -1,0 +1,526 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-versioned-merged-identity",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer versioned_merged_identity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2070_server_plan/steps/*.py",
+      "impl/common/l9700_sql_graph_query/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "contract",
+      "define": {
+        "options": {
+          "expectedCallers": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              "_compile_versioned.py:_versioned_merged_source_cte",
+              "_compile_versioned.py:compile_versioned_query",
+              "_compile_write.py:compile_versioned_delete_tombstone",
+              "fk_cascade_step.py:RestrictCheckStep.compile",
+              "intent_versioning_extended.py:_build_versioned_batch_merged_cte",
+              "intent_versioning_extended.py:_build_versioned_upsert_plan",
+              "pending_tombstone_from_merged.py:PendingTombstoneFromMergedStep.compile",
+              "query_paginate.py:_build_versioned_keyset_stmt",
+              "sql_graph_query_builder.py:SqlGraphQueryBuilder._with_staged_graph_overlay",
+              "versioned_lazy_support.py:MatchVersionedRowsByKeyToLiteralSequenceStep.compile",
+              "versioned_query_steps.py:VersionedSelectManyRawStep.compile",
+              "versioned_upsert_steps.py:VersionedUpsertReturnStep.compile"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "constructors",
+      "relational": {
+        "inputs": {
+          "raw_functions": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "pattern": "$WRAPPER"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "wrapper": "capture.WRAPPER.startByte"
+              }
+            }
+          },
+          "raw_classes": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "pattern": "$WRAPPER"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "wrapper": "capture.WRAPPER.startByte"
+              }
+            }
+          },
+          "raw_calls": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$CALLEE"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "pattern": "$CALLEE",
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:read_projection)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$PROJECTION",
+                                      "stopBy": "neighbor",
+                                      "field": "value"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "arguments"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.CALLEE",
+                "filename": "file.name",
+                "projection": "capture.PROJECTION",
+                "projection_kind": "capture.PROJECTION.kind",
+                "projection_start": "capture.PROJECTION.startByte"
+              }
+            }
+          },
+          "raw_assignments": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$VALUE",
+                          "stopBy": "neighbor",
+                          "field": "right"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$TARGET"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "all": [
+                              {
+                                "has": {
+                                  "kind": "call",
+                                  "stopBy": "neighbor",
+                                  "field": "right"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "pattern_list"
+                                        },
+                                        {
+                                          "kind": "list_pattern"
+                                        },
+                                        {
+                                          "kind": "tuple_pattern"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "pattern": "$TARGET"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "left"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "target": "capture.TARGET",
+                "value": "capture.VALUE",
+                "value_kind": "capture.VALUE.kind",
+                "value_start": "capture.VALUE.startByte"
+              },
+              "each": "TARGET"
+            }
+          },
+          "raw_aliases": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "aliased_import"
+                      },
+                      {
+                        "has": {
+                          "regex": "^SqlVersionedMergedCte$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "pattern": "$ALIAS",
+                          "stopBy": "neighbor",
+                          "field": "alias"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_from_statement",
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "alias": "capture.ALIAS"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "constructor_calls",
+            "query": "SELECT c.* FROM raw_calls c WHERE name='SqlVersionedMergedCte' OR EXISTS(SELECT 1 FROM raw_aliases a WHERE a.__path=c.__path AND a.alias=c.name)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "constructor_files",
+            "query": "SELECT DISTINCT __path FROM constructor_calls",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "frames",
+            "query": "SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions WHERE __path IN (SELECT __path FROM constructor_files) UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes WHERE __path IN (SELECT __path FROM constructor_files)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "parents",
+            "query": "SELECT f.*,(SELECT p.__start FROM frames p WHERE p.__path=f.__path AND p.lexical_start<f.lexical_start AND p.__end>=f.__end ORDER BY p.lexical_start DESC LIMIT 1) AS parent FROM frames f",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "contexts",
+            "query": "WITH RECURSIVE scope(path,start,qualname) AS (\n          SELECT __path,__start,name FROM parents WHERE parent IS NULL\n          UNION ALL SELECT c.__path,c.__start,p.qualname||'.'||c.name FROM scope p JOIN parents c ON c.__path=p.path AND c.parent=p.start)\n          SELECT * FROM scope",
+            "indexes": [
+              [
+                "path",
+                "start"
+              ]
+            ]
+          },
+          {
+            "name": "call_owners",
+            "query": "SELECT c.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner,\n          coalesce((SELECT x.qualname FROM frames f JOIN contexts x ON x.path=f.__path AND x.start=f.__start WHERE f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1),'') AS qualname FROM constructor_calls c",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "constructors",
+            "query": "SELECT c.*,filename||':'||qualname AS caller FROM call_owners c",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "assignments",
+            "query": "SELECT a.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=a.__path AND f.lexical_start<a.__start AND f.__end>=a.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner FROM raw_assignments a WHERE a.__path IN (SELECT __path FROM constructor_files)",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "target",
+                "__end"
+              ]
+            ]
+          },
+          {
+            "name": "versions",
+            "query": "SELECT c.__path,c.__start AS site,a.target,a.value,a.value_kind,a.value_start FROM constructors c JOIN assignments a ON a.__path=c.__path AND a.owner=c.owner AND a.__end<c.__start\n          WHERE NOT EXISTS(SELECT 1 FROM assignments later WHERE later.__path=a.__path AND later.owner=a.owner AND later.target=a.target AND later.__end>a.__end AND later.__end<c.__start)",
+            "indexes": [
+              [
+                "__path",
+                "site",
+                "target"
+              ]
+            ]
+          },
+          {
+            "name": "catalog_aliases",
+            "query": "WITH RECURSIVE catalog(path,site,name) AS (\n          SELECT v.__path,v.site,v.target FROM versions v JOIN raw_calls c ON c.__path=v.__path AND c.__start=v.value_start WHERE v.value_kind='call' AND c.name IN ('_get_versioned_table_projection_info','catalog_versioned_merged_projection','versioned_merged_projection_from_catalog')\n          UNION SELECT v.__path,v.site,v.target FROM versions v JOIN catalog c ON c.path=v.__path AND c.site=v.site AND c.name=v.value WHERE v.value_kind='identifier')\n          SELECT * FROM catalog",
+            "indexes": [
+              [
+                "path",
+                "site",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "expected",
+            "query": {
+              "$option": "expectedCallers",
+              "escape": "sql",
+              "map": " UNION ALL SELECT {} AS caller",
+              "join": "",
+              "template": "SELECT '' AS caller WHERE 0{}"
+            },
+            "indexes": [
+              [
+                "caller"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT c.__path AS path,c.__start AS start_byte,c.__end AS end_byte,c.caller,'VMI002' AS issue FROM constructors c WHERE NOT EXISTS(SELECT 1 FROM expected e WHERE e.caller=c.caller)\n      UNION ALL SELECT c.__path,c.__start,c.__end,c.caller,'VMI003' FROM constructors c WHERE EXISTS(SELECT 1 FROM expected e WHERE e.caller=c.caller)\n        AND NOT coalesce(((c.projection_kind='call' AND EXISTS(SELECT 1 FROM raw_calls p WHERE p.__path=c.__path AND p.__start=c.projection_start AND p.name IN ('_get_versioned_table_projection_info','catalog_versioned_merged_projection','versioned_merged_projection_from_catalog')))\n          OR (c.projection_kind='identifier' AND EXISTS(SELECT 1 FROM catalog_aliases a WHERE a.path=c.__path AND a.site=c.__start AND a.name=c.projection))),0)\n      UNION ALL SELECT 'impl/common/l2070_server_plan/steps',0,0,e.caller,'VMI001' FROM expected e WHERE NOT EXISTS(SELECT 1 FROM constructors c WHERE c.caller=e.caller)",
+        "locations": [
+          "impl/common/l2070_server_plan/steps"
+        ],
+        "key": [
+          "caller",
+          "issue"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "VMI003",
+        "anchor": "witness.span",
+        "message": "Merged identity constructor contract"
+      }
+    }
+  ]
+}

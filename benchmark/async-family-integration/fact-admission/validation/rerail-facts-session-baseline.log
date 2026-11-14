@@ -1,0 +1,14 @@
+
+running 1 test
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow' (126369313) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:277:102:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("no such table: CYC")))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3123 filtered out; finished in 10.67s

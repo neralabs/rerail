@@ -1,0 +1,15 @@
+# corpus: edge: starts lasts after of alpha
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask s = starts(alpha)
+mask l = lasts(alpha)
+mask a = after(alpha)

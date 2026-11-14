@@ -1,0 +1,134 @@
+{
+  "files": 1024,
+  "format": "rerail.fts-publication/v1",
+  "packetFiles": 32,
+  "results": [
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 32,
+      "cpuNs": 36094625,
+      "hostInsertStatements": 32,
+      "mode": "packet-transactions",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 0,
+      "wallNs": 84159875
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 23960500,
+      "hostInsertStatements": 32,
+      "mode": "packet-statements-one-transaction",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 0,
+      "wallNs": 63008208
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 11544750,
+      "hostInsertStatements": 1,
+      "mode": "one-bulk-statement",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 1,
+      "segmentsAfterVerificationEdits": 2,
+      "trial": 0,
+      "wallNs": 46544333
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 23189083,
+      "hostInsertStatements": 32,
+      "mode": "packet-statements-one-transaction",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 1,
+      "wallNs": 30095541
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 11430292,
+      "hostInsertStatements": 1,
+      "mode": "one-bulk-statement",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 1,
+      "segmentsAfterVerificationEdits": 2,
+      "trial": 1,
+      "wallNs": 11628167
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 32,
+      "cpuNs": 39274625,
+      "hostInsertStatements": 32,
+      "mode": "packet-transactions",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 1,
+      "wallNs": 134633042
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 12653542,
+      "hostInsertStatements": 1,
+      "mode": "one-bulk-statement",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 1,
+      "segmentsAfterVerificationEdits": 2,
+      "trial": 2,
+      "wallNs": 16351708
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 32,
+      "cpuNs": 41858708,
+      "hostInsertStatements": 32,
+      "mode": "packet-transactions",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 2,
+      "wallNs": 215841708
+    },
+    {
+      "columnsizeZeroError": "contentless_delete=1 is incompatible with columnsize=0",
+      "commits": 1,
+      "cpuNs": 22113417,
+      "hostInsertStatements": 32,
+      "mode": "packet-statements-one-transaction",
+      "positionalAndDeleteParity": true,
+      "segmentsAfterPublication": 5,
+      "segmentsAfterVerificationEdits": 6,
+      "trial": 2,
+      "wallNs": 49433167
+    }
+  ],
+  "scope": "Only FTS publication and commit CPU. Source staging, declaration, and verification are outside timing. No SQL tracing in these CPU controls. Every write is INSERT SELECT over a batch.",
+  "sqliteVersion": "3.53.2",
+  "tokensPerFile": 256,
+  "medianCpuMs": {
+    "packet-transactions": 39.274625,
+    "packet-statements-one-transaction": 23.189083,
+    "one-bulk-statement": 11.54475
+  },
+  "indexSchemaSha256": "5270fcafab2d7e236c3e060fb58a7eafe27ad71deef92f81abef19617966286a",
+  "binarySha256": "8ad4902395cb50dadae5e2da57f4d98f9813258c667e83921e55cc37d3d764b1",
+  "build": {
+    "profile": "release",
+    "labOptLevel": 1,
+    "dependencyOptLevel": 3,
+    "lto": false,
+    "codegenUnits": 256
+  },
+  "source": "scripts/profiling/preparation/src/fts.rs",
+  "productionDecision": "Keep the exact FTS schema. Publish the complete ready file frontier through broad INSERT SELECT; a transaction around separate statements leaves avoidable segment flushes. Whole-job engine integration remains pending."
+}

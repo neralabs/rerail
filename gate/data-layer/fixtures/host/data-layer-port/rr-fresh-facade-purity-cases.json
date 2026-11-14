@@ -1,0 +1,878 @@
+{
+  "cases": [
+    {
+      "id": "facade-name",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-attribute",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = object.thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-constants",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = None\nb = True\nc = 42\nd = 1.5\ne = 2j\nf = ...\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-containers",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = [Thing, (1, None), {True, Alias}]\nb = {\"x\": Alias, **other}\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-byte-concatenation",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "x = b\"a\" b\"b\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-surrogate-value",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "x = \"\\ud800\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-surrogate-docstring",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "\"\\ud800=\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-attr-constant",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "x = (1).real\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-empty-tuple",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "x = ()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-dict-unpack-comment",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "x = {** # note\n aliases}\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-call-value",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = create()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-nested-call",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = [Thing, {\"bad\": create()}]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-attribute-call",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = create().thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-unary",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = -1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-binary",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = 1 + 2\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-starred-list",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = [*names]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-starred-tuple",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = (*names,)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-comprehension",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = [x for x in items]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-fstring-value",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = f\"text\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-augmented",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a += 1\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-annotated-empty",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a: factory()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-annotated-value",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a: Something = Alias\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-annotated-attribute",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "obj.a: Something\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-chain",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = b = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-paren-target",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "(a) = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-paren-comment",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "( # note\n a) = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-destructure",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a, b = Things\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-single-tuple-target",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "(a,) = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-function",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "def helper(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-async",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "async def helper(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-class",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "class C: pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-decorated",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "@decorator\ndef helper(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-if",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "if True:\n    fn()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-call-statement",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "install()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-assert-gate",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "assert True # =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-pass-gate",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "pass # =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-no-trigger",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-ordinary-import",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import example\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-root-impl",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import impl\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-from-root-impl",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from impl import Something\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-impl-import",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import impl.a\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-impl-alias",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import impl.a as a, impl.b as b\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-impl-from",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from impl.a import Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-relative-impl",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from .impl.a import Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-spaced-impl",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from impl . a import Thing # =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-nfkc-import",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import \uff49\uff4d\uff50\uff4c.a # =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-strings",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "\"def fake()\"\n\"other =\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-fstring-statement",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "f\"hello\" # =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-non-first-string",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "Alias = Thing\n\"standalone\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-invalid",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-bom",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "\ufeffAlias = Thing\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-order",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "a = create(); import impl.bad\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "facade-non-python",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.txt",
+          "source": "def helper(): pass\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.txt"
+        }
+      }
+    },
+    {
+      "id": "facade-targets-shallow",
+      "check": "data_layer_facade_purity",
+      "entry": "lint_targets",
+      "files": [
+        {
+          "path": "root/a.py",
+          "source": "a = Thing\n"
+        },
+        {
+          "path": "root/b.py",
+          "source": "class C: pass\n"
+        },
+        {
+          "path": "root/deep/c.py",
+          "source": "def hidden(): pass\n"
+        }
+      ],
+      "arguments": {
+        "targets": [
+          {
+            "path": "root"
+          }
+        ]
+      }
+    }
+  ]
+}

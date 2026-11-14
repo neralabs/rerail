@@ -1,0 +1,141 @@
+.policy "eslint-plugin-vue-no-mutating-props" revision 2
+.description "Don't mutate a Vue component's props, in its template or its script; emit an event for the parent, or copy the prop into local state."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+#include "vue/mutation.rr"
+//   vcomp(o), vname(o, g, x, n), vsetup(o, f), vprops_call(c), vprop_name(c, x, n), tfree(r, x, a), vexpr(a, x),
+//   vmut_at(s, at, how, n), vmut_first(s, m, x)
+
+// eslint-plugin-vue's no-mutating-props, default options (shallowOnly: false). A mutation is findMutating's: an
+// assignment, `++`, `delete`, push/pop/…/fill called on it, or Object.assign(it, …).
+//   props: ['list']   …   this.list.push(1)   <div @click="list = []">        both reported
+//   setup(props) { props.a = 1 }      const { obj } = defineProps(…); obj.id = 2       both reported
+//   setup(props) { props = {} }       a bare parameter is a variable, not a prop: not reported
+// The template is checked against one component: <script setup>'s defineProps, else `export default`, else another
+// component object that is no `new Vue`. Its props are the declared names; defineProps drops whitelisted globals
+// and names a script declares at the top, and adds the names destructured from its result.
+//   v-model="prop" and :x.sync="prop" (also `this.prop`, `props.prop`) are reported at the expression.
+.violation mutated(at: node, x: symbol) code "vue/no-mutating-props" "Unexpected mutation of \"{x}\" prop."
+    suppress eslint "vue/no-mutating-props"
+// Script: `this.x` (or a `const vm = this`) inside a component that declares x.
+mutated(at, x) :- this_member(m, x), vmut_at(m, at, _, _).
+// Script: a variable of setup(props)'s parameter or of defineProps's result. The whole props object needs a member
+// mutated (`props.a++`); a destructured prop is also mutated by a call on it (`list.push(1)`, Object.assign(list, …)).
+mutated(at, x) :- prop_ref(r, ""), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
+mutated(at, top) :- prop_ref(r, top), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
+// Template: `this.x` and free names; a name that is defineProps's result variable is the root props object.
+mutated(at, x) :- tcomp(d, _), vcode(a, g, _), docof(g, d), has(g, t, this_kind), this_prop(t, m, x),
+    tprop(d, x), vmut_at(m, at, _, _).
+mutated(at, x) :- tfree(r, x, a), docof(a, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
+mutated(at, x) :- tfree(r, y, a), docof(a, d), props_var(d, y), vmut_at(r, at, _, _),
+    (vmut_object(m, r), static_prop(m, r, x) ; !static_parent(r), x = y).
+mutated(x, y) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), tprop(d, y), !props_var(d, y).
+mutated(x, z) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), props_var(d, y),
+    (second(x, m), vmut_first(n, m, z) ; !second(x, _), z = y).
+mutated(x, z) :- model(a, x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(a, d), tprop(d, z).
+
+vmut_ask(m) :- this_member(m, _).
+vmut_ask(r) :- prop_ref(r, _).
+vmut_ask(m) :- vcode(_, g, _), has(g, t, this_kind), this_prop(t, m, _).
+vmut_ask(r) :- tfree(r, _, _).
+vmut_ask(n) :- model(_, x), root(x, n).
+.decl this_kind(k: symbol)
+this_kind("this").
+.decl this_prop(t: node, m: node, x: symbol)
+this_prop(t, m, x) :- vmut_object(m, t), static_prop(m, t, x).
+.decl static_parent(r: node)
+static_parent(r) :- vmut_object(m, r), static_prop(m, r, _).
+
+// ---- script: `this` and its aliases, in their innermost component --------------------------------------------------
+.decl this_member(m: node, x: symbol)
+this_member(m, x) :- thisish(t), this_prop(t, m, x), vcomp(o), within(t, o), !inner(t, o), vname(o, "props", x, _).
+.decl thisish(t: node)
+thisish(t) :- kind(t, "this"), vin_script(t).
+thisish(t) :- kind(t, "identifier"), vin_script(t), ref_site(t, dcl), kind(dcl, "variable_declarator"),
+    field(dcl, "value", v), deparen(v, w), kind(w, "this"), child(l, dcl, _), kind(l, "lexical_declaration"),
+    text(l, s), match("const\\b[\\s\\S]*", s).
+.decl inner(t: node, o: node)
+inner(t, o) :- thisish(t), vcomp(o), vcomp(o2), o2 != o, within(t, o2), within(o2, o).
+
+// ---- script: the variables props are bound to ----------------------------------------------------------------------
+// root(c, p): pattern p receives the props: setup's first parameter (not `...rest` or `[a]`), or the declarator of
+// `defineProps()` / `withDefaults(defineProps(), …)`.
+.decl proot(c: node, p: node)
+proot(f, p) :- vcomp(o), vsetup(o, f), param0(f, p), !kind(p, "rest_pattern"), !kind(p, "array_pattern").
+proot(c, p) :- vprops_call(c), (t = c ; call_arg(t, w, 0), deparen(w, c), field(t, "function", f), text(f, "withDefaults")),
+    kind(dcl, "variable_declarator"), field(dcl, "value", v), deparen(v, t), field(dcl, "name", p).
+.decl param0(f: node, p: node)
+param0(f, p) :- field(f, "parameter", p).
+param0(f, p) :- field(f, "parameters", ps), child(ps, q, 0), (field(q, "pattern", p) ; !field(q, "pattern", _), p = q).
+// pnode(c, p, top): p is in c's pattern under the top-level key top ("" for the whole object): iteratePatternProperties.
+.decl pnode(c: node, p: node, top: symbol)
+pnode(c, p, "") :- proot(c, p).
+pnode(c, q, top) :- pnode(c, p, top), (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")),
+    field(p, "left", q).
+pnode(c, q, top) :- pnode(c, p, top), kind(p, "rest_pattern"), child(p, q, _).
+pnode(c, e, top) :- pnode(c, p, top), kind(p, "object_pattern"), child(p, e, _), kind(e, "rest_pattern").
+pnode(c, q, t) :- pnode(c, p, top), kind(p, "object_pattern"), child(p, e, _), pkey(e, q, x),
+    (top = "", t = x ; top != "", t = top).
+pnode(c, q, t) :- pnode(c, p, top), kind(p, "array_pattern"), child(p, q, i),
+    (top = "", t = to_string(i) ; top != "", t = top).
+.decl pkey(e: node, q: node, x: symbol)
+pkey(e, e, x) :- kind(e, "shorthand_property_identifier_pattern"), text(e, x).
+pkey(e, q, x) :- kind(e, "object_assignment_pattern"), field(e, "left", q), text(q, x).
+pkey(e, q, x) :- kind(e, "pair_pattern"), field(e, "value", q), field(e, "key", k),
+    (key_static(k, x) ; !key_static(k, _), text(k, x)).
+.decl pleaf(c: node, id: node, top: symbol)
+pleaf(c, id, top) :- pnode(c, id, top), (kind(id, "identifier") ; kind(id, "shorthand_property_identifier_pattern")).
+// prop_ref(r, top): a script reference to such a variable. A plain `const props = …` is linked at its declarator.
+.decl prop_ref(r: node, top: symbol)
+prop_ref(r, top) :- pleaf(_, id, top), (s = id ; field(s, "name", id), kind(s, "variable_declarator")),
+    ref_site(r, s), vin_script(r).
+
+// ---- template: which component, and its props (vueObjectData, propsMap) --------------------------------------------
+.decl tcomp(d: number, o: node)
+tcomp(d, c) :- vprops_call(c), docof(c, d).
+tcomp(d, o) :- vcomp(o), docof(o, d), !setup_props(d), exported(o).
+tcomp(d, o) :- candidate(d, o), !exited_later(o).
+// candidate(d, o): a component object that is no `new Vue`, in a document without setup props or an export. The
+// template takes the one exited last: none contains it, and none starts after it outside it.
+.decl candidate(d: number, o: node)
+candidate(d, o) :- vcomp(o), docof(o, d), !setup_props(d), !has_export(d), !instance(o).
+.decl exited_later(o: node)
+exited_later(o) :- candidate(d, o), candidate(d, o2), o2 != o, (within(o, o2) ; earlier(o, o2), !within(o2, o)).
+.decl instance(o: node)  // new Vue({…})
+instance(o) :- kind(n, "new_expression"), call_arg(n, w, 0), vskip_as(w, o), vcomp(o).
+.decl setup_props(d: number)
+setup_props(d) :- vprops_call(c), docof(c, d).
+.decl exported(o: node)
+exported(o) :- vcomp(o), kind(e, "export_statement"), field(e, "value", w), vunwrap(w, o).
+.decl has_export(d: number)
+has_export(d) :- exported(o), docof(o, d).
+.decl tprop(d: number, x: symbol)
+tprop(d, x) :- tcomp(d, c), vprop_name(c, x, _), !whitelisted(x), !top_level_name(d, x).
+.decl top_level_name(d: number, x: symbol)  // a script declares x at its top
+top_level_name(d, x) :- vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
+tprop(d, x) :- tcomp(d, c), pleaf(c, id, top), top != "", text(id, x).
+tprop(d, x) :- tcomp(d, o), vname(o, "props", x, _).
+.decl props_var(d: number, x: symbol)
+props_var(d, x) :- tcomp(d, c), pleaf(c, id, ""), text(id, x).
+.decl whitelisted(x: symbol)  // Vue's globalsWhitelist
+whitelisted("Infinity"). whitelisted("undefined"). whitelisted("NaN"). whitelisted("isFinite"). whitelisted("isNaN").
+whitelisted("parseFloat"). whitelisted("parseInt"). whitelisted("decodeURI"). whitelisted("decodeURIComponent").
+whitelisted("encodeURI"). whitelisted("encodeURIComponent"). whitelisted("Math"). whitelisted("Number").
+whitelisted("Date"). whitelisted("Array"). whitelisted("Object"). whitelisted("Boolean"). whitelisted("String").
+whitelisted("RegExp"). whitelisted("Map"). whitelisted("Set"). whitelisted("JSON"). whitelisted("Intl").
+whitelisted("BigInt").
+
+// ---- template: v-model and v-bind.sync (getMemberChaining) ---------------------------------------------------------
+.decl model(a: node, x: node)
+model(a, x) :- vdir(_, a, "model", _), vexpr(a, w), deparen(w, x).
+model(a, x) :- vdir(_, a, "bind", _), vmod(a, "sync"), vexpr(a, w), deparen(w, x).
+.decl down(x: node, n: node)
+down(x, x) :- model(_, x).
+down(x, o) :- down(x, n), (kind(n, "member_expression") ; kind(n, "subscript_expression")), field(n, "object", w),
+    deparen(w, o).
+.decl root(x: node, n: node)
+root(x, n) :- down(x, n), !kind(n, "member_expression"), !kind(n, "subscript_expression").
+.decl second(x: node, m: node)
+second(x, m) :- root(x, n), down(x, m), field(m, "object", w), deparen(w, n).

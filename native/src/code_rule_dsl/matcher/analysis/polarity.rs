@@ -7,14 +7,14 @@ use std::collections::BTreeSet;
 
 /// Whether every `calls` term of `matcher` is read positively: false everywhere, the rule matches
 /// nowhere a `calls` term decides.
-pub(crate) fn calls_positive_only(matcher: &AstMatcher) -> bool {
+pub fn calls_positive_only(matcher: &AstMatcher) -> bool {
     let mut polarity = Polarity::default();
     walk(matcher, false, &mut BTreeSet::new(), &mut polarity);
     polarity.calls && !polarity.negative
 }
 
 /// Whether `matcher` or a utility it calls holds an `importTarget` term.
-pub(crate) fn reads_import_targets(matcher: &AstMatcher) -> bool {
+pub fn reads_import_targets(matcher: &AstMatcher) -> bool {
     let mut polarity = Polarity::default();
     walk(matcher, false, &mut BTreeSet::new(), &mut polarity);
     polarity.import_target
@@ -107,9 +107,9 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
                 both(rule, seen, out);
             }
         }
-        AstMatcher::Semantic(Semantic::ImportTarget(_)) => out.import_target = true,
+        AstMatcher::Semantic(Semantic::Term(term)) => out.import_target |= term.reads_resolution(),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(Semantic::Resolves(_))
@@ -117,8 +117,10 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Semantic(Semantic::Arguments(_))
         | AstMatcher::Semantic(Semantic::Capture(_))
         | AstMatcher::Semantic(Semantic::Layout(_))
+        | AstMatcher::Semantic(Semantic::FilePath(_))
+        | AstMatcher::Semantic(Semantic::Gap(_))
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }

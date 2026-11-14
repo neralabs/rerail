@@ -1,0 +1,16 @@
+.policy "ruff-f506-percent-format-mixed-positional-and-named" revision 2
+.description "Don't mix %(key) placeholders and positional placeholders in one %-format string; Python cannot format it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F506 (pyflakes): a format that mixes `%(key)` placeholders with positional ones (or a `*` width).
+// Python can format neither a tuple nor a mapping into it.
+//   "%(a)s %s" % ...              ← F506
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
+
+.violation F506(at: node) code "F506"
+    "Use only %(key) placeholders or only positional ones in this format string; Python cannot format a mix."
+    suppress ruff "F506"
+F506(b) :- percent_fmt(b, _, _, v), pct_key(v, _), pct_positional(v, n), n > 0.

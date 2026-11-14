@@ -1,0 +1,62 @@
+// data-layer-backend-coupling, clauses `backend-import` and `sql-in-nonsql`, by hand.
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-backend-coupling.json.
+//
+// Both clauses match an import statement X (syntax valid, the clause's file.path regex and notRegex) where
+// - X is `from M import …` and M's text passes the clause's module test, or X is `import …` whose first
+//   non-comment named child C (`nthChild: {position: 1, ofRule: {not: {kind: comment}}}`, counted among the
+//   parent's named children) is a dotted_name passing the test, or an aliased_import whose `name` passes it.
+//   The policy's first `any` (some module_name / such a first child exists) is implied by the second;
+// - X is not inside an `if` whose condition is the identifier TYPE_CHECKING (`inside`, stopBy end: any ancestor);
+// - X is in a module whose text matches `impl\.|impl/` (option sourceGate, default true; false is `(?s).*`).
+//   Implied either way: the module's text contains X's, which contains `impl.` when the module test passes.
+// The module tests are W's regexes over the tested node's full text (node_text: a dotted_name's, an
+// aliased_import's name's, or a relative_import's dots and name), written as the policy has them (a search: `^`
+// alternatives as `(?:…)(?s:.*)`, the unanchored ones inside `(?s:.*)…(?s:.*)`).
+// Options: oracleAnalyzer (unread), sourceGate (implied at both values).
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// The first non-comment named child of an `import` statement.
+.decl backend_import_named(x: node, c: node, i: number)
+backend_import_named(x, c, i) :- node(_, x, "import_statement", _, _), child(x, c, i), !node(_, c, "comment", _, _).
+.decl backend_import_first_at(x: node, i: number)
+backend_import_first_at(x, i) :- backend_import_named(x, _, _), i = min j : { backend_import_named(x, _, j) }.
+.decl backend_import_first(x: node, c: node)
+backend_import_first(x, c) :- backend_import_first_at(x, i), backend_import_named(x, c, i).
+// The module node an import statement's test reads: `from M`'s M, or the first child's dotted name.
+.decl backend_import_module(x: node, m: node)
+backend_import_module(x, m) :- node(_, x, "import_from_statement", _, _), field(x, "module_name", m).
+backend_import_module(x, c) :- backend_import_first(x, c), node(_, c, "dotted_name", _, _).
+backend_import_module(x, m) :- backend_import_first(x, c), node(_, c, "aliased_import", _, _), field(c, "name", m).
+
+// Under `if TYPE_CHECKING:` (the if's condition is that identifier).
+.decl backend_import_if(kind: symbol)
+backend_import_if("if_statement").
+.decl backend_import_typing_if(i: node)
+backend_import_typing_if(i) :- node(_, i, "if_statement", _, _), field(i, "condition", c), node(_, c, "identifier", _, _),
+    text(c, "TYPE_CHECKING").
+.decl backend_import_typing(x: node)
+backend_import_typing(x) :- backend_import_module(x, _), inside(x, i, backend_import_if), backend_import_typing_if(i).
+
+// backend-import's files.
+.decl backend_import_doc(d: number, p: symbol)
+backend_import_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
+    match("^api/(?:.*/)?[^/]*\.py$|^data_layer/(?:.*/)?[^/]*\.py$|^_internal/(?:.*/)?[^/]*\.py$|^l[0-9][0-9][0-9][0-9]_[^/]*/(?:.*/)?[^/]*\.py$|^impl/common/(?:.*/)?[^/]*\.py$", p),
+    !match("^(?:.*/)?[^/]*l2000_connection/connection_factory\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\.py$|^_internal/dynamic_import\.py$|^api/(?:.*/)?__init__\.py$|^data_layer/(?:.*/)?__init__\.py$|^_internal/(?:.*/)?__init__\.py$|^l[^/]*/(?:.*/)?__init__\.py$|^impl/common/(?:.*/)?test_[^/]*\.py$", p).
+
+violation("data-layer-backend-coupling", "backend-import", "BC001", p, l) :- backend_import_module(x, m), node_text(m, s),
+    match("(?:impl\\.doltdb|impl\\.mariadb|impl\\.mongodb|impl\\.neo4j|impl\\.postgres|impl\\.sqlite)(?s:.*)", s),
+    !backend_import_typing(x), node(d, x, _, _, _), backend_import_doc(d, p), line(x, l).
+
+// sql-in-nonsql: the same import shapes (backend_import_*), its own module test and files.
+.decl sql_in_nonsql_doc(d: number, p: symbol)
+sql_in_nonsql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
+    match("^impl/mongodb[^/]*/(?:.*/)?[^/]*\.py$|^impl/neo4j[^/]*/(?:.*/)?[^/]*\.py$", p),
+    !match("^(?:.*/)?[^/]*l2000_connection/connection_factory\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\.py$", p).
+violation("data-layer-backend-coupling", "sql-in-nonsql", "BC001", p, l) :- backend_import_module(x, m), node_text(m, s),
+    match("(?s:.*)(?:impl\\.common\\.l2050_sql_clauses|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2100_sql_params|impl\\.common\\.l2250_json_functions|impl\\.common\\.l5200_sql_query|impl\\.common\\.l6200_sql_logged_table|impl\\.common\\.l7250_versioned_sql_query|impl\\.common\\.l9700_sql_graph_query)(?s:.*)", s),
+    !backend_import_typing(x), node(d, x, _, _, _), sql_in_nonsql_doc(d, p), line(x, l).

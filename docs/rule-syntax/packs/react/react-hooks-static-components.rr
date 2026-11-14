@@ -1,0 +1,34 @@
+.policy "react-hooks-static-components" revision 2
+.description "Declare components at module level instead of creating them while a component or hook renders; a component created during render remounts and loses its state every render."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/static-components (React Compiler): a JSX tag must not name a component the render made. Each
+// render then makes a new component type, and React unmounts the old tree and mounts a new one.
+//   function List() { const Row = () => <li/>; return <Row/>; }      reported at the tag
+//   function List() { const Row = useMemo(() => make(), []); return <Row/>; }   reported: a call's result is new
+//   function List({ Row }) { … <Row/> }  const Row = rows[kind]  const Row = cond ? A : B   not: nothing new
+// A value is new when it is a function, a class, a call or a `new`, directly or as a branch of ?: && || ??,
+// in the binding's initializer or a later assignment to it. Tagged templates (styled.div`…`) are not.
+#include "tsx/react-compiler.rr"
+
+.violation static_components(at: node, tag: node)
+    code "react-hooks/static-components"
+    "Declare {tag} once outside render (at module level, or a static lookup) and pass what varies as props; a component created during render remounts and loses its state each render."
+    suppress eslint "react-hooks/static-components"
+    suppress oxlint "static-components"
+static_components(t, t) :- jsx_open(e, o), field(o, "name", t), kind(t, "identifier"), ref_site(t, s),
+    rc_local_of(s, f), within(e, f), made_here(s).
+
+// made_here(s): binding s holds a value made during render.
+.decl made_here(s: node)
+made_here(s) :- kind(s, "function_declaration").
+made_here(s) :- kind(s, "variable_declarator"), field(s, "value", v), fresh(v).
+made_here(s) :- kind(a, "assignment_expression"), field(a, "left", n), ref_site(n, s), field(a, "right", v), fresh(v).
+.decl fresh(v: node)
+fresh(v) :- kind(v, k), (k = "arrow_function" ; k = "function_expression" ; k = "class" ; k = "new_expression").
+fresh(v) :- kind(v, "call_expression"), field(v, "arguments", a), !kind(a, "template_string").  // not styled.div`…`
+fresh(v) :- kind(v, "parenthesized_expression"), child(v, x, _), fresh(x).
+fresh(v) :- kind(v, "ternary_expression"), (field(v, "consequence", x) ; field(v, "alternative", x)), fresh(x).
+fresh(v) :- kind(v, "binary_expression"), (op(v, "&&") ; op(v, "||") ; op(v, "??")), field(v, "right", x), fresh(x).

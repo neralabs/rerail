@@ -1,0 +1,776 @@
+{
+  "format": "rerail.shared-sql-evidence/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "date": "2026-10-20",
+  "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+  "build": {
+    "profile": "release",
+    "features": [
+      "code-rule-profile"
+    ],
+    "lto": "thin",
+    "codegenUnits": 256,
+    "allocator": "system malloc via existing jemalloc symbol shim"
+  },
+  "workload": {
+    "files": 5,
+    "bytes": 1026452,
+    "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043"
+  },
+  "changedPolicies": {
+    "data-layer-serverplan-quality": {
+      "baseline": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+      "experiment": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+    }
+  },
+  "runs": {
+    "baseline": {
+      "trace": "on",
+      "external": "sample",
+      "queryPlans": true,
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 77.07119699998293,
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.14.7",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          39.3193359375,
+          34.8642578125,
+          28.5517578125
+        ],
+        "loadAverageEnd": [
+          28.43994140625,
+          32.62109375,
+          28.2724609375
+        ]
+      },
+      "phases": {
+        "compilationMs": 971.415,
+        "coldMs": 59310.658291,
+        "unchangedFileMs": 9.70662500000617,
+        "editedFileMs": 14340.985166999999,
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 586.795,
+            "systemMs": 75.44
+          },
+          "cold": {
+            "userMs": 46532.444,
+            "systemMs": 2491.529
+          },
+          "unchanged": {
+            "userMs": 8.753,
+            "systemMs": 0.779
+          },
+          "edit": {
+            "userMs": 11946.731,
+            "systemMs": 506.384
+          }
+        },
+        "peakRssBytes": 1393803264
+      },
+      "parity": {
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    },
+    "shared": {
+      "trace": "on",
+      "external": "sample",
+      "queryPlans": true,
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 25.351855250017252,
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.14.7",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          29.6943359375,
+          32.7490234375,
+          28.3681640625
+        ],
+        "loadAverageEnd": [
+          28.43994140625,
+          32.18115234375,
+          28.28759765625
+        ]
+      },
+      "phases": {
+        "compilationMs": 489.59862499999997,
+        "coldMs": 18804.631583000002,
+        "unchangedFileMs": 14.2153330000001,
+        "editedFileMs": 5037.397083,
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 404.59,
+            "systemMs": 51.135
+          },
+          "cold": {
+            "userMs": 14272.09,
+            "systemMs": 1344.158
+          },
+          "unchanged": {
+            "userMs": 9.83,
+            "systemMs": 0.805
+          },
+          "edit": {
+            "userMs": 3821.47,
+            "systemMs": 443.527
+          }
+        },
+        "peakRssBytes": 1335803904
+      },
+      "parity": {
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    },
+    "baseline-control": {
+      "trace": "off",
+      "external": "none",
+      "queryPlans": false,
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 69.3946681249945,
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.14.7",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          25.47216796875,
+          31.171875,
+          28.03564453125
+        ],
+        "loadAverageEnd": [
+          32.75439453125,
+          32.2685546875,
+          28.703125
+        ]
+      },
+      "phases": {
+        "compilationMs": 690.784208,
+        "coldMs": 53177.514958,
+        "unchangedFileMs": 9.63629100000253,
+        "editedFileMs": 14784.152957999999,
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 612.616,
+            "systemMs": 29.467
+          },
+          "cold": {
+            "userMs": 46114,
+            "systemMs": 592.998
+          },
+          "unchanged": {
+            "userMs": 9.108,
+            "systemMs": 0.688
+          },
+          "edit": {
+            "userMs": 11896.707,
+            "systemMs": 117.887
+          }
+        },
+        "peakRssBytes": 1346437120
+      },
+      "parity": {
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    },
+    "shared-control": {
+      "trace": "off",
+      "external": "none",
+      "queryPlans": false,
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 23.907387374987593,
+      "host": {
+        "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+        "cpu": "arm",
+        "python": "3.14.7",
+        "logicalCpus": 18,
+        "loadAverageStart": [
+          31.41259765625,
+          31.998046875,
+          28.62841796875
+        ],
+        "loadAverageEnd": [
+          32.7353515625,
+          32.25537109375,
+          28.8173828125
+        ]
+      },
+      "phases": {
+        "compilationMs": 497.1154999999999,
+        "coldMs": 18307.681834,
+        "unchangedFileMs": 10.143332999999984,
+        "editedFileMs": 4085.851458000001,
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 414.719,
+            "systemMs": 18.74
+          },
+          "cold": {
+            "userMs": 14018.169,
+            "systemMs": 351.588
+          },
+          "unchanged": {
+            "userMs": 9.227,
+            "systemMs": 0.886
+          },
+          "edit": {
+            "userMs": 3671.619,
+            "systemMs": 35.694
+          }
+        },
+        "peakRssBytes": 1334149120
+      },
+      "parity": {
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "incrementalDifferences": []
+      }
+    }
+  },
+  "comparisons": {
+    "plansAndSamples": {
+      "phases": {
+        "cold": {
+          "baselineMs": 59310.658291,
+          "experimentMs": 18804.631583000002,
+          "wallSpeedup": 3.1540452164252324,
+          "baselineCpuMs": 49023.973000000005,
+          "experimentCpuMs": 15616.248
+        },
+        "unchanged": {
+          "baselineMs": 9.70662500000617,
+          "experimentMs": 14.2153330000001,
+          "wallSpeedup": 0.6828278310473699,
+          "baselineCpuMs": 9.532,
+          "experimentCpuMs": 10.635
+        },
+        "edit": {
+          "baselineMs": 14340.985166999999,
+          "experimentMs": 5037.397083,
+          "wallSpeedup": 2.8469038534598283,
+          "baselineCpuMs": 12453.115,
+          "experimentCpuMs": 4264.996999999999
+        }
+      },
+      "baselinePeakRssBytes": 1393803264,
+      "experimentPeakRssBytes": 1335803904,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+          "experiment": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+        }
+      },
+      "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "traceOffControl": {
+      "phases": {
+        "cold": {
+          "baselineMs": 53177.514958,
+          "experimentMs": 18307.681834,
+          "wallSpeedup": 2.9046558401097897,
+          "baselineCpuMs": 46706.998,
+          "experimentCpuMs": 14369.757
+        },
+        "unchanged": {
+          "baselineMs": 9.63629100000253,
+          "experimentMs": 10.143332999999984,
+          "wallSpeedup": 0.9500122888603326,
+          "baselineCpuMs": 9.796000000000001,
+          "experimentCpuMs": 10.113
+        },
+        "edit": {
+          "baselineMs": 14784.152957999999,
+          "experimentMs": 4085.851458000001,
+          "wallSpeedup": 3.6183774936440667,
+          "baselineCpuMs": 12014.594000000001,
+          "experimentCpuMs": 3707.313
+        }
+      },
+      "baselinePeakRssBytes": 1346437120,
+      "experimentPeakRssBytes": 1334149120,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+          "experiment": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+        }
+      },
+      "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    }
+  },
+  "coldSqlCounts": {
+    "baseline": {
+      "input-extract": 1155,
+      "sql-materialize": 890,
+      "sql-index": 1362,
+      "fileDescendantBuilds": 30
+    },
+    "shared": {
+      "input-extract": 355,
+      "sql-materialize": 443,
+      "sql-index": 602,
+      "fileDescendantBuilds": 5
+    }
+  },
+  "externalSamples": {
+    "baseline": [
+      {
+        "activeNativeSamples": 761,
+        "topSelf": [
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 113,
+            "percent": 14.85
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+            "samples": 110,
+            "percent": 14.45
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)",
+            "samples": 108,
+            "percent": 14.19
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 63,
+            "percent": 8.28
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+            "samples": 51,
+            "percent": 6.7
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluate (rerail_engine.darwin-arm64.node)",
+            "samples": 761,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNCNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluates1_0B7_ (rerail_engine.darwin-arm64.node)",
+            "samples": 761,
+            "percent": 100.0
+          },
+          {
+            "symbol": "worker (libuv.1.0.0.dylib)",
+            "samples": 761,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl4eval16evaluate_clauses (rerail_engine.darwin-arm64.node)",
+            "samples": 761,
+            "percent": 100.0
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 761,
+            "percent": 100.0
+          }
+        ]
+      },
+      {
+        "activeNativeSamples": 803,
+        "topSelf": [
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)",
+            "samples": 134,
+            "percent": 16.69
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 116,
+            "percent": 14.45
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+            "samples": 80,
+            "percent": 9.96
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+            "samples": 72,
+            "percent": 8.97
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 63,
+            "percent": 7.85
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluate (rerail_engine.darwin-arm64.node)",
+            "samples": 803,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNCNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluates1_0B7_ (rerail_engine.darwin-arm64.node)",
+            "samples": 803,
+            "percent": 100.0
+          },
+          {
+            "symbol": "worker (libuv.1.0.0.dylib)",
+            "samples": 803,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl4eval16evaluate_clauses (rerail_engine.darwin-arm64.node)",
+            "samples": 803,
+            "percent": 100.0
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 803,
+            "percent": 100.0
+          }
+        ]
+      },
+      {
+        "activeNativeSamples": 800,
+        "topSelf": [
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)",
+            "samples": 141,
+            "percent": 17.62
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 122,
+            "percent": 15.25
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 71,
+            "percent": 8.88
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+            "samples": 64,
+            "percent": 8.0
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+            "samples": 57,
+            "percent": 7.12
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluate (rerail_engine.darwin-arm64.node)",
+            "samples": 800,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNCNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl10relational8evaluates1_0B7_ (rerail_engine.darwin-arm64.node)",
+            "samples": 800,
+            "percent": 100.0
+          },
+          {
+            "symbol": "worker (libuv.1.0.0.dylib)",
+            "samples": 800,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl4eval16evaluate_clauses (rerail_engine.darwin-arm64.node)",
+            "samples": 800,
+            "percent": 100.0
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 800,
+            "percent": 100.0
+          }
+        ]
+      }
+    ],
+    "shared": [
+      {
+        "activeNativeSamples": 783,
+        "topSelf": [
+          {
+            "symbol": "write (libsystem_kernel.dylib)",
+            "samples": 93,
+            "percent": 11.88
+          },
+          {
+            "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+            "samples": 36,
+            "percent": 4.6
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 31,
+            "percent": 3.96
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 28,
+            "percent": 3.58
+          },
+          {
+            "symbol": "_RINvXs0_NtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCsg8Nxqh786Fz_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (rerail_engine.darwin-arm64.node)",
+            "samples": 24,
+            "percent": 3.07
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "_pthread_start (libsystem_pthread.dylib)",
+            "samples": 780,
+            "percent": 99.62
+          },
+          {
+            "symbol": "_RINvNtCs9AVYoEndsxt_4napi10async_work7executeNtNtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl9workspace3api18WorkspaceApplyTaskEBP_ (rerail_engine.darwin-arm64.node)",
+            "samples": 780,
+            "percent": 99.62
+          },
+          {
+            "symbol": "_RNvNtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl9workspace6global15evaluate_global (rerail_engine.darwin-arm64.node)",
+            "samples": 780,
+            "percent": 99.62
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 780,
+            "percent": 99.62
+          },
+          {
+            "symbol": "_RNvXNtCs9AVYoEndsxt_4napi4taskNtNtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl9workspace3api18WorkspaceApplyTaskNtB2_10ScopedTask7computeBA_ (rerail_engine.darwin-arm64.node)",
+            "samples": 780,
+            "percent": 99.62
+          }
+        ]
+      },
+      {
+        "activeNativeSamples": 813,
+        "topSelf": [
+          {
+            "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+            "samples": 193,
+            "percent": 23.74
+          },
+          {
+            "symbol": "write (libsystem_kernel.dylib)",
+            "samples": 94,
+            "percent": 11.56
+          },
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 55,
+            "percent": 6.77
+          },
+          {
+            "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+            "samples": 21,
+            "percent": 2.58
+          },
+          {
+            "symbol": "_RINvMs1_NtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcher9match_anyNtNtB8_4tape7TapeDocEBa_ (rerail_engine.darwin-arm64.node)",
+            "samples": 21,
+            "percent": 2.58
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "worker (libuv.1.0.0.dylib)",
+            "samples": 813,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_pthread_start (libsystem_pthread.dylib)",
+            "samples": 813,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RNvNtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl9workspace6global15evaluate_global (rerail_engine.darwin-arm64.node)",
+            "samples": 813,
+            "percent": 100.0
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 813,
+            "percent": 100.0
+          },
+          {
+            "symbol": "node::ThreadPoolWork::ScheduleWork()::'lambda'(uv_work_s*)::__invoke(uv_work_s*) (libnode.147.dylib)",
+            "samples": 813,
+            "percent": 100.0
+          }
+        ]
+      },
+      {
+        "activeNativeSamples": 788,
+        "topSelf": [
+          {
+            "symbol": "_RNvMs4_NtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE18relation_selectionBb_ (rerail_engine.darwin-arm64.node)",
+            "samples": 70,
+            "percent": 8.88
+          },
+          {
+            "symbol": "_RNvXs6_NtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl4tapeNtB5_8TapeNodeNtNtCsg8Nxqh786Fz_13ast_grep_core6source6SgNode17child_by_field_id (rerail_engine.darwin-arm64.node)",
+            "samples": 62,
+            "percent": 7.87
+          },
+          {
+            "symbol": "write (libsystem_kernel.dylib)",
+            "samples": 52,
+            "percent": 6.6
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+            "samples": 51,
+            "percent": 6.47
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl6budget14STEP_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1s_6option6OptionQIB27_INtNtB1s_4cell4CellmEEEEE9call_onceBc_ (rerail_engine.darwin-arm64.node)",
+            "samples": 47,
+            "percent": 5.96
+          }
+        ],
+        "topInclusive": [
+          {
+            "symbol": "worker (libuv.1.0.0.dylib)",
+            "samples": 788,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_pthread_start (libsystem_pthread.dylib)",
+            "samples": 788,
+            "percent": 100.0
+          },
+          {
+            "symbol": "thread_start (libsystem_pthread.dylib)",
+            "samples": 788,
+            "percent": 100.0
+          },
+          {
+            "symbol": "node::ThreadPoolWork::ScheduleWork()::'lambda'(uv_work_s*)::__invoke(uv_work_s*) (libnode.147.dylib)",
+            "samples": 788,
+            "percent": 100.0
+          },
+          {
+            "symbol": "_RINvNtCs9AVYoEndsxt_4napi10async_work7executeNtNtNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl9workspace3api18WorkspaceApplyTaskEBP_ (rerail_engine.darwin-arm64.node)",
+            "samples": 788,
+            "percent": 100.0
+          }
+        ]
+      }
+    ]
+  },
+  "caveats": [
+    "Two matched pairs on a shared host; these measurements do not establish a production ratio.",
+    "Only the quality policy changes. Other workload inputs and the native binary match.",
+    "The selected five-file production workload expects zero findings. Positive and clean detection use the recorded corpus.",
+    "Regrouping changes clause IDs and finding IDs. Corpus parity compares diagnostic path, line, code and multiplicity.",
+    "The shared SQL clause retains the existing clause-level failure boundary.",
+    "Relational file execution remains serial. All-root recursive closure remains unchanged."
+  ],
+  "artifacts": ".rerail/profiles/shared-sql-2026-10-20",
+  "corpus": {
+    "nativeCalls": 200,
+    "positiveCalls": 135,
+    "cleanCalls": 65,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+    "missingCoverage": [],
+    "sourceRecordings": [
+      {
+        "path": "fixtures/host/data-layer-port/batch-06-recording.json",
+        "sha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-06-probes.json",
+        "sha256": "3929777c02349b0dc43ac737dda73e41fb63b425f1704f004767b4f22885dbad"
+      }
+    ]
+  },
+  "incremental": {
+    "format": "rerail.data-layer-incremental-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+    "checks": 10,
+    "transitions": 40,
+    "differences": 0,
+    "elapsedMs": 2508.641
+  },
+  "regressions": {
+    "nativeRuntimeAndRelationalTests": 226,
+    "profilingFrameworkTests": 7,
+    "directSqlTests": 4
+  },
+  "validation": {
+    "rerail-shared-sql-final-build": {
+      "exitCode": 0,
+      "elapsedSeconds": 85.67202983298921
+    },
+    "rerail-shared-sql-clippy": {
+      "exitCode": 0,
+      "elapsedSeconds": 54.99256870901445
+    },
+    "rerail-shared-sql-default-check": {
+      "exitCode": 0,
+      "elapsedSeconds": 28.879860708024353
+    },
+    "rerail-shared-sql-final-checks": {
+      "exitCode": 0,
+      "elapsedSeconds": 29.87554504099535
+    },
+    "rerail-shared-sql-final-tests": {
+      "exitCode": 0,
+      "elapsedSeconds": 3.9980683749890886
+    },
+    "rerail-shared-sql-incremental-final": {
+      "exitCode": 0,
+      "elapsedSeconds": 3.653580374986632
+    },
+    "rerail-shared-sql-doc-checks": {
+      "exitCode": 0,
+      "elapsedSeconds": 0.34432279199245386
+    },
+    "pythonTests": {
+      "profiling": 7,
+      "sharedSql": 4,
+      "passed": true
+    },
+    "additionalChecks": [
+      "cargo fmt --check",
+      "license allowlist",
+      "staged whitespace",
+      "structure (25 gates)",
+      "Windows paths"
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+// data-layer-serverplan-bypass: the three budget clauses, by hand (the converter has no budget form).
+//
+// Each clause is a budget over the calls of one raw-SQL helper: evidence rows are the calls (`call` whose
+// `function` field is the identifier `<helper>`, or an attribute whose `attribute` field is it), grouped by
+// (path, start line), `count lte 0`. So every group is over its maximum, and W reports one violation per
+// (path, line) at the group's first call: exactly a forbid over the same matcher, deduplicated by line, which
+// `violation`'s (path, line) columns already are. `syntax: valid` is `!tape_syntax_error(d)`.
+// Options: `entryPoint` from `option_value`: its `all`, `scan_file` and `scan_source` cases match every path, any
+// other value matches none. `oracleAnalyzer` is read by no clause.
+// Not modelled: a `rerail-ignore` on a group's first call silences the group (W's budget), as for any clause.
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// bypass_call(c, helper): c is a call of `helper`, by name or as an attribute (`x.helper(...)`).
+.decl bypass_call(c: node, helper: symbol)
+bypass_call(c, h) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, h).
+bypass_call(c, h) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, h).
+
+// bypass_entry(v): the entryPoint cases that match every path.
+.decl bypass_entry(v: symbol)
+bypass_entry("all"). bypass_entry("scan_file"). bypass_entry("scan_source").
+
+.decl bypass_hit(helper: symbol, p: symbol, l: number)
+bypass_hit(h, p, l) :- option_value("entryPoint", v), bypass_entry(v), bypass_call(c, h), node(d, c, _, _, _),
+    in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(c, l).
+
+violation("data-layer-serverplan-bypass", "bypass-_execute_raw_sql", "_execute_raw_sql", p, l) :-
+    bypass_hit("_execute_raw_sql", p, l).
+violation("data-layer-serverplan-bypass", "bypass-_execute_raw_sql_async", "_execute_raw_sql_async", p, l) :-
+    bypass_hit("_execute_raw_sql_async", p, l).
+violation("data-layer-serverplan-bypass", "bypass-_query_raw_sql_async", "_query_raw_sql_async", p, l) :-
+    bypass_hit("_query_raw_sql_async", p, l).

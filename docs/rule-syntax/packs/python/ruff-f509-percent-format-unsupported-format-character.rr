@@ -1,0 +1,17 @@
+.policy "ruff-f509-percent-format-unsupported-format-character" revision 2
+.description "Use only valid conversion characters in Python %-format strings; an unsupported one raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F509 (pyflakes): `S % R` where a placeholder of the str literal S ends in a character that is no
+// conversion (`d`, `s`, `r`, `f`, …). Python raises ValueError. Only the first error counts.
+//   "%y" % (1,)                   ← F509
+//   "%5.2f" % (1,)                not reported
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_error(v, what)
+
+.violation F509(at: node) code "F509"
+    "Replace the unsupported conversion character in this %-format string with a valid one such as `s`, `d`, `r` or `f`."
+    suppress ruff "F509"
+F509(b) :- percent_fmt(b, _, _, v), pct_error(v, "unsupported").

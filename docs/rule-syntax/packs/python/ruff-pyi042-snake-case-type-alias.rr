@@ -1,0 +1,14 @@
+.policy "ruff-pyi042-snake-case-type-alias" revision 2
+.description "Name type aliases in CamelCase so they read as types and are not mistaken for ordinary variables."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI042 (flake8-pyi), every file: a type alias (`x: TypeAlias = …` or `type x = …`) named in snake case:
+// starting with a lowercase letter, or with `_` and a lowercase letter or digit. Type names are CamelCase.
+//   my_alias: TypeAlias = int     ← PYI042
+#include "python/typing.rr"
+
+.violation PYI042(at: node, x: symbol) code "PYI042" "Rename type alias `{x}` to CamelCase, e.g. `MyAlias`, and update every reference; leave it if the lowercase name mirrors a runtime name that other code imports."
+    suppress ruff "PYI042"
+PYI042(n, x) :- alias_name(n, x), match("([a-z]|_[0-9a-z]).*", x).

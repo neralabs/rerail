@@ -1,0 +1,19 @@
+.policy "ruff-pth109-os-getcwd" revision 2
+.description "Use Path.cwd() instead of os.getcwd() or os.getcwdb(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH109 (flake8-use-pathlib): every call of `os.getcwd` or `os.getcwdb`, however it is imported.
+// Reported at the callee.
+//   os.getcwd()                          ← PTH109: `Path.cwd()`
+//   from os import getcwdb; getcwdb()    ← PTH109, with the bytes message
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+
+.violation PTH109(at: node, msg: symbol) code "PTH109" "{msg}"
+    suppress ruff "PTH109"
+PTH109(f, "Use `Path.cwd()` from pathlib instead of `os.getcwd()`; it returns a `Path`, so wrap it in `str()` or adjust the code where a string is required.") :-
+    pth_call(_, "os.getcwd", f).
+PTH109(f, "Use `Path.cwd()` from pathlib instead of `os.getcwdb()`; it returns a `Path`, not bytes, so leave it where a bytes value is required.") :-
+    pth_call(_, "os.getcwdb", f).

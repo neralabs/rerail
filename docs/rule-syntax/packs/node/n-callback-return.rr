@@ -1,0 +1,49 @@
+.policy "n-callback-return" revision 5
+.description "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/callback-return: a call of a callback, inside a function, must be returned or be the last
+// thing its function does. A callback is a call whose callee's text is one of the option's names (default
+// "callback", "cb", "next"; an identifier or a member chain on one, `this.cb` is not one: `this` is no
+// identifier). The call is fine when the nearest enclosing block, return or arrow function is:
+//   a return:  return cb(err);          an arrow:  (err) => cb(err)
+//   a block whose last statement is the call (or `x && cb()`), when the block is a function's body
+//   a block whose last statement is a return and whose one before it is the call:  { cb(); return; }
+//   if (err) { callback(err); }  f();     reported: the call is not last in the function
+// option_item("option", i, name): the list of names; ESLint's first option.
+
+#include "tsx/node.rr"                 // called
+#include "tsx/eslint-a-functions.rr"   // function_node, deparen
+#include "tsx/statements.rr"           // block_stmt
+
+.decl cb_name(x: symbol)
+cb_name(x) :- option_item("option", _, x).
+cb_name(x) :- !option_item("option", _, _), (x = "callback" ; x = "cb" ; x = "next").
+// cb_call(c): containsOnlyIdentifiers(callee) and its text is a name.
+.decl cb_call(c: node)
+cb_call(c) :- called(c, f), plain(f), text(f, x), cb_name(x).
+.decl plain(f: node)  // an identifier, or a member whose object (repeatedly) ends in an identifier
+plain(f) :- kind(f, "identifier").
+plain(f) :- (kind(f, "member_expression") ; kind(f, "subscript_expression")), field(f, "object", o),
+    (kind(o, "identifier") ; kind(o, "member_expression"), plain(o)).
+
+.decl stop(k: symbol)
+stop("statement_block"). stop("return_statement"). stop("arrow_function").
+.decl ok(c: node)
+ok(c) :- cb_call(c), nearest(c, s, stop), !kind(s, "statement_block").
+ok(c) :- cb_call(c), nearest(c, b, stop), last(b, x), tail(c, x), child(f, b, _), function_node(f).
+ok(c) :- cb_call(c), nearest(c, b, stop), last(b, r), kind(r, "return_statement"), prev_stmt(r, x), tail(c, x).
+// last(b, x): x is block b's last statement.
+.decl last(b: node, x: node)
+last(b, x) :- block_stmt(b, x), !block_later(x).
+.decl block_later(x: node)
+block_later(x) :- block_stmt(b, x), block_stmt(b, y), y > x.
+// tail(c, x): statement x is the call c, or `a && c` / `a + c` with c on the right (isCallbackExpression).
+.decl tail(c: node, x: node)
+tail(c, x) :- cb_call(c), kind(x, "expression_statement"), child(x, e, 0), deparen(e, d),
+    (d = c ; kind(d, "binary_expression"), field(d, "right", r), deparen(r, c)).
+
+.violation callback_return(at: node) code "n/callback-return" "Expected return with your callback function."
+    suppress eslint "n/callback-return"
+callback_return(c) :- cb_call(c), !ok(c), inside(c, _, function_node).

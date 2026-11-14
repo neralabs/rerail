@@ -1,0 +1,134 @@
+[
+  {
+    "name": "baseline"
+  },
+  {
+    "name": "planner_order",
+    "replacements": [
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ]
+    ]
+  },
+  {
+    "name": "inline_site",
+    "replacements": [
+      [
+        "async_site(c0,c1,c2) AS MATERIALIZED",
+        "async_site(c0,c1,c2) AS NOT MATERIALIZED"
+      ]
+    ]
+  },
+  {
+    "name": "site_without_distinct",
+    "replacements": [
+      [
+        "async_site(c0,c1,c2) AS MATERIALIZED (SELECT DISTINCT ",
+        "async_site(c0,c1,c2) AS MATERIALIZED (SELECT "
+      ]
+    ]
+  },
+  {
+    "name": "planner_order_without_site_distinct",
+    "replacements": [
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ],
+      [
+        "async_site(c0,c1,c2) AS MATERIALIZED (SELECT DISTINCT ",
+        "async_site(c0,c1,c2) AS MATERIALIZED (SELECT "
+      ]
+    ]
+  },
+  {
+    "name": "inline_relations",
+    "replacements": [
+      [
+        " AS MATERIALIZED ",
+        " AS NOT MATERIALIZED "
+      ]
+    ]
+  },
+  {
+    "name": "snapshot_site",
+    "snapshots": [
+      "async_site"
+    ]
+  },
+  {
+    "name": "snapshot_prefix",
+    "snapshots": [
+      "async_site",
+      "async_open_receiver"
+    ]
+  },
+  {
+    "name": "snapshot_semantics",
+    "snapshots": [
+      "rr_python"
+    ]
+  },
+  {
+    "name": "snapshot_semantics_inline",
+    "snapshots": [
+      "rr_python"
+    ],
+    "replacements": [
+      [
+        " AS MATERIALIZED ",
+        " AS NOT MATERIALIZED "
+      ]
+    ]
+  },
+  {
+    "name": "root_site",
+    "select": "SELECT count(*) FROM async_site"
+  },
+  {
+    "name": "root_reference",
+    "select": "SELECT count(*) FROM async_reference"
+  },
+  {
+    "name": "root_open",
+    "select": "SELECT count(*) FROM async_open_receiver"
+  },
+  {
+    "name": "root_qualified",
+    "select": "SELECT count(*) FROM q0_async_qualified"
+  },
+  {
+    "name": "root_arguments",
+    "select": "SELECT count(*) FROM p1_async_argument"
+  },
+  {
+    "name": "root_p0_ASYNC210",
+    "select": "SELECT count(*) FROM p0_ASYNC210"
+  },
+  {
+    "name": "root_p1_ASYNC221",
+    "select": "SELECT count(*) FROM p1_ASYNC221"
+  },
+  {
+    "name": "root_p2_ASYNC222",
+    "select": "SELECT count(*) FROM p2_ASYNC222"
+  },
+  {
+    "name": "root_p3_ASYNC230",
+    "select": "SELECT count(*) FROM p3_ASYNC230"
+  },
+  {
+    "name": "root_rr_diagnostic_at",
+    "select": "SELECT count(*) FROM rr_diagnostic_at"
+  },
+  {
+    "name": "bounded_positions",
+    "replacements": [
+      [
+        "rdl_int(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rdl_int WHERE i<4096)",
+        "rdl_int(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rdl_int WHERE i<(SELECT coalesce(max(length(sym_text(c2))),1) FROM q2_async_blocking))"
+      ]
+    ]
+  }
+]

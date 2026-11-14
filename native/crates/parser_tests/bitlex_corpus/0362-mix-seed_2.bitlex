@@ -1,0 +1,18 @@
+# corpus: mix: seed 2
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = aligned(op, 5)
+mask m1 = lf
+mask m2 = (digit ^ op)
+mask m3 = m2
+mask m4 = starts(fill(starts(alpha), (alpha | op)))
+mask m5 = aligned((m2 | m0), 9)

@@ -1,0 +1,67 @@
+// data-layer-impl-direct-execution: clause `direct-execution-lines` (relational), with its options from the
+// converter's facts: entryPoint (option_value) and oracleAnalyzer (option_on; true: code IDE001, else
+// direct_execution).
+// Policy: candidates/rules-ast/data-layer-impl-direct-execution.json.
+//
+// The SQL's rows (partitionBy file, key line):
+// - raw_calls: a call whose function is an attribute `….M`, M one of the methods; at the call's first line;
+// - raw_tokens: each match of `\.M\(` in the module's text, at its first line, less those starting inside a comment,
+//   a non-f string literal or a string's content. Outside comments and literal text the tokens are exactly the
+//   attributes `….M` whose dot touches M (node_text ends in `.M`) called with `(` right at the attribute's end (the
+//   argument list starts where the attribute ends): a primary followed by `(` is a call. An f-string's
+//   interpolations are code, and the SQL does not exclude them either (an f-string fails `(?i)^[rub]*["']`). The
+//   token's line is M's: the dot is on it.
+// - matches keeps rows whose path is not allowed, or in an fts directory with M `_execute_direct_internal[_async]`;
+//   one row per line.
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl option_value(name: symbol, v: symbol)
+.decl option_on(name: symbol)
+.output violation
+
+.decl direct_execution_method(m: symbol)
+direct_execution_method("_execute_direct_internal").
+direct_execution_method("_execute_direct_internal_async").
+direct_execution_method("_fetchall").
+direct_execution_method("_fetchone").
+direct_execution_method("execute_grammar_fetchall").
+direct_execution_method("execute_grammar_fetchone").
+direct_execution_method("fetchall").
+direct_execution_method("fetchone").
+
+// An attribute `….M` and its attribute identifier.
+.decl direct_execution_attr(a: node, id: node, m: symbol)
+direct_execution_attr(a, id, m) :- node(_, a, "attribute", _, _), field(a, "attribute", id), text(id, m), direct_execution_method(m).
+
+// The rows: (document, line, method).
+.decl direct_execution_row(d: number, l: number, m: symbol)
+direct_execution_row(d, l, m) :- direct_execution_attr(a, _, m), field(c, "function", a), node(d, c, "call", _, _), line(c, l).
+direct_execution_row(d, l, m) :- direct_execution_attr(a, id, m), node_text(a, s),
+    (suffix("._execute_direct_internal", s) ; suffix("._execute_direct_internal_async", s) ; suffix("._fetchall", s) ;
+     suffix("._fetchone", s) ; suffix(".execute_grammar_fetchall", s) ; suffix(".execute_grammar_fetchone", s) ;
+     suffix(".fetchall", s) ; suffix(".fetchone", s)),
+    node(d, a, _, _, e), field(c, "function", a), field(c, "arguments", g), node(_, g, _, e, _), line(id, l).
+
+.decl direct_execution_fts(d: number)
+direct_execution_fts(d) :- doc(d, p, _), match(".*(?:(?:^|/)impl/[^/]+/fts/.*\\.py$).*", p).
+.decl direct_execution_allowed(d: number)
+direct_execution_allowed(d) :- doc(d, p, _), match(".*(?:(?:(?:^|/)impl/browser/sqljs_sqlite3\\.py$|(?:^|/)impl/common/l1000_cache/backends/sqlite\\.py$|(?:^|/)impl/common/l2070_server_plan/base_server_plan\\.py$|(?:^|/)impl/common/l2070_server_plan/execution_guard\\.py$|(?:^|/)impl/common/l2070_server_plan/operations\\.py$|(?:^|/)impl/common/l2070_server_plan/sql_server_plan\\.py$|(?:^|/)impl/common/l2200_sql_dialect/sql_connection\\.py$|(?:^|/)impl/common/l2510_delta_storage/manager\\.py$|(?:^|/)impl/common/l3150_schema_diff/permission_validation\\.py$|(?:^|/)impl/common/l3150_schema_diff/versioning_validation\\.py$|(?:^|/)impl/common/l3250_migrations/data_validation\\.py$|(?:^|/)impl/common/l3250_migrations/executor\\.py$|(?:^|/)impl/common/l5200_sql_query/_aggregation\\.py$|(?:^|/)impl/common/l5200_sql_query/_pagination\\.py$|(?:^|/)impl/common/l5200_sql_query/_read_ops\\.py$|(?:^|/)impl/common/l5200_sql_query/_write_ops\\.py$|(?:^|/)impl/common/l7050_backend_operations/sql_backend_operations\\.py$|(?:^|/)impl/common/l7100_versioned_operations/versioned_operations\\.py$|(?:^|/)impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query\\.py$|(?:^|/)impl/common/l7248_sparse_versioned_transactions/sql_sparse_versioned_write_query\\.py$|(?:^|/)impl/common/l7300_cross_branch/sql_cross_branch_query\\.py$|(?:^|/)impl/common/l7300_sql_versioned_transactions/sql_raw_exec_mixin\\.py$|(?:^|/)impl/common/l7300_sql_versioned_transactions/sql_read_transaction\\.py$|(?:^|/)impl/common/l7300_sql_versioned_transactions/sql_write_transaction\\.py$|(?:^|/)impl/common/l7350_revision_graph/revision_graph\\.py$|(?:^|/)impl/common/l9700_sql_graph_query/sql_graph_query\\.py$|(?:^|/)impl/l1595_llm_cache/write_back_queue\\.py$|(?:^|/)impl/sqlite/native_async_wrapper\\.py$|(?:^|/)impl/[^/]+/connection\\.py$|(?:^|/)impl/[^/]+/tests/|(?:^|/)impl/common/.*/tests/|(?:^|/)impl/.*/test_[^/]+\\.py$|(?:^|/)impl/[^/]+/introspector\\.py$|(?:^|/)impl/[^/]+/validator\\.py$|(?:^|/)impl/[^/]+/fts/|(?:^|/)impl/[^/]+/vector/|(?:^|/)impl/[^/]+/sql_batch\\.py$|(?:^|/)impl/[^/]+/transaction\\.py$|(?:^|/)impl/[^/]+/versioned_.*_transaction\\.py$|(?:^|/)impl/[^/]+/query\\.py$|(?:^|/)impl/[^/]+/graph_query\\.py$|(?:^|/)impl/[^/]+/deferred\\.py$|(?:^|/)impl/[^/]+/merge_strategy\\.py$|(?:^|/)impl/[^/]+/backend_operations\\.py$|(?:^|/)impl/[^/]+/query_instrumentation\\.py$|(?:^|/)impl/common/l2070_server_plan/sql_backend_executor\\.py$|(?:^|/)impl/[^/]+/backend_executor\\.py$|(?:^|/)impl/common/l3500_bulk_ops/database_importer\\.py$|(?:^|/)impl/common/l7050_versioned_schema_builder/polymorphic_widening\\.py$|(?:^|/)impl/common/l7100_versioned_operations/ddl_constraint_management\\.py$|(?:^|/)l3200_metadata/schema_lock\\.py$|(?:^|/)l5200_vector_index/content_addressable_pgvector\\.py$)).*", p).
+
+.decl direct_execution_entry(e: symbol)
+direct_execution_entry(e) :- option_value("entryPoint", e).
+.decl direct_execution_code(c: symbol)
+direct_execution_code("IDE001") :- option_on("oracleAnalyzer").
+direct_execution_code("direct_execution") :- direct_execution_entry(_), !option_on("oracleAnalyzer").
+
+// The final query: by default rows not allowed, or in fts with M `_execute_direct_internal[_async]`; at the entry
+// points scan_fts_manager_source and scan_fts_manager_direct_execution the latter only.
+.decl direct_execution_kept(d: number, l: number)
+direct_execution_kept(d, l) :- direct_execution_entry(e), e != "scan_fts_manager_source", e != "scan_fts_manager_direct_execution",
+    direct_execution_row(d, l, _), !direct_execution_allowed(d).
+direct_execution_kept(d, l) :- direct_execution_row(d, l, "_execute_direct_internal"), direct_execution_fts(d).
+direct_execution_kept(d, l) :- direct_execution_row(d, l, "_execute_direct_internal_async"), direct_execution_fts(d).
+
+violation("data-layer-impl-direct-execution", "direct-execution-lines", c, p, l) :-
+    direct_execution_kept(d, l), direct_execution_code(c), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _).

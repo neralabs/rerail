@@ -1,0 +1,18 @@
+.policy "ruff-n816-mixed-case-variable-in-global-scope" revision 2
+.description "Name module-level variables in lowercase snake_case, not mixedCase, as PEP 8 recommends for variable names."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N816 (pep8-naming): a name stored at module level in mixedCase: not all lowercase, and its first letter
+// (after one `_`) lowercase. Exempt: namedtuple/NamedTuple assignments and names matching
+// `pep8-naming.ignore-names`. A `global` statement does not make a function's store module-level here: Ruff
+// checks the scope the store is written in.
+//   myVariable = 0                    ← N816
+//   MyObj = namedtuple("MyObj", ["a"])   not reported (and not mixedCase)
+#include "python/naming.rr"
+
+.violation N816(at: node, x: symbol) code "N816"
+    "Rename `{x}` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API."
+    suppress ruff "N816"
+N816(n, x) :- store_name(n, x, m), kind(m, "module"), mixed_name(x), !store_makes(n, "namedtuple"), !naming_ignored(x).

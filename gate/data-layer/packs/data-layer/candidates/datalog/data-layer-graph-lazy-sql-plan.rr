@@ -1,0 +1,247 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.global library stmt_of, before, in_branch, branch_kind, always_raises, alt_first, alt_next, tail_raises, fn_or_lambda, impmod, rifrom, ribind, irel_open, star, import_stmt, rel_base, module_text, import_alias, dotted, import_site, binds, module_of, module_path, workspace_module, loads, pkg_above, import_time, runs, reaches, exports, star_from, exported, resolve_export, export_query, dunder_all, public_name, has_all, top_import, last_top_import, module_doc, top_has, scope, fscope, fdef, comp_scope, lscope, lfscope, first_for, modnode, modname, nameref, kwpat_key, rdefn, rasg, param, patkind, tgt, capture_parent, tscope, walrus_tgt, rotgt, decl, rbound, home, defn, asg, otgt, ifrom, ibind, bound_in, walk, wstart, in_first_iter, tp_name, tp_list, tp_decl, tp_ref, look, miss, builtin_ref, stmt, defstmt, asgstmt, sbinds, shadowed, live_def, live_asg, attr_of, qn, cmp, scope_node, def_name, qualname, scope_name, is_async, decorator, params, binding, site_form, ref_site, bind_only, aug_target, binding_value, sym_of, global_ref, annotation, ann_root, parsed_in, ann_ctx, frag_str, str_node, ann_str, concat_part, literal_str, type_checking_block, catches, caught, class_def, class_base, subclass, method, mro_method, assigned_attr, target_form, target_stmt, form_of_kind, imported_sym, site_scope, scope_kind, site_annotation, site_used, site_only, site_latest, site_exported, site_outer, site_stop_at_global, typing_mod, py_keyword, builtin, ts_wrapper, wrapper_node, ast_parent, unparen, frame_mark, def_mark, py_frame, def_frame, ast_name, not_name, py_capture, py_pattern_class, ctx_node, store_node, del_node, expr_ctx, dotted_expr, leaf_name, call_name, call_dotted, chain_step, chain_below, chain_root, base_name, from_module_raw, in_params, param_parts, slash_at, star_at, param_kind, sig_param, param_named, tparam_list, tparam_item, tparam_shape, type_param, tparam_named, assign_chain, assign_target, assign_value, assign_ann, body_node, body_stmt, body_len, body_of, docstring, doc_stmt, py_if, py_orelse, py_next_code, same_bool, bool_top, bool_part, bool_operand, cmp_pair, fstring, string_form, plain_str_node, plain_str, str_const, const_kind, ast_constant, class_chain, class_path, def_chain, owner_path, py_qualname, stub_file, path_module, ann_node, in_string_ann, ann_name, ann_head, head_of, latest_assign, same_file_call, name_reach
+.decl graph_plan_contracts_cdef(kind: symbol)
+graph_plan_contracts_cdef("class_definition").
+.decl graph_plan_contracts_deco(kind: symbol)
+graph_plan_contracts_deco("decorator").
+.decl graph_plan_contracts_defs(kind: symbol)
+graph_plan_contracts_defs("function_definition"). graph_plan_contracts_defs("class_definition").
+.decl graph_plan_contracts_fdef(kind: symbol)
+graph_plan_contracts_fdef("function_definition").
+.decl graph_plan_contracts_imports(kind: symbol)
+graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("import_from_statement"). graph_plan_contracts_imports("future_import_statement").
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl graph_plan_contracts_alias(y: symbol, x: symbol)
+.decl graph_plan_contracts_alias_name(o: node, i: node)
+.decl graph_plan_contracts_banned(clause: symbol, p: symbol, x: symbol, k: symbol, need: symbol, code: symbol)
+.decl graph_plan_contracts_bare(l: node, t: node)
+.decl graph_plan_contracts_cand(d: number, o: symbol, x: symbol, f: node, s: number)
+.decl graph_plan_contracts_chain(a: node, b: node)
+.decl graph_plan_contracts_class(d: number, x: symbol, c: node)
+.decl graph_plan_contracts_decorator(f: node, x: symbol)
+.decl graph_plan_contracts_defkind(k: symbol)
+.decl graph_plan_contracts_file(d: number, p: symbol)
+.decl graph_plan_contracts_has_class(d: number, x: symbol)
+.decl graph_plan_contracts_has_def(d: number, x: symbol)
+.decl graph_plan_contracts_has_method(d: number, o: symbol, x: symbol)
+.decl graph_plan_contracts_hit(clause: symbol, code: symbol, p: symbol, l: number)
+.decl graph_plan_contracts_in_fn(n: node)
+.decl graph_plan_contracts_inner(a: node)
+.decl graph_plan_contracts_mention(f: node, x: symbol)
+.decl graph_plan_contracts_mentions(f: node, y: symbol)
+.decl graph_plan_contracts_method(d: number, o: symbol, x: symbol, f: node)
+.decl graph_plan_contracts_named(d: number, i: node, x: symbol)
+.decl graph_plan_contracts_nested(n: node)
+.decl graph_plan_contracts_not_name(n: node)
+.decl graph_plan_contracts_params(kind: symbol)
+.decl graph_plan_contracts_ref(e: node, x: symbol)
+.decl graph_plan_contracts_removed(clause: symbol, p: symbol, o: symbol, x: symbol, code: symbol)
+.decl graph_plan_contracts_req_class(clause: symbol, p: symbol, x: symbol, code: symbol)
+.decl graph_plan_contracts_req_deco(clause: symbol, p: symbol, o: symbol, x: symbol, y: symbol, code: symbol)
+.decl graph_plan_contracts_req_mention(clause: symbol, p: symbol, o: symbol, x: symbol, y: symbol, code: symbol)
+.decl graph_plan_contracts_req_method(clause: symbol, p: symbol, o: symbol, x: symbol, code: symbol)
+.decl graph_plan_contracts_req_symbol(clause: symbol, p: symbol, x: symbol, code: symbol)
+.decl graph_plan_contracts_surface(d: number)
+.decl graph_plan_contracts_symbol(d: number, x: symbol, k: symbol, l: number)
+.decl graph_plan_contracts_target(a: node, t: node)
+.decl graph_plan_contracts_tclass(d: number, x: symbol, c: node, s: number)
+.decl graph_plan_contracts_topdef(d: number, x: symbol, s: number, k: symbol, l: number)
+.decl graph_plan_contracts_unparen(e: node, m: node)
+.decl graph_plan_contracts_wanted(x: symbol)
+.decl in_scope(d: number)
+.decl kind(n: node, k: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl tparam_item(l: node, i: number, p: node, dflt: node)
+.decl tparam_list(o: node, l: node)
+.decl tparam_shape(p: node, nm: node, k: symbol, b: node)
+.decl type_param(o: node, p: node, nm: node, i: number, kind: symbol, bound: node, dflt: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, token, cpython_syntax_error
+.output violation
+.pragma "magic-transform" "reaches, unparen"
+graph_plan_contracts_alias("legacy", "_legacy_delegate_stub").
+graph_plan_contracts_alias("legacy", "_txn_legacy_delegate_body").
+graph_plan_contracts_alias("legacy", "_versioned_legacy_delegate_body").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_MappedLazyContext", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_PlanBackedGraphQuery", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_PlanBackedGraphTraversal", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_TxnBoundGraphQueryBuilder", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_add_plan_intent", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_get_or_create_plan_flush_context", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_lazy_result_for_plan_ref", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_make_graph_query_builder", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "_map_lazy", "def", "VersionedReadTransactionLazyMixin", "GLSP-001").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "GraphQueryTerminalIntent", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "GraphQueryTerminalStep", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphQueryTerminalMode", "any", "", "GLSP-010").
+graph_plan_contracts_banned("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "_clone_graph_pattern", "any", "", "GLSP-010").
+graph_plan_contracts_defkind("class").
+graph_plan_contracts_defkind("function").
+graph_plan_contracts_params("parameters").
+graph_plan_contracts_params("lambda_parameters").
+graph_plan_contracts_removed("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_query_builder_lazy", "GLSP-003").
+graph_plan_contracts_removed("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_traverse_lazy", "GLSP-003").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_query_builder", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_query_builder_async", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_traverse", "GLSP-007").
+graph_plan_contracts_removed("graph-plan-contracts-6", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_traverse_async", "GLSP-007").
+graph_plan_contracts_req_class("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "GLSP-002").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "GraphLazyStepRegistrar", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQuery", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-1", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphTraversal", "GLSP-006").
+graph_plan_contracts_req_class("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "GLSP-006").
+graph_plan_contracts_req_deco("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_lazy", "pure_lazy", "GLSP-004").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_one_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "count_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "exists_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_bindings_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_aggregate_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-4", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_paths_lazy", "pure_lazy", "GLSP-009").
+graph_plan_contracts_req_deco("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "legacy_sync", "GLSP-010").
+graph_plan_contracts_req_deco("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "legacy_async", "GLSP-010").
+graph_plan_contracts_req_mention("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "legacy", "GLSP-011").
+graph_plan_contracts_req_mention("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "legacy", "GLSP-011").
+graph_plan_contracts_req_mention("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "SqlColumnTypeHints", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "_binding_node_sys_id_alias", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "_binding_edge_alias", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "uuid_columns", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "text_columns", "GLSP-014").
+graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "integer_columns", "GLSP-014").
+graph_plan_contracts_req_method("graph-plan-contracts-0", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin", "graph_lazy", "GLSP-003").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_one_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-2", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "count_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "exists_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_bindings_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-3", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_aggregate_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-4", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder", "execute_paths_lazy", "GLSP-008").
+graph_plan_contracts_req_method("graph-plan-contracts-4", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph", "GLSP-007").
+graph_plan_contracts_req_method("graph-plan-contracts-5", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction", "graph_async", "GLSP-007").
+graph_plan_contracts_req_method("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "cte_column_type_hints", "GLSP-013").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphAggregateStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphBindingsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphCountStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-6", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphExistsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphNodesStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphOneStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep", "GLSP-012").
+graph_plan_contracts_req_symbol("graph-plan-contracts-7", "impl/common/l2070_server_plan/steps/intent_graph.py", "_build_graph_execution_ctx", "GLSP-012").
+graph_plan_contracts_wanted("_legacy_delegate_stub").
+graph_plan_contracts_wanted("_txn_legacy_delegate_body").
+graph_plan_contracts_wanted("_versioned_legacy_delegate_body").
+graph_plan_contracts_wanted("SqlColumnTypeHints").
+graph_plan_contracts_wanted("_binding_node_sys_id_alias").
+graph_plan_contracts_wanted("_binding_edge_alias").
+graph_plan_contracts_wanted("uuid_columns").
+graph_plan_contracts_wanted("text_columns").
+graph_plan_contracts_wanted("integer_columns").
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_lazy_mixin.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_transactions.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/graph_lazy_sql.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/intent_graph.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+kind(n, k) :- node(_, n, k, _, _).
+tparam_list(o, l) :- kind(o, "function_definition"), field(o, "type_parameters", l).
+tparam_list(o, l) :- kind(o, "class_definition"), field(o, "type_parameters", l).
+tparam_list(o, l) :- kind(o, "type_alias_statement"), field(o, "left", t), kind(t, "generic_type"), g = t, child(g, l, _), kind(l, "type_parameter").
+tparam_list(o, l) :- kind(o, "type_alias_statement"), field(o, "left", t), kind(t, "type"), child(t, g, 0), kind(g, "generic_type"), child(g, l, _), kind(l, "type_parameter").
+tparam_item(l, i, p, -1) :- tparam_list(_, l), child(l, p, i), kind(p, "type").
+tparam_item(l, i, p, d) :- tparam_list(_, l), child(l, e, i), kind(e, "type_default"), field(e, "name", p), field(e, "value", d).
+tparam_shape(p, nm, "typevar", -1) :- tparam_item(_, _, p, _), child(p, nm, 0), kind(nm, "identifier").
+tparam_shape(p, nm, "typevar", b) :- tparam_item(_, _, p, _), child(p, c, 0), kind(c, "constrained_type"), child(c, t, 0), child(t, nm, 0), kind(nm, "identifier"), child(c, b, 1).
+tparam_shape(p, nm, "typevartuple", -1) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"), op(s, "*"), child(s, nm, 0).
+tparam_shape(p, nm, "paramspec", -1) :- tparam_item(_, _, p, _), child(p, s, 0), kind(s, "splat_type"), op(s, "**"), child(s, nm, 0).
+type_param(o, p, nm, i, k, b, d) :- tparam_list(o, l), tparam_item(l, i, p, d), tparam_shape(p, nm, k, b).
+graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), !out_scope(d), doc(d, p, _).
+graph_plan_contracts_nested(n) :- inside(n, _, graph_plan_contracts_defs).
+graph_plan_contracts_in_fn(n) :- inside(n, _, graph_plan_contracts_fdef).
+graph_plan_contracts_tclass(d, x, c, s) :- node(d, c, "class_definition", s, _), !graph_plan_contracts_nested(c), field(c, "name", nm), text(nm, x).
+graph_plan_contracts_class(d, x, c) :- graph_plan_contracts_tclass(d, x, c, s), s = min t : { graph_plan_contracts_tclass(d, x, _, t) }.
+graph_plan_contracts_has_class(d, x) :- graph_plan_contracts_tclass(d, x, _, _).
+graph_plan_contracts_cand(d, o, x, f, s) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_in_fn(f), nearest(f, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, o, c, _), field(f, "name", nm), text(nm, x).
+graph_plan_contracts_method(d, o, x, f) :- graph_plan_contracts_cand(d, o, x, f, s), s = max t : { graph_plan_contracts_cand(d, o, x, _, t) }.
+graph_plan_contracts_has_method(d, o, x) :- graph_plan_contracts_cand(d, o, x, _, _).
+graph_plan_contracts_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
+graph_plan_contracts_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graph_plan_contracts_unparen(i, m).
+graph_plan_contracts_ref(e, x) :- node(_, e, "identifier", _, _), text(e, x).
+graph_plan_contracts_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+graph_plan_contracts_decorator(f, x) :- field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graph_plan_contracts_unparen(e0, e), !node(_, e, "call", _, _), graph_plan_contracts_ref(e, x).
+graph_plan_contracts_decorator(f, x) :- field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graph_plan_contracts_unparen(e0, e), node(_, e, "call", _, _), field(e, "function", g0), graph_plan_contracts_unparen(g0, g), graph_plan_contracts_ref(g, x).
+graph_plan_contracts_not_name(n) :- field(_, "name", n).
+graph_plan_contracts_not_name(n) :- child(ps, n, _), node(_, ps, k, _, _), graph_plan_contracts_params(k).
+graph_plan_contracts_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, 0), child(s, n, 0), node(_, s, "list_splat_pattern", _, _).
+graph_plan_contracts_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, 0), child(s, n, 0), node(_, s, "dictionary_splat_pattern", _, _).
+graph_plan_contracts_not_name(n) :- child(ps, s, _), node(_, ps, k, _, _), graph_plan_contracts_params(k), child(s, n, 0), node(_, s, "list_splat_pattern", _, _).
+graph_plan_contracts_not_name(n) :- child(ps, s, _), node(_, ps, k, _, _), graph_plan_contracts_params(k), child(s, n, 0), node(_, s, "dictionary_splat_pattern", _, _).
+graph_plan_contracts_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, graph_plan_contracts_imports).
+graph_plan_contracts_not_name(n) :- node(_, g, "global_statement", _, _), child(g, n, _).
+graph_plan_contracts_not_name(n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _).
+graph_plan_contracts_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _), field(ap, "alias", t), child(t, n, _).
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, dn, 0), node(_, dn, "dotted_name", _, _), child(dn, n, 0), !child(dn, _, 1).
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, ap, 0), node(_, ap, "as_pattern", _, _), child(ap, n, 1), node(_, n, "identifier", _, _).
+graph_plan_contracts_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, dn, 1), node(_, dn, "dotted_name", _, _), child(dn, n, 0), !child(dn, _, 1).
+graph_plan_contracts_not_name(n) :- type_param(_, _, n, _, _, _, _).
+graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x), graph_plan_contracts_wanted(x), !graph_plan_contracts_not_name(i).
+graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x), graph_plan_contracts_wanted(x), field(a, "attribute", i), node(_, a, "attribute", _, _).
+graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, f, graph_plan_contracts_fdef).
+graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, dc, graph_plan_contracts_deco), child(dd, dc, _), field(dd, "definition", f).
+graph_plan_contracts_topdef(d, x, s, "class", l) :- graph_plan_contracts_tclass(d, x, c, s), line(c, l).
+graph_plan_contracts_topdef(d, x, s, "function", l) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_nested(f), field(f, "name", nm), text(nm, x), line(f, l).
+graph_plan_contracts_chain(a, a) :- node(_, a, "assignment", _, _), !field(a, "type", _), !graph_plan_contracts_inner(a).
+graph_plan_contracts_chain(a, c) :- graph_plan_contracts_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
+graph_plan_contracts_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a).
+graph_plan_contracts_target(a, t) :- graph_plan_contracts_chain(a, b), field(b, "left", l), graph_plan_contracts_bare(l, t).
+graph_plan_contracts_bare(l, l) :- node(_, l, "identifier", _, _).
+graph_plan_contracts_bare(l, t) :- node(_, l, "tuple_pattern", _, _), child(l, c, 0), !child(l, _, 1), !token(l, _, ",", _, _), graph_plan_contracts_bare(c, t).
+graph_plan_contracts_topdef(d, x, s, "assign", l) :- node(d, a, "assignment", s, _), !graph_plan_contracts_nested(a), graph_plan_contracts_target(a, t), text(t, x), line(a, l).
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, g, 0), node(_, g, "generic_type", _, _), child(g, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", g), node(_, g, "generic_type", _, _), child(g, i, 0), node(_, i, "identifier", _, _).
+graph_plan_contracts_topdef(d, x, s, "typealias", l) :- node(d, o, "type_alias_statement", s, _), !graph_plan_contracts_nested(o), graph_plan_contracts_alias_name(o, i), text(i, x), line(o, l).
+graph_plan_contracts_symbol(d, x, k, l) :- graph_plan_contracts_topdef(d, x, s, k, l), s = max t : { graph_plan_contracts_topdef(d, x, t, _, _) }.
+graph_plan_contracts_has_def(d, x) :- graph_plan_contracts_symbol(d, x, k, _), graph_plan_contracts_defkind(k).
+graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_class(c, p, x, code), graph_plan_contracts_file(d, p), !graph_plan_contracts_has_class(d, x).
+graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_symbol(c, p, x, code), graph_plan_contracts_file(d, p), !graph_plan_contracts_has_def(d, x).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "def", need, code), graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, k, l), graph_plan_contracts_defkind(k), graph_plan_contracts_has_class(d, need).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "any", "", code), graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, _, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_method(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_class(d, o, k), !graph_plan_contracts_has_method(d, o, x), line(k, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_deco(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_decorator(f, y), line(f, l).
+graph_plan_contracts_alias(y, y) :- graph_plan_contracts_req_mention(_, _, _, _, y, _), y != "legacy".
+graph_plan_contracts_mentions(f, y) :- graph_plan_contracts_alias(y, x), graph_plan_contracts_mention(f, x).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_mention(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_mentions(f, y), line(f, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_removed(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), line(f, l).
+graph_plan_contracts_surface(d) :- graph_plan_contracts_target(a, t), text(t, "__pure_lazy_surface__"), node(d, a, _, _, _), !graph_plan_contracts_in_fn(a), nearest(a, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, "GraphLazyStepRegistrar", c, _).
+graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, 1) :- graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py", !graph_plan_contracts_has_class(d, "GraphLazyStepRegistrar").
+graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, l) :- graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py", graph_plan_contracts_class(d, "GraphLazyStepRegistrar", k), !graph_plan_contracts_surface(d), line(k, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-0", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-0", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-1", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-1", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-2", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-2", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-3", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-3", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-4", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-4", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-5", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-5", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-6", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-6", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-7", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-7", code, p, l).
+violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-8", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-8", code, p, l).

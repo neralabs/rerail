@@ -1,0 +1,69 @@
+.policy "eslint-curly" revision 3
+.description "Wrap every if, else and loop body in braces, even a single statement; unbraced bodies invite bugs when lines are added."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/statements.rr"
+
+// ESLint's curly. `option` says which bodies of if, else, while, do and for need braces:
+//   "all" (the default)  every body             if (a) b();       → Expected { after 'if' condition.
+//   "multi"              only where needed      if (a) { b(); }   → Unnecessary { after 'if' condition.
+//   "multi-line"         bodies that span lines; a one-line body may have braces or not
+//   "multi-or-nest"      bodies whose statement spans lines, or has a comment before it in its block
+// Braces that cannot go (needs_braces: two statements, a declaration, a dangling if before else) are expected
+// in every mode. `option2` "consistent": the bodies of one if/else chain all have braces, or none do.
+
+// The bodies curly checks, with the words its messages use for them. with and labels are not checked.
+.decl named(w: symbol, phrase: symbol)
+named("if", "'if' condition"). named("while", "'while' condition"). named("for", "'for' condition").
+named("else", "'else'"). named("do", "'do'"). named("for-in", "'for-in'"). named("for-of", "'for-of'").
+.decl checked(b: node, phrase: symbol)
+checked(b, p) :- body(_, b, w), named(w, p).
+
+// expect(b, e): what the option asks of body b: "braces", "none", or "either".
+.decl expect(b: node, e: symbol)
+expect(b, "braces") :- checked(b, _), needs_braces(b).
+expect(b, "braces") :- checked(b, _), !needs_braces(b), (option("option", "all") ; !option("option", _)).
+expect(b, "none")   :- checked(b, _), !needs_braces(b), option("option", "multi").
+expect(b, "braces") :- checked(b, _), !needs_braces(b), option("option", "multi-line"), !collapsed(b).
+expect(b, "either") :- checked(b, _), !needs_braces(b), option("option", "multi-line"), collapsed(b).
+// multi-or-nest judges the statement itself: b, or the one statement in b's braces.
+expect(b, "none")   :- nest(b, x), one_liner(x), !lead_comment(b, x).
+expect(b, "braces") :- nest(b, x), !one_liner(x).
+expect(b, "braces") :- nest(b, x), lead_comment(b, x).
+.decl nest(b: node, x: node)
+nest(b, b) :- checked(b, _), option("option", "multi-or-nest"), !braced(b).
+nest(b, x) :- checked(b, _), option("option", "multi-or-nest"), !needs_braces(b), single_statement(b, x).
+.decl lead_comment(b: node, x: node)  // if (a) { // why\n  x(); }
+lead_comment(b, x) :- child(b, c, _), is_comment(c), precedes(c, x).
+
+// consistent: one body of a chain wanting braces, or having them where either is fine, makes them all want braces.
+.decl link(t: node, b: node)  // b is an if or else body of the chain headed by t
+link(t, b) :- if_chain(t, s), body(s, b, w), (w = "if" ; w = "else").
+.decl chain_braces(t: node)
+chain_braces(t) :- link(t, b), expect(b, "braces").
+chain_braces(t) :- link(t, b), expect(b, "either"), braced(b).
+.decl want(b: node, e: symbol)
+want(b, e) :- expect(b, e), !option("option2", "consistent").
+want(b, e) :- expect(b, e), !link(_, b).
+want(b, "braces") :- option("option2", "consistent"), link(t, b), chain_braces(t).
+want(b, "none")   :- option("option2", "consistent"), link(t, b), !chain_braces(t).
+
+// The findings sit on the body, as ESLint's do.
+.violation MISSING_BRACES(at: node, after: symbol) code "curly" "Expected { after {after}."
+    fix add_braces "Wrap the body in braces"
+    suppress eslint "curly"
+    suppress oxlint "curly"
+    suppress biome "lint/style/useBlockStatements"
+MISSING_BRACES(b, p) :- checked(b, p), want(b, "braces"), !braced(b).
+add_braces(b, _) => replace(b, `{$b}`).
+
+.violation EXTRA_BRACES(at: node, after: symbol) code "curly" "Unnecessary { after {after}."
+    fix drop_braces "Remove the braces"
+    suppress eslint "curly"
+    suppress oxlint "curly"
+    suppress biome "lint/style/useBlockStatements"
+EXTRA_BRACES(b, p) :- checked(b, p), want(b, "none"), braced(b).
+// Still reported, but with no fix, where unbracing would break the code: `if (a) { x = y } (z)()` would make
+// `y (z)()` a call, and `if (a) { enum E {} }` would not parse.
+drop_braces(b, _) :- !unbrace_unsafe(b) => unbrace(b).

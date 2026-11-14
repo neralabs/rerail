@@ -1,0 +1,39 @@
+corpus: 1847 files, 8537597 nodes, load 16.83s
+kind postings build: 106.0 ms (12.41 ns/node)
+template pool: 980
+
+== Multi-rule co-execution (set semantics; outputs = distinct (rule, doc, root)) ==
+   K  outputs |  sep-unanch    sep-anch  fused-disp  fused-trie |  tasks-sa  tasks-fd  tasks-ft
+   8    28342 |    170.23ns      2.11ns     10.01ns     23.60ns |    953398    496760    496760
+  32   161270 |    943.23ns     45.52ns     64.55ns     84.82ns |   5263258   2618520   2618520
+ 128   675986 |       NaNns    182.44ns    188.16ns    171.58ns |  17274127   3747473   3747473
+ 512  2067821 |       NaNns    677.26ns    707.84ns    273.20ns |  62475120   4369826   4369826
+
+== Boolean composition on one root (ns per corpus node; outputs = distinct roots) ==
+
+-- function_definition: has return / has yield (66761 roots)
+   separate A path-enum: 4.31 ns/node (29313 witness paths, 20950 roots, 5355404 steps); set-mode: 4.08 ns/node (4605543 steps)
+   separate B path-enum: 4.24 ns/node (2565 witness paths, 1552 roots, 5328656 steps); set-mode: 4.21 ns/node (5252457 steps)
+   join (3 set ops over root sets): 0.038 ns/node
+   fused AND  (A then B)     5.89 ns/node (   285 roots,   6184343 steps) | vs separate path-enum  1.46x, vs separate set-mode  1.41x
+   fused AND  (B then A)     5.28 ns/node (   285 roots,   5414503 steps) | vs separate path-enum  1.63x, vs separate set-mode  1.58x
+   fused OR                 15.12 ns/node ( 22217 roots,   8568746 steps) | vs separate path-enum  0.57x, vs separate set-mode  0.55x
+   fused A AND NOT B         5.92 ns/node ( 20665 roots,   6204723 steps) | vs separate path-enum  1.45x, vs separate set-mode  1.41x
+
+-- call: function is attribute / has keyword_argument (381926 roots)
+   separate A path-enum: 1.02 ns/node (262070 witness paths, 262070 roots, 1789775 steps); set-mode: 0.99 ns/node (1527705 steps)
+   separate B path-enum: 1.52 ns/node (44968 witness paths, 27826 roots, 2127337 steps); set-mode: 1.53 ns/node (2092863 steps)
+   join (3 set ops over root sets): 4.108 ns/node
+   fused AND  (A then B)     2.22 ns/node ( 18075 roots,   3635141 steps) | vs separate path-enum  2.99x, vs separate set-mode  2.98x
+   fused AND  (B then A)     2.01 ns/node ( 18075 roots,   2631994 steps) | vs separate path-enum  3.31x, vs separate set-mode  3.30x
+   fused OR                  1.96 ns/node (271821 roots,   3330732 steps) | vs separate path-enum  3.39x, vs separate set-mode  3.38x
+   fused A AND NOT B         2.33 ns/node (243995 roots,   3861061 steps) | vs separate path-enum  2.85x, vs separate set-mode  2.84x
+
+-- except_clause: inside function / has raise (6188 roots)
+   separate A path-enum: 0.12 ns/node (6472 witness paths, 5775 roots, 55808 steps); set-mode: 0.11 ns/node (37742 steps)
+   separate B path-enum: 0.14 ns/node (1402 witness paths, 1306 roots, 93436 steps); set-mode: 0.11 ns/node (84156 steps)
+   join (3 set ops over root sets): 0.008 ns/node
+   fused AND  (A then B)     0.22 ns/node (  1274 roots,    129733 steps) | vs separate path-enum  1.18x, vs separate set-mode  1.04x
+   fused AND  (B then A)     0.19 ns/node (  1274 roots,    101166 steps) | vs separate path-enum  1.40x, vs separate set-mode  1.24x
+   fused OR                  0.16 ns/node (  5807 roots,     61740 steps) | vs separate path-enum  1.61x, vs separate set-mode  1.42x
+   fused A AND NOT B         0.26 ns/node (  4501 roots,    132960 steps) | vs separate path-enum  1.00x, vs separate set-mode  0.89x

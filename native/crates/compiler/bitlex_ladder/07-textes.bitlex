@@ -1,0 +1,39 @@
+# Step 7: texts between hashes, without escapes, `(#a b#; ##; vrai)`.
+#
+# New: a string state, a carried prefix XOR of the hashes (`toggle`). Inside a text every byte
+# is content: tier 1 masks the code outside texts, and only there are words, brackets and
+# semicolons tokens.
+
+lexer ladder07
+
+class ws    = ' ' '\t' '\n' '\r'
+class alpha = 'a'..'z'
+class op    = '(' ')' ';'
+class quote = '#'
+class lf    = '\n'
+class caret = '^'
+
+mask inside  = toggle(quote)          # the opening hash, not the closing one
+mask opening = quote & inside
+mask closing = quote & ~inside
+mask body    = inside & ~opening      # between the hashes
+mask code    = ~inside & ~closing
+
+token '#'     = start quote
+token contenu = start starts(body) last lasts(body)
+token word    = start starts(code & alpha) last lasts(code & alpha)
+keywords word { "vrai" "fausse" "nul" } required
+token punctuation = start code & op
+keywords punctuation { "(" ")" ";" } required
+
+skip code & ws
+error "a byte no token takes" when code & ~ws & ~alpha & ~op & ~quote
+error "a newline in a text"   when body & lf
+error "an escape (step 8)"    when body & caret
+
+tree ladder {
+  node document = valeur
+  node liste nested = '(' [valeur (';' valeur)*] ')'
+  node texte = '#' [contenu] '#'
+  choice valeur supertype _valeur = liste | texte | vrai | fausse | nul
+}

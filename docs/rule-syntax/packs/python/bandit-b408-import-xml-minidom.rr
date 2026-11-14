@@ -1,0 +1,18 @@
+.policy "bandit-b408-import-xml-minidom" revision 2
+.description "Avoid importing xml.dom.minidom to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B408 (its B001 blacklist): an import of xml.dom.minidom or a name in it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   from xml.dom import minidom                 B408
+//   from xml.dom.minidom import parseString     B408
+//   import xml.dom                              not reported
+//   importlib.import_module("xml.dom.minidom")  B408: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B408(at: node) code "B408"
+    "xml.dom.minidom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B408"
+B408(n) :- blacklisted(n, "B408").

@@ -1,0 +1,180 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-admin-async-purity",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer admin_async_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l8000_admin/tools/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/*test_*"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "pattern-0",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\basyncio\\.to_thread\\b",
+          "lines": {
+            "first": true,
+            "exclude": [
+              "^\\s*#"
+            ],
+            "state": {
+              "initial": "code",
+              "emit": [
+                "code"
+              ],
+              "transitions": [
+                {
+                  "from": "code",
+                  "to": "hidden",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "hidden",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "code",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "skip": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "asyncio.to_thread(): use native async operations in admin tools."
+      }
+    },
+    {
+      "id": "pattern-1",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\brun_in_executor\\b",
+          "lines": {
+            "first": true,
+            "exclude": [
+              "^\\s*#"
+            ],
+            "state": {
+              "initial": "code",
+              "emit": [
+                "code"
+              ],
+              "transitions": [
+                {
+                  "from": "code",
+                  "to": "hidden",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "hidden",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "code",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "skip": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "run_in_executor(): use native async operations in admin tools."
+      }
+    },
+    {
+      "id": "pattern-2",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bdisable_sync_in_async_check\\b",
+          "lines": {
+            "first": true,
+            "exclude": [
+              "^\\s*#"
+            ],
+            "state": {
+              "initial": "code",
+              "emit": [
+                "code"
+              ],
+              "transitions": [
+                {
+                  "from": "code",
+                  "to": "hidden",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "hidden",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "count": {
+                    "parity": "odd"
+                  },
+                  "skip": true
+                },
+                {
+                  "from": "code",
+                  "to": "code",
+                  "pattern": "\"\"\"|\\x27\\x27\\x27",
+                  "skip": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "disable_sync_in_async_check(): use native async operations in admin tools."
+      }
+    }
+  ]
+}

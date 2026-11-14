@@ -1,0 +1,15 @@
+.policy "sqlfluff-cv05-convention-is-null" revision 2
+.description "Use IS NULL or IS NOT NULL instead of comparing to NULL with =, != or <>; such a comparison is never true."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's CV05 (convention.is_null). An equality comparison with NULL on its right:
+//   WHERE a = NULL           reported at =; the fix is a IS NULL
+//   WHERE a <> NULL          reported at <>; the fix is a IS NOT NULL
+//   SET a = NULL             fine: an assignment, not a comparison
+
+#include "sql/syntax.rr"
+
+.violation CV05(at: loc) code "CV05" "Comparisons with NULL should use \"IS\" or \"IS NOT\"."
+    suppress sqlfluff "CV05", "L049", "all", "convention", "convention.is_null", "core"
+CV05(t) :- comparison(e, o, t), (o = "=" ; o = "!=" ; o = "<>"), field(e, "right", r), null_lit(r).

@@ -1,0 +1,154 @@
+{
+  "cases": [
+    {
+      "id": "removed-report-multiple",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "dispatch_due_jobs; TimerClaim; TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-attribute",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim.dispatch_due_jobs\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-normalization-gate",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\uff34\uff49\uff4d\uff45\uff52\uff23\uff4c\uff41\uff49\uff4d\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-normalization-trigger",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "# TimerClaim\n\uff34\uff49\uff4d\uff45\uff52\uff23\uff4c\uff41\uff49\uff4d\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-outside",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "other/a.py",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-test",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-test-dir",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-hidden",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-test-name",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-extension",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.txt",
+          "source": "TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-invalid",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "TimerClaim =\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-bom",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\ufeffTimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-decorated",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "@TimerClaim\ndef dispatch_due_jobs(): return TimerClaim\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-async",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "async def dispatch_due_jobs(): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "removed-report-clean",
+      "check": "removed_compat_surfaces",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def current_contract(): pass\n"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+.policy "data-layer:generated-index-sources" revision 1
+.description "Generated auxiliary indexes are built by _generated_index, which takes and forwards a required IndexSource."
+.language python
+.mode block
+.scope include "impl/common/l7245_versioned_backends/generic_sparse.py"
+// Python linter: scripts/lint_generated_index_sources.py, on the generator file only. One code, missing_source:
+//   an Index(…) call outside a def named _generated_index (module level included), or inside one without source=source;
+//   a plain `def _generated_index` with no `source` parameter (positional or keyword-only), with one not annotated
+//   IndexSource, or whose keyword-only default is MODEL_DECLARED (bare or IndexSource.MODEL_DECLARED).
+// An Index call is `Index(…)`, a name from-imported from l1000_schema.schema_def as Index, or `m.Index(…)` where m
+// is `schema_def` or a name `import l1000_schema.schema_def [as m]` binds. Aliases count from their import on, in
+// visit order, for the whole file (the linter grows one set as it walks).
+// The fact engine runs the collector only on files whose text contains "Index(", "_generated_index" or "IndexSource".
+//
+// How to read this file
+//   1. gis_doc: the trigger gate. gis_index_name / gis_module_name: the alias sets, each with the import it starts at.
+//   2. gis_index_call: the calls that build an Index.
+//   3. missing_source: one rule per message of the linter.
+
+#include "python/ast.rr"     // def_frame, sig_param, unparen, dotted_expr, from_module_raw
+#include "python/calls.rr"   // call_arg
+
+// gis_doc(d): the file's text holds one of the collector's triggers.
+.decl gis_trigger(t: symbol)
+gis_trigger("Index("). gis_trigger("_generated_index"). gis_trigger("IndexSource").
+.decl gis_doc(d: number)
+gis_doc(d) :- source(d, sp), text(sp, t), gis_trigger(g), contains(g, t).
+
+// gis_index_name(x, i): x names Index from import i on; i is unset for the built-in "Index".
+// gis_module_name(x, i): x names the schema_def module, the same way.
+.decl gis_index_name(d: number, x: symbol, i: loc)
+gis_index_name(d, "Index", u) :- gis_doc(d), unset(u).
+gis_index_name(d, x, i) :- from_module_raw(i, "l1000_schema.schema_def"), docof(i, d), field(i, "name", a),
+    gis_alias(a, "Index", x).
+.decl gis_module_name(d: number, x: symbol, i: loc)
+gis_module_name(d, "schema_def", u) :- gis_doc(d), unset(u).
+// `import l1000_schema.schema_def` binds its last segment, as the linter's rpartition has it (Python binds the head).
+gis_module_name(d, x, i) :- kind(i, "import_statement"), docof(i, d), field(i, "name", a), kind(a, "aliased_import"),
+    gis_alias(a, "l1000_schema.schema_def", x).
+gis_module_name(d, "schema_def", i) :- kind(i, "import_statement"), docof(i, d), field(i, "name", a),
+    kind(a, "dotted_name"), text(a, "l1000_schema.schema_def").
+// gis_alias(a, name, local): import item a imports name, bound as local (the name itself when there is no `as`).
+.decl gis_alias(a: node, name: symbol, local: symbol)
+gis_alias(a, x, x) :- kind(a, "dotted_name"), text(a, x).
+gis_alias(a, x, l) :- kind(a, "aliased_import"), field(a, "name", n), text(n, x), field(a, "alias", al), text(al, l).
+// gis_before(i, n): import i comes before call n in visit order, or i is unset (the name always counts).
+.decl gis_before(i: loc, n: node)
+gis_before(i, n) :- unset(i), kind(n, "call").
+gis_before(i, n) :- kind(n, "call"), earlier(i, n).
+
+// gis_index_call(c): `Index(…)` by a current alias, or `m.Index(…)` on a current module alias.
+.decl gis_index_call(c: node)
+gis_index_call(c) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x), docof(c, d), gis_doc(d),
+    gis_index_name(d, x, i), gis_before(i, c).
+gis_index_call(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute"), field(f, "attribute", a),
+    text(a, "Index"), field(f, "object", o), kind(o, "identifier"), text(o, m), docof(c, d), gis_doc(d),
+    gis_module_name(d, m, i), gis_before(i, c).
+
+// gis_helper(f): a def (async too) named _generated_index; the call's innermost def is what the linter's stack holds.
+.decl gis_helper(f: node)
+gis_helper(f) :- def_name(f, "_generated_index"), kind(f, "function_definition").
+// gis_forwards(c): the call passes source=source (a bare name).
+.decl gis_forwards(c: node)
+gis_forwards(c) :- call_arg(c, _, "source", v), kind(v, "identifier"), text(v, "source").
+// gis_source_param(f, ann, dflt): the plain def _generated_index's `source` parameter, positional or keyword-only.
+.decl gis_check(f: node)
+gis_check(f) :- gis_helper(f), !op(f, "async"), docof(f, d), gis_doc(d).
+.decl gis_source_param(f: node, k: symbol, ann: loc, dflt: loc)
+gis_source_param(f, k, a, v) :- gis_check(f), sig_param(f, _, nm, _, k, a, v), text(nm, "source"), (k = "pos" ; k = "kwonly").
+.decl gis_model_declared(s: symbol)
+gis_model_declared("MODEL_DECLARED"). gis_model_declared("IndexSource.MODEL_DECLARED").
+
+.violation missing_source(at: node, why: symbol) "{why}"
+missing_source(c, "generated indexes must use _generated_index(..., source=IndexSource.*)") :-
+    gis_index_call(c), !gis_in_helper(c).
+missing_source(c, "_generated_index must forward source=source into Index(...)") :-
+    gis_index_call(c), gis_in_helper(c), !gis_forwards(c).
+missing_source(f, "_generated_index must require a source: IndexSource parameter") :-
+    gis_check(f), !gis_source_param(f, _, _, _).
+missing_source(f, "_generated_index source parameter must be annotated as IndexSource") :-
+    gis_source_param(f, _, a, _), !gis_index_source(a).
+missing_source(f, "_generated_index source must not default to MODEL_DECLARED") :-
+    gis_source_param(f, "kwonly", _, v), unparen(v, e), dotted_expr(e, s), gis_model_declared(s).
+// gis_in_helper(c): c's innermost def (decorators and defaults belong to it) is a _generated_index.
+.decl gis_in_helper(c: node)
+gis_in_helper(c) :- gis_index_call(c), def_frame(c, f), gis_helper(f).
+// gis_index_source(a): annotation a (a `type` node) unparses to IndexSource: the bare name, perhaps parenthesised.
+.decl gis_index_source(a: loc)
+gis_index_source(a) :- gis_source_param(_, _, a, _), child(a, t, 0), unparen(t, e), kind(e, "identifier"),
+    text(e, "IndexSource").

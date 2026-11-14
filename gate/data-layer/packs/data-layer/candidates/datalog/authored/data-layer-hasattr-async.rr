@@ -1,0 +1,57 @@
+// data-layer-hasattr-async: both clauses, `hasattr` and `getattr`. Policy:
+// candidates/rules-ast/data-layer-hasattr-async.json. No options.
+//
+// A call whose function's text ends in `hasattr` (`getattr`), whose argument list's second named child is a plain
+// string literal `'<word>_async'`, (getattr) whose third and last named child is `None`, and whose first line does
+// not match the allowlist regex (`not layout.line`: the source line holding the call's first byte).
+// `nthChild` counts the parent's tree-sitter named children, comments and line continuations included; `child`
+// leaves comments out, so a position is the child's index plus the argument list's comments (and continuations
+// `child` does not hold) before it, read from `token`. The line is `tape_line`'s, the lines `line(n)` numbers
+// (\n, \r\n, \r), as W's layout reads them.
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// The argument lists of calls `f(…)`: `f`'s text.
+.decl hasattr_args(c: node, a: node, f: symbol)
+hasattr_args(c, a, s) :- node(_, c, "call", _, _), field(c, "function", fn), node_text(fn, s),
+    field(c, "arguments", a), node(_, a, "argument_list", _, _).
+
+// A named child of `a` that `child` does not hold (a comment, or a line continuation), starting at byte `st`.
+.decl hasattr_extra(a: node, st: number)
+hasattr_extra(a, st) :- hasattr_args(_, a, _), token(a, _, s, st, _), match("(?:#|\\\\)(?s:.*)", s),
+    !hasattr_child_at(a, st).
+.decl hasattr_child_at(a: node, st: number)
+hasattr_child_at(a, st) :- hasattr_args(_, a, _), child(a, c, _), node(_, c, _, st, _).
+
+// x's 1-based position among a's named children (nthChild's count).
+.decl hasattr_pos(a: node, x: node, k: number)
+hasattr_pos(a, x, k) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _),
+    e = count : { hasattr_extra(a, st), st < xs }, k = i + e + 1.
+
+// The number of a's named children.
+.decl hasattr_named(a: node, k: number)
+hasattr_named(a, k) :- hasattr_args(_, a, _), c = count : { child(a, _, _) }, e = count : { hasattr_extra(a, _) }, k = c + e.
+
+// The call `f(x, '<word>_async', …)`: its argument list `a` and the string, the list's second named child.
+.decl hasattr_call(c: node, a: node, f: symbol)
+hasattr_call(c, a, s) :- hasattr_args(c, a, s), hasattr_pos(a, x, 2), node(_, x, "string", _, _), node_text(x, t),
+    match("['\"]\\w+_async['\"]", t).
+
+// The call's first line matches the allowlist (W: `layout.line`, a search).
+.decl hasattr_allowed(c: node)
+hasattr_allowed(c) :- hasattr_call(c, _, _), node(d, c, _, _, _), line(c, l), tape_line(d, l, sp), text(sp, s),
+    match("(?s:.*)(?:(?:_has_sql_template_support_async)|(?:_has_sql_template_support\\b)|(?:hasattr\\(txn._conn, ['\\\"]_execute_template_with_params)|(?:hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn)|(?:_select_one_direct_async)|(?:insert_many_raw_async)|(?:upsert_many_raw_async)|(?:upsert_many_async)|(?:update_async)|(?:delete_async)|(?:delete_all_async)|(?:delete_many_async)|(?:getattr\\(scheme, ['\\\"]resolve_context_async)|(?:getattr\\(graph_scheme, ['\\\"]resolve_context_async)|(?:keyset_paginate_async)|(?:_execute_aggregate_async)|(?:_execute_windowed_async)|(?:_execute_grammar_async)|(?:fetchall_raw_async)|(?:_update_fts_polyfill_index_async))(?s:.*)", s).
+
+violation("data-layer-hasattr-async", "hasattr", "hasattr", p, l) :-
+    hasattr_call(c, _, f), suffix("hasattr", f), !hasattr_allowed(c),
+    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
+
+// getattr: the list's third named child is `None` and its last (nthChild 3, and 1 from the end).
+.decl getattr_three(a: node)
+getattr_three(a) :- hasattr_call(_, a, _), hasattr_pos(a, y, 3), node(_, y, "none", _, _), hasattr_named(a, 3).
+
+violation("data-layer-hasattr-async", "getattr", "getattr", p, l) :-
+    hasattr_call(c, a, f), suffix("getattr", f), getattr_three(a), !hasattr_allowed(c),
+    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).

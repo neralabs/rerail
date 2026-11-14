@@ -4,7 +4,7 @@
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};

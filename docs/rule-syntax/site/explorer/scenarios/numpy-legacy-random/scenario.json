@@ -1,0 +1,5 @@
+{
+  "title": "numpy's legacy random API",
+  "rule": "ruff-npy002-numpy-legacy-random",
+  "note": "NPY002 flags np.random.rand, seed, choice and the other module-level functions on numpy's global generator: np.random.default_rng() gives a seeded, independent one, and its methods are fine."
+}

@@ -1,0 +1,19 @@
+# corpus: mix: seed 148
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = span((((x | x) & ~x) ^ alpha), 7)
+mask m1 = toggle(aligned(quote, 1))
+mask m2 = high
+mask m3 = fill(aligned(high, 5), toggle(m0))
+mask m4 = (aligned(toggle(starts(ws)), 7) | (((op & digit) ^ next(m0, 7)) ^ starts(m2)))
+mask m5 = escaped((op & m0))
+mask m6 = starts(quote)

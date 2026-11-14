@@ -1,0 +1,5 @@
+{
+  "title": "A dict literal with a key twice",
+  "rule": "ruff-f601-multi-value-repeated-key-literal",
+  "note": "F601 flags a key repeated in a dict literal: the later value wins and the earlier one is lost. A repeat with the same value is reported too, as redundant."
+}

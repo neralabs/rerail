@@ -1,0 +1,18 @@
+.policy "ruff-fbt002-boolean-default-value-positional-argument" revision 2
+.description "Make Python function parameters that default to True or False keyword-only; a positional boolean flag makes calls hard to read."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FBT002 (flake8-boolean-trap): a positional parameter whose default is `True` or `False`, so callers
+// write a bare boolean to change it. Keyword-only parameters are fine, and so are stubs, operators,
+// `__post_init__`, setters and overrides (python/misc-boolean-trap). Reported at the name.
+//   def f(flag=True): ...                 ← FBT002
+//   def f(flag: int = True): ...          ← FBT002
+//   def f(*, flag=True): ...              not reported
+#include "python/misc-boolean-trap.rr"
+
+.violation FBT002(at: node) code "FBT002"
+    "Make `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
+    suppress ruff "FBT002"
+FBT002(nm) :- trap_param(_, nm, _, v), unparen(v, m), (kind(m, "true") ; kind(m, "false")).

@@ -1,0 +1,18 @@
+.policy "ruff-ruf040-invalid-assert-message-literal-argument" revision 2
+.description "Use a string as the assert message; a number, boolean, None, ellipsis or bytes literal there is usually a comparison written with a comma by mistake."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF040: an assert message that is a number, bool, None, `...` or bytes literal. It is usually a
+// comparison mistyped with a comma: `assert len(xs), 2` meant `assert len(xs) == 2`.
+//   assert len(fruits), 2        ← RUF040 at 2
+//   assert ok, "always true"     not reported
+#include "python/ruff.rr"
+
+.violation RUF040(at: node) code "RUF040"
+    "Use a string as the assert message; if this literal was meant to be compared with the condition, write the comparison instead, as in `assert cond == value`."
+    suppress ruff "RUF040"
+RUF040(m) :- kind(a, "assert_statement"), child(a, x, 1), unparen(x, m), (kind(m, k), non_str(k) ; string_form(m, "bytes")).
+.decl non_str(k: symbol)
+non_str("integer"). non_str("float"). non_str("true"). non_str("false"). non_str("none"). non_str("ellipsis").

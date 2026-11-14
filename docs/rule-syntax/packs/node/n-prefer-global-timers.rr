@@ -1,0 +1,21 @@
+.policy "n-prefer-global-timers" revision 4
+.description "Use the global timer functions, such as setTimeout, instead of reading them from the timers module."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/timers: use the global timer functions (setTimeout, setInterval,
+// setImmediate and their clear functions), not the timers module's. Option "always" (the default) reports each
+// use of the module's; "never" reports each use of the globals:
+//   const { setTimeout } = require("timers")     import { setImmediate } from "node:timers"
+//   require("timers").clearInterval(t)           export * from "timers" (one finding per timer it re-exports)
+//   "never":  setTimeout(f, 1)                    reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("clearImmediate", "timers", "clearImmediate"). module_global("clearInterval", "timers", "clearInterval").
+module_global("clearTimeout", "timers", "clearTimeout"). module_global("setImmediate", "timers", "setImmediate").
+module_global("setInterval", "timers", "setInterval"). module_global("setTimeout", "timers", "setTimeout").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/timers" "{msg}"
+    suppress eslint "n/prefer-global/timers"
+prefer_global(n, m) :- prefer_global_use(n, m).

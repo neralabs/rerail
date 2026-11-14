@@ -1,0 +1,278 @@
+// P1, `struct` (decision 0083 §1): the structure of every document, the workspace's and the libraries' its imports
+// reach, keyed by symbols. It reads module-level statements, imports, class headers and the definitions in class
+// bodies, and annotations as written; it never reads a function's body.
+//
+// Its documents are the workspace's files and the libraries their imports reach, both phase 1's (`sources.rr`): the
+// imports were resolved there, to their fixed point, and the libraries loaded. Reading `sources__library` takes the
+// libraries as this phase's documents; it loads nothing itself.
+//
+// What it hands on (`.export`) names definitions by symbol, never by node: a module by its dotted name, a definition
+// in it by `module.name`, a definition in a class by `module.Class.name`, and the k-th redefinition of a name in one
+// scope (k > 0) by `name#k`. An edit renumbers nodes, never symbols. Each row is about its first column, a symbol:
+// its granule, which freshness keys (`corpus::phases`).
+//
+// ```text
+// # m.py                                  unit("m", h0).  unit("m.C", h1).  unit("m.C.run", h2).
+// from os import path                     def("m.C", "class").  def("m.C.run", "function").
+// class C(Base):                          binds("m", "path", "import", "os.path").  binds("m", "C", "def", "m.C").
+//     def run(self, n: int) -> bool: ...  base("m.C", 0, "Base").  member("m.C", "run", "m.C.run").
+//                                         param("m.C.run", 1, "n", "int").  ret("m.C.run", "bool").
+// ```
+
+#include "core.rr"
+#include "python/conditions.rr"
+
+.phase struct
+.export unit, def, binds, base, member, param, ret, vann, alias, flag, shape, tvar, module_file, at, ann, annarg, all
+
+// ---- the scopes P1 reads: a module, and the classes defined at module level or in such a class ----------------
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl modnode(d: number, m: node)
+modnode(d, m) :- node(d, m, "module", _, _).
+.decl modname(m: node, q: symbol)
+modname(m, q) :- modnode(d, m), doc(d, _, q), q != "".
+
+// A definition f named x whose nearest scope is s: a function or a class, not in a branch never taken.
+.decl pscope(s: node)
+pscope(m) :- modname(m, _).
+pscope(c) :- pdef(c, _, _, "class").
+// pdef_at(f, s, x, k): definition f, named x, of kind k, has nearest scope s: syntax, so made per file. pdef reads
+// the run's settings (py_dead_at), so it is cross-file; joined there with `nearest`, the cross part held every
+// node's nearest scope (352 k rows at 237 files) and indexed it.
+.decl pdef_at(f: node, s: node, x: symbol, k: symbol)
+pdef_at(f, s, x, "function") :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+pdef_at(f, s, x, "class") :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+.decl pdef(f: node, s: node, x: symbol, k: symbol)
+pdef(f, s, x, k) :- pdef_at(f, s, x, k), !py_dead_at(f), pscope(s).
+
+// The k-th definition of x in s, by position: 0 for the first.
+.decl start(n: node, b: number)
+start(n, b) :- pdef(n, _, _, _), node(_, n, _, b, _).
+.decl ord(f: node, k: number)
+ord(f, k) :- pdef(f, s, x, _), start(f, b), k = count : { pdef(g, s, x, _), start(g, c), c < b }.
+
+// ---- symbols ---------------------------------------------------------------------------------------------------
+.decl sym(n: node, q: symbol)
+sym(m, q) :- modname(m, q).
+sym(f, @dot(q, x)) :- pdef(f, s, x, _), sym(s, q), ord(f, 0).
+sym(f, cat(@dot(q, x), cat("#", to_string(k)))) :- pdef(f, s, x, _), sym(s, q), ord(f, k), k > 0.
+
+// ---- what P1 hands on ------------------------------------------------------------------------------------------
+// unit(s, h): each definition P1 read, with its own code's digest: its freshness.
+.decl unit(s: symbol, h: symbol)
+unit(q, h) :- sym(n, q), def_digest(n, h).
+.decl def(s: symbol, k: symbol)
+def(q, "module") :- modname(m, q), sym(m, q).
+def(q, k) :- pdef(f, _, _, k), sym(f, q).
+// binds(m, x, how, t): module m binds x, by a definition (t its symbol), an import (t the qualified name imported),
+// or an assignment (t "").
+.decl binds(m: symbol, x: symbol, how: symbol, t: symbol)
+binds(q, x, "def", t) :- pdef(f, s, x, _), modname(s, q), sym(f, t).
+binds(q, x, "assign", "") :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
+    modname(s, q), !py_dead_at(a).
+binds(q, y, "import", @dot(m, y)) :- impmod(i, m), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope), modname(s, q).
+binds(q, a, "import", @dot(m, y)) :- impmod(i, m), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, y),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), modname(s, q).
+binds(q, t, "import", t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t),
+    nearest(i, s, scope), modname(s, q), !py_dead_at(i).
+binds(q, a, "import", m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), modname(s, q), !py_dead_at(i).
+// all(m, x): module m's `__all__` lists x (`__all__ = ["a", "b"]`, `__all__ += [...]`, not in a branch never
+// taken): what `from m import *` binds, when m has one.
+.decl all(m: symbol, x: symbol)
+all(q, x) :- kind(g, "assignment"), allnames(g, x), nearest(g, s, scope), modname(s, q), !py_dead_at(g).
+all(q, x) :- kind(g, "augmented_assignment"), allnames(g, x), nearest(g, s, scope), modname(s, q), !py_dead_at(g).
+.decl allnames(g: node, x: symbol)
+allnames(g, x) :- field(g, "left", l), kind(l, "identifier"), text(l, "__all__"), field(g, "right", r), alllist(r), child(r, e, _),
+    kind(e, "string"), child(e, c, _), kind(c, "string_content"), text(c, x).
+.decl alllist(r: node)
+alllist(r) :- kind(r, "list").
+alllist(r) :- kind(r, "tuple").
+// `from m import *`: module q binds m's public names (`*`, how "star", t the module m).
+binds(q, "*", "star", m) :- impmod(i, m), child(i, w, _), kind(w, "wildcard_import"), nearest(i, s, scope), modname(s, q).
+// The module an import-from names: absolute, or relative to the document's package.
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m), !py_dead_at(i).
+impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
+impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
+// base(c, i, b): class c's i-th base, as written, on one line: runs of white space one space each (a value
+// handed on is one line of an output; so are `param`'s and `ret`'s annotations).
+.decl base(c: symbol, i: number, b: symbol)
+base(q, i, b) :- pdef(c, _, _, "class"), sym(c, q), field(c, "superclasses", args), child(args, e, i), !kind(e, "keyword_argument"), text(e, w), b = @replace_all(w, "\\s+", " ").
+// member(c, x, t): class c defines x, by a definition (t its symbol) or an assignment in its body (t "").
+.decl member(c: symbol, x: symbol, t: symbol)
+member(q, x, t) :- pdef(f, c, x, _), pdef(c, _, _, "class"), sym(c, q), sym(f, t).
+member(q, x, "") :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, c, scope),
+    pdef(c, _, _, "class"), sym(c, q), !py_dead_at(a).
+// param(f, i, x, a): function f's i-th parameter x and its annotation as written ("" when it has none).
+.decl param(f: symbol, i: number, x: symbol, a: symbol)
+param(q, i, x, "") :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
+param(q, i, x, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"),
+    text(id, x), field(p, "type", t), text(t, w), a = @replace_all(w, "\\s+", " ").
+// A parameter with a default and no annotation (`d=None`): a call may name it.
+param(q, i, x, "") :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), kind(p, "default_parameter"),
+    field(p, "name", id), text(id, x).
+// ret(f, a): function f's return annotation as written.
+.decl ret(f: symbol, a: symbol)
+ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), text(r, w), a = @replace_all(w, "\\s+", " ").
+// vann(s, a): the annotation a module- or class-level name s is declared with, as written (`x: int = 0`, `x: int`).
+// A library's values are typed by these (O128: most of the workspace's values that point into a library).
+.decl vann(s: symbol, a: symbol)
+vann(@dot(q, x), a) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "type", t), text(t, w),
+    nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g), a = @replace_all(w, "\\s+", " ").
+// alias(s, e): a module- or class-level name s assigned a name or a dotted name, as written (`local = _thread._local`
+// in a stub): s is what e names.
+.decl alias(s: symbol, e: symbol)
+alias(@dot(q, x), e) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), text(r, e),
+    match("^[A-Za-z_][A-Za-z_0-9.]*$", e), nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g).
+// flag(f, k): function f is an `async def` (k "async"), or an `@overload` (k "overload"; `typing.overload` too), or
+// an overload that takes `**kwargs` (k "kwargs").
+// A call of an async function holds a coroutine, not what it is declared to return; a stub's overloads are all the
+// name's, and a call is typed by those its positional arguments fit (`shape`).
+.decl flag(f: symbol, k: symbol)
+flag(q, "async") :- pdef(f, _, _, "function"), sym(f, q), op(f, "async").
+flag(q, "overload") :- povl(f), sym(f, q).
+// An overload that takes `**kwargs`: any keyword fits it.
+flag(q, "kwargs") :- povl(f), sym(f, q), field(f, "parameters", ps), child(ps, p, _), kind(p, "dictionary_splat_pattern").
+flag(q, "kwargs") :- povl(f), sym(f, q), field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, s, 0),
+    kind(s, "dictionary_splat_pattern").
+.decl povl(f: node)
+povl(f) :- pdef(f, _, _, "function"), kind(st, "decorated_definition"), field(st, "definition", f), child(st, dc, _), kind(dc, "decorator"),
+    child(dc, e, 0), text(e, "overload").
+povl(f) :- pdef(f, _, _, "function"), kind(st, "decorated_definition"), field(st, "definition", f), child(st, dc, _), kind(dc, "decorator"),
+    child(dc, e, 0), kind(e, "attribute"), field(e, "attribute", a), text(a, "overload").
+// shape(f, need, cap, kw): overload f's positional parameters (`self` counted, `/` not): `need` of them required,
+// room for `cap` (9 with `*args`), and kw = 1 when a keyword-only parameter has no default. Positional parameters are
+// those before any `*`, `*args` or `**kw`; a call with n positional arguments and no keywords fits when need <= n <=
+// cap and kw = 0, one with keywords when n <= cap.
+.decl shape(f: symbol, need: number, cap: number, kw: number)
+shape(q, n, p, 1) :- povl(f), sym(f, q), fneed(f, n), fcap(f, p), fkwreq(f).
+shape(q, n, p, 0) :- povl(f), sym(f, q), fneed(f, n), fcap(f, p), !fkwreq(f).
+.decl pstar(f: node, k: number)
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "keyword_separator").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "list_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "dictionary_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "list_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "dictionary_splat_pattern").
+.decl pstar_before(f: node, k: number)
+pstar_before(f, k) :- pstar(f, s), field(f, "parameters", ps), child(ps, _, k), s <= k.
+.decl psep_before(f: node, k: number)
+psep_before(f, k) :- povl(f), field(f, "parameters", ps), child(ps, q, s), kind(q, "positional_separator"), child(ps, _, k), s < k.
+.decl ppos(f: node, i: number, p: node)
+ppos(f, k, p) :- povl(f), field(f, "parameters", ps), child(ps, p, k), !kind(p, "positional_separator"), !pstar_before(f, k),
+    !psep_before(f, k).
+ppos(f, i, p) :- povl(f), field(f, "parameters", ps), child(ps, p, k), !kind(p, "positional_separator"), !pstar_before(f, k),
+    psep_before(f, k), pred(k, i).
+.decl preq(f: node, i: number)
+preq(f, i) :- ppos(f, i, p), kind(p, "identifier").
+preq(f, i) :- ppos(f, i, p), kind(p, "typed_parameter").
+.decl fneed(f: node, n: number)
+fneed(f, 0) :- povl(f), !preq(f, _).
+fneed(f, n) :- preq(f, i), pred(n, i), !preq(f, n).
+.decl fkwreq(f: node)
+fkwreq(f) :- povl(f), field(f, "parameters", ps), child(ps, p, k), pstar_before(f, k), !pstar(f, k), kind(p, "identifier").
+fkwreq(f) :- povl(f), field(f, "parameters", ps), child(ps, p, k), pstar_before(f, k), !pstar(f, k), kind(p, "typed_parameter").
+.decl fstar(f: node)
+fstar(f) :- povl(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "list_splat_pattern").
+fstar(f) :- povl(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "list_splat_pattern").
+.decl fcap(f: node, n: number)
+fcap(f, 9) :- fstar(f).
+fcap(f, 0) :- povl(f), !fstar(f), !ppos(f, _, _).
+fcap(f, n) :- ppos(f, i, _), pred(n, i), !ppos(f, n, _), !fstar(f).
+// pred(i, j): j = i - 1.
+.decl pred(i: number, j: number)
+pred(1, 0). pred(2, 1). pred(3, 2). pred(4, 3). pred(5, 4). pred(6, 5). pred(7, 6). pred(8, 7). pred(9, 8).
+// tvar(s): module-level name s is assigned a type variable (`_T = TypeVar("_T")`, `typing.TypeVar(...)`): an
+// annotation naming it is what a generic's argument, or a call, binds.
+.decl tvar(s: symbol)
+tvar(@dot(q, x)) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), kind(r, "call"),
+    field(r, "function", fn), tvfn(fn), nearest(g, s, scope), modname(s, q), !py_dead_at(g).
+.decl tvfn(e: node)
+tvfn(e) :- kind(e, "identifier"), text(e, "TypeVar").
+tvfn(e) :- kind(e, "attribute"), field(e, "attribute", a), text(a, "TypeVar").
+// module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
+.decl module_file(m: symbol, p: symbol)
+module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
+.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)
+module_file(q, p) :- sources__library(p, q, _, _).
+// at(s, p, l): where definition s is, path and line: a position, kept out of freshness (`.positions`).
+.decl at(s: symbol, p: symbol, l: number)
+at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), line(n, l).
+
+// ---- annotations, read off their own trees -------------------------------------------------------------------
+// What P2 resolves an annotation by: its alternatives, each one's head name and its arguments. Read from the tree,
+// so a union inside brackets (`dict[str, list[int] | None]`), a nested generic and `Callable[P, A]` are each what
+// they are, and the text is never split.
+//
+// ```text
+// def f(a: int | None, b: dict[str, list[int]]): ...
+//   ann("m", "int | None", "int", "int").  ann("m", "int | None", "None", "None").
+//   ann("m", "dict[str, list[int]]", "dict[str, list[int]]", "dict").
+//   annarg("m", "dict[str, list[int]]", 0, "str").  annarg("m", "dict[str, list[int]]", 1, "list[int]").
+//   ann("m", "list[int]", "list[int]", "list").  annarg("m", "list[int]", 0, "int").  ann("m", "str", "str", "str").
+// ```
+//
+// aroot(t, q): an annotation written in module q: a parameter's, a return's, a declared value's, a class's base,
+// and each argument inside one's brackets. Syntax only, so made per file: a dead branch's or a nested function's
+// annotations are read too, and P2 reads only those `param`, `ret`, `vann` and `base` name.
+.decl aroot(t: node, q: symbol)
+aroot(t, q) :- kind(f, "function_definition"), field(f, "parameters", ps), child(ps, p, _), field(p, "type", t), amod(t, q).
+aroot(t, q) :- kind(f, "function_definition"), field(f, "return_type", t), amod(t, q).
+aroot(t, q) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), field(g, "type", t), nearest(g, s, scope), ascope(s),
+    amod(t, q).
+aroot(e, q) :- kind(c, "class_definition"), field(c, "superclasses", args), child(args, e, _), !kind(e, "keyword_argument"), amod(e, q).
+aroot(y, q) :- aroot(t, q), aalt(t, n), kind(n, "generic_type"), child(n, tp, _), kind(tp, "type_parameter"), child(tp, y, _).
+aroot(y, q) :- aroot(t, q), aalt(t, n), kind(n, "subscript"), child(n, y, j), j > 0.
+// amod(n, q): node n is in module q's document.
+.decl amod(n: node, q: symbol)
+amod(n, q) :- docof(n, d), doc(d, _, q), q != "".
+.decl ascope(s: node)
+ascope(s) :- kind(s, "module").
+ascope(s) :- kind(s, "class_definition").
+// aunion(t, u): u is a part of annotation t's union, before it is split: `A | B` (an operator at the top),
+// `list[A | B]`'s argument (a union type inside brackets), `(A | B)`.
+.decl aunion(t: node, u: node)
+aunion(t, u) :- aroot(t, _), kind(t, "type"), child(t, u, 0).
+aunion(t, t) :- aroot(t, _), !kind(t, "type").
+aunion(t, v) :- aunion(t, u), kind(u, "binary_operator"), op(u, "|"), field(u, "left", v).
+aunion(t, v) :- aunion(t, u), kind(u, "binary_operator"), op(u, "|"), field(u, "right", v).
+aunion(t, v) :- aunion(t, u), kind(u, "union_type"), child(u, w, _), kind(w, "type"), child(w, v, 0).
+aunion(t, v) :- aunion(t, u), kind(u, "parenthesized_expression"), child(u, v, 0).
+.decl asplit(u: node)
+asplit(u) :- kind(u, "binary_operator"), op(u, "|").
+asplit(u) :- kind(u, "union_type").
+asplit(u) :- kind(u, "parenthesized_expression").
+// aalt(t, a): alternative a of annotation t.
+.decl aalt(t: node, a: node)
+aalt(t, a) :- aunion(t, a), !asplit(a).
+// ahead(a, h): the name alternative a's head is: a name, a dotted name, None, a subscript's or a generic's head.
+.decl ahead(a: node, h: symbol)
+ahead(a, h) :- aalt(_, a), kind(a, "identifier"), text(a, h).
+ahead(a, h) :- aalt(_, a), kind(a, "attribute"), text(a, w), h = @replace_all(w, "\\s+", "").
+ahead(a, "None") :- aalt(_, a), kind(a, "none").
+ahead(a, h) :- aalt(_, a), kind(a, "generic_type"), child(a, i, 0), text(i, w), h = @replace_all(w, "\\s+", "").
+ahead(a, h) :- aalt(_, a), kind(a, "subscript"), field(a, "value", v), text(v, w), h = @replace_all(w, "\\s+", "").
+// A quoted forward reference (`"C"`, `'list[B] | None'`): its text's parts at each `|`, each one's head before its
+// brackets. Its text is not parsed yet, so a `|` inside its brackets splits it too (open: parse the string, a cache
+// by its text, decision 0103).
+ahead(a, h) :- astr(a, s), match("^\\s*(?<h>[A-Za-z_][A-Za-z_0-9.]*).*$", s).
+.decl astr(a: node, s: symbol)
+astr(a, s) :- aalt(_, a), kind(a, "string"), child(a, c, _), kind(c, "string_content"), text(c, s).
+astr(a, b) :- astr(a, s), match("^[^|]*\\|(?<b>.*)$", s).
+// atext(n, w): annotation node n's text, as `param`, `ret`, `vann` and `base` give it: on one line.
+.decl atext(n: node, w: symbol)
+atext(n, w) :- aroot(n, _), text(n, x), w = @replace_all(x, "\\s+", " ").
+atext(n, w) :- aalt(_, n), text(n, x), w = @replace_all(x, "\\s+", " ").
+// ann(m, e, a, h): annotation e, as written in module m, has alternative a, whose head is the name h ("" for one with
+// no name, such as `[int]` or a literal).
+.decl ann(m: symbol, e: symbol, a: symbol, h: symbol)
+ann(q, e, a, h) :- aroot(t, q), aalt(t, n), atext(t, e), atext(n, a), ahead(n, h).
+ann(q, e, a, "") :- aroot(t, q), aalt(t, n), atext(t, e), atext(n, a), !ahead(n, _).
+// annarg(m, a, j, x): alternative a, written in module m, a generic or a subscript, has x as its j-th argument.
+.decl annarg(m: symbol, a: symbol, j: number, x: symbol)
+annarg(q, a, j, x) :- aroot(t, q), aalt(t, n), kind(n, "generic_type"), child(n, tp, _), kind(tp, "type_parameter"), child(tp, y, j),
+    atext(n, a), atext(y, x).
+annarg(q, a, i, x) :- aroot(t, q), aalt(t, n), kind(n, "subscript"), child(n, y, j), j > 0, pred(j, i), atext(n, a), atext(y, x).

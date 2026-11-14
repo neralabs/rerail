@@ -1,0 +1,25 @@
+{
+  "merge_commit": "abf75bb799b249c1b0aef1f435e13c4e62d2105b",
+  "binary": "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+  "binary_sha256": "4f47f06c95df755cbc2c8888780d345e176af2c692b0e8f23eeb87d0820ecbe1",
+  "source_sha256": {
+    "native/src/code_rule_dsl/facts/vtab.rs": "dff5f052ec785fc8d8a014bab5ba689b72291f5c9f529549b05b6cfc8ab6ed77",
+    "native/src/code_rule_dsl/facts/vtab/demand.rs": "cc12cefe8e772e3f5a77e07da35359dfeb7c94a1cc50860f64c622963c119fbc",
+    "native/src/code_rule_dsl/facts/vtab/python.rs": "9336c17aa8cbdd22a2f6ce8a037770f0552b6e9c562ed3e04e262276aa68d756",
+    "native/src/code_rule_dsl/findings/tests/rr_comparison.rs": "bb7850a0d75f71afeb577d31638452a2c046ca446887cce8df4bd2b185791d26",
+    "native/src/code_rule_dsl/logic/front.rs": "7047801009c2c86e8f62e843e10625021095e746aded22570e9c52d2be7aad57",
+    "native/src/code_rule_dsl/logic/native.rs": "208b810bc6aedc45005538af73924d06ca1fd768f315cacd5d3f71c955a53c47",
+    "native/src/code_rule_dsl/logic/native/setfix.rs": "81641bfadc425a5bca91dfb9722ea9778b905ac50f1e8e280741cdecb77e43c4",
+    "native/src/code_rule_dsl/logic/plan.rs": "f194d96269432aa7766fb67781cd2da86b0cac2d71d5359251a7fb2c13984baa",
+    "native/src/code_rule_dsl/logic/plan/compose.rs": "f6636e3c4949e2d9cee157b28fb6d3ac4190aca3e19dfec945917f4411f14e48",
+    "native/src/code_rule_dsl/logic/plan/compose/tests.rs": "58c1820bfe53b0fe6a62888b964c912f47cfac425e1c4a13f9117c408c45a63c",
+    "native/src/code_rule_dsl/logic/plan/corpus.rs": "6953d5c3598942ee62d06038dd79d6fe7225b4f2f06f5b1834280a043d592641",
+    "native/src/code_rule_dsl/logic/plan/corpus/retain.rs": "66b99ae6e7cc23eb80eea4b7bacdc4fa25614fe0ab547e34a8ce2dcb3ac94826",
+    "native/src/code_rule_dsl/logic/plan/native_demand.rs": "2ac267928ef22bbdb9f62f778cc7a17b7e7f7e05727f74c68977fb5e8d66383a"
+  },
+  "cargo_profile": "profiling",
+  "features": "default; no extra code-rule-profile feature",
+  "corpus": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "files": 5725,
+  "nodes": 19007630
+}

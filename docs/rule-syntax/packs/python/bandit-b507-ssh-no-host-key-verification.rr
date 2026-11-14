@@ -1,0 +1,26 @@
+.policy "bandit-b507-ssh-no-host-key-verification" revision 5
+.description "Don't let Paramiko auto-accept unknown SSH host keys with AutoAddPolicy or WarningPolicy; it opens the door to man-in-the-middle attacks."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B507 (ssh_no_host_key_verification): in a file that has imported something named like paramiko, a
+// call to anything named set_missing_host_key_policy whose first argument names AutoAddPolicy or WarningPolicy:
+// the class, or a call of it, by its last name.
+//   import paramiko
+//   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())    B507
+//   client.set_missing_host_key_policy(WarningPolicy)               B507
+//   client.set_missing_host_key_policy(paramiko.RejectPolicy())     not reported
+
+#include "python/security.rr"   // imported_like, call_leaf, pos_arg
+
+.violation B507(at: node) code "B507"
+    "Set paramiko.RejectPolicy and load known host keys instead of auto-accepting unknown ones; that invites man-in-the-middle attacks."
+    suppress nosec "B507"
+B507(c) :- imported_like(c, "paramiko"), call_leaf(c, "set_missing_host_key_policy"), pos_arg(c, 0, a),
+    policy_name(a, x), (x = "AutoAddPolicy" ; x = "WarningPolicy").
+// policy_name(a, x): Bandit's reading of the argument: an attribute's attr, a name's id, or either of those as
+// the function of a call.
+.decl policy_name(a: node, x: symbol)
+policy_name(a, x) :- kind(a, "attribute"), field(a, "attribute", at), text(at, x).
+policy_name(a, x) :- kind(a, "identifier"), text(a, x).
+policy_name(a, x) :- kind(a, "call"), field(a, "function", f0), unparen(f0, f), !kind(f, "call"), policy_name(f, x).

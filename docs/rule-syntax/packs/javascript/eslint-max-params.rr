@@ -1,0 +1,31 @@
+.policy "eslint-max-params" revision 5
+.description "Keep JavaScript functions to 3 parameters or fewer; pass an options object instead of a long parameter list."
+.language javascript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+//   function_node, param_count, this_param, fn_name_kind, fn_head, limit
+
+// ESLint's max-params: a function, method or arrow with more than `max` parameters (default 3; `max`, or the
+// number form). Defaults, rest and destructured parameters count like any other.
+//   function f(a, b, c, d) {}    → Function 'f' has too many parameters (4). Maximum allowed is 3.
+// `countThis` (TypeScript only): "except-void" (the default) leaves out `this: void`, "never" any `this`
+// parameter, "always" counts it; the deprecated `countVoidThis: true` is "always".
+// Reported at the function's head: a method's key, an arrow's `=>`, else the function itself.
+.violation max_params(at: loc, name: symbol, k: number, m: number) code "max-params"
+    "{name} has too many parameters ({k}). Maximum allowed is {m}; group them into one options object."
+    suppress eslint "max-params"
+    suppress oxlint "max-params"
+    suppress biome "lint/complexity/useMaxParams"
+max_params(at, s, k, m) :- param_count(f, n), limit("max", 3, m), uncounted(f, u), k = n - u, k > m,
+    fn_name_kind(f, s), fn_head(f, at).
+limit_rule("max", 3).
+
+// uncounted(f): 1 when f's first parameter is a `this` the option leaves out.
+.decl uncounted(f: node, k: number)
+uncounted(f, 1) :- fn_param(f, p, 0), this_param(p, v), skip_this(v).
+uncounted(f, 0) :- function_node(f), count : { fn_param(f, p, 0), this_param(p, v), skip_this(v) } = 0.
+.decl skip_this(v: number)  // `this: void` (v = 1) or any other `this` (0) is not counted
+skip_this(1) :- !option("countThis", "always"), !option("countVoidThis", "true").
+skip_this(0) :- option("countThis", "never").

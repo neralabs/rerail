@@ -1,0 +1,652 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-bootstrap-engine-invariants",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer bootstrap_engine_invariants at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l3200_metadata/**/*.py",
+      "l2000_connection/schema_transaction.py",
+      "l2055_lazy_result/purity.py",
+      "impl/common/l2200_sql_dialect/{sql_connection,sql_core_support_free_functions,sql_core_support_mixin,sql_execution_mixin,sql_schema_services,sql_bootstrap_metadata_services}.py",
+      "impl/common/l2070_server_plan/steps/bootstrap_interrogation.py",
+      "impl/common/l7245_versioned_backends/{generic_sparse,staged_table_triggers}.py",
+      "impl/read_through/connection.py",
+      "data_layer_testing/helpers/{bootstrap,bootstrap_manifest}.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "bootstrap-invariants",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "_collect_primitive_install_coverage_violations": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "coverage_errors": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "filePath": {
+                          "regex": "^l3200_metadata/bootstrap_(?:coordinator|data_plan)\\.py$"
+                        }
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "source": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "pattern": "$SOURCE"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "_collect_primitive_install_coverage_violations": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "source": "capture.SOURCE"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_op",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_name_repr",
+                "ast_annotation"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,ast_name_repr AS name_repr,NULL AS value_repr,ast_annotation AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "decorators",
+            "query": "WITH RECURSIVE d(__path,fn,root,id) AS (\n      SELECT __path,parent,id,id FROM a WHERE field='decorator_list'\n      UNION ALL SELECT d.__path,d.fn,d.root,n.id FROM d JOIN a n ON n.__path=d.__path AND n.parent=d.id AND n.field='func'\n      JOIN a c ON c.__path=d.__path AND c.id=d.id AND c.kind='Call')\n      SELECT d.__path,d.fn,d.root,n.id,n.kind,n.name FROM d JOIN a n ON n.__path=d.__path AND n.id=d.id WHERE n.kind IN ('Name','Attribute')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "configuration",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "entry",
+            "query": {
+              "$option": "entryPoint",
+              "escape": "sql",
+              "template": "SELECT {} name"
+            }
+          },
+          {
+            "name": "effective_source",
+            "query": "SELECT source.__path,coalesce(json_extract(configuration.data,'$.rawSources.'||json_quote(source.__path)),source_text(source.__path,0,source.__end)) source FROM source CROSS JOIN configuration"
+          },
+          {
+            "name": "file_scope",
+            "query": "SELECT source.__path,rx_replace(source.__path,'^.*/','') basename,\n EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.enginePaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) engine,\n EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) bootstrap\n FROM effective_source source CROSS JOIN entry WHERE entry.name='_collect_fake_executor_violations' OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path)\n OR rx_matches(source.__path,'(^|/)(schema_transaction|sql_connection|bootstrap_interrogation)\\.py$') OR instr(rx_replace(source.__path,'^.*/',''),'bootstrap')>0\n OR rx_matches(source.source,'Bootstrap|bootstrap|schema_transaction|materialized_pipeline|physical_table|reconciliation')",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "engine_nodes",
+            "query": "SELECT a.*,s.basename,s.engine,s.bootstrap FROM a JOIN file_scope s ON s.__path=a.__path",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "kind",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "engine_calls",
+            "query": "SELECT c.*,s.basename,s.engine,s.bootstrap FROM calls c JOIN file_scope s ON s.__path=c.__path",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "callee"
+              ]
+            ]
+          },
+          {
+            "name": "function_nodes",
+            "query": "SELECT f.*,s.basename,s.engine,s.bootstrap,s.engine OR s.basename='schema_transaction.py' AND f.name IN ('bootstrap_interrogation_lazy','bootstrap_interrogation_request_no_io','bootstrap_schema_tail_lazy') OR entry.name='_collect_fake_executor_violations' AS checked FROM functions f JOIN file_scope s ON s.__path=f.__path CROSS JOIN entry CROSS JOIN configuration WHERE entry.name!='_collect_fake_executor_violations' OR json_extract(configuration.data,'$.functionLine') IS NULL OR f.line=json_extract(configuration.data,'$.functionLine')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "basename",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "deleted_surfaces",
+            "query": "SELECT column1 family,column2 ordinal,column3 surface,column4 issue,'deleted '||column5||' surface '||quote(column3)||' must not be reintroduced' message FROM (VALUES (0,0,'BOOTSTRAP_STRICT_MODE_OVERRIDE_PURPOSE','BEI035','cold-bootstrap'),(0,1,'BootstrapEngineRunMode.COLD','BEI035','cold-bootstrap'),(0,2,'BootstrapMode.COLD','BEI035','cold-bootstrap'),(0,3,'COLD_APPLICATION','BEI035','cold-bootstrap'),(0,4,'WRITE_TRANSITION_ARTIFACT','BEI035','cold-bootstrap'),(0,5,'WriteTransitionArtifactEffect','BEI035','cold-bootstrap'),(0,6,'_BOOTSTRAP_APPROVED_TERMINAL_DEPTH','BEI035','cold-bootstrap'),(0,7,'_BOOTSTRAP_STRICT_OVERRIDE_DEPTH','BEI035','cold-bootstrap'),(0,8,'_allow_post_commit_bootstrap_scope_invalidation','BEI035','cold-bootstrap'),(0,9,'_allow_versioned_base_table_creation','BEI035','cold-bootstrap'),(0,10,'_bootstrap_force_versioned_aux_cold_create_only','BEI035','cold-bootstrap'),(0,11,'_lifecycle_effects_with_transition_payload','BEI035','cold-bootstrap'),(0,12,'approved_terminal_depth','BEI035','cold-bootstrap'),(0,13,'begin_bootstrap_transition_capture','BEI035','cold-bootstrap'),(0,14,'bootstrap_strict_mode_override','BEI035','cold-bootstrap'),(0,15,'cold_application','BEI035','cold-bootstrap'),(0,16,'cold_create_only','BEI035','cold-bootstrap'),(0,17,'finish_bootstrap_transition_capture','BEI035','cold-bootstrap'),(0,18,'pending_after_create_schema_ddl_async_batch_ref_id','BEI035','cold-bootstrap'),(0,19,'pending_after_create_schema_ddl_async_statements','BEI035','cold-bootstrap'),(0,20,'pending_after_create_schema_ddl_batch_ref_id','BEI035','cold-bootstrap'),(0,21,'pending_after_create_schema_ddl_statements','BEI035','cold-bootstrap'),(0,22,'pending_polymorphic_guard_ddl_async_batch_scheduled','BEI035','cold-bootstrap'),(0,23,'pending_polymorphic_guard_ddl_async_statements','BEI035','cold-bootstrap'),(0,24,'pending_polymorphic_guard_ddl_batch_scheduled','BEI035','cold-bootstrap'),(0,25,'pending_polymorphic_guard_ddl_statements','BEI035','cold-bootstrap'),(0,26,'pending_staged_trigger_ddl_async_batch_scheduled','BEI035','cold-bootstrap'),(0,27,'pending_staged_trigger_ddl_async_statements','BEI035','cold-bootstrap'),(0,28,'pending_staged_trigger_ddl_batch_scheduled','BEI035','cold-bootstrap'),(0,29,'pending_staged_trigger_ddl_statements','BEI035','cold-bootstrap'),(1,0,'DeletedSchemaState','BEI035','schema sidecar'),(1,1,'SchemaSidecarProvider','BEI035','schema sidecar'),(1,2,'SchemaTransactionSidecar','BEI035','schema sidecar'),(1,3,'_defer_current_schema_state_post_commit_depth','BEI035','schema sidecar'),(1,4,'_deferred_current_schema_state_post_commit','BEI035','schema sidecar'),(1,5,'_deleted_deleted_schema_state','BEI035','schema sidecar'),(1,6,'_deleted_schema_state','BEI035','schema sidecar'),(1,7,'_disable_current_schema_state_post_commit','BEI035','schema sidecar'),(1,8,'_flush_fts_config_metadata_batch_lazy','BEI035','schema sidecar'),(1,9,'_flush_static_naming_metadata_batch_lazy','BEI035','schema sidecar'),(1,10,'_flush_vector_config_metadata_batch_lazy','BEI035','schema sidecar'),(1,11,'_pending_fts_config_persistence','BEI035','schema sidecar'),(1,12,'_pending_static_naming_persistence','BEI035','schema sidecar'),(1,13,'_pending_vector_config_persistence','BEI035','schema sidecar'),(1,14,'_persist_current_schema_state_for_connection','BEI035','schema sidecar'),(1,15,'_persist_current_schema_state_for_connection_async','BEI035','schema sidecar'),(1,16,'_persist_current_schema_state_post_commit','BEI035','schema sidecar'),(1,17,'_persist_current_schema_state_post_commit_async','BEI035','schema sidecar'),(1,18,'_persist_current_schema_state_post_commit_async_inner','BEI035','schema sidecar'),(1,19,'_persist_current_schema_state_post_commit_inner','BEI035','schema sidecar'),(1,20,'_require_schema_transaction_deferred_state','BEI035','schema sidecar'),(1,21,'_schedule_sql_connection_post_schema_batches_lazy','BEI035','schema sidecar'),(1,22,'_schema_sidecar','BEI035','schema sidecar'),(1,23,'_schema_state_metadata_tables_exist','BEI035','schema sidecar'),(1,24,'_schema_state_metadata_tables_exist_async','BEI035','schema sidecar'),(1,25,'_schema_transaction_deferred_state','BEI035','schema sidecar'),(1,26,'create_logged_tables','BEI035','schema sidecar'),(1,27,'create_logged_tables_async','BEI035','schema sidecar'),(1,28,'create_logged_tables_lazy','BEI035','schema sidecar'),(1,29,'ddl_bundle_many_lazy','BEI035','schema sidecar'),(1,30,'defer_current_schema_state_post_commit','BEI035','schema sidecar'),(1,31,'defer_current_schema_state_post_commit_async','BEI035','schema sidecar'),(1,32,'defer_retroactive_versioned_fk_triggers','BEI035','schema sidecar'),(1,33,'deleted_deleted_schema_state_accessor','BEI035','schema sidecar'),(1,34,'deleted_schema_state','BEI035','schema sidecar'),(1,35,'deleted_schema_state_accessor','BEI035','schema sidecar'),(1,36,'disable_current_schema_state_post_commit','BEI035','schema sidecar'),(1,37,'ensure_commit_triggers_lazy','BEI035','schema sidecar'),(1,38,'ensure_large_column_metadata_schema_lazy','BEI035','schema sidecar'),(1,39,'ensure_logged_table_lazy','BEI035','schema sidecar'),(1,40,'ensure_queue_lazy','BEI035','schema sidecar'),(1,41,'ensure_table_event_trigger_lazy','BEI035','schema sidecar'),(1,42,'has_schema_sidecar','BEI035','schema sidecar'),(1,43,'pending_constraint_metadata_models','BEI035','schema sidecar'),(1,44,'pending_create_index_statements','BEI035','schema sidecar'),(1,45,'pending_create_table_statements','BEI035','schema sidecar'),(1,46,'pending_graph_config_metadata_models','BEI035','schema sidecar'),(1,47,'pending_large_column_metadata_models','BEI035','schema sidecar'),(1,48,'pending_log_immutability_statements','BEI035','schema sidecar'),(1,49,'pending_polymorphic_metadata_models','BEI035','schema sidecar'),(1,50,'pending_retroactive_versioned_fk_models','BEI035','schema sidecar'),(1,51,'pending_staged_trigger_models','BEI035','schema sidecar'),(1,52,'pending_versioned_aux_bootstrap_verifications','BEI035','schema sidecar'),(1,53,'persist_schema_state_post_commit','BEI035','schema sidecar'),(1,54,'schema_sidecar','BEI035','schema sidecar'),(1,55,'schema_transaction_sidecar','BEI035','schema sidecar'),(1,56,'upsert_bootstrap_versioned_rows_lazy','BEI035','schema sidecar'),(2,0,'_bootstrap_queue_schema_plan_lazy','BEI046','non-batch bootstrap schema'))"
+          },
+          {
+            "name": "raw_matches",
+            "query": "SELECT n.__path,n.__start,n.__end,length(substr(source.source,1,instr(source.source,d.surface)-1))-length(replace(substr(source.source,1,instr(source.source,d.surface)-1),char(10),''))+1 line,\n d.issue,d.message,d.family*1000+d.ordinal ordering,d.surface FROM a n JOIN file_scope s ON s.__path=n.__path JOIN effective_source source ON source.__path=n.__path JOIN deleted_surfaces d ON instr(source.source,d.surface)>0 WHERE n.kind='Module' AND (d.family<2 OR s.basename='schema_transaction.py')"
+          },
+          {
+            "name": "diagnostics_0",
+            "query": "SELECT __path path,__start start_byte,__end end_byte,line,issue,message,surface||':'||issue identity,-1 phase,ordering,'' symbol,'' sort_name FROM raw_matches UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI005' AS issue,'@pure_lazy function '||f.name_repr||' calls executable bootstrap surface '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI005:'||(printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy') AND n.callee IN ('_bootstrap_control_table_presence_override','_bootstrap_direct_static_naming_post_commit','_execute_direct_internal','_execute_direct_internal_async','_execute_direct_internal_lazy','_execute_queue_bootstrap','_execute_schema_direct_internal','_execute_schema_direct_internal_async','_execute_schema_direct_internal_lazy','_execute_table_trigger_bootstrap','_publish_bootstrap_rows_direct','_publish_bootstrap_rows_direct_async','_publish_bootstrap_rows_direct_lazy','_publish_static_naming_rows_direct','_publish_static_naming_rows_direct_async','_read_bootstrap_metadata_direct','_read_bootstrap_metadata_direct_async','_read_bootstrap_metadata_direct_lazy','_read_bootstrap_metadata_immediate','_read_bootstrap_metadata_immediate_async','_read_bootstrap_metadata_immediate_lazy','_read_bootstrap_proof_direct_async','_read_lazy_bootstrap_metadata_direct','_read_lazy_bootstrap_metadata_direct_async','_read_lazy_bootstrap_metadata_immediate','_read_lazy_bootstrap_metadata_immediate_async','_read_lazy_bootstrap_proof_direct','_read_lazy_bootstrap_proof_immediate','_upsert_bootstrap_model_row_groups_direct','_upsert_bootstrap_model_rows_direct','create_log_table','flush_schema_plan','flush_schema_plan_async','materialized_bootstrap_control_table_presence','read_transition_artifact','write_transition_artifact')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI023' AS issue,'@pure_lazy function '||f.name_repr||' calls boundary/materialization surface '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI023:'||(printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy') AND n.callee IN ('_flush_deferred_create_table_ddl_batch','_materialize_schema_operation_records','apply_lifecycle_effects_boundary','apply_validated_bootstrap_lifecycle_effect','begin_bootstrap_transition_capture','finish_bootstrap_transition_capture','load_bootstrap_transition_cache_artifact','lower_bootstrap_lifecycle_effects','materialized_bootstrap_backend_fingerprint','materialized_bootstrap_control_table_presence','materialized_bootstrap_ddl_lockdown_present','materialized_bootstrap_interrogation_request','materialized_bootstrap_transition_artifact','read_transition_artifact','table_exists_many_for_schema_batch','transition_artifact_payload_json')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI006' AS issue,'LazyResult.of(...) must not wrap executable bootstrap work' AS message,n.id||':BEI006:'||(printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs+0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,1000,(n.bfs+0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy') AND n.callee_kind='Attribute' AND n.callee='of' AND n.receiver_kind='Name' AND n.receiver_name='LazyResult' AND EXISTS(SELECT 1 FROM calls work WHERE work.__path=n.__path AND work.parent=n.id AND work.field='args' AND work.position=0 AND (work.callee IN ('_bootstrap_control_table_presence_override','_bootstrap_direct_static_naming_post_commit','_execute_direct_internal','_execute_direct_internal_async','_execute_direct_internal_lazy','_execute_queue_bootstrap','_execute_schema_direct_internal','_execute_schema_direct_internal_async','_execute_schema_direct_internal_lazy','_execute_table_trigger_bootstrap','_publish_bootstrap_rows_direct','_publish_bootstrap_rows_direct_async','_publish_bootstrap_rows_direct_lazy','_publish_static_naming_rows_direct','_publish_static_naming_rows_direct_async','_read_bootstrap_metadata_direct','_read_bootstrap_metadata_direct_async','_read_bootstrap_metadata_direct_lazy','_read_bootstrap_metadata_immediate','_read_bootstrap_metadata_immediate_async','_read_bootstrap_metadata_immediate_lazy','_read_bootstrap_proof_direct_async','_read_lazy_bootstrap_metadata_direct','_read_lazy_bootstrap_metadata_direct_async','_read_lazy_bootstrap_metadata_immediate','_read_lazy_bootstrap_metadata_immediate_async','_read_lazy_bootstrap_proof_direct','_read_lazy_bootstrap_proof_immediate','_upsert_bootstrap_model_row_groups_direct','_upsert_bootstrap_model_rows_direct','create_log_table','flush_schema_plan','flush_schema_plan_async','materialized_bootstrap_control_table_presence','read_transition_artifact','write_transition_artifact') OR substr(work.callee,-7)='_direct' OR substr(work.callee,1,6)='build_'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI007' AS issue,'bootstrap application executor must use typed execution authority, not discard conn' AS message,n.id||':BEI007:'||(printf('%020d/%06d/%024.6f',f.bfs,2000,(n.bfs+target.position*0.0001))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,2000,(n.bfs+target.position*0.0001)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='targets' AND target.kind='Name' AND target.name='conn' WHERE f.checked AND (f.name='execute_application_plan' AND n.kind='Delete') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI007' AS issue,'bootstrap application executor returns synthetic zero mutation facts' AS message,n.id||':BEI007:'||(printf('%020d/%06d/%024.6f',f.bfs,2000,(n.bfs+kw.position*0.0001))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,2000,(n.bfs+kw.position*0.0001)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN a kw ON kw.__path=n.__path AND kw.parent=n.id AND kw.field='keywords' AND kw.name='mutation_counts' JOIN calls value ON value.__path=kw.__path AND value.parent=kw.id AND value.field='value' WHERE f.checked AND (f.name='execute_application_plan' AND n.callee='BootstrapExecutionFacts' AND NOT EXISTS(SELECT 1 FROM a branch JOIN a test ON test.__path=branch.__path AND test.parent=branch.id AND test.field='test' JOIN a operand ON operand.__path=test.__path AND operand.parent=test.id AND operand.field IN ('left','comparators') WHERE branch.__path=n.__path AND branch.kind='If' AND n.id BETWEEN branch.id AND branch.last AND test.kind='Compare' AND operand.kind='Attribute' AND operand.name='ZERO_APPLICATION_TERMINALS' AND branch.id BETWEEN f.id AND f.last) AND value.callee='BootstrapMutationCounts' AND (SELECT count(*) FROM a k JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE k.__path=value.__path AND k.parent=value.id AND k.field='keywords' AND v.kind='Constant' AND (v.value_kind IN ('int','float','complex') AND v.value IN ('0','0.0','0j') OR v.value_kind='bool' AND v.value='False'))>=4) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI016' AS issue,'metadata publication must consume produced BootstrapApplicationPlan refs' AS message,n.id||':BEI016:'||(printf('%020d/%06d/%024.6f',f.bfs,3000,(n.bfs+k.position*0.0001))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,3000,(n.bfs+k.position*0.0001)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN a k ON k.__path=n.__path AND k.parent=n.id AND k.field='keywords' AND k.name='dependency_refs' JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND n.callee='publish_bootstrap_metadata_lazy' AND v.kind='Tuple' AND NOT EXISTS(SELECT 1 FROM a elt WHERE elt.__path=v.__path AND elt.parent=v.id AND elt.field='elts' AND (1))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI012' AS issue,'cold application final tail must depend on planned metadata/proof publication' AS message,n.id||':BEI012:'||(printf('%020d/%06d/%024.6f',f.bfs,3000,(1000000))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,3000,(1000000)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND n.callee='bootstrap_schema_tail_lazy' AND n.line=(SELECT max(t.line) FROM calls t WHERE t.__path=f.__path AND t.id BETWEEN f.id AND f.last AND t.callee='bootstrap_schema_tail_lazy') AND n.id=(SELECT min(t.id) FROM calls t WHERE t.__path=f.__path AND t.id BETWEEN f.id AND f.last AND t.callee='bootstrap_schema_tail_lazy' AND t.line=n.line) AND NOT EXISTS(SELECT 1 FROM calls p WHERE p.__path=f.__path AND p.id BETWEEN f.id AND f.last AND p.callee='publish_bootstrap_metadata_lazy' AND p.line<=n.line) OR f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND n.callee='bootstrap_schema_tail_lazy' AND n.id=(SELECT min(t.id) FROM calls t WHERE t.__path=f.__path AND t.id BETWEEN f.id AND f.last AND t.callee='bootstrap_schema_tail_lazy' AND t.line=(SELECT max(x.line) FROM calls x WHERE x.__path=f.__path AND x.id BETWEEN f.id AND f.last AND x.callee='bootstrap_schema_tail_lazy')) AND EXISTS(SELECT 1 FROM calls p WHERE p.__path=f.__path AND p.id BETWEEN f.id AND f.last AND p.callee='publish_bootstrap_metadata_lazy' AND p.line>n.line)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI015' AS issue,'required DDL lockdown lifecycle effect must execute, not be skipped' AS message,n.id||':BEI015:'||(printf('%020d/%06d/%024.6f',f.bfs,4000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,4000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='apply_lifecycle_effects' AND n.kind='If' AND EXISTS(SELECT 1 FROM a test WHERE test.__path=n.__path AND test.parent=n.id AND test.field='test' AND (EXISTS(SELECT 1 FROM a n WHERE n.__path=test.__path AND n.id BETWEEN test.id AND test.last AND (n.kind='Attribute' AND n.name='APPLY_DDL_LOCKDOWN' AND EXISTS(SELECT 1 FROM a value WHERE value.__path=n.__path AND value.parent=n.id AND value.field='value' AND (value.kind='Name' AND value.name='BootstrapLifecycleEffectKind')))))) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='body' AND (v.kind='Continue')) AND NOT EXISTS(SELECT 1 FROM a stmt JOIN calls call ON call.__path=stmt.__path AND call.id BETWEEN stmt.id AND stmt.last WHERE stmt.__path=n.__path AND stmt.parent=n.id AND stmt.field='body' AND call.callee='apply_bootstrap_ddl_lockdown_effect')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI019' AS issue,'cold bootstrap lifecycle effects must run at the explicit post-application boundary' AS message,n.id||':BEI019:'||(printf('%020d/%06d/%024.6f',f.bfs,5000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,5000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='plan_application' AND n.callee='lower_bootstrap_lifecycle_effects') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI019' AS issue,'cold application tail must not execute lifecycle effects as ServerPlan callbacks' AS message,n.id||':BEI019:'||(printf('%020d/%06d/%024.6f',f.bfs,5000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,5000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND n.callee='bootstrap_schema_tail_lazy' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='keywords' AND (v.name='lifecycle_effects'))) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI024' AS issue,'bootstrap_schema_tail_lazy must accept the BootstrapApplicationPlan-produced tail ref' AS message,f.id||':BEI024:'||(printf('%020d/%06d/%024.6f',f.bfs,6000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,6000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='schema_transaction.py' AND f.name='bootstrap_schema_tail_lazy' AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field IN ('args','kwonlyargs') AND p.name='produced_ref'))"
+          },
+          {
+            "name": "diagnostics_1",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI024' AS issue,'bootstrap_schema_tail_lazy must publish facts only; materialization/flush belongs to the application boundary' AS message,n.id||':BEI024:'||(printf('%020d/%06d/%024.6f',f.bfs,6000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,6000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='schema_transaction.py' AND f.name='bootstrap_schema_tail_lazy' AND n.callee IN ('_materialize_schema_operation_records','_flush_deferred_create_table_ddl_batch','flush_schema_plan','flush_schema_plan_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI025' AS issue,'application install must consume BootstrapApplicationPlan dependency refs, not reset them to ()' AS message,n.id||':BEI025:'||(printf('%020d/%06d/%024.6f',f.bfs,7000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,7000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_materialize_application_lazy_results' AND n.kind='Assign' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='targets' AND (v.kind='Name' AND v.name='schema_dependency_refs')) AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Tuple' AND NOT EXISTS(SELECT 1 FROM a elt WHERE elt.__path=v.__path AND elt.parent=v.id AND elt.field='elts' AND (1))))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI025' AS issue,'application tail installation must pass application_plan.application_tail_ref as produced_ref' AS message,n.id||':BEI025:'||(printf('%020d/%06d/%024.6f',f.bfs,7000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,7000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_materialize_application_lazy_results' AND n.callee='bootstrap_schema_tail_lazy' AND NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='keywords' AND (v.name='produced_ref'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI026' AS issue,'contributor primitive lowering must be represented in BootstrapDataPrimitivePlan before install' AS message,n.id||':BEI026:'||(printf('%020d/%06d/%024.6f',f.bfs,8000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,8000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_materialize_application_lazy_results' AND n.kind='Attribute' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Name' AND v.name='BootstrapDataPrimitiveKind'))) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI027' AS issue,'transition replay planning must validate backend/observed/desired/artifact identity; missing '||(SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'artifact_hash' AS name UNION ALL SELECT 'backend_facts' AS name UNION ALL SELECT 'backend_fingerprint' AS name UNION ALL SELECT 'desired_hash' AS name UNION ALL SELECT 'observed_hash' AS name) required WHERE NOT EXISTS(SELECT 1 FROM a child WHERE child.__path=f.__path AND child.id BETWEEN f.id AND f.last AND child.kind IN ('Name','Attribute') AND child.name=required.name)) AS message,f.id||':BEI027:'||(printf('%020d/%06d/%024.6f',f.bfs,9000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,9000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name='_transition_replay_plan_for_observation' AND (SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'artifact_hash' AS name UNION ALL SELECT 'backend_facts' AS name UNION ALL SELECT 'backend_fingerprint' AS name UNION ALL SELECT 'desired_hash' AS name UNION ALL SELECT 'observed_hash' AS name) required WHERE NOT EXISTS(SELECT 1 FROM a child WHERE child.__path=f.__path AND child.id BETWEEN f.id AND f.last AND child.kind IN ('Name','Attribute') AND child.name=required.name)) IS NOT NULL) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI029' AS issue,'bootstrap runner must be an explicit _lazy function' AS message,f.id||':BEI029:'||(printf('%020d/%06d/%024.6f',f.bfs,10000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,10000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('_enqueue_application_schema_lazy') AND substr(f.name,-5)!='_lazy') UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI029' AS issue,'bootstrap runner must be decorated with @pure_lazy' AS message,f.id||':BEI029:'||(printf('%020d/%06d/%024.6f',f.bfs,10000,(1))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,10000,(1)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('_enqueue_application_schema_lazy') AND NOT EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy')) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI029' AS issue,'bootstrap runner must return LazyResult[...]' AS message,f.id||':BEI029:'||(printf('%020d/%06d/%024.6f',f.bfs,10000,(2))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,10000,(2)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('_enqueue_application_schema_lazy') AND NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=f.__path AND v.parent=f.id AND v.field='returns' AND (substr(v.annotation,1,11)='LazyResult['))) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI033' AS issue,'bootstrap API '||f.name_repr||' must be decorated with @pure_lazy' AS message,f.id||':BEI033:'||(printf('%020d/%06d/%024.6f',f.bfs,12000,(1))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,12000,(1)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('build_execution_plan_lazy','interrogate_schema_state_lazy') AND NOT EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy')) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI033' AS issue,'bootstrap API '||f.name_repr||' must return LazyResult[...]' AS message,f.id||':BEI033:'||(printf('%020d/%06d/%024.6f',f.bfs,12000,(2))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,12000,(2)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('build_execution_plan_lazy','interrogate_schema_state_lazy') AND NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=f.__path AND v.parent=f.id AND v.field='returns' AND (substr(v.annotation,1,11)='LazyResult['))) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI034' AS issue,'bootstrap wrapper must call the public lazy APIs; missing '||(SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'build_execution_plan_lazy' name UNION ALL SELECT 'interrogate_schema_state_lazy' name) required WHERE NOT EXISTS(SELECT 1 FROM calls call WHERE call.__path=f.__path AND call.id BETWEEN f.id AND f.last AND call.callee=required.name)) AS message,f.id||':BEI034:'||(printf('%020d/%06d/%024.6f',f.bfs,13000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,13000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('run','run_async') AND (SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'build_execution_plan_lazy' name UNION ALL SELECT 'interrogate_schema_state_lazy' name) required WHERE NOT EXISTS(SELECT 1 FROM calls call WHERE call.__path=f.__path AND call.id BETWEEN f.id AND f.last AND call.callee=required.name)) IS NOT NULL) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI034' AS issue,'bootstrap wrapper must not call eager/internal surface '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI034:'||(printf('%020d/%06d/%024.6f',f.bfs,13000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,13000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.checked AND (f.basename='bootstrap_coordinator.py' AND f.name IN ('run','run_async') AND n.callee IN ('_install_application_lazy_results','_materialize_application_lazy_results','_schema_plan_fetch','_schema_plan_fetch_async','execute_application_plan','execute_application_plan_async','execute_interrogation_plan','execute_interrogation_plan_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI014' AS issue,CASE WHEN f.basename='bootstrap_coordinator.py' THEN 'coordinator must use LazySchemaTransaction primitive lowering surfaces' ELSE 'LazySchemaTransaction primitive surfaces must not delegate to legacy coordinator helpers' END AS message,n.id||':BEI014:'||(printf('%020d/%06d/%024.6f',f.bfs,14000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,14000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE (f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' OR f.basename='schema_transaction.py' AND f.name IN ('ensure_commit_triggers_lazy','ensure_queue_lazy','ensure_logged_table_lazy','ensure_table_event_trigger_lazy','ensure_large_column_metadata_schema_lazy')) AND n.callee IN ('_execute_commit_trigger_primitives_lazy','_execute_large_column_metadata_schema_primitives_lazy','_execute_logged_table_primitives_lazy','_execute_queue_primitives_lazy','_execute_table_event_trigger_primitives_lazy') UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI036' AS issue,'_unsupported_bootstrap_schema_surface_lazy is a temporary tripwire and must be deleted' AS message,f.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='schema_transaction.py' AND f.name='_unsupported_bootstrap_schema_surface_lazy' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still delegates to the unsupported bootstrap primitive tripwire' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.callee='_unsupported_bootstrap_schema_surface_lazy' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''requires an explicit schema primitive''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+0*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+0*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'requires an explicit schema primitive')>0 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''BootstrapSchemaSurfacePrimitivePayload''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+1*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+1*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'BootstrapSchemaSurfacePrimitivePayload')>0 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''_unsupported_bootstrap_schema_surface_lazy''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+2*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+2*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'_unsupported_bootstrap_schema_surface_lazy')>0"
+          },
+          {
+            "name": "diagnostics_2",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''has no lazy schema transaction lowering yet''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+3*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+3*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'has no lazy schema transaction lowering yet')>0 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''must be lowered as an explicit bootstrap primitive''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+4*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+4*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'must be lowered as an explicit bootstrap primitive')>0 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI036' AS issue,f.name||' still contains placeholder primitive lowering text ''_declare_schema_surface''' AS message,n.id||':BEI036:'||(printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+5*0.01))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,15000,(n.bfs+5*0.01)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Constant' AND n.value_kind='str' AND instr(n.value,'_declare_schema_surface')>0 UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI039' AS issue,'schema-transaction lazy bootstrap surface '||f.name_repr||' must be decorated with @pure_lazy' AS message,f.id||':BEI039:'||(printf('%020d/%06d/%024.6f',f.bfs,16000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,16000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='schema_transaction.py' AND (substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' OR f.name IN ('ddl_bundle_many','enqueue_schema_ddl_lazy','enqueue_schema_ddl_many','publish_bootstrap_metadata_lazy')) AND NOT EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy') UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI039' AS issue,'schema-transaction lazy bootstrap surface '||f.name_repr||' must return LazyResult[...]' AS message,f.id||':BEI039:'||(printf('%020d/%06d/%024.6f',f.bfs,16000,(1))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,16000,(1)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='schema_transaction.py' AND (substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' OR f.name IN ('ddl_bundle_many','enqueue_schema_ddl_lazy','enqueue_schema_ddl_many','publish_bootstrap_metadata_lazy')) AND NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=f.__path AND v.parent=f.id AND v.field='returns' AND (substr(v.annotation,1,11)='LazyResult[')) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI039' AS issue,'bootstrap primitive lowerer '||f.name_repr||' must accept keyword-only produced_ref' AS message,f.id||':BEI039:'||(printf('%020d/%06d/%024.6f',f.bfs,16000,(2))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,16000,(2)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field='kwonlyargs' AND p.name='produced_ref') UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI039' AS issue,'bootstrap primitive lowerer '||f.name_repr||' must accept keyword-only dependency_refs' AS message,f.id||':BEI039:'||(printf('%020d/%06d/%024.6f',f.bfs,16000,(3))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,16000,(3)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field='kwonlyargs' AND p.name='dependency_refs') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI040' AS issue,'bootstrap primitive lowerer '||f.name_repr||' must preserve contract refs, not discard '||(SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT DISTINCT name FROM a t WHERE t.__path=n.__path AND t.parent=n.id AND t.field='targets' AND t.kind='Name' AND t.name IN ('produced_ref','dependency_refs') ORDER BY name)) AS message,n.id||':BEI040:'||(printf('%020d/%06d/%024.6f',f.bfs,16000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,16000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.kind='Delete' AND (SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT DISTINCT name FROM a t WHERE t.__path=n.__path AND t.parent=n.id AND t.field='targets' AND t.kind='Name' AND t.name IN ('produced_ref','dependency_refs') ORDER BY name)) IS NOT NULL UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI043' AS issue,'build_execution_plan_lazy must call the application install runner directly, not materialize lazy-result buckets' AS message,n.id||':BEI043:'||(printf('%020d/%06d/%024.6f',f.bfs,17000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,17000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='bootstrap_coordinator.py' AND f.name='build_execution_plan_lazy' AND n.callee IN ('_materialize_application_lazy_results','_install_application_lazy_results') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI043' AS issue,'_enqueue_application_schema_lazy must build and return the terminal LazyResult directly, not fetch a preinstalled tail' AS message,n.id||':BEI043:'||(printf('%020d/%06d/%024.6f',f.bfs,17000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,17000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND n.kind='Attribute' AND n.name IN ('lazy_results','application_tail_result') UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI043' AS issue,'_enqueue_application_schema_lazy must be the single installer that calls bootstrap_schema_tail_lazy' AS message,f.id||':BEI043:'||(printf('%020d/%06d/%024.6f',f.bfs,17000,(1000000))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,17000,(1000000)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='bootstrap_coordinator.py' AND f.name='_enqueue_application_schema_lazy' AND NOT EXISTS(SELECT 1 FROM calls n WHERE n.__path=f.__path AND n.id BETWEEN f.id AND f.last AND (n.callee='bootstrap_schema_tail_lazy')) UNION ALL SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI043' AS issue,'deleted application install scaffold '||f.name_repr||' must be removed or folded into _enqueue_application_schema_lazy' AS message,f.id||':BEI043:'||(printf('%020d/%06d/%024.6f',f.bfs,17000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,17000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE f.basename='bootstrap_coordinator.py' AND f.name IN ('_materialize_application_lazy_results','_install_application_lazy_results') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI044' AS issue,'bootstrap lowerer '||f.name_repr||' must collect work into the fused terminal payload, not emit ordinary SQL step via '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI044:'||(printf('%020d/%06d/%024.6f',f.bfs,18000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,18000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND (substr(f.name,1,17)='ensure_bootstrap_' OR f.name IN ('_build_ddl_effect_lazy','_enqueue_bootstrap_dml_statements_lazy','assert_bootstrap_sql_assertions_lazy','bootstrap_schema_tail_lazy')) AND n.callee IN ('_build_ddl_effect_lazy','_enqueue_bootstrap_dml_statements_lazy','_flush_deferred_create_table_ddl_batch','_materialize_schema_operation_records','assert_bootstrap_sql_assertions_lazy','enqueue_bootstrap_dml_statements_lazy') AND n.callee!=f.name UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI037' AS issue,f.name||' must use primitive dispatch, not direct installer '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI037:'||(printf('%020d/%06d/%024.6f',f.bfs,19000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,19000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='bootstrap_coordinator.py' AND f.name IN ('_materialize_application_lazy_results','_install_application_lazy_results') AND n.callee IN ('_flush_deferred_create_table_ddl_batch','_materialize_schema_operation_records','create_log_table_lazy','create_logged_tables','create_logged_tables_lazy','create_table_from_schema_lazy','create_versioned_table_lazy','ensure_commit_triggers_lazy','ensure_large_column_metadata_schema_lazy','ensure_logged_table_lazy','ensure_queue_lazy','ensure_table_event_trigger_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI011' AS issue,'bootstrap interrogation must use BootstrapInterrogationStep rows, not compose helper refs directly' AS message,n.id||':BEI011:'||(printf('%020d/%06d/%024.6f',f.bfs,20000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,20000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE (f.basename='bootstrap_coordinator.py' AND f.name='execute_interrogation_plan' OR f.basename='schema_transaction.py' AND f.name='bootstrap_interrogation_lazy') AND n.callee IN ('bootstrap_backend_facts_lazy','bootstrap_ddl_lockdown_facts_lazy','bootstrap_manifest_facts_lazy','bootstrap_proof_facts_lazy','bootstrap_schema_state_facts_lazy','bootstrap_seed_facts_lazy','bootstrap_transition_artifact_facts_lazy','columns_exist_many_lazy','lazy_tuple','physical_indexes_many_lazy','physical_table_exists_many_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI013' AS issue,'execute_runtime_rows must not synthesize physical table/column/index facts' AS message,n.id||':BEI013:'||(printf('%020d/%06d/%024.6f',f.bfs,21000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,21000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='bootstrap_interrogation.py' AND f.name='execute_runtime_rows' AND n.kind='Attribute' AND n.name IN ('TABLE','COLUMN','INDEX') AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Name' AND v.name='BootstrapInterrogationRowKind')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI045' AS issue,'ensure_versioning_domain_schema must be the sole owner of versioning infra tables; do not emit ENSURE_TABLE duplicates' AS message,n.id||':BEI045:'||(printf('%020d/%06d/%024.6f',f.bfs,22000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,22000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.name='ensure_versioning_domain_schema' AND n.callee='ensure_tables' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI046' AS issue,'ensure bootstrap schema primitives must delegate to batch installers, not call non-batch lowering surface '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI046:'||(printf('%020d/%06d/%024.6f',f.bfs,23000,(n.bfs))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,23000,(n.bfs)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN calls n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.basename='schema_transaction.py' AND substr(f.name,1,17)='ensure_bootstrap_' AND substr(f.name,-5)='_lazy' AND n.callee IN ('_bootstrap_queue_schema_plan_lazy','_bootstrap_table_schema_plan_lazy','_schema_plan_lazy_from_work_product','ddl_bundle_many','ddl_bundle_many_async','enqueue_schema_ddl_many','enqueue_schema_ddl_many_async')"
+          },
+          {
+            "name": "diagnostics_3",
+            "query": "SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,f.line,'BEI047' AS issue,'bootstrap surface '||f.name_repr||' must be lazy-only; delete sync/async variants and keep the _lazy entrypoint' AS message,f.id||':BEI047:'||(printf('%020d/%06d/%024.6f',f.bfs,24000,(0))) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,24000,(0)) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f WHERE instr('/'||f.__path||'/','/tests/')=0 AND instr('/'||f.__path||'/','/data_layer_testing/')=0 AND (f.bootstrap OR instr(f.basename,'bootstrap')>0) AND instr(f.name,'bootstrap')>0 AND substr(f.name,-5)!='_lazy' AND NOT EXISTS(SELECT 1 FROM decorators d WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy') AND (f.kind='AsyncFunctionDef' OR substr(f.name,-6)='_async' OR EXISTS(SELECT 1 FROM functions counterpart WHERE counterpart.__path=f.__path AND counterpart.name=CASE WHEN substr(f.name,-6)='_async' THEN substr(f.name,1,length(f.name)-6)||'_lazy' WHEN substr(f.name,-5)='_sync' THEN substr(f.name,1,length(f.name)-5)||'_lazy' ELSE f.name||'_lazy' END)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI001' AS issue,'old bootstrap engine symbol '||n.name_repr||' must be deleted, not preserved' AS message,n.id||':BEI001:'||(printf('%020d/%06d/%024.6f',n.bfs,0,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,0,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.name IN ('BootstrapConnectionProof','BootstrapContributor','BootstrapCoordinator','BootstrapExecutionResult','BootstrapObservedState','BootstrapPlan','BootstrapPrimitive','BootstrapPrimitiveKind','BootstrapProjectedState','BootstrapRunMode','BootstrapSnapshotLoader','BootstrapState','DataLayerBootstrapContributor','EnsureBootstrapScopePayload','EnsureCommitTriggersPayload','EnsureLargeColumnMetadataSchemaPayload','EnsureLoggedTablePayload','EnsureQueuePayload','EnsureRowPayload','EnsureSystemSessionPayload','EnsureTableEventTriggerPayload','EnsureTablePayload','EnsureVersionedRowPayload','EnsureVersioningDomainPayload','_AsyncBootstrapColumnProofConnection','_AsyncBootstrapDirectPublishConnection','_AsyncBootstrapManifestPublisher','_AsyncBootstrapMissingSchemaConnection','_AsyncBootstrapObservedFingerprintConnection','_AsyncCommitTriggerCreator','_AsyncCommitTriggerEnqueuer','_AsyncExecuteDdlTransaction','_AsyncLazyBootstrapProofImmediateConnection','_AsyncLoggedTableSchemaTransaction','_AsyncMaterializedPhysicalIndexesConnection','_AsyncPhysicalTableExistsManyConnection','_AsyncSchemaDiscoveryTransaction','_AsyncVersionedLogTableCreator','_BootstrapLazyCallContext','_BootstrapPlanExecutionOutcome','_BootstrapRunContext','_BootstrapSyncConnectionView','_DialectProvider','_NullAsyncContext','_NullContext','_SyncLoggedTableSchemaTransaction','_bootstrap_lazy_call','_execute_bootstrap_plan','_execute_bootstrap_plan_lazy','_execute_cold_data_primitives_direct_bundled','_execute_commit_trigger_primitives_lazy','_execute_data_primitives','_execute_data_primitives_async','_execute_large_column_metadata_schema_primitives_lazy','_execute_logged_table_primitives_lazy','_execute_plan_async','_execute_queue_primitives_lazy','_execute_row_primitives_direct','_execute_table_event_trigger_primitives_lazy','_execute_versioned_row_primitives','_execute_versioned_row_primitives_direct','_execute_versioning_domain_primitive_direct','_flatten_bootstrap_schema_effect_write_collector','_flush_bootstrap_schema_effect_write_collector_async','_invalidate_table_exists_cache','_load_sync_index_snapshot','_lookup_direct_versioning_branch','_manifest_matches','_manifest_mismatch_details','_mark_schema_proof_scopes_verified','_mark_seed_fact_verified','_physical_table_presence_many','_read_current_schema_generation','_reconcile_versioning_initialization_metadata_indexes_for_bootstrap_async','_remember_direct_versioning_branch','_run_contributor_finalizers','_seed_fact_is_verified','_store_manifest','_store_manifest_async') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI002' AS issue,'direct bootstrap/eager transition surface '||n.name_repr||' is forbidden' AS message,n.id||':BEI002:'||(printf('%020d/%06d/%024.6f',n.bfs,100.0,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,100.0,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.name IN ('_bootstrap_control_table_presence_override','_bootstrap_direct_static_naming_post_commit','_publish_bootstrap_rows_direct','_publish_bootstrap_rows_direct_async','_publish_bootstrap_rows_direct_lazy','_publish_static_naming_rows_direct','_publish_static_naming_rows_direct_async','_read_bootstrap_metadata_direct','_read_bootstrap_metadata_direct_async','_read_bootstrap_metadata_direct_lazy','_read_bootstrap_metadata_immediate','_read_bootstrap_metadata_immediate_async','_read_bootstrap_metadata_immediate_lazy','_read_bootstrap_proof_direct_async','_read_lazy_bootstrap_metadata_direct','_read_lazy_bootstrap_metadata_direct_async','_read_lazy_bootstrap_metadata_immediate','_read_lazy_bootstrap_metadata_immediate_async','_read_lazy_bootstrap_proof_direct','_read_lazy_bootstrap_proof_immediate','_upsert_bootstrap_model_row_groups_direct','_upsert_bootstrap_model_rows_direct','materialized_bootstrap_control_table_presence','read_transition_artifact','write_transition_artifact') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI047' AS issue,'deleted bootstrap callback/fallback surface '||n.name_repr||' must not be reintroduced' AS message,n.id||':BEI047:'||(printf('%020d/%06d/%024.6f',n.bfs,200.0,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,200.0,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.name IN ('_install_schema_primitive_contract','ensure_schema_callback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI017' AS issue,'metadata publication must accept preplanned rows/plan, not rebuild inputs' AS message,n.id||':BEI017:'||(printf('%020d/%06d/%024.6f',f.bfs,25000,n.position)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,25000,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN parameters n ON n.__path=f.__path AND n.fn=f.id WHERE f.kind='FunctionDef' AND f.name='publish_bootstrap_metadata_lazy' AND n.kind='arg' AND n.field='args' AND n.name IN ('bootstrap_plan','model_classes') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI032' AS issue,'bootstrap lifecycle effects must not accept connection authority' AS message,n.id||':BEI032:'||(printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.kind='ClassDef' AND EXISTS(SELECT 1 FROM a base WHERE base.__path=f.__path AND base.parent=f.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='PipelineLifecycleEffect') AND n.kind='arg' AND n.name IN ('conn','connection','database_connection','sql_conn') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI032' AS issue,'bootstrap lifecycle effects must not use connection authority' AS message,n.id||':BEI032:'||(printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.kind='ClassDef' AND EXISTS(SELECT 1 FROM a base WHERE base.__path=f.__path AND base.parent=f.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='PipelineLifecycleEffect') AND n.kind='Name' AND n.name IN ('conn','connection','database_connection','sql_conn') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI032' AS issue,'bootstrap lifecycle effects must not recover connection authority' AS message,n.id||':BEI032:'||(printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.kind='ClassDef' AND EXISTS(SELECT 1 FROM a base WHERE base.__path=f.__path AND base.parent=f.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='PipelineLifecycleEffect') AND n.kind='Attribute' AND n.name IN ('_conn','conn','connection','sql_conn') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI032' AS issue,'bootstrap lifecycle effects must not use dynamic connection dispatch or mutation' AS message,n.id||':BEI032:'||(printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,24000,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.kind='ClassDef' AND EXISTS(SELECT 1 FROM a base WHERE base.__path=f.__path AND base.parent=f.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='PipelineLifecycleEffect') AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee IN ('__setattr__','getattr','hasattr')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI002' AS issue,'direct bootstrap/eager transition surface '||n.name_repr||' is forbidden' AS message,n.id||':BEI002:'||(printf('%020d/%06d/%024.6f',n.bfs,30000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,30000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.kind IN ('Name','Attribute') AND n.name IN ('_bootstrap_control_table_presence_override','_bootstrap_direct_static_naming_post_commit','_publish_bootstrap_rows_direct','_publish_bootstrap_rows_direct_async','_publish_bootstrap_rows_direct_lazy','_publish_static_naming_rows_direct','_publish_static_naming_rows_direct_async','_read_bootstrap_metadata_direct','_read_bootstrap_metadata_direct_async','_read_bootstrap_metadata_direct_lazy','_read_bootstrap_metadata_immediate','_read_bootstrap_metadata_immediate_async','_read_bootstrap_metadata_immediate_lazy','_read_bootstrap_proof_direct_async','_read_lazy_bootstrap_metadata_direct','_read_lazy_bootstrap_metadata_direct_async','_read_lazy_bootstrap_metadata_immediate','_read_lazy_bootstrap_metadata_immediate_async','_read_lazy_bootstrap_proof_direct','_read_lazy_bootstrap_proof_immediate','_upsert_bootstrap_model_row_groups_direct','_upsert_bootstrap_model_rows_direct','materialized_bootstrap_control_table_presence','read_transition_artifact','write_transition_artifact') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI047' AS issue,'deleted bootstrap callback/fallback surface '||n.name_repr||' must not be referenced' AS message,n.id||':BEI047:'||(printf('%020d/%06d/%024.6f',n.bfs,30100.0,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,30100.0,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.kind IN ('Name','Attribute') AND n.name IN ('_install_schema_primitive_contract','ensure_schema_callback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI003' AS issue,'.resolve() is forbidden in bootstrap engine files' AS message,n.id||':BEI003:'||(printf('%020d/%06d/%024.6f',n.bfs,31000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,31000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.callee_kind='Attribute' AND n.callee='resolve' AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name IN ('run','run_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI004' AS issue,'lambda-backed bootstrap trampolines are forbidden; use named ServerPlan/IR steps' AS message,n.id||':BEI004:'||(printf('%020d/%06d/%024.6f',n.bfs,32000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,32000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.engine AND n.kind='Lambda' AND NOT EXISTS(SELECT 1 FROM a p WHERE p.__path=n.__path AND p.id=n.parent AND p.kind='keyword' AND p.name='default_factory') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI008' AS issue,'BootstrapApplicationPlan must contain real planned step refs, not a single-terminal skeleton' AS message,n.id||':BEI008:'||(printf('%020d/%06d/%024.6f',n.bfs,33000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,33000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.callee='BootstrapServerPlanContract' AND EXISTS(SELECT 1 FROM a kw WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.field='keywords' AND (kw.name='step_refs' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=kw.__path AND v.parent=kw.id AND v.field='value' AND (v.kind='Tuple' AND NOT EXISTS(SELECT 1 FROM a element WHERE element.__path=v.__path AND element.parent=v.id AND element.field='elts' AND (1)))))) AND EXISTS(SELECT 1 FROM a kw WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.field='keywords' AND (kw.name='steps' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=kw.__path AND v.parent=kw.id AND v.field='value' AND (v.kind='Tuple' AND (SELECT count(*) FROM a element WHERE element.__path=v.__path AND element.parent=v.id AND element.field='elts')<=1))))"
+          },
+          {
+            "name": "diagnostics_4",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI009' AS issue,'lazy bootstrap index interrogation must use typed plan-owned facts, not a placeholder' AS message,n.id||':BEI009:'||(printf('%020d/%06d/%024.6f',n.bfs,34000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,34000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.callee='_bootstrap_engine_placeholder' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (v.position=0 AND v.kind='Constant' AND v.value_kind='str' AND v.value='lazy bootstrap index interrogation')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI010' AS issue,'lazy coordinator must derive desired physical contracts without passing a runtime connection' AS message,n.id||':BEI010:'||(printf('%020d/%06d/%024.6f',n.bfs,35000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,35000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.basename='bootstrap_coordinator.py' AND n.callee='_plan_physical_schema_contract' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='keywords' AND (v.name='conn')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI017' AS issue,'metadata publication must not receive positional fallback reconstruction inputs' AS message,n.id||':BEI017:'||(printf('%020d/%06d/%024.6f',n.bfs,36000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,36000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.callee='publish_bootstrap_metadata_lazy' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='args' AND (1)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI017' AS issue,'metadata publication call must pass preplanned artifacts: '||(SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'publication_plan' name UNION ALL SELECT 'publication_rows') required WHERE NOT EXISTS(SELECT 1 FROM a k WHERE k.__path=n.__path AND k.parent=n.id AND k.field='keywords' AND k.name=required.name)) AS message,n.id||':BEI017:'||(printf('%020d/%06d/%024.6f',n.bfs,36100.0,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,36100.0,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.callee='publish_bootstrap_metadata_lazy' AND (SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT 'publication_plan' name UNION ALL SELECT 'publication_rows') required WHERE NOT EXISTS(SELECT 1 FROM a k WHERE k.__path=n.__path AND k.parent=n.id AND k.field='keywords' AND k.name=required.name)) IS NOT NULL UNION ALL SELECT v.__path AS path,v.__start AS start_byte,v.__end AS end_byte,v.line,'BEI017' AS issue,'metadata publication artifacts must come from BootstrapApplicationPlan' AS message,v.id||':BEI017:'||(printf('%020d/%06d/%024.6f',n.bfs,36200.0,k.position)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,36200.0,k.position) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n JOIN a k ON k.__path=n.__path AND k.parent=n.id AND k.field='keywords' JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE n.engine AND n.callee='publish_bootstrap_metadata_lazy' AND n.basename='bootstrap_coordinator.py' AND EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name='_enqueue_application_schema_lazy') AND k.name IN ('publication_plan','publication_rows') AND NOT (v.kind='Attribute' AND EXISTS(SELECT 1 FROM a obj WHERE obj.__path=v.__path AND obj.parent=v.id AND obj.field='value' AND (obj.kind='Name' AND obj.name='application_plan'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI020' AS issue,'bootstrap SQL assertions must fail closed when a planned source ref is missing' AS message,n.id||':BEI020:'||(printf('%020d/%06d/%024.6f',n.bfs,37000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,37000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE n.engine AND n.basename='bootstrap_coordinator.py' AND n.callee_kind='Attribute' AND n.callee='get' AND n.receiver_kind='Name' AND n.receiver_name='table_source_refs' AND (SELECT count(*) FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args')>1 AND EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name='_application_sql_assertions_for_plan') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI018' AS issue,CASE WHEN n.name='BootstrapObservedState' THEN 'schema generation planning must consume BootstrapObservation facts only' ELSE 'schema generation planning must not read legacy generation maps' END AS message,n.id||':BEI018:'||(printf('%020d/%06d/%024.6f',f.bfs,50000,n.bfs)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',f.bfs,50000,n.bfs) AS ordering,'' AS symbol,'' AS sort_name FROM function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE f.kind='FunctionDef' AND f.name='plan_bootstrap_schema_generation' AND n.kind='Name' AND n.name IN ('BootstrapObservedState','SCHEMA_GENERATION_GLOBAL_TAG') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI018' AS issue,'schema generation/version counters must be explicit, not inferred with ''or''' AS message,n.id||':BEI018:'||(printf('%020d/%06d/%024.6f',p.bfs,50000,n.position)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',p.bfs,50000,n.position) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes p JOIN a n ON n.__path=p.__path AND n.parent=p.id WHERE p.kind='BoolOp' AND p.op='Or' AND n.kind='Attribute' AND n.field='values' AND n.name IN ('schema_generation','schema_version') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI021' AS issue,'test bootstrap helpers must use the lazy bootstrap coordinator path, not probe or mutate proof caches' AS message,n.id||':BEI021:'||(printf('%020d/%06d/%024.6f',n.bfs,51000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,51000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE substr(n.__path,1,36)='data_layer_testing/helpers/bootstrap' AND instr(substr(n.__path,37),'/')=0 AND n.callee IN ('_load_table_columns_many','_mark_table_created','get_table_info','list_tables','mark_bootstrap_scope_verified','physical_table_exists','physical_table_exists_many','schema_transaction','table_exists','table_exists_many','unseal_table_exists_cache') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI021' AS issue,'test bootstrap helpers must not maintain helper-owned bootstrap proof state' AS message,n.id||':BEI021:'||(printf('%020d/%06d/%024.6f',n.bfs,51000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,51000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE substr(n.__path,1,36)='data_layer_testing/helpers/bootstrap' AND instr(substr(n.__path,37),'/')=0 AND n.kind IN ('Name','Attribute') AND n.name IN ('_bootstrap_column_proof_cache','_verified_bootstrap_system_session','_verified_bootstrap_tables') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI028' AS issue,'backend-specific bootstrap probes must live behind explicit interrogation/replay collaborators' AS message,n.id||':BEI028:'||(printf('%020d/%06d/%024.6f',n.bfs,52000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,52000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.basename!='bootstrap_backend_collaborators.py' AND (substr(n.basename,1,9)='bootstrap' OR instr('/'||n.__path||'/','/bootstrap/')>0) AND n.kind='Attribute' AND n.name IN ('collection_names','execute_cypher','labels','list_collection_names','run_cypher') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI041' AS issue,'schema reconciliation planning must consume SchemaStateSnapshot facts, not call physical/introspection fallback '||(SELECT name_repr FROM a x WHERE x.__path=n.__path AND x.id=n.callee_id) AS message,n.id||':BEI041:'||(printf('%020d/%06d/%024.6f',n.bfs,53000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,53000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_calls n WHERE (instr('/'||n.__path||'/','/l2200_sql_dialect/')>0 OR n.basename='generic_sparse.py') AND n.callee IN ('get_table_info_lazy','introspect_table_lazy','list_tables_lazy','materialized_physical_columns','materialized_physical_columns_lazy','materialized_physical_indexes','materialized_physical_indexes_lazy','physical_table_exists_for_reconcile') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI035' AS issue,'deleted schema sidecar pending deferred-state field '||n.name_repr||' must not be reintroduced' AS message,n.id||':BEI035:'||(printf('%020d/%06d/%024.6f',n.bfs,54000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,54000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE instr('/'||n.__path||'/','/l2200_sql_dialect/')>0 AND n.kind='Attribute' AND substr(n.name,1,8)='pending_' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Name' AND v.name='deferred_state')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI042' AS issue,'bootstrap application must not use deleted lazy-result scaffolding '||n.name_repr||'; return the fused terminal LazyResult directly' AS message,n.id||':BEI042:'||(printf('%020d/%06d/%024.6f',n.bfs,55000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,55000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.basename IN ('bootstrap_application_plan.py','bootstrap_coordinator.py') AND n.kind IN ('Name','Attribute') AND n.name IN ('BootstrapApplicationLazyResults','_install_application_lazy_results','_materialize_application_lazy_results','application_tail_result','execution_fact_ref','lazy_results','pipeline_lifecycle_effects') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI022' AS issue,'interrogation decoding must consume explicit proof/seed rows, not synthesize facts from manifest payloads' AS message,n.id||':BEI022:'||(printf('%020d/%06d/%024.6f',n.bfs,26000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,26000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.basename='bootstrap_interrogation.py' AND n.kind IN ('FunctionDef','AsyncFunctionDef') AND n.name IN ('_proof_hashes_from_payload','_seed_hashes_from_payload','_stable_payload_hash') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI022' AS issue,'interrogation decoding must consume explicit proof/seed rows, not synthesize facts from manifest payloads' AS message,n.id||':BEI022:'||(printf('%020d/%06d/%024.6f',n.bfs,56000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,56000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.basename='bootstrap_interrogation.py' AND n.kind IN ('FunctionDef','AsyncFunctionDef') AND n.name IN ('_proof_hashes_from_payload','_seed_hashes_from_payload','_stable_payload_hash') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI022' AS issue,'interrogation facts must not fall back to request defaults or manifest-derived hashes' AS message,n.id||':BEI022:'||(printf('%020d/%06d/%024.6f',n.bfs,56000,0)) AS identity,0 AS phase,printf('%020d/%06d/%024.6f',n.bfs,56000,0) AS ordering,'' AS symbol,'' AS sort_name FROM engine_nodes n WHERE n.basename='bootstrap_interrogation.py' AND n.kind='BoolOp' AND n.op='Or' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='values' AND (v.kind IN ('Name','Attribute') AND v.name IN ('request','proof_hashes','seed_hashes')))"
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "all": "SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4) WHERE NOT EXISTS(SELECT 1 FROM coverage_errors error WHERE error.__path='l3200_metadata/bootstrap_coordinator.py' OR EXISTS(SELECT 1 FROM gate WHERE __path='l3200_metadata/bootstrap_coordinator.py'))"
+          },
+          "default": {
+            "$option": "entryPoint",
+            "cases": {
+              "_collect_fake_executor_violations": "SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4) WHERE issue='BEI007'"
+            },
+            "default": "SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4"
+          }
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "primitive-install-coverage",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "_collect_primitive_install_coverage_violations": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          },
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "install_functions",
+            "query": "SELECT f.* FROM functions f WHERE f.__path='l3200_metadata/bootstrap_coordinator.py' AND f.name IN ('_data_primitive_plan_for_plan','_enqueue_application_schema_lazy','_install_schema_primitive_contract','_install_data_mutation_contract','_install_versioning_mutation_contract') AND NOT EXISTS(SELECT 1 FROM functions later WHERE later.__path=f.__path AND later.name=f.name AND later.bfs>f.bfs)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "installed_kinds",
+            "query": "SELECT DISTINCT n.name FROM install_functions f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last WHERE n.kind='Attribute' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Name' AND v.name='BootstrapDataPrimitiveKind'))",
+            "indexes": [
+              [
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "declared_kinds",
+            "query": "SELECT t.name,t.id,t.position FROM a cls JOIN a declaration ON declaration.__path=cls.__path AND declaration.parent=cls.id AND declaration.field='body' AND declaration.kind IN ('Assign','AnnAssign') JOIN a t ON t.__path=declaration.__path AND t.parent=declaration.id AND t.field IN ('target','targets') AND t.kind='Name'\n WHERE cls.__path='l3200_metadata/bootstrap_data_plan.py' AND cls.kind='ClassDef' AND cls.name='BootstrapDataPrimitiveKind' AND cls.bfs=(SELECT min(x.bfs) FROM a x WHERE x.__path=cls.__path AND x.kind='ClassDef' AND x.name=cls.name)",
+            "indexes": [
+              [
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BEI038' AS issue,'BootstrapDataPrimitiveKind.'||k.name||' has no lazy install family' AS message,n.id||':BEI038:'||(k.id) AS identity,1 AS phase,k.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN declared_kinds k WHERE n.__path='l3200_metadata/bootstrap_coordinator.py' AND n.kind='Module' AND NOT EXISTS(SELECT 1 FROM installed_kinds i WHERE i.name=k.name)",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "bootstrap-source-syntax",
+      "relational": {
+        "inputs": {
+          "invalid_source": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "pattern": "$SOURCE"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "source": "capture.SOURCE"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "configuration",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "entry",
+            "query": {
+              "$option": "entryPoint",
+              "escape": "sql",
+              "template": "SELECT {} name"
+            }
+          },
+          {
+            "name": "invalid_scope",
+            "query": "SELECT source.__path,rx_replace(source.__path,'^.*/','') basename,\n EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.enginePaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) engine,\n EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path) bootstrap\n FROM invalid_source source CROSS JOIN entry WHERE entry.name='_collect_fake_executor_violations' OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),'[\"l3200_metadata/bootstrap_state.py\", \"l3200_metadata/bootstrap_coordinator.py\"]')) p WHERE p.value=source.__path)\n OR rx_matches(source.__path,'(^|/)(schema_transaction|sql_connection|bootstrap_interrogation)\\.py$') OR instr(rx_replace(source.__path,'^.*/',''),'bootstrap')>0\n OR rx_matches(source.source,'Bootstrap|bootstrap|schema_transaction|materialized_pipeline|physical_table|reconciliation')"
+          }
+        ],
+        "query": "SELECT i.__path path,i.__start start_byte,i.__end end_byte,'NATIVE-SYNTAX' issue,i.__path identity FROM invalid_source i JOIN invalid_scope s ON s.__path=i.__path",
+        "key": [
+          "identity"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

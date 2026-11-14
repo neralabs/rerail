@@ -3,7 +3,7 @@ use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, ScopeFeature, ScopeRules, gate, with_adapter,
+    ScopeFeature, gate,
 };
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -13,9 +13,10 @@ use crate::code_rule_dsl::model::Limits;
 use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Filters over a binding, in `binds` and `resolves.binding`.
-pub(super) const FILTER_KEYS: &[&str] = &[
+pub const FILTER_KEYS: &[&str] = &[
     "form",
     "scope",
     "used",
@@ -99,18 +100,18 @@ fn every_family<T: 'static>(
 }
 
 /// The grammar-independent checks of a filter's keys.
-pub(super) fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
+pub fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
     // Every family's names, in the order its errors list them; each family's compile narrows
     // them to its own.
     if let Some(form) = object.get("form") {
         let known = every_family(
-            |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FORMS),
+            |family| { let pack = language_pack::pack(family); pack.scope_forms() },
         );
         names(form, &format!("{path}/form"), &known, "binding form")?;
     }
     if let Some(scope) = object.get("scope") {
         let known = every_family(
-            |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::SCOPES),
+            |family| { let pack = language_pack::pack(family); pack.scope_scopes() },
         );
         names(scope, &format!("{path}/scope"), &known, "scope kind")?;
     }
@@ -176,21 +177,21 @@ fn binding_count(value: &Value, path: &str) -> Result<BindingCount> {
 /// `outer`) are Python's, and PHP's from its flow; ESLint's directive comments (`directives`) and
 /// configured globals (`builtin`) are TypeScript's. `bindings` counts a scope's bindings of the
 /// name in all three: Ruff's `scope.get_all`, eslint-scope's `defs`, PHP's binding sites.
-pub(super) fn compile_filter<S: ScopeRules>(
-    object: &Map<String, Value>,
+pub fn compile_filter(
+    pack: &dyn language_pack::LanguagePack, object: &Map<String, Value>,
     language: GrammarDialect,
     path: &str,
     utils: &UtilScope,
 ) -> Result<BindingFilter> {
-    for &key in S::REFUSED_FILTERS {
+    for &key in pack.scope_refused_filters() {
         if object.contains_key(key) {
             gate(
                 &format!("{path}/{key}"),
-                S::feature(ScopeFeature::Filter(key)),
+                pack.scope_feature(ScopeFeature::Filter(key)),
             )?;
         }
     }
-    let (forms, scopes) = (S::FORMS, S::SCOPES);
+    let (forms, scopes) = (pack.scope_forms(), pack.scope_scopes());
     Ok(BindingFilter {
         forms: object
             .get("form")
@@ -213,7 +214,7 @@ pub(super) fn compile_filter<S: ScopeRules>(
         builtin: boolean(object, "builtin", path)?,
         directives: object.contains_key("directives"),
         language: Some(language),
-        options: S::eslint_options(utils.options.as_ref()),
+        options: pack.scope_eslint_options(utils.options.as_ref()),
     })
 }
 
@@ -305,14 +306,14 @@ pub(super) fn compile_binds(
     gaps: &mut Vec<String>,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
-    with_adapter!(Family::of(language), A => compile_binds_in::<<A as Adapter>::Scope>(
+    { let pack = language_pack::pack(Family::of(language)); compile_binds_in(pack, 
         value, language, path, gaps, utils,
-    ))
+    ) }
 }
 
 /// `compile_binds`, for the family `S` reads.
-fn compile_binds_in<S: ScopeRules>(
-    value: &Value,
+fn compile_binds_in(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,
     gaps: &mut Vec<String>,
@@ -324,23 +325,23 @@ fn compile_binds_in<S: ScopeRules>(
         if redefines.contains_key("every") {
             gate(
                 &format!("{redefines_path}/every"),
-                S::feature(ScopeFeature::Every),
+                pack.scope_feature(ScopeFeature::Every),
             )?;
         }
         if redefines.contains_key("sameImport") {
             gate(
                 &format!("{redefines_path}/sameImport"),
-                S::feature(ScopeFeature::SameImport),
+                pack.scope_feature(ScopeFeature::SameImport),
             )?;
         }
     }
     if binds.contains_key(OCCURRENCE_KEY) {
         gate(
             &format!("{path}/{OCCURRENCE_KEY}"),
-            S::feature(ScopeFeature::Occurrence),
+            pack.scope_feature(ScopeFeature::Occurrence),
         )?;
     }
-    let filter = compile_filter::<S>(binds, language, path, utils)?;
+    let filter = compile_filter(pack, binds, language, path, utils)?;
     let Some([site, value, annotation]) = compile_sub_rules(binds, language, path, gaps, utils)?
     else {
         return Ok(AstMatcher::Never);
@@ -371,7 +372,7 @@ fn compile_binds_in<S: ScopeRules>(
                 return Ok(AstMatcher::Never);
             };
             Some(Box::new(Redefines {
-                filter: compile_filter::<S>(redefines, language, &redefines_path, utils)?,
+                filter: compile_filter(pack, redefines, language, &redefines_path, utils)?,
                 same_scope: boolean(redefines, "sameScope", &redefines_path)?,
                 same_import: boolean(redefines, "sameImport", &redefines_path)?,
                 every: redefines.get("every") == Some(&Value::Bool(true)),
@@ -382,8 +383,8 @@ fn compile_binds_in<S: ScopeRules>(
         }
     };
     // Private names (TypeScript's `#a`) are bindings of their class body.
-    let mut kinds = kind_ids(language, S::NAME_KINDS);
-    kinds.extend(kind_ids(language, S::PRIVATE_NAME_KINDS));
+    let mut kinds = kind_ids(language, pack.scope_name_kinds());
+    kinds.extend(kind_ids(language, pack.scope_private_name_kinds()));
     Ok(AstMatcher::Semantic(Semantic::Binds(Box::new(Binds {
         language,
         name_kinds: kinds,
@@ -398,11 +399,8 @@ fn compile_binds_in<S: ScopeRules>(
     }))))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-#[cfg(test)]
-pub(super) mod ruff;
+// cratify: `ruff` is rerail-lang-python's (it mounts it)
 
-#[cfg(test)]
-mod eslint;
+// cratify: `eslint` is rerail-engine's (it mounts it)

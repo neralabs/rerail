@@ -1,0 +1,836 @@
+{
+  "cases": [
+    {
+      "id": "sas-WriteTransaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-WriteTransaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-WriteTransaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-WriteTransaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-ReadTransaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: ReadTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-ReadTransaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: ReadTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-ReadTransaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: ReadTransaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-ReadTransaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: ReadTransaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-Transaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Transaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-Transaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Transaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-Transaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Transaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-Transaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Transaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-SchemaTransaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: SchemaTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-SchemaTransaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: SchemaTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-SchemaTransaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: SchemaTransaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-SchemaTransaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: SchemaTransaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedWriteTransaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedWriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedWriteTransaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedWriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedWriteTransaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedWriteTransaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedWriteTransaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedWriteTransaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedReadTransaction-SyncDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedReadTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedReadTransaction-Connection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedReadTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedReadTransaction-SyncVersionedDatabaseConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedReadTransaction): ...\nasync def load_async(conn: SyncVersionedDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-LazyVersionedReadTransaction-VersionedConnection",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: LazyVersionedReadTransaction): ...\nasync def load_async(conn: VersionedConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-matching",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: WriteTransaction): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-connection-pair",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Connection): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-left-preference",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Connection | WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-right-interest",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Other | WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-nested-binary",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: (Other | None) + (WriteTransaction | Connection)): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-subscript-head",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: Optional[WriteTransaction]): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-qualified",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: api.WriteTransaction): ...\nasync def load_async(conn: db.Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-string",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: \"WriteTransaction\"): ...\nasync def load_async(conn: \"Connection\"): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-joined-string",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: \"Write\" \"Transaction\"): ...\nasync def load_async(conn: \"Con\" \"nection\"): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-named-escape",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: \"\\N{LATIN CAPITAL LETTER W}riteTransaction\"): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-string-no-nfkc",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: \"\uff37\uff52\uff49\uff54\uff45\uff34\uff52\uff41\uff4e\uff53\uff41\uff43\uff54\uff49\uff4f\uff4e\"): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-nfkc",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: \uff37\uff52\uff49\uff54\uff45\uff34\uff52\uff41\uff4e\uff53\uff41\uff43\uff54\uff49\uff4f\uff4e): ...\nasync def load_async(conn: \uff23\uff4f\uff4e\uff4e\uff45\uff43\uff54\uff49\uff4f\uff4e): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-self",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(self, txn: WriteTransaction): ...\nasync def load_async(self, conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-posonly",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction, /): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-kwonly",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(*, conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-vararg",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(*conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-zero-argument-overwrite",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\ndef load(): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-untyped-overwrite",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\ndef load(txn): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-nested-last-overwrite",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\ndef outer():\n    def load(txn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-class-with-cls",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\nclass C:\n    def load(cls): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-class-self-only",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\nclass C:\n    def load(self): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-flags",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "async def load(txn: WriteTransaction): ...\ndef load_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-order",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def z(txn: WriteTransaction): ...\ndef z_async(conn: Connection): ...\ndef a(txn: ReadTransaction): ...\ndef a_async(conn: Connection): ...\ndef z_async(conn: Connection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-invalid",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-bom",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "\ufeffdef load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-parameter-nfkc",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def load(\uff54\uff58\uff4e: WriteTransaction): ...\nasync def load_async(\uff43\uff4f\uff4e\uff4e: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "sas-non-py",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "misc/a.txt",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "misc/a.txt"
+        }
+      }
+    },
+    {
+      "id": "sas-nested-test-path",
+      "check": "sync_async_signatures",
+      "entry": "analyze_file",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: SyncDatabaseConnection): ...\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/tests/a.py"
+        }
+      }
+    }
+  ]
+}

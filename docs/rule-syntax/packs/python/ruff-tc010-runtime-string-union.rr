@@ -1,0 +1,30 @@
+.policy "ruff-tc010-runtime-string-union" revision 2
+.description "Avoid quoted members in X | Y union types that Python evaluates at runtime; quote the whole union or remove the quotes, since a string cannot be an operand of the | operator."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TC010 (flake8-type-checking): a string (or bytes) literal as a member of an `X | Y` union in a type
+// expression that runs: `"int" | str` raises TypeError. Each string member of the outermost union is reported.
+// Where it runs (python/misc2-typecheck): the type arguments of cast, TypeVar, NewType, TypeAliasType, TypeForm,
+// NamedTuple and TypedDict calls and a `X: TypeAlias = …` value (in stubs too); the items of `list[…]`,
+// `Optional[…]` and other generic subscripts in running code; a def's annotations in any scope and a module or
+// class variable's, without `from __future__ import annotations`, below Python 3.14. Not in TYPE_CHECKING blocks.
+//   x: "int" | str                     ← TC010 at "int" (module scope, Python 3.10)
+//   T = TypeVar("T", int | "str", str) ← TC010, also under `from __future__ import annotations`
+//   Y = list["int" | str]              ← TC010, in a function too
+//   x: Literal["a" | "b"]              ← TC010 twice: Literal's arguments are inside the type expression
+//   def f(): x: "int" | str            not reported: a local annotation is never evaluated
+//   y: Annotated[int, "a" | str]       not reported: Annotated's metadata is a value
+//   type A = Value["int" | str]        not reported: a `type` statement is lazy
+#include "python/misc2-typecheck.rr"
+//   tc_runtime_typedef(e), tc_union(u), tc_union_member(u, m), up_typing_sub(s, x), type_arg(s, i, a)
+
+.violation TC010(at: node) code "TC010" "Invalid string member in `X | Y`-style union type"
+    suppress ruff "TC010"
+TC010(m) :- tc_runtime_typedef(e), tc_union(u), (u = e ; within(u, e), !not_typedef(u, e)),
+    tc_union_member(u, m), (kind(m, "string") ; kind(m, "concatenated_string")), !fstring(m).
+// Inside a type expression, Annotated's metadata is a value, not a type.
+.decl not_typedef(u: node, e: node)
+not_typedef(u, e) :- tc_runtime_typedef(e), up_typing_sub(s, "Annotated"), within(s, e), type_arg(s, i, a), i > 0,
+    (u = a ; within(u, a)).

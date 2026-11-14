@@ -1,0 +1,75 @@
+.policy "typescript-eslint-no-inferrable-types" revision 3
+.description "Remove type annotations that TypeScript already infers from a literal initializer on variables, defaulted parameters and class properties."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   ts_keyword, type_child, deparen
+#include "tsx/eslint-a-functions.rr"
+//   function_node, fn_param
+#include "tsx/eslint-a-expressions.rr"
+//   number_lit, bigint_lit
+
+// typescript-eslint's no-inferrable-types: an explicit type that TypeScript would infer from the initial value.
+//   let a: number = 5;    let s: string = `x`;    let b: boolean = !x;    let r: RegExp = /x/;   → reported
+//   let a: number = f();  fine: not a literal          let n: null = null;   let u: undefined = void 0;   → reported
+// Checked: variables, function parameters with a default (ignoreParameters skips them), and class fields
+// that are neither readonly nor optional (ignoreProperties skips them). The fix removes the annotation.
+.violation no_inferrable_types(at: node, t: symbol) code "@typescript-eslint/no-inferrable-types"
+    "Type {t} trivially inferred from a {t} literal, remove type annotation."
+    suppress eslint "@typescript-eslint/no-inferrable-types"
+    suppress oxlint "no-inferrable-types"
+    fix safe remove_annotation "Remove the type annotation"
+no_inferrable_types(at, t) :- annotated_init(h, at, ta, v), child(ta, x, _), !kind(x, "comment"), type_child(x, y),
+    keyword(y, t), inferrable(t, v).
+
+// annotated_init(h, at, ta, v): h has annotation ta and initial value v (parentheses off); at is where the
+// plugin reports: a declarator, a parameter's name (a parameter property's too), a field.
+.decl annotated_init(h: node, at: node, ta: node, v: node)
+annotated_init(h, h, ta, v) :- kind(h, "variable_declarator"), field(h, "type", ta), field(h, "value", w), deparen(w, v).
+annotated_init(p, at, ta, v) :- !option("ignoreParameters", "true"), function_node(f), fn_param(f, p, _),
+    field(p, "pattern", at), field(p, "type", ta), field(p, "value", w), deparen(w, v).
+annotated_init(h, h, ta, v) :- !option("ignoreProperties", "true"), kind(h, "public_field_definition"),
+    !op(h, "readonly"), !op(h, "?"), field(h, "type", ta), field(h, "value", w), deparen(w, v).
+
+// keyword(y, t): the annotation is one of the types the plugin knows, named t in the message.
+.decl keyword(y: node, t: symbol)
+keyword(y, t) :- ts_keyword(y, t), (t = "bigint" ; t = "boolean" ; t = "number" ; t = "string" ; t = "symbol" ;
+    t = "null" ; t = "undefined").
+keyword(y, "RegExp") :- kind(y, "type_identifier"), text(y, "RegExp").
+
+// inferrable(t, v): isInferrable.
+.decl inferrable(t: symbol, v: node)
+inferrable("bigint", v) :- signed_arg(v, "-", u), (calls(u, "BigInt") ; literal(u)).
+inferrable("boolean", v) :- annotated_init(_, _, _, v), (unary(v, "!", _) ; calls(v, "Boolean") ;
+    kind(v, "true") ; kind(v, "false")).
+inferrable("number", v) :- (signed_arg(v, "-", u) ; signed_arg(v, "+", u)),
+    (kind(u, "identifier"), (text(u, "Infinity") ; text(u, "NaN")) ; calls(u, "Number") ; number_lit(u)).
+inferrable("null", v) :- annotated_init(_, _, _, v), kind(v, "null").
+inferrable("string", v) :- annotated_init(_, _, _, v), (calls(v, "String") ; kind(v, "string") ;
+    kind(v, "template_string")).
+inferrable("symbol", v) :- calls(v, "Symbol").
+inferrable("RegExp", v) :- annotated_init(_, _, _, v), (kind(v, "regex") ; calls(v, "RegExp") ;
+    kind(v, "new_expression"), field(v, "constructor", c), kind(c, "identifier"), text(c, "RegExp")).
+inferrable("undefined", v) :- annotated_init(_, _, _, v), (unary(v, "void", _) ;
+    kind(v, "undefined") ; kind(v, "identifier"), text(v, "undefined")).
+
+.decl unary(v: node, o: symbol, a: node)  // `o a`, a without its parentheses
+unary(v, o, a) :- kind(v, "unary_expression"), op(v, o), field(v, "argument", w), deparen(w, a).
+.decl signed_arg(v: node, o: symbol, u: node)  // u is v with one leading `o` taken off, if it has one
+signed_arg(v, o, u) :- annotated_init(_, _, _, v), (o = "-" ; o = "+"), unary(v, o, u).
+signed_arg(v, o, v) :- annotated_init(_, _, _, v), (o = "-" ; o = "+"), !unary(v, o, _).
+.decl calls(v: node, x: symbol)  // `x(…)` or `x?.(…)` for the identifier x
+calls(v, x) :- kind(v, "call_expression"), field(v, "function", f), kind(f, "identifier"), text(f, x).
+.decl literal(u: node)  // an ESTree Literal: a string, number, BigInt, boolean, null or regex
+literal(u) :- kind(u, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex").
+
+// The fix removes `: T`, and with it the `?` of an optional parameter or the `!` of a definite field.
+remove_annotation(at, _) :- annotated_init(h, at, ta, _) => delete(ta).
+// The `?` or `!` is the first one in h's source, before any `:` or `=` (an optional parameter's kind implies its
+// `?`, so the tape keeps none).
+remove_annotation(at, _) :- annotated_init(h, at, ta, _), (kind(h, "optional_parameter") ; definite(h)),
+    match("(?s)[^?!:=]*(?<q>[?!])\\s*:.*", h) => delete(q).
+.decl definite(h: node)  // `a!: T`
+definite(h) :- kind(h, "public_field_definition"), op(h, "!").

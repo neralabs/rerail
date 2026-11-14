@@ -1,0 +1,73 @@
+# Step 13: block comments, `<#a# = 1 {- un -}; -- deux\n #b# = 2>`.
+#
+# New: block comments, one more `fill` from each `{-` to the byte after the `-}` that closes it.
+# A comment of one kind holding the other's opener goes to tree-sitter.
+
+lexer ladder13
+
+class ws    = ' ' '\t' '\n' '\r'
+class op    = '(' ')' ';' '<' '>' '='
+class quote = '#'
+class lf    = '\n'
+class caret = '^'
+class digit   = '0'..'9'
+class nonzero = '1'..'9'
+class expo    = 'e' 'E'
+class dash    = '-'
+class lbrace  = '{'
+class rbrace  = '}'
+
+mask escaped  = escaped(caret)
+mask q        = quote & ~escaped
+mask inside   = toggle(q)
+mask opening  = q & inside
+mask closing  = q & ~inside
+mask body     = inside & ~opening
+mask esc      = caret & body & ~escaped     # an escape's caret
+mask esc_last = escaped & body              # the byte it escapes
+mask content  = body & ~esc & ~esc_last
+mask outside  = ~inside & ~closing
+mask line     = fill(outside & dash & next(dash), lf)
+# A block comment: from `{-` to the first `-}` after it, the opener's `-` not counted. One
+# `fill` from each opener up to the byte after a closing `}`.
+mask opener   = outside & lbrace & next(dash)
+mask closer   = dash & next(rbrace) & ~prev(opener, 1)   # the closing `-`
+mask block    = fill(opener, prev(closer, 2))
+mask shut     = block & prev(closer, 1)                  # the closing `}`
+mask comment  = line | block
+mask last_byte = ~next(~empty)
+mask code     = outside & ~comment
+
+token '#'          = start q
+token contenu      = start starts(content) last lasts(content)
+token echappement  = start esc last esc_last
+keywords echappement {
+  "^#" -> echappement  "^^" -> echappement  "^n" -> echappement  "^t" -> echappement
+} required
+# A comment starts at its opener, unless inside another comment of its kind; it ends at the
+# end of its line, or at its closing `}`.
+token commentaire  = start (dash | lbrace) & (starts(line) | (opener & ~prev(block & ~shut, 1))) last lasts(line) | shut
+mask word          = code & ~ws & ~op & ~dash & ~lbrace & ~rbrace
+token nombre       = start starts(word) last lasts(word)
+keywords nombre { "vrai" -> vrai  "fausse" -> fausse  "nul" -> nul }
+token punctuation = start code & op
+keywords punctuation { "<" ">" "(" ")" ";" "=" } required
+
+skip code & ws
+error "a newline in a text"   when body & lf
+error "a dash or brace outside a comment" when code & (dash | lbrace | rbrace)
+escape "a hash in a comment" when comment & quote
+escape "a comment opened in a comment" when (line & lbrace & next(dash)) | (block & ~opener & dash & next(dash))
+error "an unclosed block comment" when block & ~shut & last_byte
+
+check nombre = ['~'] ('0' | nonzero digit*) [',' digit+] [expo ['~'] digit+]
+
+tree ladder {
+  extra commentaire
+  node document = valeur
+  node enregistrement nested = '<' [entree (';' entree)*] '>'
+  node entree = cle: texte '=' valeur: valeur
+  node liste nested = '(' [valeur (';' valeur)*] ')'
+  node texte = '#' (contenu | echappement)* '#'
+  choice valeur supertype _valeur = enregistrement | liste | texte | nombre | vrai | fausse | nul
+}

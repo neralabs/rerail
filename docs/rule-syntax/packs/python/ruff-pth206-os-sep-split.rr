@@ -1,0 +1,19 @@
+.policy "ruff-pth206-os-sep-split" revision 2
+.description "Use Path.parts instead of splitting a path string on os.sep; path objects read better than string-based path handling."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH206 (flake8-use-pathlib): `x.split(os.sep)` or `x.split(sep=os.sep)`, any x, with no other
+// argument; `os.sep` however imported. Reported at the word `split`.
+//   "foo/bar".split(os.sep)              ← PTH206: `Path("foo/bar").parts`
+//   from os import sep; p.split(sep)     ← PTH206
+//   p.split(os.sep, 1), p.rsplit(os.sep) not reported
+#include "python/pathlib.rr"
+//   call_len(c, n), arg_value(c, x, i, a) (python/pathlib)   ruff_qual(e, q), attr_of(n, o, a) (python/ruff, names)
+
+.violation PTH206(at: node) code "PTH206"
+    "Use `Path(...).parts` instead of `.split(os.sep)` for the path components (`.name` or `.parent` for just the last or parent one); leave it where empty segments or non-path text matter."
+    suppress ruff "PTH206"
+PTH206(m) :- kind(c, "call"), field(c, "function", g), unparen(g, fa), attr_of(fa, _, "split"),
+    field(fa, "attribute", m), call_len(c, 1), arg_value(c, "sep", 0, s), ruff_qual(s, "os.sep").

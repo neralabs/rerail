@@ -1,0 +1,38 @@
+.policy "ruff-pt019-pytest-fixture-param-without-value" revision 2
+.description "Activate fixtures a test does not read with the usefixtures mark instead of declaring underscore-prefixed parameters for them."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT019 (flake8-pytest-style): a `test_*` function with a parameter named `_x`: a fixture whose value the
+// test does not read, better requested with `@pytest.mark.usefixtures("_x")`. A name given by a
+// `pytest.mark.parametrize` decorator is a parameter, not a fixture; when that decorator's names are a variable
+// (or a list or tuple holding one), Ruff cannot tell and reports nothing for the function. The decorator is
+// matched by its spelling, `pytest.mark.parametrize(…)`, not resolved.
+//   def test_db(_db): ...                                          ← PT019
+//   @pytest.mark.parametrize("_x", [1, 2])
+//   def test_x(_x): ...                                            not reported
+#include "python/pytest.rr"
+//   exc_argument(c, k, i, a), plain_str(s, v); ast: sig_param(f, p, nm, i, kind, ann, dflt)
+
+.violation PT019(at: node, x: symbol) code "PT019"
+    "If the test never reads `{x}`, remove the parameter and add `@pytest.mark.usefixtures(\"{x}\")` to the test; if it reads the value, leave it as is."
+    suppress ruff "PT019"
+PT019(p, x) :- kind(f, "function_definition"), def_name(f, t), prefix("test_", t), !unknown_names(f),
+    sig_param(f, p, nm, _, k, _, _), k != "vararg", k != "kwarg", text(nm, x), prefix("_", x),
+    !parametrized(f, x).
+
+// argnames(f, a): the names argument of a `pytest.mark.parametrize(…)` decorator call on f.
+.decl argnames(f: node, a: node)
+argnames(f, a) :- decorator(f, e), kind(e, "call"), field(e, "function", g), exc_dotted(g, "pytest.mark.parametrize"),
+    exc_argument(e, "argnames", 0, a).
+.decl unknown_names(f: node)
+unknown_names(f) :- argnames(f, a), kind(a, "identifier").
+unknown_names(f) :- argnames(f, a), (kind(a, "list") ; kind(a, "tuple")), child(a, n0, _), unparen(n0, n),
+    kind(n, "identifier").
+// parametrized(f, x): x is one of the names: "a, _x" split at commas, or a str element of a list or tuple.
+.decl parametrized(f: node, x: symbol)
+parametrized(f, x) :- argnames(f, a), plain_str(a, v), sig_param(f, _, nm, _, _, _, _), text(nm, x),
+    match(cat(cat("([\\s\\S]*,)?\\s*", x), "\\s*(,[\\s\\S]*)?"), v).
+parametrized(f, x) :- argnames(f, a), (kind(a, "list") ; kind(a, "tuple")), child(a, s0, _), unparen(s0, s),
+    plain_str(s, v), sig_param(f, _, nm, _, _, _, _), text(nm, x), match(cat(cat("\\s*", x), "\\s*"), v).

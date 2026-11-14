@@ -1,0 +1,12 @@
+{
+  "focusedPassed": 110,
+  "edgeFindings": 178,
+  "corpusFiles": 5725,
+  "corpusNodes": 19007630,
+  "corpusFindings": [],
+  "ruleExecutions": 81,
+  "vmSteps": 785573,
+  "profiledCpuSeconds": 3.76521,
+  "profiledWallSeconds": 2.4846565,
+  "note": "One profiled validation run, not a controlled performance comparison. Definition IDs are now default. SQL counters cover rule execution, not every content-store statement."
+}

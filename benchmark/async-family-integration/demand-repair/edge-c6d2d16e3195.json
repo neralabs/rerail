@@ -1,0 +1,298 @@
+{
+  "cpuNs": 495391000,
+  "execution": "combined production corpus::run_with_options; program; CPU",
+  "flattenCpuNs": 253000,
+  "flattenWallNs": 250958,
+  "keyCount": 32,
+  "keys": [
+    [
+      "ASYNC210",
+      "doc0.py",
+      10
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      11
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      14
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      60
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      62
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      65
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      66
+    ],
+    [
+      "ASYNC210",
+      "doc0.py",
+      67
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      16
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      18
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      19
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      20
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      22
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      23
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      24
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      26
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      28
+    ],
+    [
+      "ASYNC221",
+      "doc0.py",
+      30
+    ],
+    [
+      "ASYNC222",
+      "doc0.py",
+      17
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      35
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      36
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      37
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      38
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      40
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      41
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      43
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      44
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      46
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      48
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      51
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      55
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      57
+    ]
+  ],
+  "out": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/edge-c6d2d16e3195",
+  "profile": {
+    "decisions": [],
+    "directory": null,
+    "spans": [],
+    "statements": []
+  },
+  "profiling": false,
+  "report": {
+    "chunks": 1,
+    "consulted": [
+      [
+        "doc",
+        "doc0.py",
+        "2ee5a1bf2a872672c74e7c1b25069abd97c9d8d851dfcfe94fcecc0c810aa92c"
+      ]
+    ],
+    "cross": [
+      0,
+      0
+    ],
+    "crossAgain": {},
+    "crossChanged": [],
+    "crossDeltaCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "crossMaintained": [
+      0,
+      0,
+      0
+    ],
+    "crossStrata": null,
+    "files": 1,
+    "memo": [
+      0,
+      0
+    ],
+    "native": 49,
+    "nodes": 932,
+    "phaseRunCount": 0,
+    "phases": [
+      [
+        "stats",
+        0.37650900000000004,
+        0.09785400000000001,
+        490.930176,
+        7
+      ],
+      [
+        "parse (worker)",
+        0.000723,
+        0.000367,
+        490.930176,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.000587,
+        0.000427,
+        490.930176,
+        0
+      ],
+      [
+        "wait",
+        0.00029200000000001447,
+        0.0033209999999999906,
+        490.930176,
+        0
+      ],
+      [
+        "local",
+        0.008004999999999984,
+        0.0008690000000000087,
+        490.930176,
+        125
+      ],
+      [
+        "cross",
+        0.001587000000000005,
+        0.00007199999999998874,
+        490.930176,
+        62
+      ],
+      [
+        "write",
+        0.00004299999999995974,
+        0.0009180000000000021,
+        490.930176,
+        0
+      ]
+    ],
+    "prepared": "store",
+    "rounds": {
+      "converged": true,
+      "pending": false,
+      "rows": [],
+      "run": 1
+    },
+    "rows": {
+      "p0_ASYNC210": 8,
+      "p1_ASYNC221": 10,
+      "p2_ASYNC222": 1,
+      "p3_ASYNC230": 13,
+      "rr_diagnostic": 32,
+      "violation": 32
+    },
+    "text": [
+      1,
+      285,
+      0.0004189999999999999
+    ],
+    "typing": "TypingReport { declared: 0, pending: [], conflicts: [], typed_nodes: 0, terms: 0, summaries: 0 }",
+    "typingRunNames": []
+  },
+  "root": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/edge-fixtures/c6d2d16e3195",
+  "rules": [
+    "ruff-async210-blocking-http-call-in-async-function.rr",
+    "ruff-async221-run-process-in-async-function.rr",
+    "ruff-async222-wait-for-process-in-async-function.rr",
+    "ruff-async230-blocking-open-call-in-async-function.rr"
+  ],
+  "schema": "rerail-async-authored-rr-comparison-v1",
+  "suppression": "declarations retained; raw violation.csv keys",
+  "wallNs": 1303917792
+}

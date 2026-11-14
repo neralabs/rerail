@@ -1,0 +1,21 @@
+.policy "ruff-b002-unary-prefix-increment-decrement" revision 2
+.description "Don't write a doubled plus or minus prefix to increment or decrement a value; Python has no such operators, so the value is left unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B002 (flake8-bugbear): `++x` or `--x`. Python has no increment operator: `++x` is `+(+x)`, which is x.
+// The operand is the same unary operator, through parentheses (Ruff's tree has none). Reported at the outer one.
+//   x = ++n                    ← B002 "Replace this `++` prefix …"
+//   return --n                 ← B002 "Replace this `--` prefix …"
+//   y = -(-n)                  ← B002 too: the same tree as `--n`
+//   z = +-n                    not reported: the operators differ
+#include "python/ast.rr"
+
+.violation B002(at: node, detail: symbol) code "B002" "Replace this {detail}."
+    suppress ruff "B002"
+B002(u, d) :- kind(u, "unary_operator"), op(u, o), field(u, "argument", a), unparen(a, v),
+    kind(v, "unary_operator"), op(v, o), b002_detail(o, d).
+.decl b002_detail(o: symbol, d: symbol)
+b002_detail("+", "`++` prefix with `+= 1`; Python reads `++x` as `x`, so nothing is incremented").
+b002_detail("-", "`--` prefix with `-= 1`; Python reads `--x` as `x`, so nothing is decremented").

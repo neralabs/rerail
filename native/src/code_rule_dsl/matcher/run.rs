@@ -13,7 +13,7 @@ use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{AstGrep as Root, Node};
 
 /// Why a clause stopped before its roots ran out.
-pub(in crate::code_rule_dsl) enum Stopped {
+pub enum Stopped {
     /// A term hit a utility limit: the clause's verdicts are not the matcher's.
     Limit(UtilLimit),
     /// The file's deadline passed (or its workspace closed): the caller records the exhaustion.
@@ -21,7 +21,7 @@ pub(in crate::code_rule_dsl) enum Stopped {
 }
 
 /// The node at a preorder ordinal of `file`.
-pub(in crate::code_rule_dsl) fn node_at(file: &Root<TapeDoc>, ordinal: u32) -> Node<'_, TapeDoc> {
+pub fn node_at(file: &Root<TapeDoc>, ordinal: u32) -> Node<'_, TapeDoc> {
     file.adopt(file.root().get_doc().node(ordinal))
 }
 
@@ -52,19 +52,19 @@ fn roots<'f>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static ROOTS_MATCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Roots this thread matched (`reset_roots_matched` restarts the count).
-#[cfg(test)]
-pub(crate) fn roots_matched() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn roots_matched() -> usize {
     ROOTS_MATCHED.get()
 }
 
-#[cfg(test)]
-pub(crate) fn reset_roots_matched() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_roots_matched() {
     ROOTS_MATCHED.set(0);
 }
 
@@ -75,7 +75,7 @@ fn match_root<'f>(
     matcher: &GrammarMatcher,
     node: u32,
 ) -> Result<Option<MetaVarEnv<'f, TapeDoc>>, Stopped> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     ROOTS_MATCHED.set(ROOTS_MATCHED.get() + 1);
     let found = matcher.match_rule(node_at(file, node));
     if util_limit_hit() {
@@ -94,7 +94,7 @@ fn match_root<'f>(
 /// outside it, with the budget it left in `work`. A file whose source type its query's `when`
 /// does not list (`GrammarMatcher::may_apply_to`, decided here once its syntax is read), or whose
 /// JSX runtime its `file.jsxRuntime` does not, matches nothing.
-pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
+pub fn run_clause<'f, E>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
     selected: Option<&'f [u32]>,
@@ -153,7 +153,7 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
 /// excluded, until a match binds nothing new or `visit` returns false (which this returns). A match
 /// that leaves the capture unbound is visited only as the first. `visit` runs with nothing
 /// excluded: its own matching (a transform's) reads its bindings as a clause's does.
-pub(in crate::code_rule_dsl) fn enumerate<'f>(
+pub fn enumerate<'f>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
     node: u32,

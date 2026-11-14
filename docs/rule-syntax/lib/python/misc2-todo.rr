@@ -1,0 +1,72 @@
+// python/misc2-todo: TODO comments as Ruff's flake8-todos (TD) rules parse them: the tag, the author, the colon,
+// the description, and the issue link on the line or in the comment lines after it.
+//
+// Interface
+//   todo_tag(c, pre, tag, rest)  comment c holds a directive: tag is "TODO", "FIXME", "XXX" or "HACK" in any case,
+//                                pre the comment's text before it, rest the text after it
+//   todo_item(c, tag, rest)      the same, for the tags TD checks: HACK is a directive but flake8-todos skips it
+//   todo_author(c, has, after)   has = "yes" when the tag is followed by `(name)` or `@name`, else "no"; after is the
+//                                text after the author (all of the trimmed rest when there is none)
+//   todo_shape(c, what)          what follows the author: "colon-space" (`: text`), "colon-tight" (`:text`),
+//                                "colon-empty" (a final `:`), "no-colon" (anything else) or "empty" (nothing)
+//   todo_linked(c)               the TODO has an issue link: on its own line after the tag, or in a comment of
+//                                the same block below it before the next directive
+//
+// How Ruff finds the tag (TodoDirective::from_comment). It cuts the comment at each `#`; in each piece it skips
+// `#`s and whitespace and takes the first word (letters and digits). The first piece whose first word is a tag
+// gives the directive. So `# foo # TODO` has one and `# foo TODO` has none, and `# TODOs` has none (the word is
+// "TODOs"). One regex says the same: a `#`, then `#`s and spaces, then the tag, then a non-word character or the
+// end, at the leftmost `#` where that holds. Word characters are ASCII here; Ruff's are Unicode.
+//
+// A comment block is the comments with nothing but whitespace between them: no token. Two comments are in one
+// block when the token just before each is the same token (or neither has one).
+//
+//   # TODO(charlie): fix this          todo_tag(c, "# ", "TODO", "(charlie): fix this"); todo_author(c, "yes", ": fix
+//                                      this"); todo_shape(c, "colon-space")
+//   # todo fix                         todo_author(c, "no", "fix"); todo_shape(c, "no-colon")
+//   # TODO: see                        todo_linked(c): the next comment line is a link
+//   # https://github.com/a/b/issues/1
+//   # HACK: x                          todo_tag only; no todo_item
+
+// The tag must be the whole first word, which Ruff takes as a run of Unicode alphanumerics: what follows is
+// empty or starts with ASCII punctuation or a space, so `TODOé` and `TODO2` are not tags (a non-ASCII
+// punctuation mark right after the tag, such as `TODO：`, is missed: Ruff takes it as a tag).
+.decl todo_tag(c: node, pre: symbol, tag: symbol, rest: symbol)
+todo_tag(c, P, D, R) :- kind(c, "comment"), text(c, s),
+    match("(?<P>.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?<R>(?:[\\t -/:-@\\[-\\x60{-~].*)?)", s).
+.decl todo_item(c: node, tag: symbol, rest: symbol)
+todo_item(c, D, R) :- todo_tag(c, _, D, R), !match("[hH][aA][cC][kK]", D).
+
+// ---- author, colon, description (Ruff's static_errors) ---------------------------------------------------------
+// todo_trim(c, t): the rest with leading whitespace taken off.
+.decl todo_trim(c: node, t: symbol)
+todo_trim(c, @replace_all(R, "^\\s+", "")) :- todo_item(c, _, R).
+.decl todo_author(c: node, has: symbol, after: symbol)
+// `(name)`: the author runs to the first `)`; with no `)` it takes the rest.
+todo_author(c, "yes", A) :- todo_trim(c, t), match("\\([^)]*\\)(?<A>.*)", t).
+todo_author(c, "yes", "") :- todo_trim(c, t), match("\\([^)]*", t).
+// `@name`: up to the first whitespace or `:`; with neither, it is not an author.
+todo_author(c, "yes", A) :- todo_trim(c, t), match("@[^\\s:]*(?<A>[\\s:].*)", t).
+todo_author(c, "no", t) :- todo_trim(c, t), !match("\\(.*", t), !match("@[^\\s:]*[\\s:].*", t).
+.decl todo_shape(c: node, what: symbol)
+todo_shape(c, "colon-empty") :- todo_author(c, _, ":").
+todo_shape(c, "colon-space") :- todo_author(c, _, a), match(":\\s.*", a).
+todo_shape(c, "colon-tight") :- todo_author(c, _, a), match(":[^\\s].*", a).
+todo_shape(c, "no-colon") :- todo_author(c, _, a), !prefix(":", a).
+todo_shape(c, "empty") :- todo_author(c, _, "").
+
+// ---- issue links (TD003) ---------------------------------------------------------------------------------------
+// On the TODO's own line, anywhere after the tag: a URL, or `#` and a digit (`# TODO(x): #1234`).
+.decl todo_linked(c: node)
+todo_linked(c) :- todo_item(c, _, R), (match(".*https?://.*", R) ; match(".*#[0-9].*", R)).
+// Below it in its block: a comment that is a link or an issue id, before the next directive.
+todo_linked(c) :- todo_item(c, _, _), todo_block(c, l), todo_link_line(l),
+    count : { todo_block(c, o), todo_tag(o, _, _, _), o <= l } = 0.
+.decl todo_link_line(l: node)
+todo_link_line(l) :- kind(l, "comment"),
+    (match("#\\s*https?://.*", l) ; match("#\\s*[0-9]+", l) ; match("#\\s*[A-Z]+-?[0-9]+", l)).
+// todo_block(c, o): comment o comes after comment c with no token between them.
+.decl todo_block(c: node, o: node)
+todo_block(c, o) :- todo_item(c, _, _), token_before(c, t), token_before(o, t), kind(o, "comment"), c < o.
+todo_block(c, o) :- todo_item(c, _, _), !token_before(c, _), docof(c, d), kind(o, "comment"), docof(o, d),
+    !token_before(o, _), c < o.

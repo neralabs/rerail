@@ -1,0 +1,2 @@
+logic/device.rs	logic/profile.rs	struct Report
+logic/profile.rs	logic/profile/report.rs	fn placed; fn placements; fn write

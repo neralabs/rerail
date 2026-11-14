@@ -229,20 +229,10 @@
           "rule": {
             "any": [
               {
-                "regex": "^print$",
-                "inside": {
+                "kind": "print_statement",
+                "has": {
                   "stopBy": "neighbor",
-                  "kind": "print_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "chevron"
-                  }
-                },
-                "not": {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "(?s)."
-                  }
+                  "kind": "chevron"
                 },
                 "all": [
                   {

@@ -1,0 +1,54 @@
+.policy "react-no-unknown-property" revision 2
+.description "Use the property names React knows on DOM elements: className, not class; tabIndex, not tabindex."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-unknown-property: a prop on a DOM element that React does not know. Three cases, at the prop:
+//   <div class="x" />          an HTML or SVG attribute name: use className (fix: rename)
+//   <div onclick={f} />        a property in the wrong case: use onClick (fix: rename)
+//   <div checked />            a property React supports only on some tags: checked is for <input>
+//   <div foo="x" />            unknown
+// Not checked: components, member tags (<a.b>), custom elements (a tag with `-`, or any tag with an `is` prop),
+// fbt/fbs, data-* props and aria-* attributes. A few names match in any case (allowFullScreen, charset, …).
+// The name tables are react-no-unknown-property.props.rr, generated from the JSON (gen-…py, check-…py); they are
+// eslint-plugin-react's for React 19. The options (ignore, requireDataLowercase) are not in the JSON.
+#include "tsx/react.rr"
+#include "../packs/react/react-no-unknown-property.props.rr"   // dom_property, dom_attribute, only_on, …
+
+.violation unknown_prop(at: node, msg: symbol)
+    code "react/no-unknown-property"
+    "{msg}"
+    suppress eslint "react/no-unknown-property"
+    suppress oxlint "no-unknown-property"
+    suppress biome "lint/suspicious/noUnknownAttribute"
+    fix rename_prop "Rename the prop to React's name"
+unknown_prop(a, cat("Remove ", x, " from this <", tg, ">; React supports it only on ", t, ".")) :-
+    checked_prop(a, x, n, tg), only_on_says(n, t), !only_on(n, tg).
+unknown_prop(a, cat("Rename ", x, " to ", std, ", the name React uses for this attribute.")) :-
+    checked_prop(a, x, n, _), !only_on(n, _), standard(n, std), std != n.
+unknown_prop(a, cat("Rename ", x, " to an attribute React supports on DOM elements, move custom values to a data-* attribute, or remove it.")) :-
+    checked_prop(a, x, n, _), !only_on(n, _), !standard(n, _).
+// The fix writes the standard name over the prop's name.
+rename_prop(a, _) :- checked_prop(a, _, n, _), !only_on(n, _), standard(n, std), std != n, child(a, k, 0)
+    => replace(k, `$std`).
+
+// checked_prop(a, x, n, tg): prop a is written x on DOM tag tg; n is x with the any-case names normalised.
+.decl checked_prop(a: node, x: symbol, n: symbol, tg: symbol)
+checked_prop(a, x, n, tg) :- react_open(_, o), html_tag(o, tg), jsx_prop(o, x, a), normal(x, n),
+    !data_prop(n), !aria_property(n).
+// <div>, <svg>: a plain lower-case tag without `-` and without an `is` prop (both mark a custom element).
+.decl html_tag(o: node, tg: symbol)
+html_tag(o, tg) :- field(o, "name", t), kind(t, "identifier"), text(t, tg), match("[a-z][^-]*", tg),
+    tg != "fbt", tg != "fbs", count : { jsx_prop(o, "is", i), child(i, k, 0), kind(k, "property_identifier") } = 0.
+.decl normal(x: symbol, n: symbol)
+normal(x, n) :- jsx_prop(_, x, _), any_case(n), @lower(n) = @lower(x).
+normal(x, x) :- jsx_prop(_, x, _), count : { any_case(c), @lower(c) = @lower(x) } = 0.
+.decl data_prop(n: symbol)  // data-foo, but not data-xml…, and no `:`
+data_prop(n) :- normal(_, n), match("data-[^:]*", n), !imatch_data_xml(n).
+.decl imatch_data_xml(n: symbol)
+imatch_data_xml(n) :- normal(_, n), iprefix("data-xml", n).
+// standard(n, std): the name React uses: the attribute's property, or the DOM property equal to n in any case.
+.decl standard(n: symbol, std: symbol)
+standard(n, std) :- normal(_, n), dom_attribute(n, std).
+standard(n, p) :- normal(_, n), !dom_attribute(n, _), dom_property(p), @lower(p) = @lower(n).

@@ -1,0 +1,1004 @@
+{
+  "format": "rerail.shared-sql-next-profile/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "nativeSha256": "0cae9379d657755954ab150ff97b30bd589c0900857a621b31c086af7fa619f2",
+  "policyDigests": {
+    "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+  },
+  "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+  "scope": {
+    "files": 5,
+    "bytes": 1026452,
+    "allocator": "system-malloc-shim"
+  },
+  "unchangedImplementation": true,
+  "runs": {
+    "control": {
+      "trace": "off",
+      "external": "none",
+      "measuredPhases": [
+        "compile",
+        "cold",
+        "unchanged",
+        "edit"
+      ],
+      "coldMs": 14809.721834,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 403.885,
+          "systemMs": 21.999
+        },
+        "cold": {
+          "userMs": 14002.896,
+          "systemMs": 355.032
+        },
+        "unchanged": {
+          "userMs": 8.978,
+          "systemMs": 0.758
+        },
+        "edit": {
+          "userMs": 3611.929,
+          "systemMs": 42.32
+        }
+      },
+      "editedFileMs": 3778.382707999999,
+      "peakRssBytes": 1335246848,
+      "elapsedSeconds": 19.898267999989912
+    },
+    "attributed": {
+      "trace": "on",
+      "external": "none",
+      "measuredPhases": [
+        "compile",
+        "cold",
+        "unchanged",
+        "edit"
+      ],
+      "coldMs": 15267.470040999999,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 401.863,
+          "systemMs": 51.713
+        },
+        "cold": {
+          "userMs": 13766.586,
+          "systemMs": 934.468
+        },
+        "unchanged": {
+          "userMs": 9.795,
+          "systemMs": 0.722
+        },
+        "edit": {
+          "userMs": 3612.668,
+          "systemMs": 185.708
+        }
+      },
+      "editedFileMs": 4436.974208,
+      "peakRssBytes": 1389346816,
+      "elapsedSeconds": 21.117585625004722
+    },
+    "external": {
+      "trace": "off",
+      "external": "sample",
+      "measuredPhases": [
+        "compile",
+        "cold",
+        "unchanged",
+        "edit"
+      ],
+      "coldMs": 19702.063124999997,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 401.846,
+          "systemMs": 22.347
+        },
+        "cold": {
+          "userMs": 14294.714,
+          "systemMs": 445.213
+        },
+        "unchanged": {
+          "userMs": 8.638,
+          "systemMs": 1.266
+        },
+        "edit": {
+          "userMs": 3779.875,
+          "systemMs": 56.718
+        }
+      },
+      "editedFileMs": 5971.718124999999,
+      "peakRssBytes": 1392771072,
+      "elapsedSeconds": 27.26299870799994
+    },
+    "dense-external": {
+      "trace": "off",
+      "external": "sample",
+      "measuredPhases": [
+        "compile",
+        "cold"
+      ],
+      "coldMs": 22352.7115,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 404.342,
+          "systemMs": 24.451
+        },
+        "cold": {
+          "userMs": 14587.735,
+          "systemMs": 443.653
+        }
+      },
+      "editedFileMs": null,
+      "peakRssBytes": 1344864256,
+      "elapsedSeconds": 24.057781374984188
+    }
+  },
+  "coldPhaseCpu": [
+    {
+      "phase": "sql-materialize",
+      "calls": 443,
+      "cpuMs": 6577.82095,
+      "percentColdProcessCpu": 44.74387312637583,
+      "wallMs": 6999.964801
+    },
+    {
+      "phase": "sql-index",
+      "calls": 602,
+      "cpuMs": 3021.248413,
+      "percentColdProcessCpu": 20.551236754861247,
+      "wallMs": 3277.320987
+    },
+    {
+      "phase": "input-extract",
+      "calls": 355,
+      "cpuMs": 1778.361884,
+      "percentColdProcessCpu": 12.096832540034203,
+      "wallMs": 2185.762167
+    },
+    {
+      "phase": "sql-input",
+      "calls": 376,
+      "cpuMs": 446.445593,
+      "percentColdProcessCpu": 3.03682710777064,
+      "wallMs": 493.002332
+    },
+    {
+      "phase": "sql-analyze",
+      "calls": 377,
+      "cpuMs": 68.190496,
+      "percentColdProcessCpu": 0.46384766697680313,
+      "wallMs": 99.873034
+    },
+    {
+      "phase": "sql-validate",
+      "calls": 443,
+      "cpuMs": 53.141633,
+      "percentColdProcessCpu": 0.36148178899281647,
+      "wallMs": 65.242042
+    },
+    {
+      "phase": "sql-result",
+      "calls": 15,
+      "cpuMs": 70.973294,
+      "percentColdProcessCpu": 0.4827769083767735,
+      "wallMs": 80.568707
+    }
+  ],
+  "coldConstructionCpuByStage": [
+    {
+      "stage": "descendants",
+      "sql-materializeCpuMs": 2666.808917,
+      "cpuMs": 3987.8537879999994,
+      "sql-indexCpuMs": 1309.873415,
+      "sql-analyzeCpuMs": 11.171456,
+      "percentColdProcessCpu": 27.126312086194634
+    },
+    {
+      "stage": "nodes",
+      "sql-materializeCpuMs": 1055.6724179999997,
+      "cpuMs": 1685.0669159999995,
+      "sql-indexCpuMs": 619.306333,
+      "sql-analyzeCpuMs": 10.088165,
+      "percentColdProcessCpu": 11.462218396041532
+    },
+    {
+      "stage": "ownership",
+      "sql-materializeCpuMs": 1127.6125410000002,
+      "cpuMs": 1534.518834,
+      "sql-indexCpuMs": 400.033292,
+      "sql-analyzeCpuMs": 6.8730009999999995,
+      "percentColdProcessCpu": 10.43815520982373
+    },
+    {
+      "stage": "edges",
+      "sql-indexCpuMs": 346.18733399999996,
+      "cpuMs": 417.280247,
+      "sql-materializeCpuMs": 66.172624,
+      "sql-analyzeCpuMs": 4.920289,
+      "percentColdProcessCpu": 2.8384376181462905
+    },
+    {
+      "stage": "scoped_nodes",
+      "sql-materializeCpuMs": 292.359417,
+      "cpuMs": 344.12587499999995,
+      "sql-indexCpuMs": 50.492124000000004,
+      "sql-analyzeCpuMs": 1.274334,
+      "percentColdProcessCpu": 2.3408245082291375
+    },
+    {
+      "stage": "scope_owners",
+      "sql-materializeCpuMs": 170.52875,
+      "cpuMs": 270.03249900000003,
+      "sql-indexCpuMs": 97.73191700000002,
+      "sql-analyzeCpuMs": 1.771832,
+      "percentColdProcessCpu": 1.83682407397456
+    },
+    {
+      "stage": "py_names",
+      "sql-materializeCpuMs": 128.689541,
+      "cpuMs": 178.34203899999997,
+      "sql-indexCpuMs": 47.319876,
+      "sql-analyzeCpuMs": 2.332622,
+      "percentColdProcessCpu": 1.2131241678317757
+    },
+    {
+      "stage": "methods",
+      "sql-materializeCpuMs": 111.82616600000001,
+      "cpuMs": 113.80991700000003,
+      "sql-indexCpuMs": 1.4790010000000002,
+      "sql-analyzeCpuMs": 0.5047499999999999,
+      "percentColdProcessCpu": 0.7741616145345771
+    },
+    {
+      "stage": "call_paths",
+      "sql-materializeCpuMs": 84.06525,
+      "cpuMs": 98.844961,
+      "sql-indexCpuMs": 13.971876,
+      "sql-analyzeCpuMs": 0.8078350000000001,
+      "percentColdProcessCpu": 0.6723664915454362
+    },
+    {
+      "stage": "loop_names",
+      "sql-materializeCpuMs": 84.62654,
+      "cpuMs": 85.69241500000003,
+      "sql-indexCpuMs": 0.629416,
+      "sql-analyzeCpuMs": 0.436459,
+      "percentColdProcessCpu": 0.5828998043269552
+    },
+    {
+      "stage": "method_nodes",
+      "sql-indexCpuMs": 58.211415,
+      "cpuMs": 81.60958200000003,
+      "sql-materializeCpuMs": 21.4585,
+      "sql-analyzeCpuMs": 1.939667,
+      "percentColdProcessCpu": 0.5551274214760386
+    },
+    {
+      "stage": "assignments",
+      "sql-materializeCpuMs": 49.10937600000001,
+      "cpuMs": 64.61662700000002,
+      "sql-indexCpuMs": 12.467125999999999,
+      "sql-analyzeCpuMs": 3.040125,
+      "percentColdProcessCpu": 0.43953737602759657
+    },
+    {
+      "stage": "calls",
+      "sql-materializeCpuMs": 41.306375,
+      "cpuMs": 55.21779199999999,
+      "sql-indexCpuMs": 12.403834,
+      "sql-analyzeCpuMs": 1.5075830000000001,
+      "percentColdProcessCpu": 0.3756043070109122
+    },
+    {
+      "stage": "syntax_rows_0",
+      "sql-materializeCpuMs": 53.12358400000001,
+      "cpuMs": 53.12358400000001,
+      "percentColdProcessCpu": 0.3613590154828355
+    },
+    {
+      "stage": "self_stores",
+      "sql-materializeCpuMs": 52.311875,
+      "cpuMs": 52.753417,
+      "sql-indexCpuMs": 0.32925,
+      "sql-analyzeCpuMs": 0.112292,
+      "percentColdProcessCpu": 0.3588410531653036
+    },
+    {
+      "stage": "syntax_rows_1",
+      "sql-materializeCpuMs": 46.88595899999999,
+      "cpuMs": 46.88595899999999,
+      "percentColdProcessCpu": 0.318929234597737
+    }
+  ],
+  "unattributedColdCpuMs": 2684.8717369999995,
+  "fileLocalStatistics": {
+    "totals": {
+      "nodes": 113953,
+      "descendants": 1095879,
+      "ownership": 113953,
+      "functions": 1509,
+      "calls": 8155,
+      "scope_owners": 113953,
+      "scoped_nodes": 105959,
+      "descendantKeyTextBytes": 113048228,
+      "descendantPathTextBytes": 61475460
+    },
+    "byFile": {
+      "impl/common/l2070_server_plan/sql_backend_executor.py": {
+        "functions.textBytes": 272433,
+        "nodes.rows": 29624,
+        "functions.rows": 244,
+        "nodes.textBytes": 2735516,
+        "ownership.rows": 29624,
+        "calls.rows": 1843,
+        "nodes.identifierRows": 11804,
+        "descendants.rows": 296028,
+        "scope_owners.rows": 29624,
+        "descendants.roots": 29624,
+        "nodes.functionRows": 244,
+        "descendants.keyTextBytes": 29688427,
+        "calls.textBytes": 125971,
+        "scoped_nodes.rows": 27455
+      },
+      "impl/common/l2070_server_plan/steps/_conditional_compile.py": {
+        "nodes.identifierRows": 4612,
+        "scoped_nodes.rows": 10580,
+        "nodes.functionRows": 56,
+        "calls.textBytes": 71668,
+        "functions.rows": 56,
+        "nodes.textBytes": 1197819,
+        "ownership.rows": 11272,
+        "descendants.keyTextBytes": 13132402,
+        "descendants.roots": 11272,
+        "nodes.rows": 11272,
+        "calls.rows": 846,
+        "descendants.rows": 126246,
+        "functions.textBytes": 138174,
+        "scope_owners.rows": 11272
+      },
+      "impl/common/l2070_server_plan/steps/commit_branch_steps.py": {
+        "nodes.textBytes": 5571782,
+        "nodes.functionRows": 1098,
+        "scope_owners.rows": 67774,
+        "nodes.identifierRows": 26886,
+        "scoped_nodes.rows": 63300,
+        "nodes.rows": 67774,
+        "descendants.keyTextBytes": 66697780,
+        "functions.textBytes": 553061,
+        "descendants.roots": 67774,
+        "ownership.rows": 67774,
+        "descendants.rows": 631463,
+        "calls.textBytes": 590549,
+        "calls.rows": 5234,
+        "functions.rows": 1098
+      },
+      "impl/common/l2070_server_plan/steps/sql_conditional.py": {
+        "calls.textBytes": 5738,
+        "calls.rows": 74,
+        "functions.textBytes": 11463,
+        "descendants.keyTextBytes": 1343376,
+        "scope_owners.rows": 1668,
+        "nodes.identifierRows": 689,
+        "descendants.rows": 13989,
+        "descendants.roots": 1668,
+        "nodes.rows": 1668,
+        "scoped_nodes.rows": 1451,
+        "functions.rows": 34,
+        "ownership.rows": 1668,
+        "nodes.textBytes": 109246,
+        "nodes.functionRows": 34
+      },
+      "l2070_batching/conditional_step.py": {
+        "nodes.textBytes": 227966,
+        "descendants.roots": 3615,
+        "nodes.identifierRows": 1371,
+        "nodes.rows": 3615,
+        "functions.textBytes": 22950,
+        "scoped_nodes.rows": 3173,
+        "scope_owners.rows": 3615,
+        "calls.textBytes": 6506,
+        "functions.rows": 77,
+        "ownership.rows": 3615,
+        "descendants.keyTextBytes": 2186243,
+        "descendants.rows": 28153,
+        "nodes.functionRows": 77,
+        "calls.rows": 158
+      }
+    }
+  },
+  "externalBottomUp": {
+    "external": {
+      "sampleWindows": [
+        {
+          "file": "sample-1.txt",
+          "activeNativeSamples": 786,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 489,
+              "percent": 62.21
+            },
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 252,
+              "percent": 32.06
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 34,
+              "percent": 4.33
+            },
+            {
+              "symbol": "other-native",
+              "samples": 10,
+              "percent": 1.27
+            },
+            {
+              "symbol": "profiling",
+              "samples": 1,
+              "percent": 0.13
+            }
+          ]
+        },
+        {
+          "file": "sample-2.txt",
+          "activeNativeSamples": 794,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 542,
+              "percent": 68.26
+            },
+            {
+              "symbol": "sqlite",
+              "samples": 242,
+              "percent": 30.48
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 9,
+              "percent": 1.13
+            },
+            {
+              "symbol": "other-native",
+              "samples": 1,
+              "percent": 0.13
+            }
+          ]
+        },
+        {
+          "file": "sample-3.txt",
+          "activeNativeSamples": 798,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 798,
+              "percent": 100.0
+            }
+          ]
+        },
+        {
+          "file": "sample-4.txt",
+          "activeNativeSamples": 792,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 461,
+              "percent": 58.21
+            },
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 275,
+              "percent": 34.72
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 55,
+              "percent": 6.94
+            },
+            {
+              "symbol": "other-native",
+              "samples": 1,
+              "percent": 0.13
+            }
+          ]
+        },
+        {
+          "file": "sample-5.txt",
+          "activeNativeSamples": 781,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 337,
+              "percent": 43.15
+            },
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 230,
+              "percent": 29.45
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 211,
+              "percent": 27.02
+            },
+            {
+              "symbol": "other-native",
+              "samples": 3,
+              "percent": 0.38
+            }
+          ]
+        },
+        {
+          "file": "sample-6.txt",
+          "activeNativeSamples": 794,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 529.149
+            },
+            {
+              "phase": "unchanged",
+              "overlapMs": 11.0
+            },
+            {
+              "phase": "edit",
+              "overlapMs": 459.851
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 794,
+              "percent": 100.0
+            }
+          ]
+        },
+        {
+          "file": "sample-7.txt",
+          "activeNativeSamples": 805,
+          "driverPhaseOverlap": [
+            {
+              "phase": "edit",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 489,
+              "percent": 60.75
+            },
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 214,
+              "percent": 26.58
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 101,
+              "percent": 12.55
+            },
+            {
+              "symbol": "other-native",
+              "samples": 1,
+              "percent": 0.12
+            }
+          ]
+        }
+      ],
+      "pureColdActiveSamples": 3951,
+      "pureColdSubsystems": [
+        {
+          "subsystem": "sqlite",
+          "samples": 2327,
+          "percentOfSampledNativeStacks": 58.89648190331562
+        },
+        {
+          "subsystem": "matching-and-parsing",
+          "samples": 1299,
+          "percentOfSampledNativeStacks": 32.877752467729685
+        },
+        {
+          "subsystem": "relational-host",
+          "samples": 309,
+          "percentOfSampledNativeStacks": 7.820804859529233
+        },
+        {
+          "subsystem": "other-native",
+          "samples": 15,
+          "percentOfSampledNativeStacks": 0.37965072133637057
+        },
+        {
+          "subsystem": "profiling",
+          "samples": 1,
+          "percentOfSampledNativeStacks": 0.025310048089091368
+        }
+      ],
+      "pureColdTopSelf": [
+        {
+          "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+          "samples": 396,
+          "percentOfSampledNativeStacks": 10.022779043280183
+        },
+        {
+          "symbol": "_platform_memmove (libsystem_platform.dylib)",
+          "samples": 307,
+          "percentOfSampledNativeStacks": 7.77018476335105
+        },
+        {
+          "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+          "samples": 265,
+          "percentOfSampledNativeStacks": 6.707162743609213
+        },
+        {
+          "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)",
+          "samples": 214,
+          "percentOfSampledNativeStacks": 5.416350291065553
+        },
+        {
+          "symbol": "_xzm_free (libsystem_malloc.dylib)",
+          "samples": 146,
+          "percentOfSampledNativeStacks": 3.6952670210073397
+        },
+        {
+          "symbol": "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+          "samples": 143,
+          "percentOfSampledNativeStacks": 3.619336876740066
+        },
+        {
+          "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+          "samples": 132,
+          "percentOfSampledNativeStacks": 3.340926347760061
+        },
+        {
+          "symbol": "sqlite3BtreeTableMoveto (rerail_engine.darwin-arm64.node)",
+          "samples": 59,
+          "percentOfSampledNativeStacks": 1.4932928372563907
+        },
+        {
+          "symbol": "_RNvYNCNKNvNtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl6budget16BUDGET_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1u_6option6OptionQIB29_INtNtB1u_4cell4CellmEEEEE9call_onceBc_ (rerail_engine.darwin-arm64.node)",
+          "samples": 56,
+          "percentOfSampledNativeStacks": 1.4173626929891168
+        },
+        {
+          "symbol": "_RINvXs0_NtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCsg8Nxqh786Fz_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (rerail_engine.darwin-arm64.node)",
+          "samples": 54,
+          "percentOfSampledNativeStacks": 1.366742596810934
+        },
+        {
+          "symbol": "_RINvMs1_NtNtCs3SNv6mEXVdg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcher9match_anyNtNtB8_4tape7TapeDocEBa_ (rerail_engine.darwin-arm64.node)",
+          "samples": 51,
+          "percentOfSampledNativeStacks": 1.2908124525436597
+        },
+        {
+          "symbol": "_platform_memset (libsystem_platform.dylib)",
+          "samples": 51,
+          "percentOfSampledNativeStacks": 1.2908124525436597
+        }
+      ]
+    },
+    "dense-external": {
+      "sampleWindows": [
+        {
+          "file": "sample-1.txt",
+          "activeNativeSamples": 781,
+          "driverPhaseOverlap": [
+            {
+              "phase": "compile",
+              "overlapMs": 570.072
+            },
+            {
+              "phase": "cold",
+              "overlapMs": 429.928
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 770,
+              "percent": 98.59
+            },
+            {
+              "symbol": "other-native",
+              "samples": 10,
+              "percent": 1.28
+            },
+            {
+              "symbol": "profiling",
+              "samples": 1,
+              "percent": 0.13
+            }
+          ]
+        },
+        {
+          "file": "sample-2.txt",
+          "activeNativeSamples": 794,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 794,
+              "percent": 100.0
+            }
+          ]
+        },
+        {
+          "file": "sample-3.txt",
+          "activeNativeSamples": 805,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 805,
+              "percent": 100.0
+            }
+          ]
+        },
+        {
+          "file": "sample-4.txt",
+          "activeNativeSamples": 805,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 805,
+              "percent": 100.0
+            }
+          ]
+        },
+        {
+          "file": "sample-5.txt",
+          "activeNativeSamples": 810,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 808,
+              "percent": 99.75
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 2,
+              "percent": 0.25
+            }
+          ]
+        },
+        {
+          "file": "sample-6.txt",
+          "activeNativeSamples": 802,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 427,
+              "percent": 53.24
+            },
+            {
+              "symbol": "sqlite",
+              "samples": 327,
+              "percent": 40.77
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 45,
+              "percent": 5.61
+            },
+            {
+              "symbol": "other-native",
+              "samples": 3,
+              "percent": 0.37
+            }
+          ]
+        },
+        {
+          "file": "sample-7.txt",
+          "activeNativeSamples": 794,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 435,
+              "percent": 54.79
+            },
+            {
+              "symbol": "matching-and-parsing",
+              "samples": 250,
+              "percent": 31.49
+            },
+            {
+              "symbol": "relational-host",
+              "samples": 108,
+              "percent": 13.6
+            },
+            {
+              "symbol": "other-native",
+              "samples": 1,
+              "percent": 0.13
+            }
+          ]
+        },
+        {
+          "file": "sample-8.txt",
+          "activeNativeSamples": 813,
+          "driverPhaseOverlap": [
+            {
+              "phase": "cold",
+              "overlapMs": 1000.0
+            }
+          ],
+          "subsystems": [
+            {
+              "symbol": "sqlite",
+              "samples": 813,
+              "percent": 100.0
+            }
+          ]
+        }
+      ],
+      "pureColdActiveSamples": 5623,
+      "pureColdSubsystems": [
+        {
+          "subsystem": "sqlite",
+          "samples": 4787,
+          "percentOfSampledNativeStacks": 85.13249155255203
+        },
+        {
+          "subsystem": "matching-and-parsing",
+          "samples": 677,
+          "percentOfSampledNativeStacks": 12.039836386270673
+        },
+        {
+          "subsystem": "relational-host",
+          "samples": 155,
+          "percentOfSampledNativeStacks": 2.7565356571225323
+        },
+        {
+          "subsystem": "other-native",
+          "samples": 4,
+          "percentOfSampledNativeStacks": 0.07113640405477503
+        }
+      ],
+      "pureColdTopSelf": [
+        {
+          "symbol": "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+          "samples": 852,
+          "percentOfSampledNativeStacks": 15.152054063667082
+        },
+        {
+          "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+          "samples": 647,
+          "percentOfSampledNativeStacks": 11.506313355859861
+        },
+        {
+          "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)",
+          "samples": 486,
+          "percentOfSampledNativeStacks": 8.643073092655166
+        },
+        {
+          "symbol": "_platform_memmove (libsystem_platform.dylib)",
+          "samples": 454,
+          "percentOfSampledNativeStacks": 8.073981860216966
+        },
+        {
+          "symbol": "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+          "samples": 298,
+          "percentOfSampledNativeStacks": 5.29966210208074
+        },
+        {
+          "symbol": "sqlite3BtreeTableMoveto (rerail_engine.darwin-arm64.node)",
+          "samples": 243,
+          "percentOfSampledNativeStacks": 4.321536546327583
+        },
+        {
+          "symbol": "_xzm_free (libsystem_malloc.dylib)",
+          "samples": 147,
+          "percentOfSampledNativeStacks": 2.6142628490129822
+        },
+        {
+          "symbol": "vdbeSorterSort (rerail_engine.darwin-arm64.node)",
+          "samples": 138,
+          "percentOfSampledNativeStacks": 2.4542059398897385
+        },
+        {
+          "symbol": "sqlite3VdbeRecordUnpack (rerail_engine.darwin-arm64.node)",
+          "samples": 122,
+          "percentOfSampledNativeStacks": 2.1696603236706387
+        },
+        {
+          "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+          "samples": 122,
+          "percentOfSampledNativeStacks": 2.1696603236706387
+        },
+        {
+          "symbol": "vdbeSorterCompareText (rerail_engine.darwin-arm64.node)",
+          "samples": 111,
+          "percentOfSampledNativeStacks": 1.9740352125200071
+        },
+        {
+          "symbol": "getPageNormal (rerail_engine.darwin-arm64.node)",
+          "samples": 111,
+          "percentOfSampledNativeStacks": 1.9740352125200071
+        }
+      ]
+    }
+  },
+  "caveats": [
+    "No production runtime or policy changes. All new commands are diagnostic.",
+    "SQL statistics replace final diagnostic SELECTs in an in-memory policy copy and add SQL work; these runs are not parity benchmarks.",
+    "Logical text bytes are not physical memory or simultaneous live allocations; file-partitioned SQL runs serially.",
+    "External stack percentages describe sampled windows, not whole-run CPU shares. Mixed phase windows are excluded from cold aggregates.",
+    "Attributed phase percentages use cold process CPU; the remaining CPU is left unassigned.",
+    "Production workload expectations contain zero findings. No detection logic changed; the prior 200-case positive/clean corpus validation remains applicable."
+  ],
+  "artifacts": ".rerail/profiles/shared-sql-next-2026-10-20",
+  "validation": {
+    "pythonProfilerTests": 9,
+    "directSqlTests": 4,
+    "nativeSqlProbeTests": 2,
+    "typecheck": "passed",
+    "boundaries": "passed",
+    "structure": "25 passed",
+    "licenses": "passed",
+    "stagedWhitespace": "passed"
+  }
+}

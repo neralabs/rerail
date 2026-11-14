@@ -16,7 +16,8 @@ use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubDoc;
-use crate::code_rule_dsl::literal::{self, Grammar, LiteralHost, Parsed};
+use crate::code_rule_dsl::literal::{self, Grammar, Parsed};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::scope::Reading;
 use crate::code_rule_dsl::value::Value;
@@ -31,16 +32,18 @@ use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(crate) struct ParseTest {
-    pub(crate) grammar: Grammar,
+pub struct ParseTest {
+    pub grammar: Grammar,
+    /// Opaque slot text for pythonFString; other grammars ignore it.
+    pub(crate) interpolation: String,
     /// The rule matched on the parsed tree's root, compiled for the grammar.
-    pub(crate) rule: AstMatcher,
+    pub rule: AstMatcher,
     /// The captures the rule may bind, exported to the host.
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
     /// Host kinds that hold a literal of the grammar.
-    pub(crate) host_kinds: Arc<BTreeSet<u16>>,
+    pub host_kinds: Arc<BTreeSet<u16>>,
     /// How the scope table reads the file (`annotation`, whose trees the table parses).
-    pub(crate) reading: Reading,
+    pub reading: Reading,
     /// With `host` rules in the tree's rule: whether each is sound under syntax errors and none
     /// is negated (they read the file around the literal); `None` without any.
     pub(crate) host_sound: Option<bool>,
@@ -53,7 +56,7 @@ pub(crate) struct ParseTest {
 /// On an embedded program's node (outside `parse`), the file's own tree is the host
 /// (`embedded::document_host`).
 #[derive(Clone)]
-pub(crate) struct HostTest {
+pub struct HostTest {
     pub(crate) rule: AstMatcher,
 }
 
@@ -106,6 +109,11 @@ impl Drop for Hosted {
 }
 
 impl HostTest {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn rule(&self) -> &AstMatcher {
+        &self.rule
+    }
+
     pub(super) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
@@ -159,6 +167,37 @@ pub(super) fn host_exports<D: Doc>(
     exports
 }
 
+// Read by N's catalog (test-only); W's matcher reads `parse_fact_tree_with`.
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn parse_fact_tree<'t, D: Doc>(
+    node: &Node<'t, D>,
+    grammar: Grammar,
+    host_kinds: &BTreeSet<u16>,
+    reading: Reading,
+) -> Option<Parsed> {
+    parse_fact_tree_with(node, grammar, host_kinds, reading, "{}")
+}
+
+/// `parse_fact_tree` with P's interpolation slot text (`pythonFString`; other grammars ignore it).
+fn parse_fact_tree_with<'t, D: Doc>(
+    node: &Node<'t, D>,
+    grammar: Grammar,
+    host_kinds: &BTreeSet<u16>,
+    reading: Reading,
+    interpolation: &str,
+) -> Option<Parsed> {
+    if !host_kinds.contains(&node.kind_id()) {
+        return Some(Parsed::NotString);
+    }
+    if grammar.of_host_syntax() {
+        let table = file_table(node, GrammarDialect::Python, reading)?;
+        return table
+            .annotation_at(&node.range())
+            .map(|annotation| Parsed::Tree(Arc::clone(&annotation.tree)));
+    }
+    parsed_tree_with(node, grammar, interpolation)
+}
+
 impl ParseTest {
     pub(super) fn match_node<'t, D: Doc>(
         &self,
@@ -168,14 +207,19 @@ impl ParseTest {
         if !self.host_kinds.contains(&node.kind_id()) {
             return None;
         }
-        if self.grammar == Grammar::Annotation {
-            // A string type definition's tree is the table's; any other string has none.
+        if self.grammar.of_host_syntax() {
             let table = file_table(&node, GrammarDialect::Python, self.reading)?;
             let tree = Arc::clone(&table.annotation_at(&node.range())?.tree);
             let _tables = SubTables::enter(table);
             return self.match_tree(node, env, tree);
         }
-        let tree = match parsed_tree(&node, self.grammar)? {
+        let tree = match parse_fact_tree_with(
+            &node,
+            self.grammar,
+            &self.host_kinds,
+            self.reading,
+            &self.interpolation,
+        )? {
             Parsed::Tree(tree) => tree,
             Parsed::NotString => return None,
             Parsed::Unknown => {
@@ -235,21 +279,25 @@ impl ParseTest {
 
 /// The node's tree under a text grammar, parsed once per file; `None` when the budget ran out (the
 /// clause fails).
-pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
-    let key = (node.node_id(), grammar);
+pub fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
+    parsed_tree_with(node, grammar, "{}")
+}
+
+fn parsed_tree_with<D: Doc>(
+    node: &Node<'_, D>,
+    grammar: Grammar,
+    interpolation: &str,
+) -> Option<Parsed> {
+    let key = (node.node_id(), grammar, interpolation.to_owned());
     if let Some(memo) = memoized_parse(&key) {
         return Some(match memo {
             Some(tree) => Parsed::Tree(tree),
             None => Parsed::Unknown,
         });
     }
-    let parsed = match grammar.literal_host() {
-        LiteralHost::EcmaComment => literal::parse_comment(node, &mut spend_steps),
-        LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
-        LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
-        LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),
-        LiteralHost::RustString => literal::parse_rust_string(node, grammar, &mut spend_steps),
-    };
+    // The family of the grammar's host reads its literals (`SyntaxRules::parse_literal`).
+    let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(grammar.host_language()));
+    let parsed = language_pack::syntax_parse_literal(pack, grammar, node, interpolation, &mut spend_steps);
     let Some(parsed) = parsed else {
         // The budget fails the clause; a deadline leaves the parse unknown.
         return UTIL_EXCEEDED.get().is_none().then_some(Parsed::Unknown);
@@ -266,7 +314,7 @@ pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Optio
 /// format through concatenation or a variable's binding), parsed once per file and reading, every
 /// node mapped to `node`'s range. `NotString` where the value is known and no string; `None` when
 /// the budget ran out (the clause fails).
-pub(super) fn parsed_value_tree<D: Doc>(
+pub fn parsed_value_tree<D: Doc>(
     node: &Node<'_, D>,
     reading: &super::value::Reading,
     grammar: Grammar,
@@ -288,7 +336,7 @@ pub(super) fn parsed_value_tree<D: Doc>(
         Value::Unknown => return Some(Parsed::Unknown),
         _ => return Some(Parsed::NotString),
     };
-    let Some(parsed) = literal::parse_php_value(bytes, node.range(), grammar, &mut spend_steps)
+    let Some(parsed) = crate::code_rule_dsl::language::adapter::pack::pack(reading.family).value_parse_string_value(bytes, node.range(), grammar, &mut spend_steps)
     else {
         return UTIL_EXCEEDED.get().is_none().then_some(Parsed::Unknown);
     };

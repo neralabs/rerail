@@ -1,0 +1,18 @@
+.policy "ruff-b022-useless-contextlib-suppress" revision 2
+.description "Pass at least one exception type to contextlib.suppress(); with none it suppresses nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B022 (flake8-bugbear): `contextlib.suppress()` with no positional argument. It suppresses nothing, so the
+// `with` is redundant. The callee is resolved through imports; `suppress(*xs)` has an argument.
+//   with contextlib.suppress():        ← B022
+//   from contextlib import suppress
+//   with suppress():                   ← B022
+//   with suppress(ValueError):         not reported
+#include "python/bugbear.rr"
+
+.violation B022(at: node) code "B022"
+    "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant"
+    suppress ruff "B022"
+B022(c) :- bb_sym_call(c, "contextlib.suppress"), call_nargs(c, 0).

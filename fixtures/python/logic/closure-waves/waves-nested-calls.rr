@@ -1,0 +1,13 @@
+.policy "waves-nested-calls" revision 1
+.description "A call with another call anywhere in its arguments: descendants of each call, as a closure over child edges."
+.language python
+.mode steer
+.scope include "**/*"
+// A call's descendants: many small components (one per outermost call), packed into pieces.
+.decl wn_tree(p: node, c: node)
+wn_tree(p, c) :- child(p, c, _).
+.decl wn_desc(c: node, n: node)
+wn_desc(c, a) :- kind(c, "call"), field(c, "arguments", a).
+wn_desc(c, m) :- wn_desc(c, n), wn_tree(n, m).
+.violation WN1(at: node) code "WN1" "this call has a call in its arguments"
+WN1(c) :- wn_desc(c, n), kind(n, "call").

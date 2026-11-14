@@ -1,0 +1,17 @@
+.policy "eslint-no-template-curly-in-string" revision 5
+.description "Don't put template placeholders inside ordinary quoted strings; they are not interpolated, so use a template literal instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// ESLint's no-template-curly-in-string: a quoted string whose value holds `${` + something + `}`, which looks
+// like a template placeholder but is plain text.
+//   "Hello ${name}!"   'Time: ${12 * 60} s'     → reported
+//   `Hello ${name}!`   "${}"   "$ {a}"   "{a}"   fine
+// The test is on the value (escapes applied), as ESLint's /\$\{[^}]+\}/u is. No options.
+.violation no_template_curly_in_string(at: node) code "no-template-curly-in-string"
+    "Change these quotes to backticks so the ${...} is interpolated, or escape the $ if the text is meant literally."
+    suppress eslint "no-template-curly-in-string"
+    suppress oxlint "no-template-curly-in-string"
+    suppress biome "lint/suspicious/noTemplateCurlyInString"
+no_template_curly_in_string(s) :- kind(s, "string"), value(s, v), match("[\\s\\S]*\\$\\{[^}]+\\}[\\s\\S]*", v).

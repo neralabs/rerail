@@ -1,0 +1,43 @@
+corpus: 1847 files, 8537597 nodes, load 7.99s
+kind postings build: 204.4 ms (23.94 ns/node)
+template pool: 980
+
+== Multi-rule co-execution (set semantics; outputs = distinct (rule, doc, root)) ==
+   K  outputs |  sep-unanch    sep-anch  fused-disp  fused-trie |  tasks-sa  tasks-fd  tasks-ft
+K=8: root kinds 6, max programs per root kind 2, words separate 33 vs fused trie 32 (1.03x)
+   8    28342 |    128.98ns      2.41ns      2.74ns      2.57ns |    953398    496760    496760
+K=32: root kinds 22, max programs per root kind 3, words separate 137 vs fused trie 132 (1.04x)
+  32   161270 |    517.63ns     19.47ns     23.67ns     21.43ns |   5263258   2618520   2618520
+K=128: root kinds 55, max programs per root kind 10, words separate 546 vs fused trie 495 (1.10x)
+ 128   675986 |       NaNns     71.86ns     67.24ns     51.38ns |  17274127   3747473   3747473
+K=512: root kinds 84, max programs per root kind 25, words separate 2194 vs fused trie 1750 (1.25x)
+ 512  2067821 |       NaNns    363.47ns    264.81ns    160.53ns |  62475120   4369826   4369826
+
+== Boolean composition on one root (ns per corpus node; outputs = distinct roots) ==
+
+-- function_definition: has return / has yield (66761 roots)
+   separate A path-enum: 2.13 ns/node (29313 witness paths, 20950 roots, 96074 pushes); set-mode: 1.76 ns/node (87711 pushes)
+   separate B path-enum: 2.02 ns/node (2565 witness paths, 1552 roots, 69326 pushes); set-mode: 2.05 ns/node (68313 pushes)
+   join (3 set ops over root sets): 0.027 ns/node
+   fused AND  (A then B)     2.27 ns/node (   285 roots,    175707 pushes) | vs separate path-enum  1.84x, vs separate set-mode  1.69x
+   fused AND  (B then A)     2.04 ns/node (   285 roots,    136911 pushes) | vs separate path-enum  2.04x, vs separate set-mode  1.88x
+   fused OR                  2.67 ns/node ( 22217 roots,    268311 pushes) | vs separate path-enum  1.57x, vs separate set-mode  1.44x
+   fused A AND NOT B         2.25 ns/node ( 20665 roots,    175707 pushes) | vs separate path-enum  1.86x, vs separate set-mode  1.71x
+
+-- call: function is attribute / has keyword_argument (381926 roots)
+   separate A path-enum: 0.99 ns/node (262070 witness paths, 262070 roots, 763853 pushes); set-mode: 1.02 ns/node (763853 pushes)
+   separate B path-enum: 1.42 ns/node (44968 witness paths, 27826 roots, 995956 pushes); set-mode: 1.40 ns/node (995956 pushes)
+   join (3 set ops over root sets): 0.568 ns/node
+   fused AND  (A then B)     1.94 ns/node ( 18075 roots,   1840232 pushes) | vs separate path-enum  1.53x, vs separate set-mode  1.54x
+   fused AND  (B then A)     1.65 ns/node ( 18075 roots,   1433534 pushes) | vs separate path-enum  1.80x, vs separate set-mode  1.81x
+   fused OR                  1.80 ns/node (271821 roots,   1829208 pushes) | vs separate path-enum  1.65x, vs separate set-mode  1.66x
+   fused A AND NOT B         1.98 ns/node (243995 roots,   1840232 pushes) | vs separate path-enum  1.50x, vs separate set-mode  1.51x
+
+-- except_clause: inside function / has raise (6188 roots)
+   separate A path-enum: 0.11 ns/node (6472 witness paths, 5775 roots, 43148 pushes); set-mode: 0.11 ns/node (43148 pushes)
+   separate B path-enum: 0.09 ns/node (1402 witness paths, 1306 roots, 7590 pushes); set-mode: 0.09 ns/node (7494 pushes)
+   join (3 set ops over root sets): 0.005 ns/node
+   fused AND  (A then B)     0.19 ns/node (  1274 roots,     56385 pushes) | vs separate path-enum  1.04x, vs separate set-mode  1.05x
+   fused AND  (B then A)     0.13 ns/node (  1274 roots,     23060 pushes) | vs separate path-enum  1.56x, vs separate set-mode  1.59x
+   fused OR                  0.11 ns/node (  5807 roots,     55969 pushes) | vs separate path-enum  1.77x, vs separate set-mode  1.80x
+   fused A AND NOT B         0.22 ns/node (  4501 roots,     56385 pushes) | vs separate path-enum  0.90x, vs separate set-mode  0.92x

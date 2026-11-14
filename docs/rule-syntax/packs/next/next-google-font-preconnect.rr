@@ -1,0 +1,19 @@
+.policy "next-google-font-preconnect" revision 4
+.description "Mark links to Google's font file host (fonts.gstatic.com) as preconnect; it opens the connection early so fonts load sooner."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's google-font-preconnect. A <link> to https://fonts.gstatic.com must have rel="preconnect":
+//   <link href="https://fonts.gstatic.com" />                       reported
+//   <link rel="preload" href="https://fonts.gstatic.com" />         reported
+//   <link rel="preconnect" href="https://fonts.gstatic.com" />      fine
+
+#include "tsx/next.rr"
+
+.violation preconnect(at: node) code "@next/next/google-font-preconnect"
+    "`rel=\"preconnect\"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect"
+    suppress eslint "@next/next/google-font-preconnect"
+    suppress oxlint "google-font-preconnect"
+    suppress biome "lint/performance/useGoogleFontPreconnect"
+preconnect(o) :- tag_of(o, "link"), attr_str(o, "href", h), prefix("https://fonts.gstatic.com", h),
+    !attr_lit(o, "rel", "preconnect").

@@ -1,0 +1,120 @@
+{
+  "baseline": {
+    "phases": {
+      "tape restore": {
+        "cpu": 0.6056250000000005,
+        "calls": 5725
+      },
+      "facts from tape": {
+        "cpu": 1.1997779999999998,
+        "calls": 5725
+      },
+      "validated tape columns": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "kind postings": {
+        "cpu": 0.3369599999999997,
+        "calls": 5725
+      },
+      "identity maps": {
+        "cpu": 0.22011599999999726,
+        "calls": 5725
+      },
+      "token spans": {
+        "cpu": 0.10096300000000233,
+        "calls": 5725
+      },
+      "projection lines": {
+        "cpu": 0.0855679999999765,
+        "calls": 5725
+      },
+      "projection depths": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "projection subtree sizes": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "projection ordinals": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "projection fields": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "project and intern": {
+        "cpu": 0.753660999999999,
+        "calls": 73
+      }
+    },
+    "cumulativeAtPublication": {
+      "coreColumnBytes": 848390546,
+      "identityCapacityBytes": 447217764,
+      "extraSpanCapacityBytes": 103090760
+    },
+    "vm": 785573,
+    "sql": 81
+  },
+  "production": {
+    "phases": {
+      "tape restore": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "facts from tape": {
+        "cpu": 1.024947999999999,
+        "calls": 5725
+      },
+      "validated tape columns": {
+        "cpu": 0.5874619999999982,
+        "calls": 5725
+      },
+      "kind postings": {
+        "cpu": 0.0772059999999964,
+        "calls": 5725
+      },
+      "identity maps": {
+        "cpu": 0.09536699999999784,
+        "calls": 5725
+      },
+      "token spans": {
+        "cpu": 0.0007439999999999947,
+        "calls": 34
+      },
+      "projection lines": {
+        "cpu": 0.09422699999999823,
+        "calls": 5725
+      },
+      "projection depths": {
+        "cpu": 0.00019099999999996897,
+        "calls": 25
+      },
+      "projection subtree sizes": {
+        "cpu": 0.0005569999999999742,
+        "calls": 35
+      },
+      "projection ordinals": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "projection fields": {
+        "cpu": 0,
+        "calls": 0
+      },
+      "project and intern": {
+        "cpu": 0.30055999999999966,
+        "calls": 73
+      }
+    },
+    "cumulativeAtPublication": {
+      "coreColumnBytes": 696329506,
+      "identityCapacityBytes": 126171076,
+      "extraSpanCapacityBytes": 0
+    },
+    "vm": 785573,
+    "sql": 81
+  }
+}

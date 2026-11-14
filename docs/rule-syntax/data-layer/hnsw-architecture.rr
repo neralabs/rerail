@@ -1,0 +1,132 @@
+.policy "data-layer:hnsw-architecture" revision 1
+.description "The standard HNSW stays backend-independent: no pseudo-HNSW names or state, no backend code in the algorithm, no JSON."
+.language python
+.mode block
+.scope dirs "impl/common", "l5200_vector_index"
+.scope include "vector_types.py"
+.scope tests false
+// Python linter: scripts/lint_hnsw_architecture.py. One pass over the module's `ast` nodes:
+//   HNSW001 a Name, an attribute or a def/class name in the deleted pseudo-HNSW names
+//   HNSW002 a str constant (docstrings included) containing a deleted state word (in_beam, route_partition, …)
+//   HNSW003 in a file named algorithm.py: an import whose module names a backend (.sqlite, sql_dialect, backend_type)
+//   HNSW004 in algorithm.py: a plain `def render` (not async), at any depth
+//   HNSW005 in algorithm.py: a call `SqlFragment.x(…)`
+//   HNSW006 the file is one of the deleted modules: reported at line 1, and nothing else is checked in it
+//   HNSW007 in an HNSW module ("hnsw" in the file's stem, or under sql_table_hnsw/): a JSON token in an import,
+//           a Name, an attribute or a str constant that is not a docstring
+// Generated rust_bridge/generated_* files are skipped.
+// The plugin path runs the extractor only on files whose text contains hnsw/Hnsw/HNSW/json/Json/JSON; the direct
+// call (find_hnsw_architecture_findings, every recorded event) does not. This rule follows the direct call.
+//
+// How to read this file
+//   1. hn_doc / hn_algorithm / hn_hnsw_module classify the document by its path.
+//   2. hn_str(n, v): every str Constant `ast.walk` visits, with its node; hn_doc_str marks docstrings.
+//   3. hn_import_piece(i, s): the module and the imported names of an import, as the linter joins them.
+//   4. Each code is then one rule, or one per kind of node.
+
+#include "python/ast.rr"   // ast_name, docstring, str_const, from_module_raw
+
+// The deleted classes, settings and helpers (_FORBIDDEN_NAMES).
+.decl hn_forbidden(x: symbol)
+hn_forbidden("SqlHnswBeamLayerSearch"). hn_forbidden("SqlHnswBeamLayerTrace").
+hn_forbidden("SqlHnswEpochRecoveryStep"). hn_forbidden("SqlHnswFrontierAdvance").
+hn_forbidden("SqlHnswFrontierTickInsert"). hn_forbidden("SqlHnswIncrementalMutationProgram").
+hn_forbidden("SqlTableHnswIncrementalUpperEdges"). hn_forbidden("SqlTableHnswScopedRebuild").
+hn_forbidden("SqlTableHnswRepairContentOrphanNeighbors"). hn_forbidden("SqlTableHnswRepairSourceNeighbors").
+hn_forbidden("_SqlHnswEpochLayerEdges").
+hn_forbidden("hnsw_flat_walk_neighbor_limit"). hn_forbidden("hnsw_flat_walk_recursion_limit").
+hn_forbidden("hnsw_flat_walk_visited_budget"). hn_forbidden("hnsw_insertion_recursive_iteration_limit").
+hn_forbidden("hnsw_recovery_diversity_candidate_limit"). hn_forbidden("hnsw_recovery_exhaustive_candidate_limit").
+hn_forbidden("hnsw_recovery_initial_neighbor_limit"). hn_forbidden("hnsw_recovery_pruning_candidate_limit").
+hn_forbidden("hnsw_recovery_route_partition_count"). hn_forbidden("hnsw_search_frontier_iteration_limit").
+hn_forbidden("scored_pairs_query").
+// Deleted state, matched as substrings of string constants (_FORBIDDEN_TEXT).
+.decl hn_state(t: symbol)
+hn_state("in_beam"). hn_state("beam_iteration_limit"). hn_state("original_cosine"). hn_state("recovery_epoch").
+hn_state("route_partition").
+// Backend modules the algorithm may not import (_FORBIDDEN_ALGORITHM_IMPORT_PARTS), as substrings.
+.decl hn_backend(t: symbol)
+hn_backend(".sqlite"). hn_backend("sql_dialect"). hn_backend("backend_type").
+// The deleted modules (_FORBIDDEN_FILES), under impl/common/l2100_sql_grammar/domain/sql_table_hnsw/.
+.decl hn_deleted_file(f: symbol)
+hn_deleted_file("frontier.py"). hn_deleted_file("normalized_vectors.py"). hn_deleted_file("recovery_schema.py").
+hn_deleted_file("search_program.py"). hn_deleted_file("sqlite_construction.py").
+hn_deleted_file("sqlite_frontier.py").
+
+// ---- 1. documents ------------------------------------------------------------------------------------------------
+// hn_deleted(d, p): document d, at path p, is a deleted module. hn_doc(d): any other document that is checked.
+.decl hn_deleted(d: number, p: symbol)
+hn_deleted(d, p) :- doc(d, p, _), file_name(d, f), hn_deleted_file(f),
+    p = cat("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/", f).
+.decl hn_doc(d: number)
+hn_doc(d) :- doc(d, _, _), !hn_deleted(d, _), !hn_generated(d).
+.decl hn_generated(d: number)                       // rust_bridge/…/generated_*.py
+hn_generated(d) :- path_part(d, "rust_bridge"), file_name(d, f), prefix("generated_", f).
+// hn_algorithm(d): a file named algorithm.py, wherever it is.
+.decl hn_algorithm(d: number)
+hn_algorithm(d) :- hn_doc(d), file_name(d, "algorithm.py").
+// hn_hnsw_module(d): "hnsw" in the stem, any case, or a sql_table_hnsw directory on the path.
+.decl hn_hnsw_module(d: number)
+hn_hnsw_module(d) :- hn_doc(d), file_name(d, f), icontains("hnsw", f).   // f is *.py: the suffix holds no "hnsw"
+hn_hnsw_module(d) :- hn_doc(d), path_part(d, "sql_table_hnsw").
+// hn_in(n, d): node n is in a checked document d.
+.decl hn_in(n: node, d: number)
+hn_in(n, d) :- docof(n, d), hn_doc(d).
+
+// ---- 2. strings --------------------------------------------------------------------------------------------------
+// hn_str(n, v): a str Constant. A plain literal, or adjacent ones, is one Constant at the literal; an f-string's
+// literal pieces are Constants of their own, format specs included, at the piece they start in. Bytes give none.
+.decl hn_str(n: node, v: symbol)
+hn_str(n, v) :- str_const(n, v).
+hn_str(at, v) :- fstring(n), str_part(n, _, v, at, _).
+// hn_doc_str(n): the first statement of a module, class or def is this string: a docstring, skipped by HNSW007.
+.decl hn_doc_str(n: node)
+hn_doc_str(s) :- docstring(_, s).
+
+// ---- 3. imports --------------------------------------------------------------------------------------------------
+// hn_import_module(i, m): the module the linter reads off an import: `from m import …` as written (dots dropped),
+// or each name of `import a, b` (the linter joins them with "," and searches the join; none starts with ".").
+.decl hn_import_module(i: node, m: symbol)
+hn_import_module(i, m) :- from_module_raw(i, m).
+hn_import_module(i, m) :- kind(i, "import_statement"), field(i, "name", n), hn_alias_name(n, m).
+// hn_alias_name(n, x): an imported name as written, before any `as`.
+.decl hn_alias_name(n: node, x: symbol)
+hn_alias_name(n, x) :- kind(n, "dotted_name"), text(n, x).
+hn_alias_name(n, x) :- kind(n, "aliased_import"), field(n, "name", d), text(d, x).
+// hn_import_piece(i, s): the module, or one imported name. HNSW007 tests each (they are joined by " ").
+.decl hn_import_piece(i: node, s: symbol)
+hn_import_piece(i, m) :- hn_import_module(i, m).
+hn_import_piece(i, x) :- kind(i, "import_from_statement"), field(i, "name", n), hn_alias_name(n, x).
+
+// ---- 4. findings -------------------------------------------------------------------------------------------------
+.violation HNSW001(at: node, name: symbol) "forbidden pseudo-HNSW symbol: {name}"
+HNSW001(n, x) :- ast_name(n, x), hn_forbidden(x), hn_in(n, _).
+HNSW001(a, x) :- kind(a, "attribute"), field(a, "attribute", t), text(t, x), hn_forbidden(x), hn_in(a, _).
+HNSW001(f, x) :- def_name(f, x), hn_forbidden(x), hn_in(f, _).
+
+.violation HNSW002(at: node, text: symbol) "forbidden pseudo-HNSW state: {text}"
+HNSW002(n, t) :- hn_str(n, v), hn_state(t), contains(t, v), hn_in(n, _).
+
+.violation HNSW003(at: node, module: symbol) "algorithm imports backend implementation: {module}"
+HNSW003(i, m) :- hn_import_module(i, m), hn_backend(t), contains(t, m), docof(i, d), hn_algorithm(d).
+
+.violation HNSW004(at: node) "algorithm defines a custom render method"
+HNSW004(f) :- def_name(f, "render"), kind(f, "function_definition"), !op(f, "async"), docof(f, d), hn_algorithm(d).
+
+.violation HNSW005(at: node) "algorithm constructs SQL fragments instead of query-builder nodes"
+HNSW005(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute"), field(f, "object", o),
+    kind(o, "identifier"), text(o, "SqlFragment"), docof(c, d), hn_algorithm(d).
+
+.violation HNSW006(at: span) "forbidden HNSW module exists"
+HNSW006(@place(p, 1)) :- hn_deleted(_, p).
+
+// hn_token(n, s): what HNSW007 searches at node n: an import's module or names, a Name, an attribute's name, or a str
+// constant that is not a docstring.
+.decl hn_token(n: node, s: symbol)
+hn_token(i, s) :- hn_import_piece(i, s).
+hn_token(n, x) :- ast_name(n, x).
+hn_token(a, x) :- kind(a, "attribute"), field(a, "attribute", t), text(t, x).
+hn_token(n, v) :- hn_str(n, v), !hn_doc_str(n).
+// A JSON token: SQL/JSON names (sqljson…), or json / jsonb, alone or with a `_suffix`, as a whole word, any case.
+.violation HNSW007(at: node) "HNSW must use indexed SQL rows, not JSON operations"
+HNSW007(n) :- hn_token(n, s), match("(?is).*(?:sqljson|\\bjsonb?(?:_\\w+)?\\b).*", s), docof(n, d), hn_hnsw_module(d).

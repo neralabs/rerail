@@ -1,0 +1,97 @@
+.policy "data-layer:schema-bootstrap-contracts" revision 1
+.description "Strict signatures in the schema transaction and bootstrap files: typed, lazy-universe, no runtime probes."
+.language python
+.mode block
+.scope include "l2000_connection/schema_transaction.py", "l2000_connection/connection_caches.py", "l3200_metadata/bootstrap_state.py"
+.scope include "impl/common/l2200_sql_dialect/sql_connection.py", "impl/common/l2200_sql_dialect/sql_schema_services.py"
+.scope include "impl/common/l2200_sql_dialect/sql_versioning_services.py", "impl/common/l7245_versioned_backends/generic_sparse.py"
+.scope include "l7000_versioned_schema/physical_keys.py"
+.scope tests false
+// Python linter: scripts/lint_schema_bootstrap_contracts.py (the suite runs it with --check), over eight files.
+//   SBC001  a def named …_lazy without a pure_lazy decorator (`@pure_lazy`, `@x.pure_lazy()`)
+//   SBC002  a parameter (self and cls aside) with no annotation, or one naming a broad type: Any, Collection,
+//           Iterable, Mapping, MutableMapping, MutableSequence, Sequence. A public def may take `Sequence[T]` when
+//           T names something and nothing primitive (Any, bytes, bytearray, float, int, object, str)
+//   SBC003  a call of getattr, hasattr, setattr or delattr;  SBC005  of isinstance or issubclass
+//   SBC004  a def with both a connection-like and a transaction-like parameter, by name or by annotation
+//   SBC006  a sync/async connection or transaction type in a …_lazy def's annotations (parameters, return,
+//           and every annotated assignment below it, nested defs' included), at the annotation; or a
+//           schema_txn / schema_transaction / current_schema_txn parameter of a non-lazy def typed
+//           SyncSchemaTransaction or AsyncSchemaTransaction
+// Annotations are read by their words (lib/data-layer/boot-python.rr's ann_word_s: Name ids and Attribute
+// attrs; a whole-string annotation is parsed). Names are matched by spelling; nothing is resolved. Every def
+// counts, nested ones and methods included; lambdas do not.
+
+#include "python/ast.rr"
+#include "data-layer/boot-python.rr"     // callee_name, deco_word, ann_word_s, ann_value_word, ann_slice_word
+
+// sbc_param(f, nm, x, a): parameter x (name node nm) of def f, any kind, self and cls aside; a its annotation or unset.
+.decl sbc_param(f: node, nm: node, x: symbol, a: loc)
+sbc_param(f, nm, x, a) :- kind(f, "function_definition"), sig_param(f, _, nm, _, _, a, _), text(nm, x),
+    x != "self", x != "cls".
+.decl sbc_lazy(f: node)  // a def named …_lazy
+sbc_lazy(f) :- kind(f, "function_definition"), def_name(f, n), suffix("_lazy", n).
+// The linter's type and parameter-name sets.
+.decl sbc_broad(x: symbol)
+sbc_broad("Any"). sbc_broad("Collection"). sbc_broad("Iterable"). sbc_broad("Mapping").
+sbc_broad("MutableMapping"). sbc_broad("MutableSequence"). sbc_broad("Sequence").
+.decl sbc_primitive(x: symbol)
+sbc_primitive("Any"). sbc_primitive("bytes"). sbc_primitive("bytearray"). sbc_primitive("float").
+sbc_primitive("int"). sbc_primitive("object"). sbc_primitive("str").
+.decl sbc_conn_name(x: symbol)
+sbc_conn_name("conn"). sbc_conn_name("connection"). sbc_conn_name("db_connection"). sbc_conn_name("sync_conn").
+sbc_conn_name("async_conn"). sbc_conn_name("sql_conn").
+.decl sbc_txn_name(x: symbol)
+sbc_txn_name("txn"). sbc_txn_name("transaction"). sbc_txn_name("read_txn"). sbc_txn_name("write_txn").
+sbc_txn_name(x) :- sbc_schema_txn_name(x).
+.decl sbc_schema_txn_name(x: symbol)
+sbc_schema_txn_name("schema_txn"). sbc_schema_txn_name("schema_transaction"). sbc_schema_txn_name("current_schema_txn").
+// Type names, as globs over annotation words.
+.decl sbc_conn_type(x: symbol)
+sbc_conn_type(x) :- ann_word_s(_, x), glob("{{Sync,Async}{,Versioned}DatabaseConnection,_DatabaseConnectionCore,_SqlConnectionCore}", x).
+.decl sbc_txn_type(x: symbol)
+sbc_txn_type(x) :- ann_word_s(_, x), glob("{{Lazy,Sync,Async}Schema,{,Sync,Async}{Read,Write}}Transaction", x).
+.decl sbc_mode_type(x: symbol)  // a sync- or async-universe connection or transaction type
+sbc_mode_type(x) :- ann_word_s(_, x),
+    glob("{Sync,Async}{DatabaseConnection,VersionedDatabaseConnection,ReadTransaction,WriteTransaction,SchemaTransaction}", x).
+
+.violation SBC001(at: node) "{at.name}() ends with _lazy but is not decorated with @pure_lazy"
+SBC001(f) :- sbc_lazy(f), !deco_word(f, "pure_lazy").
+
+// SBC002: missing, or broad and not the allowed public Sequence[T].
+.violation SBC002(at: node, x: symbol) "parameter {x} is missing an explicit type annotation or uses a broad one"
+SBC002(nm, x) :- sbc_param(_, nm, x, a), unset(a).
+SBC002(nm, x) :- sbc_param(f, nm, x, a), ann_word_s(a, b), sbc_broad(b), !sbc_domain_sequence(f, a).
+// sbc_domain_sequence(f, a): f is public, a is `Sequence[T]` (a subscript, not a string), its only broad word is
+// Sequence, its value's words are just Sequence, and T has words, none primitive.
+.decl sbc_domain_sequence(f: node, a: node)
+sbc_domain_sequence(f, a) :- sbc_param(f, _, _, a), def_name(f, n), !prefix("_", n),
+    count : { ann_word_s(a, b), sbc_broad(b), b != "Sequence" } = 0,
+    count : { ann_value_word(a, v), v != "Sequence" } = 0, ann_value_word(a, "Sequence"),
+    ann_slice_word(a, _), count : { ann_slice_word(a, w), sbc_primitive(w) } = 0.
+
+.violation SBC003(at: node, x: symbol) "{x}() is forbidden in schema/bootstrap contract files; use explicit typed attributes or protocols"
+SBC003(c, x) :- callee_name(c, x), (x = "getattr" ; x = "hasattr" ; x = "setattr" ; x = "delattr").
+.violation SBC005(at: node, x: symbol) "{x}() is forbidden in schema/bootstrap contract files; use concrete typed collaborators instead"
+SBC005(c, x) :- callee_name(c, x), (x = "isinstance" ; x = "issubclass").
+
+.violation SBC004(at: node) "{at.name}() accepts both connection-like and transaction-like parameters"
+SBC004(f) :- sbc_conn_param(f), sbc_txn_param(f).
+.decl sbc_conn_param(f: node)
+sbc_conn_param(f) :- sbc_param(f, _, x, a), !unset(a), sbc_conn_name(x).
+sbc_conn_param(f) :- sbc_param(f, _, _, a), ann_word_s(a, w), sbc_conn_type(w).
+.decl sbc_txn_param(f: node)
+sbc_txn_param(f) :- sbc_param(f, _, x, a), !unset(a), sbc_txn_name(x).
+sbc_txn_param(f) :- sbc_param(f, _, _, a), ann_word_s(a, w), sbc_txn_type(w).
+
+// SBC006: at the annotation inside a lazy def, at the parameter's name for a non-lazy schema parameter.
+.violation SBC006(at: node, x: symbol) "{x}: a sync/async type where the lazy universe is required; use LazySchemaTransaction"
+SBC006(a, w) :- sbc_lazy(f), sbc_lazy_ann(f, a), ann_word_s(a, w), sbc_mode_type(w).
+SBC006(nm, w) :- sbc_param(f, nm, x, a), !sbc_lazy(f), sbc_schema_txn_name(x), ann_word_s(a, w),
+    (w = "SyncSchemaTransaction" ; w = "AsyncSchemaTransaction").
+// sbc_lazy_ann(f, a): the linter's _function_annotations: f's parameter and return annotations, and every annotated
+// assignment's anywhere below f.
+.decl sbc_lazy_ann(f: node, a: node)
+sbc_lazy_ann(f, a) :- sbc_lazy(f), sig_param(f, _, _, _, _, a, _), !unset(a).
+sbc_lazy_ann(f, a) :- sbc_lazy(f), field(f, "return_type", a).
+sbc_lazy_ann(f, a) :- kind(x, "assignment"), field(x, "type", a), inside(x, f, "function_definition"), sbc_lazy(f).

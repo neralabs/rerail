@@ -1,0 +1,18 @@
+.policy "bandit-b406-import-xml-sax" revision 3
+.description "Avoid importing xml.sax or anything under it, saxutils included; its XML parsing is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B406 (its B001 blacklist): an import of xml.sax or anything under it, saxutils included.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import xml.sax                              B406
+//   from xml.sax import saxutils                B406
+//   import defusedxml.sax                       not reported
+//   importlib.import_module("xml.sax")          B406: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B406(at: node) code "B406"
+    "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B406"
+B406(n) :- blacklisted(n, "B406").

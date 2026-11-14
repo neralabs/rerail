@@ -1,0 +1,4835 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-async-patterns",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer async_patterns at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/sqlite/**/*.py",
+      "impl/postgres/**/*.py",
+      "impl/mariadb/**/*.py",
+      "impl/doltdb/**/*.py",
+      "impl/mongodb/**/*.py",
+      "impl/neo4j/**/*.py",
+      "impl/common/**/*.py",
+      "api/**/*.py",
+      "conform/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/*test_*"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "oracle-facade",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Replay the original raw analyzer boundary instead of the production plugin reporter."
+          }
+        },
+        "language": "python",
+        "utils": {
+          "txn-annotation": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      },
+                      {
+                        "kind": "generic_type"
+                      },
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "union_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "txn-annotation",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "matches": "txn-annotation",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "txn-name": {
+            "all": [
+              {
+                "kind": "identifier",
+                "pattern": "$TRACKED_NAME"
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "has": {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "pattern": "$TRACKED_NAME"
+                                    },
+                                    {
+                                      "kind": "identifier",
+                                      "regex": "^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "default_parameter"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "pattern": "$TRACKED_NAME"
+                                      },
+                                      {
+                                        "kind": "identifier",
+                                        "regex": "^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "typed_parameter"
+                                    },
+                                    {
+                                      "kind": "typed_default_parameter"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "nthChild": 1
+                                      },
+                                      {
+                                        "any": [
+                                          {
+                                            "pattern": "$TRACKED_NAME"
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$TRACKED_NAME",
+                                              "stopBy": "neighbor"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "all": [
+                                              {
+                                                "nthChild": 1
+                                              },
+                                              {
+                                                "any": [
+                                                  {
+                                                    "pattern": "$TRACKED_NAME"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "pattern": "$TRACKED_NAME",
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "regex": "^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "matches": "txn-annotation",
+                                        "stopBy": "neighbor",
+                                        "field": "type"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "list_splat_pattern"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat_pattern"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "pattern": "$TRACKED_NAME"
+                                      },
+                                      {
+                                        "kind": "identifier",
+                                        "regex": "^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "parameters"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "txn-root": {
+            "any": [
+              {
+                "matches": "txn-name"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "matches": "txn-root",
+                      "stopBy": "neighbor",
+                      "field": "object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "matches": "txn-root",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "matches": "txn-root",
+                      "stopBy": "neighbor",
+                      "field": "value"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "query-chain": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:select_at_revision|query|cross_branch)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "txn-root",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "matches": "query-chain",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "query-name": {
+            "params": [
+              "CANDIDATE",
+              "AT"
+            ],
+            "rule": {
+              "all": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$CANDIDATE"
+                },
+                {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^async\\b"
+                      },
+                      {
+                        "has": {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "assignment"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier",
+                                      "pattern": "$CANDIDATE"
+                                    },
+                                    {
+                                      "pattern": "$ASSIGN_POINT"
+                                    },
+                                    {
+                                      "layout": {
+                                        "after": {
+                                          "to": "capture.AT",
+                                          "breaks": {
+                                            "min": 0
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "left"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "matches": {
+                                    "query-value": {
+                                      "AT": "$ASSIGN_POINT"
+                                    }
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "right"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_definition"
+                                },
+                                {
+                                  "kind": "lambda"
+                                }
+                              ]
+                            }
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "lambda"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "session-name": {
+            "params": [
+              "CANDIDATE",
+              "AT"
+            ],
+            "rule": {
+              "all": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$CANDIDATE"
+                },
+                {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^async\\b"
+                      },
+                      {
+                        "has": {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "assignment"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier",
+                                      "pattern": "$CANDIDATE"
+                                    },
+                                    {
+                                      "pattern": "$ASSIGN_POINT"
+                                    },
+                                    {
+                                      "layout": {
+                                        "after": {
+                                          "to": "capture.AT",
+                                          "breaks": {
+                                            "min": 0
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "left"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "matches": {
+                                    "session-value": {
+                                      "AT": "$ASSIGN_POINT"
+                                    }
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "right"
+                                }
+                              }
+                            ],
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_definition"
+                                },
+                                {
+                                  "kind": "lambda"
+                                }
+                              ]
+                            }
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "lambda"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "query-value": {
+            "params": [
+              "AT"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "matches": "query-chain"
+                },
+                {
+                  "all": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$ALIAS"
+                    },
+                    {
+                      "matches": {
+                        "query-name": {
+                          "CANDIDATE": "$ALIAS",
+                          "AT": "$AT"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "has": {
+                        "matches": {
+                          "query-value": {
+                            "AT": "$AT"
+                          }
+                        },
+                        "stopBy": "neighbor",
+                        "field": "right"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "session-value": {
+            "params": [
+              "AT"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "kind": "call"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:session)$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "function"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$ALIAS"
+                    },
+                    {
+                      "matches": {
+                        "session-name": {
+                          "CANDIDATE": "$ALIAS",
+                          "AT": "$AT"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "has": {
+                        "matches": {
+                          "session-value": {
+                            "AT": "$AT"
+                          }
+                        },
+                        "stopBy": "neighbor",
+                        "field": "right"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "query-root": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$QUERY_ROOT"
+                  },
+                  {
+                    "matches": {
+                      "query-name": {
+                        "CANDIDATE": "$QUERY_ROOT",
+                        "AT": "$CALL"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "matches": "query-root",
+                      "stopBy": "neighbor",
+                      "field": "object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "matches": "query-root",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "matches": "query-root",
+                      "stopBy": "neighbor",
+                      "field": "value"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "session-root": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$SESSION_ROOT"
+                  },
+                  {
+                    "matches": {
+                      "session-name": {
+                        "CANDIDATE": "$SESSION_ROOT",
+                        "AT": "$CALL"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "matches": "session-root",
+                      "stopBy": "neighbor",
+                      "field": "object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "matches": "session-root",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "matches": "session-root",
+                      "stopBy": "neighbor",
+                      "field": "value"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "to-thread-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call",
+                "pattern": "$CALL"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "has": {
+                        "kind": "identifier",
+                        "regex": "^(?:to_thread)$",
+                        "stopBy": "neighbor",
+                        "field": "attribute"
+                      }
+                    },
+                    {
+                      "has": {
+                        "pattern": "$RECEIVER",
+                        "stopBy": "neighbor",
+                        "field": "object"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC001",
+        "anchor": "witness.span",
+        "message": "Use native async instead of to_thread() in implementation code."
+      }
+    },
+    {
+      "id": "to-thread-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:to_thread)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC001",
+        "anchor": "witness.span",
+        "message": "Use native async instead of to_thread() in implementation code."
+      }
+    },
+    {
+      "id": "to-thread-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:to_thread)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "regex": "Transaction|Connection|Query|Handle|Version",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:ABC)$"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "has": {
+                                          "kind": "identifier",
+                                          "regex": "^(?:ABC)$",
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "superclasses"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC001",
+        "anchor": "witness.span",
+        "message": "Use native async instead of to_thread() in implementation code."
+      }
+    },
+    {
+      "id": "to-thread-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:to_thread)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC001",
+        "anchor": "witness.span",
+        "message": "Use native async instead of to_thread() in implementation code."
+      }
+    },
+    {
+      "id": "executor-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call",
+                "pattern": "$CALL"
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "has": {
+                        "kind": "identifier",
+                        "regex": "^(?:run_in_executor)$",
+                        "stopBy": "neighbor",
+                        "field": "attribute"
+                      }
+                    },
+                    {
+                      "has": {
+                        "pattern": "$RECEIVER",
+                        "stopBy": "neighbor",
+                        "field": "object"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC002",
+        "anchor": "witness.span",
+        "message": "Use native async instead of run_in_executor() in implementation code."
+      }
+    },
+    {
+      "id": "executor-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:run_in_executor)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC002",
+        "anchor": "witness.span",
+        "message": "Use native async instead of run_in_executor() in implementation code."
+      }
+    },
+    {
+      "id": "executor-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:run_in_executor)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "regex": "Transaction|Connection|Query|Handle|Version",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:ABC)$"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "has": {
+                                          "kind": "identifier",
+                                          "regex": "^(?:ABC)$",
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "superclasses"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "layout": {
+                    "context": {
+                      "before": 15,
+                      "after": 15,
+                      "regex": "_wrap_for_executor"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC002",
+        "anchor": "witness.span",
+        "message": "Use native async instead of run_in_executor() in implementation code."
+      }
+    },
+    {
+      "id": "executor-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:run_in_executor)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "layout": {
+                    "context": {
+                      "before": 15,
+                      "after": 15,
+                      "regex": "_wrap_for_executor"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC002",
+        "anchor": "witness.span",
+        "message": "Use native async instead of run_in_executor() in implementation code."
+      }
+    },
+    {
+      "id": "decorated-write-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-write-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-write-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-write-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-read-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:select_one|execute|execute_one|count|exists|first)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async|read_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-read-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:select_one|execute|execute_one|count|exists|first)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async|read_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-read-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:select_one|execute|execute_one|count|exists|first)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async|read_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "decorated-read-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:select_one|execute|execute_one|count|exists|first)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "function_definition",
+                      "regex": "^async\\b"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "decorated_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "decorator"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "kind": "identifier",
+                                                "regex": "^(?:write_async|read_async)$",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC004",
+        "anchor": "witness.span",
+        "message": "Use the async method variant inside an async transaction callback."
+      }
+    },
+    {
+      "id": "internal-io-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:_execute_sql|_fetchone|_fetchall|raw_execute|_execute_template_with_params|nonportably_execute_sql)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC005",
+        "anchor": "witness.span",
+        "message": "Sync I/O in an async function requires the corresponding async implementation."
+      }
+    },
+    {
+      "id": "internal-io-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:_execute_sql|_fetchone|_fetchall|raw_execute|_execute_template_with_params|nonportably_execute_sql)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC005",
+        "anchor": "witness.span",
+        "message": "Sync I/O in an async function requires the corresponding async implementation."
+      }
+    },
+    {
+      "id": "internal-io-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:_execute_sql|_fetchone|_fetchall|raw_execute|_execute_template_with_params|nonportably_execute_sql)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "regex": "Transaction|Connection|Query|Handle|Version",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:ABC)$"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "has": {
+                                          "kind": "identifier",
+                                          "regex": "^(?:ABC)$",
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "superclasses"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC005",
+        "anchor": "witness.span",
+        "message": "Sync I/O in an async function requires the corresponding async implementation."
+      }
+    },
+    {
+      "id": "internal-io-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:_execute_sql|_fetchone|_fetchall|raw_execute|_execute_template_with_params|nonportably_execute_sql)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC005",
+        "anchor": "witness.span",
+        "message": "Sync I/O in an async function requires the corresponding async implementation."
+      }
+    },
+    {
+      "id": "polymorphic-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:ensure_dynamic_polymorphic_metadata|register_polymorphic_metadata_for_schema_update)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC008",
+        "anchor": "witness.span",
+        "message": "Use await with the async polymorphic metadata helper inside an async function."
+      }
+    },
+    {
+      "id": "polymorphic-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:ensure_dynamic_polymorphic_metadata|register_polymorphic_metadata_for_schema_update)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC008",
+        "anchor": "witness.span",
+        "message": "Use await with the async polymorphic metadata helper inside an async function."
+      }
+    },
+    {
+      "id": "polymorphic-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:ensure_dynamic_polymorphic_metadata|register_polymorphic_metadata_for_schema_update)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC008",
+        "anchor": "witness.span",
+        "message": "Use await with the async polymorphic metadata helper inside an async function."
+      }
+    },
+    {
+      "id": "polymorphic-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:ensure_dynamic_polymorphic_metadata|register_polymorphic_metadata_for_schema_update)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC008",
+        "anchor": "witness.span",
+        "message": "Use await with the async polymorphic metadata helper inside an async function."
+      }
+    },
+    {
+      "id": "transaction-receiver-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback|select_one|execute|execute_one|count|exists|first|execute_raw|fetchone_raw|fetchall_raw|search|commit_branch|get_history|get_branch_tip|select_at_revision)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^async\\b"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "decorator"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "kind": "identifier",
+                                                  "regex": "^(?:write_async|read_async)$",
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "lambda"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^(?:self)$"
+                      },
+                      {
+                        "matches": "txn-root"
+                      },
+                      {
+                        "matches": "query-root"
+                      },
+                      {
+                        "matches": "query-chain"
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "object"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC006",
+        "anchor": "witness.span",
+        "message": "Use the async method variant on a transaction or query receiver inside an async function."
+      }
+    },
+    {
+      "id": "transaction-receiver-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback|select_one|execute|execute_one|count|exists|first|execute_raw|fetchone_raw|fetchall_raw|search|commit_branch|get_history|get_branch_tip|select_at_revision)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition",
+                            "regex": "^async\\b"
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "decorator"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "attribute"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "kind": "identifier",
+                                                      "regex": "^(?:write_async|read_async)$",
+                                                      "stopBy": "neighbor",
+                                                      "field": "attribute"
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "lambda"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "regex": "^(?:self)$"
+                          },
+                          {
+                            "matches": "txn-root"
+                          },
+                          {
+                            "matches": "query-root"
+                          },
+                          {
+                            "matches": "query-chain"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "object"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC006",
+        "anchor": "witness.span",
+        "message": "Use the async method variant on a transaction or query receiver inside an async function."
+      }
+    },
+    {
+      "id": "transaction-receiver-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback|select_one|execute|execute_one|count|exists|first|execute_raw|fetchone_raw|fetchall_raw|search|commit_branch|get_history|get_branch_tip|select_at_revision)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition",
+                            "regex": "^async\\b"
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "decorator"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "attribute"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "kind": "identifier",
+                                                      "regex": "^(?:write_async|read_async)$",
+                                                      "stopBy": "neighbor",
+                                                      "field": "attribute"
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "lambda"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "regex": "^(?:self)$"
+                          },
+                          {
+                            "matches": "txn-root"
+                          },
+                          {
+                            "matches": "query-root"
+                          },
+                          {
+                            "matches": "query-chain"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "object"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "regex": "Transaction|Connection|Query|Handle|Version",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:ABC)$"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "has": {
+                                          "kind": "identifier",
+                                          "regex": "^(?:ABC)$",
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "superclasses"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": {
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC006",
+        "anchor": "witness.span",
+        "message": "Use the async method variant on a transaction or query receiver inside an async function."
+      }
+    },
+    {
+      "id": "transaction-receiver-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call",
+                        "pattern": "$CALL"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "kind": "identifier",
+                                "regex": "^(?:insert|insert_many|update|update_many|delete_by_id|delete_many|delete_returning|delete_many_returning|delete_by_key_many|upsert|upsert_many|commit|rollback|select_one|execute|execute_one|count|exists|first|execute_raw|fetchone_raw|fetchall_raw|search|commit_branch|get_history|get_branch_tip|select_at_revision)$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$RECEIVER",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "regex": "^async\\b",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition",
+                            "regex": "^async\\b"
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "decorator"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "attribute"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "kind": "identifier",
+                                                      "regex": "^(?:write_async|read_async)$",
+                                                      "stopBy": "neighbor",
+                                                      "field": "attribute"
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "lambda"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "identifier",
+                            "regex": "^(?:self)$"
+                          },
+                          {
+                            "matches": "txn-root"
+                          },
+                          {
+                            "matches": "query-root"
+                          },
+                          {
+                            "matches": "query-chain"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "object"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "layout": {
+                        "context": {
+                          "before": 5,
+                          "after": 5,
+                          "regex": "ASYNC_FALLBACK:"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "TODO: Implement"
+                            }
+                          }
+                        },
+                        {
+                          "layout": {
+                            "context": {
+                              "before": 5,
+                              "after": 5,
+                              "regex": "native async"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC006",
+        "anchor": "witness.span",
+        "message": "Use the async method variant on a transaction or query receiver inside an async function."
+      }
+    },
+    {
+      "id": "session-receiver-analyzer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:read|write)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "any": [
+                      {
+                        "matches": "session-root"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:self)$",
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:_conn|conn|connection|_connection)$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "object"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC007",
+        "anchor": "witness.span",
+        "message": "Use await with the async read/write variant on a connection or session inside an async function."
+      }
+    },
+    {
+      "id": "session-receiver-impl",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:read|write)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "any": [
+                      {
+                        "matches": "session-root"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:self)$",
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:_conn|conn|connection|_connection)$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "object"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC007",
+        "anchor": "witness.span",
+        "message": "Use await with the async read/write variant on a connection or session inside an async function."
+      }
+    },
+    {
+      "id": "session-receiver-api",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:read|write)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "any": [
+                      {
+                        "matches": "session-root"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:self)$",
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:_conn|conn|connection|_connection)$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "object"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^api/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC007",
+        "anchor": "witness.span",
+        "message": "Use await with the async read/write variant on a connection or session inside an async function."
+      }
+    },
+    {
+      "id": "session-receiver-conform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^(?:read|write)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        },
+                        {
+                          "has": {
+                            "pattern": "$RECEIVER",
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "kind": "function_definition",
+                  "regex": "^async\\b",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "any": [
+                      {
+                        "matches": "session-root"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:self)$",
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:_conn|conn|connection|_connection)$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "object"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "syntax": "valid",
+          "when": {
+            "option": {
+              "oracleAnalyzer": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "^conform/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "ASYNC007",
+        "anchor": "witness.span",
+        "message": "Use await with the async read/write variant on a connection or session inside an async function."
+      }
+    }
+  ]
+}

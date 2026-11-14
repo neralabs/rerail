@@ -1,6 +1,7 @@
 //! ECMAScript's conversions between numbers and strings, exactly: `Number::toString`,
 //! StringToNumber, StringToBigInt, ToInt32 and ToUint32; and ESLint's static property names.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 use super::ecma::{cooked, number, operand, ops, string_node};
@@ -15,7 +16,7 @@ use num_traits::Zero;
 /// itself, is what its property is named (`getStaticStringValue`: `` `a` `` is `a`, `/a/g` is
 /// `/a/g`, `0x1` is `1`). Anything else, a computed expression or a private name included, is not
 /// known (`None`).
-pub(crate) fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let (key, computed) = match node.kind().as_ref() {
         "pair" | "pair_pattern" => (node.field("key")?, false),
         "method_definition"
@@ -45,7 +46,7 @@ pub(crate) fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16
 /// private name's `PrivateIdentifier.name`, without its `#`) or a string literal's value
 /// (`Literal.value`). ESLint rules compare these across the two (func-name-matching's string key
 /// and function name, no-useless-rename's key and local name). `None` for any other node.
-pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     match node.kind().as_ref() {
         "identifier"
         | "property_identifier"
@@ -67,7 +68,7 @@ pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
 /// `static_keys` (the default there), a member access with a static name is the same as one of the
 /// same name on the same object (`a.b` and `a['b']`); without, computed and static accesses
 /// differ. Any other expression is never the same. `None` where a literal does not decode.
-pub(crate) fn same_reference<D: Doc>(
+pub fn same_reference<D: Doc>(
     left: &Node<'_, D>,
     right: &Node<'_, D>,
     static_keys: bool,
@@ -171,7 +172,7 @@ fn equal_literal_value<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> Optio
 /// `value` folds the key to (eslint-utils' `getStaticValue` in the node's scope: `['f' + '']` is
 /// `f`). It reads a property, method, field, signature or member access, or a key node itself.
 /// `None` where the key's value is not known.
-pub(crate) fn member_access_name<'r, D: Doc>(
+pub fn member_access_name<'r, D: Doc>(
     node: &Node<'r, D>,
     value: &mut dyn FnMut(&Node<'r, D>) -> Value,
 ) -> Option<Vec<u16>> {
@@ -202,10 +203,10 @@ pub(crate) fn member_access_name<'r, D: Doc>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The key node that ESLint's `key` or `property` is: a computed name without its brackets and
 /// parentheses, since ESTree has neither.
-pub(crate) fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let key = match node.kind().as_ref() {
         "pair" | "pair_pattern" => node.field("key")?,
         "method_definition"
@@ -287,46 +288,8 @@ pub(crate) fn identifier_name(text: &str) -> Option<Vec<u16>> {
     Some(out)
 }
 
-/// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
-/// ECMA-262 §6.1.6.1.20 lays them out.
-pub(crate) fn number_to_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value == 0.0 {
-        return "0".to_owned();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
-    }
-    if value < 0.0 {
-        return format!("-{}", number_to_string(-value));
-    }
-    // Rust's shortest round-trip digits, as `d.ddde±x`.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("LowerExp writes an exponent");
-    let digits = mantissa.replace('.', "");
-    let exponent: i32 = exponent.parse().expect("an integer exponent");
-    let k = digits.len() as i32;
-    let n = exponent + 1;
-    if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let sign = if n > 0 { '+' } else { '-' };
-        let (first, rest) = digits.split_at(1);
-        if rest.is_empty() {
-            format!("{first}e{sign}{}", (n - 1).abs())
-        } else {
-            format!("{first}.{rest}e{sign}{}", (n - 1).abs())
-        }
-    }
-}
+// The DSL's number text, which is ECMAScript's (`matcher::transform`, the engine's).
+pub use crate::code_rule_dsl::matcher::transform::number_to_string;
 
 /// `StrWhiteSpaceChar`: ECMAScript white space and line terminators.
 fn is_str_white_space(c: char) -> bool {
@@ -366,7 +329,7 @@ fn radix_integer(text: &str) -> Option<(u32, &str)> {
 
 /// StringToNumber: white space trimmed; empty is 0; `Infinity`, decimals and `0x`/`0o`/`0b`
 /// integers read; anything else is NaN. `None` only for a radix integer past 128 bits.
-pub(crate) fn string_to_number(units: &[u16]) -> Option<f64> {
+pub fn string_to_number(units: &[u16]) -> Option<f64> {
     let Some(text) = trimmed(units) else {
         return Some(f64::NAN);
     };
@@ -420,7 +383,7 @@ pub(crate) fn string_to_number(units: &[u16]) -> Option<f64> {
 }
 
 /// StringToBigInt, exactly: `None` where it is undefined (not an integer literal).
-pub(crate) fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
+pub fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
     let text = trimmed(units)?;
     if text.is_empty() {
         return Some(BigInt::zero());
@@ -441,7 +404,7 @@ pub(crate) fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
 }
 
 /// ToUint32: the number truncated, modulo 2^32; NaN and infinities are 0.
-pub(crate) fn to_uint32(value: f64) -> u32 {
+pub fn to_uint32(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
@@ -449,344 +412,8 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
 }
 
 /// ToInt32: ToUint32 read as two's complement.
-pub(crate) fn to_int32(value: f64) -> i32 {
+pub fn to_int32(value: f64) -> i32 {
     to_uint32(value) as i32
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::oracle;
-    use ast_grep_core::tree_sitter::LanguageExt;
-    use serde_json::Value as Json;
-    use std::collections::HashMap;
-
-    const ORACLE: &str = oracle!("ecma/value/keys.expected.json");
-    const MEMBERS: &str = oracle!("ecma/value/members.expected.json");
-    const NAMES: &str = oracle!("ecma/value/names.expected.json");
-    const REFERENCES: &str = oracle!("ecma/value/references.expected.json");
-
-    fn parses_javascript(source: &str) -> bool {
-        !GrammarDialect::JavaScript
-            .ast_grep(source)
-            .root()
-            .get_doc()
-            .tree
-            .root_node()
-            .has_error()
-    }
-
-    /// Every pair in the isSameReference oracle (`fixtures/ecma/value/generate_references.mjs`) is the same
-    /// reference here exactly where ESLint's says so, with static computed keys and without.
-    #[test]
-    fn same_references_are_eslints() {
-        let oracle: Json = serde_json::from_str(REFERENCES).expect("oracle JSON");
-        let prefix = oracle["prefix"].as_str().expect("prefix");
-        let mut compared = 0;
-        for case in oracle["cases"].as_array().expect("cases") {
-            let (left, right) = (
-                case["left"].as_str().expect("left"),
-                case["right"].as_str().expect("right"),
-            );
-            let source = format!("{prefix}{left}, {right}); }} }}\n");
-            for language in [GrammarDialect::TypeScript, GrammarDialect::JavaScript] {
-                if language == GrammarDialect::JavaScript && !parses_javascript(&source) {
-                    continue;
-                }
-                let root = language.ast_grep(&source);
-                let arguments = root
-                    .root()
-                    .dfs()
-                    .find(|node| node.kind() == "arguments")
-                    .expect("the call's arguments");
-                let [a, b] = arguments
-                    .children()
-                    .filter(|child| child.is_named())
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .unwrap_or_else(|_| panic!("{language:?} {source:?} has two arguments"));
-                for (static_keys, field) in [(true, "same"), (false, "sameWithoutStaticKeys")] {
-                    assert_eq!(
-                        same_reference(&a, &b, static_keys),
-                        Some(case[field].as_bool().expect("bool")),
-                        "{language:?} {left} and {right}, static keys {static_keys}"
-                    );
-                    if language == GrammarDialect::TypeScript {
-                        compared += 1;
-                    }
-                }
-            }
-        }
-        assert!(compared > 100, "{compared} pairs compared");
-    }
-
-    #[test]
-    fn oversized_bigints_are_unknown_for_reference_comparison() {
-        let source =
-            "f(340282366920938463463374607431768211456n, 340282366920938463463374607431768211456n)";
-        let root = GrammarDialect::TypeScript.ast_grep(source);
-        let arguments = root
-            .root()
-            .dfs()
-            .find(|node| node.kind() == "arguments")
-            .expect("the call's arguments");
-        let [left, right] = arguments
-            .children()
-            .filter(|child| child.is_named())
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap_or_else(|_| panic!("two bigint arguments"));
-        assert_eq!(same_reference(&left, &right, true), None);
-    }
-
-    /// Every identifier and string literal in the names oracle (`fixtures/ecma/value/generate_names.mjs`) has a
-    /// node of the same range here whose name is ESTree's.
-    #[test]
-    fn node_names_are_estrees() {
-        let oracle: Json = serde_json::from_str(NAMES).expect("oracle JSON");
-        let mut compared = 0;
-        for case in oracle["cases"].as_array().expect("cases") {
-            let source = case["src"].as_str().expect("src");
-            for language in [GrammarDialect::TypeScript, GrammarDialect::JavaScript] {
-                if language == GrammarDialect::JavaScript && !parses_javascript(source) {
-                    continue;
-                }
-                let root = language.ast_grep(source);
-                let mut names = HashMap::new();
-                for node in root.root().dfs() {
-                    if let Some(name) = node_name(&node) {
-                        let range = node.range();
-                        names.entry((range.start, range.end)).or_insert(name);
-                    }
-                }
-                for entry in case["names"].as_array().expect("names") {
-                    let range = (
-                        entry["start"].as_u64().expect("start") as usize,
-                        entry["end"].as_u64().expect("end") as usize,
-                    );
-                    let expected = entry["name"]
-                        .as_array()
-                        .expect("name")
-                        .iter()
-                        .map(|unit| unit.as_u64().expect("unit") as u16)
-                        .collect::<Vec<_>>();
-                    let text = &source[range.0..range.1];
-                    assert_eq!(
-                        names.get(&range),
-                        Some(&expected),
-                        "{language:?} {source:?}: {text} ({})",
-                        entry["type"]
-                    );
-                    if language == GrammarDialect::TypeScript {
-                        compared += 1;
-                    }
-                }
-            }
-        }
-        assert!(compared > 40, "{compared} names compared");
-    }
-
-    /// Every key typescript-eslint's getStaticMemberAccessValue names in the oracle
-    /// (`fixtures/ecma/value/generate_members.mjs`), read with the module's scope: where it has a name Rerail
-    /// has the same or none (not known), and where it has none (or a symbol) Rerail has none.
-    #[test]
-    fn member_access_names_are_typescript_eslints() {
-        use super::super::Context;
-        use super::super::ecma::decode;
-        use crate::code_rule_dsl::scope::ScopeTable;
-        let oracle: Json = serde_json::from_str(MEMBERS).expect("oracle JSON");
-        let (mut known, mut unknown) = (0, 0);
-        for case in oracle["cases"].as_array().expect("cases") {
-            let source = case["src"].as_str().expect("src");
-            for language in [GrammarDialect::TypeScript, GrammarDialect::JavaScript] {
-                if language == GrammarDialect::JavaScript && !parses_javascript(source) {
-                    continue;
-                }
-                let root = language.ast_grep(source);
-                let table = ScopeTable::build(root.root(), language, usize::MAX, &|| false)
-                    .expect("table builds");
-                let mut read = |node: &Node<'_, _>| {
-                    let mut spend = || true;
-                    let mut global = |range: std::ops::Range<usize>, name: &str| {
-                        let reference = table.reference(&range)?;
-                        Some(table.resolve(reference, name).is_none())
-                    };
-                    let mut binding = |range: std::ops::Range<usize>, name: &str| {
-                        let reference = table.reference(&range)?;
-                        let (binding, value) = table.binding(reference, name)?;
-                        Some(binding.followed(value?))
-                    };
-                    let mut context =
-                        Context::with_globals(&mut spend, &mut global).following(&mut binding);
-                    decode(node, &mut context)
-                };
-                let mut names = HashMap::new();
-                for node in root.root().dfs() {
-                    if let Some(key) = key_node(&node) {
-                        let range = key.range();
-                        names.insert(
-                            (range.start, range.end),
-                            member_access_name(&node, &mut read),
-                        );
-                    }
-                }
-                for key in case["keys"].as_array().expect("keys") {
-                    let range = (
-                        key["start"].as_u64().expect("start") as usize,
-                        key["end"].as_u64().expect("end") as usize,
-                    );
-                    let Some(actual) = names.get(&range) else {
-                        panic!(
-                            "{language:?} {source:?}: no owner for {}",
-                            &source[range.0..range.1]
-                        );
-                    };
-                    let expected = key["name"].as_array().map(|units| {
-                        units
-                            .iter()
-                            .map(|unit| unit.as_u64().expect("unit") as u16)
-                            .collect::<Vec<_>>()
-                    });
-                    let text = &source[range.0..range.1];
-                    match (&expected, actual) {
-                        (_, None) => {
-                            if language == GrammarDialect::TypeScript {
-                                unknown += 1;
-                            }
-                        }
-                        (Some(expected), Some(actual)) => {
-                            assert_eq!(actual, expected, "{language:?} {source:?}: {text}");
-                            if language == GrammarDialect::TypeScript {
-                                known += 1;
-                            }
-                        }
-                        (None, Some(actual)) => panic!(
-                            "{language:?} {source:?}: {text} has no name in typescript-eslint, Rerail reads {}",
-                            String::from_utf16_lossy(actual)
-                        ),
-                    }
-                }
-            }
-        }
-        assert!(known > 80, "{known} names known, {unknown} not");
-    }
-
-    /// Every key ESLint's getStaticPropertyName reads in the oracle (`fixtures/ecma/value/generate_keys.mjs`)
-    /// has an owner here with the same key range, and the same name, or none where ESLint has none;
-    /// the key node itself (a computed key's expression without its brackets) has the same name.
-    #[test]
-    fn property_names_are_eslints() {
-        let oracle: Json = serde_json::from_str(ORACLE).expect("oracle JSON");
-        let mut compared = 0;
-        for case in oracle["cases"].as_array().expect("cases") {
-            let source = case["src"].as_str().expect("src");
-            for language in [GrammarDialect::TypeScript, GrammarDialect::JavaScript] {
-                if language == GrammarDialect::JavaScript && !parses_javascript(source) {
-                    continue;
-                }
-                let root = language.ast_grep(source);
-                let mut names = HashMap::new();
-                for node in root.root().dfs() {
-                    if let Some(key) = key_node(&node) {
-                        let range = key.range();
-                        let name = static_property_name(&node);
-                        assert_eq!(
-                            static_property_name(&key),
-                            name,
-                            "{language:?} {source:?}: the key {} itself",
-                            key.text()
-                        );
-                        names.insert((range.start, range.end), name);
-                    }
-                }
-                for key in case["keys"].as_array().expect("keys") {
-                    let range = (
-                        key["start"].as_u64().expect("start") as usize,
-                        key["end"].as_u64().expect("end") as usize,
-                    );
-                    let expected = key["name"].as_array().map(|units| {
-                        units
-                            .iter()
-                            .map(|unit| unit.as_u64().expect("unit") as u16)
-                            .collect::<Vec<_>>()
-                    });
-                    let Some(actual) = names.get(&range) else {
-                        panic!(
-                            "{language:?} {source:?}: no owner for {} at {range:?}",
-                            &source[range.0..range.1]
-                        );
-                    };
-                    assert_eq!(
-                        actual,
-                        &expected,
-                        "{language:?} {source:?}: {} at {range:?}",
-                        &source[range.0..range.1]
-                    );
-                    if language == GrammarDialect::TypeScript {
-                        compared += 1;
-                    }
-                }
-            }
-        }
-        assert!(compared > 60, "{compared} keys compared");
-    }
-
-    #[test]
-    fn numbers_print_as_javascript_prints_them() {
-        for (value, expected) in [
-            (0.0, "0"),
-            (-0.0, "0"),
-            (1.0, "1"),
-            (-1.5, "-1.5"),
-            (0.1, "0.1"),
-            (1e21, "1e+21"),
-            (1e20, "100000000000000000000"),
-            (123456789012345680000.0, "123456789012345680000"),
-            (1e-6, "0.000001"),
-            (1e-7, "1e-7"),
-            (1.5e-7, "1.5e-7"),
-            (5e-324, "5e-324"),
-            (f64::MAX, "1.7976931348623157e+308"),
-            (0.1 + 0.2, "0.30000000000000004"),
-            (100.0, "100"),
-            (f64::NAN, "NaN"),
-            (f64::NEG_INFINITY, "-Infinity"),
-            (9007199254740993.0, "9007199254740992"),
-            (255.0 / 256.0, "0.99609375"),
-        ] {
-            assert_eq!(number_to_string(value), expected, "{value:e}");
-        }
-    }
-
-    #[test]
-    fn strings_read_as_javascript_reads_them() {
-        let units = |text: &str| text.encode_utf16().collect::<Vec<_>>();
-        let number = |text: &str| string_to_number(&units(text));
-        assert_eq!(number(""), Some(0.0));
-        assert_eq!(number(" \n12 "), Some(12.0));
-        assert_eq!(number("-1.5e3"), Some(-1500.0));
-        assert_eq!(number(".5"), Some(0.5));
-        assert_eq!(number("5."), Some(5.0));
-        assert_eq!(number("0x1F"), Some(31.0));
-        assert_eq!(number("-Infinity"), Some(f64::NEG_INFINITY));
-        for nan in ["1_0", "0x", "-0x1", "abc", "1e", ".", "infinity", "1 2"] {
-            assert!(number(nan).is_some_and(f64::is_nan), "{nan}");
-        }
-        let big = |text: &str| string_to_bigint(&units(text));
-        assert_eq!(big(" -12 "), Some(BigInt::from(-12)));
-        assert_eq!(big("0x10"), Some(BigInt::from(16)));
-        assert_eq!(big("1.5"), None);
-        assert_eq!(big("-0x10"), None);
-        assert_eq!(big(""), Some(BigInt::zero()));
-        assert_eq!(
-            big(&"9".repeat(60)),
-            BigInt::parse_bytes("9".repeat(60).as_bytes(), 10)
-        );
-        assert_eq!(to_int32(4294967297.0), 1);
-        assert_eq!(to_int32(2147483648.0), -2147483648);
-        assert_eq!(to_int32(-1.9), -1);
-        assert_eq!(to_uint32(-1.0), 4294967295);
-        assert_eq!(to_uint32(f64::NAN), 0);
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

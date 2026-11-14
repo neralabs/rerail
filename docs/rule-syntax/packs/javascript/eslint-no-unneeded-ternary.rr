@@ -1,0 +1,65 @@
+.policy "eslint-no-unneeded-ternary" revision 5
+.description "Replace ternaries that choose between true and false, or that fall back from a value to itself, with the condition or a logical OR."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen
+#include "tsx/eslint-b-control.rr"
+//   below_unary, below_or
+
+// ESLint's no-unneeded-ternary, with its fixes:
+//   a ? true : true        → true (only when the test is a plain name; `f() ? true : true` has no fix)
+//   a === b ? false : true → a !== b       (==, !=, ===, !== invert; anything else becomes !x or !(x))
+//   a > b ? true : false   → a > b         (comparisons, in, instanceof and ! already give a boolean)
+//   f() ? true : false     → !!f()
+// defaultAssignment: false (the default is true) also reports a fallback from a name to itself:
+//   x ? x : y              → x || y        (y in parentheses if it is lower than ||, or a ??)
+.violation no_unneeded_ternary(at: node, msg: symbol) code "no-unneeded-ternary" "{msg}"
+    suppress eslint "no-unneeded-ternary"
+    suppress oxlint "no-unneeded-ternary"
+    suppress biome "lint/complexity/noUselessTernary"
+    fix simplify "Simplify the ternary"
+no_unneeded_ternary(t, "Unnecessary use of boolean literals in conditional expression.") :- two_booleans(t, _, _).
+no_unneeded_ternary(t, "Unnecessary use of conditional expression for default assignment.") :-
+    option("defaultAssignment", "false"), !two_booleans(t, _, _), kind(t, "ternary_expression"),
+    field(t, "condition", c), deparen(c, x), kind(x, "identifier"), text(x, n),
+    field(t, "consequence", y), deparen(y, z), kind(z, "identifier"), text(z, n).
+
+// two_booleans(t, c, a): both branches are boolean literals, c and a their values (parentheses aside).
+.decl two_booleans(t: node, c: symbol, a: symbol)
+two_booleans(t, c, a) :- kind(t, "ternary_expression"), field(t, "consequence", x), boolean(x, c),
+    field(t, "alternative", y), boolean(y, a).
+.decl boolean(e: node, v: symbol)
+boolean(e, v) :- deparen(e, b), (kind(b, "true"), v = "true" ; kind(b, "false"), v = "false").
+.decl boolean_test(t: node)  // ESLint's isBooleanExpression
+boolean_test(x) :- kind(x, "binary_expression"), op(x, o), (o = "==" ; o = "===" ; o = "!=" ; o = "!==" ; o = ">" ;
+    o = ">=" ; o = "<" ; o = "<=" ; o = "in" ; o = "instanceof").
+boolean_test(x) :- kind(x, "unary_expression"), op(x, "!").
+
+// The fixes. $c is the test as written (with its parentheses), x the test without them.
+simplify(t, _) :- two_booleans(t, v, v), field(t, "condition", c), deparen(c, x), kind(x, "identifier") => replace(t, `$v`).
+simplify(t, _) :- two_booleans(t, "false", "true"), field(t, "condition", c), invert(c, s) => replace(t, `$s`).
+simplify(t, _) :- two_booleans(t, "true", "false"), field(t, "condition", c), deparen(c, x), boolean_test(x) =>
+    replace(t, `$c`).
+simplify(t, _) :- two_booleans(t, "true", "false"), field(t, "condition", c), deparen(c, x), !boolean_test(x),
+    invert(c, s) => replace(t, `!$s`).
+simplify(t, _) :- !two_booleans(t, _, _), field(t, "condition", c), field(t, "alternative", a), or_operand(a, s) =>
+    replace(t, `$c || $s`).
+// invert(c, s): ESLint's invertExpression: swap ==/!=/===/!==, else negate, in parentheses below unary.
+.decl invert(c: node, s: symbol)
+invert(c, cat(l, cat(" ", cat(i, cat(" ", r))))) :- ternary_test(c), deparen(c, x), kind(x, "binary_expression"),
+    op(x, o), inverse(o, i), field(x, "left", a), text(a, l), field(x, "right", b), text(b, r).
+invert(c, cat("!(", cat(s, ")"))) :- ternary_test(c), deparen(c, x), !inverts(x), below_unary(x), text(c, s).
+invert(c, cat("!", s)) :- ternary_test(c), deparen(c, x), !inverts(x), !below_unary(x), text(c, s).
+.decl inverts(x: node)
+inverts(x) :- kind(x, "binary_expression"), op(x, o), inverse(o, _).
+.decl inverse(o: symbol, i: symbol)
+inverse("==", "!="). inverse("!=", "=="). inverse("===", "!=="). inverse("!==", "===").
+.decl ternary_test(c: node)
+ternary_test(c) :- two_booleans(t, _, _), field(t, "condition", c).
+// or_operand(a, s): the fallback as an operand of ||.
+.decl or_operand(a: node, s: symbol)
+or_operand(a, cat("(", cat(s, ")"))) :- kind(t, "ternary_expression"), field(t, "alternative", a), below_or(a), text(a, s).
+or_operand(a, s) :- kind(t, "ternary_expression"), field(t, "alternative", a), !below_or(a), text(a, s).

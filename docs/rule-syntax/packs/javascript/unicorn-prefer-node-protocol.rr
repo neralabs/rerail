@@ -1,0 +1,39 @@
+.policy "unicorn-prefer-node-protocol" revision 3
+.description "Import Node.js built-in modules with the node: prefix; it makes clear they are built-ins, not npm packages."
+.language javascript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+#include "tsx/eslint-b-objects.rr"
+//   deparen, call_arg, call_arg_count
+#include "../packs/javascript/unicorn-prefer-node-protocol.modules.rr"
+//   bare_builtin(m): the built-in modules, from the policy JSON (gen-unicorn-prefer-node-protocol.py)
+
+// eslint-plugin-unicorn's prefer-node-protocol: a Node.js built-in module named without `node:`.
+//   import fs from "fs";   export * from "path";   await import("os");   require("fs/promises")   → reported
+//   process.getBuiltinModule("util")                                                               → reported
+//   import fs from "node:fs";   import x from "punycode/";   require?.("fs");   require(`fs`)       fine
+// Only a string literal is read: a template is not. require and getBuiltinModule must have exactly that one
+// argument, and no `?.`. The fix writes the prefix inside the quotes. No options.
+.violation prefer_node_protocol(at: node) code "unicorn/prefer-node-protocol"
+    "Prefer `node:` when importing a Node.js built-in module."
+    suppress eslint "unicorn/prefer-node-protocol"
+    suppress oxlint "prefer-node-protocol"
+    suppress biome "lint/style/useNodejsImportProtocol"
+    fix add_prefix "Add the node: prefix."
+prefer_node_protocol(s) :- specifier(s), kind(s, "string"), value(s, m), bare_builtin(m).
+
+// specifier(s): where a module is named. `import(s)` takes the first argument whatever follows it.
+.decl specifier(s: node)
+specifier(s) :- (kind(i, "import_statement") ; kind(i, "export_statement")), field(i, "source", s).
+specifier(s) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), call_arg(c, s, 0).
+specifier(s) :- kind(c, "call_expression"), !optional_call(c), field(c, "function", f), deparen(f, g), module_loader(g),
+    call_arg_count(c, 1), call_arg(c, s, 0).
+.decl optional_call(c: node)  // `f?.(x)`: an optional_chain field in JavaScript's grammar, a `?.` token in TypeScript's
+optional_call(c) :- kind(c, "call_expression"), (field(c, "optional_chain", _) ; op(c, "?.")).
+.decl module_loader(g: node)  // require, or process.getBuiltinModule, by name
+module_loader(g) :- kind(g, "identifier"), text(g, "require").
+module_loader(g) :- kind(g, "member_expression"), !field(g, "optional_chain", _), field(g, "object", o), deparen(o, p),
+    kind(p, "identifier"), text(p, "process"), field(g, "property", x), text(x, "getBuiltinModule").
+
+add_prefix(s) :- text(s, t), u = cat(@slice(t, 0, 1), cat("node:", @slice(t, 1, strlen(t)))) => replace(s, `$u`).

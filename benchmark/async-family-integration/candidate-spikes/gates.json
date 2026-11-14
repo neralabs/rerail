@@ -1,0 +1,55 @@
+{
+  "baseline": {
+    "files": 5725,
+    "findings": 0,
+    "executions": 80,
+    "vm": 3386852,
+    "reprepares": 71,
+    "candidates": null
+  },
+  "winner": {
+    "files": 5725,
+    "findings": 0,
+    "executions": 80,
+    "vm": 732887,
+    "reprepares": 0,
+    "candidates": 10
+  },
+  "medians": {
+    "baseline": {
+      "cpu": 12.387239,
+      "wall": 17.106459459,
+      "localCpu": 1.0898720000000002,
+      "localSamples": [
+        1.0590699999999993,
+        1.090935,
+        1.0898720000000002
+      ]
+    },
+    "stable-frame_guard": {
+      "cpu": 11.765002,
+      "wall": 15.397600291,
+      "localCpu": 0.5026139999999996,
+      "localSamples": [
+        0.5026139999999996,
+        0.5012140000000002,
+        0.5118670000000005
+      ]
+    }
+  },
+  "gates": {
+    "baselineFailsNewVmAndReprepareCeilings": true,
+    "fullCorpusParity": true,
+    "executionBudget": true,
+    "vmCeiling": true,
+    "noAutomaticReprepare": true,
+    "narrowCandidates": true,
+    "edgeFindings": true,
+    "positiveFindings": true,
+    "positiveVmCeiling": true,
+    "positiveExecutionBudget": true,
+    "localCpuImprovement": true,
+    "wholeCpuNoRegression": true
+  },
+  "allPassed": true
+}

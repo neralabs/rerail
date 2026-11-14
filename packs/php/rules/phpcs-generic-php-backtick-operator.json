@@ -42,19 +42,12 @@
         "ast": {
           "language": "php",
           "rule": {
-            "regex": "^`$",
-            "inside": {
-              "kind": "shell_command_expression"
-            },
-            "follows": {
-              "regex": "^`$",
-              "stopBy": "end"
-            }
+            "kind": "shell_command_expression"
           }
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "witness.end",
         "code": "Generic.PHP.BacktickOperator",
         "message": "Replace this backtick shell command with proc_open() given the command as an array, so no shell parses the arguments.",
         "suppress": {

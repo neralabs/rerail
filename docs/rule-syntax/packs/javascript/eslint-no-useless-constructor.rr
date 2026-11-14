@@ -1,0 +1,55 @@
+.policy "eslint-no-useless-constructor" revision 6
+.description "Remove JavaScript constructors that are empty in a base class or only pass their arguments to super(); the default constructor does the same."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+//   ctor, fn_block, fn_param, deparen, call_arg
+#include "tsx/eslint-b-control.rr"
+//   member_runs_on
+
+// ESLint's no-useless-constructor: a constructor that does what the implicit one does. In a base class that is
+// an empty body; in a derived class, a body that is only `super(…)` passing the parameters on unchanged, or
+// `super(...arguments)`, with every parameter a plain name or a rest.
+//   class A { constructor() {} }                                  → reported
+//   class B extends A { constructor(a, ...b) { super(a, ...b); } } → reported
+//   class B extends A { constructor(a) { super(...arguments); } }  → reported
+//   class B extends A { constructor(a, b) { super(b, a); } }       fine
+//   class B extends A { constructor(a = 1) { super(a); } }         fine: a default
+//   class B extends A { constructor() {} }                         fine: skips super(), so `this` throws
+// The suggestion deletes it, leaving `;` where a following `[key]` member would join the line before.
+.violation no_useless_constructor(at: node) code "no-useless-constructor" "Useless constructor."
+    suppress eslint "no-useless-constructor"
+    suppress oxlint "no-useless-constructor"
+    suppress biome "lint/complexity/noUselessConstructor"
+    fix remove "Remove the constructor."
+no_useless_constructor(m) :- ctor(m), fn_block(m, b), !derived(m), stmts(b, 0).
+no_useless_constructor(m) :- ctor(m), fn_block(m, b), derived(m), stmts(b, 1), child(b, s, _),
+    kind(s, "expression_statement"), child(s, e, 0), deparen(e, c), kind(c, "call_expression"),
+    field(c, "function", f), kind(f, "super"), !odd_param(m), passes_on(m, c).
+
+remove(m) :- keep_semi(m) => replace(m, `;`).
+remove(m) :- ctor(m), !keep_semi(m) => delete(m).
+.decl keep_semi(m: node)
+keep_semi(m) :- ctor(m), token_after(m, t), text(t, "["), member_runs_on(m).
+
+.decl derived(m: node)  // m's class has `extends`
+derived(m) :- child(b, m, _), kind(b, "class_body"), field(c, "body", b), child(c, h, _), kind(h, "class_heritage").
+.decl stmts(b: node, k: number)
+stmts(b, k) :- kind(b, "statement_block"), k = count : { child(b, s, _), !not_stmt(s) }.
+.decl odd_param(m: node)  // a parameter that is not a name or a rest: `a = 1`, `{ a }`, `[a]`
+odd_param(m) :- fn_param(m, p, _), !kind(p, "identifier"), !kind(p, "rest_pattern").
+// passes_on(m, c): super's arguments are m's parameters in order (`...xs` for `...xs`), or `...arguments`.
+.decl passes_on(m: node, c: node)
+passes_on(m, c) :- ctor(m), call_arg(c, a, 0), !call_arg(c, _, 1), kind(a, "spread_element"), child(a, x, 0),
+    kind(x, "identifier"), text(x, "arguments").
+passes_on(m, c) :- ctor(m), kind(c, "call_expression"), field(c, "function", f), kind(f, "super"),
+    k = count : { fn_param(m, _, _) }, k = count : { call_arg(c, _, _) },
+    count : { fn_param(m, p, i), !same_arg(p, c, i) } = 0.
+.decl same_arg(p: node, c: node, i: number)
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), kind(p, "identifier"), kind(a, "identifier"),
+    text(p, x), text(a, x).
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), kind(p, "rest_pattern"),
+    kind(a, "spread_element"), child(p, x, 0), kind(x, "identifier"), text(x, n), child(a, y, 0),
+    kind(y, "identifier"), text(y, n).

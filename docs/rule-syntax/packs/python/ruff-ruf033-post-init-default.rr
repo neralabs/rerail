@@ -1,0 +1,20 @@
+.policy "ruff-ruf033-post-init-default" revision 3
+.description "Declare init-only dataclass parameters with their defaults as InitVar fields in the class body, not on the post-init method; the generated constructor ignores those defaults."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF033: a default on a parameter of a dataclass's `__post_init__`. The generated `__init__` passes
+// every InitVar, so the default is never used; it belongs on an `InitVar` field. Each default is reported.
+//   @dataclass
+//   class Foo:
+//       def __post_init__(self, bar: int = 11) -> None: ...      ← RUF033 at 11
+//       # instead:  bar: InitVar[int] = 11  and  def __post_init__(self, bar: int)
+#include "python/ruff-classes.rr"
+
+.violation RUF033(at: node) code "RUF033"
+    "The generated `__init__` ignores `__post_init__` defaults: declare this parameter as an `InitVar` field with this default in the class body and drop the default here, unless only direct calls pass it."
+    suppress ruff "RUF033"
+// The method is in the class's scope: in its body, or in an `if` or `try` there.
+RUF033(at) :- kind(f, "function_definition"), def_name(f, "__post_init__"), child(p, f, _), nearest(p, c, scope),
+    dataclass_of(c, "stdlib", _), sig_param(f, _, _, _, _, _, d), !unset(d), unparen(d, at).

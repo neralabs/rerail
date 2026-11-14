@@ -1,0 +1,16 @@
+.policy "ruff-f508-percent-format-star-requires-sequence" revision 2
+.description "Pass a tuple, not a dict, to a %-format string that uses a * width or precision; the call fails at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F508 (pyflakes): a format with a `*` width or precision applied to a dict display or comprehension. The
+// `*` takes its value from a tuple, so Python raises TypeError.
+//   "%(a)*d" % {"a": 1}           ← F508 (and F506)
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_star(v)
+
+.violation F508(at: node) code "F508"
+    "Pass a tuple instead of a dict to this %-format string; its `*` width or precision takes positional values."
+    suppress ruff "F508"
+F508(b) :- percent_fmt(b, _, r, v), pct_star(v), mapping_display(r).

@@ -1,0 +1,53 @@
+.policy "ruff-f722-forward-annotation-syntax-error" revision 3
+.description "Keep string type annotations and other forward references valid Python expressions; a syntax error there breaks type checking and runtime evaluation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F722 (pyflakes): a string annotation (a forward reference) that is not a valid Python expression, so type
+// checkers and typing.get_type_hints() cannot read it. Strings inside a string annotation are annotations too.
+// Not checked: the annotations of a def decorated with `@no_type_check` (on a class it does nothing), the
+// arguments of `Literal[...]` and the metadata of `Annotated[T, ...]`, which are values, and jaxtyping shape
+// strings, which are not Python (`Float[Array, "batch dim"]`).
+//   def g() -> "///": ...                 ← F722
+//   X: """List[int]"""'☃' = []            ← F722: the parts join into one invalid annotation
+//   def f() -> "A": ...                   not reported
+#include "python/pyflakes.rr"
+//   annotation(n)              n is in a type annotation, or in a string annotation's parsed tree (python/names)
+//   string_annotation(s)       s is a string Ruff reads as a type: cast("T", x), TypeVar bound=… (core)
+//   parsed(s, "annotation", r) r is the tree of s's contents (core)
+
+.violation F722(at: node) code "F722" "Syntax error in forward annotation"
+    suppress ruff "F722"
+F722(s) :- ann_string(s), parsed(s, "annotation", r), (kind(r, "ERROR") ; has(r, _, "ERROR")), !no_type_check(s),
+    !not_a_type(s).
+// ann_string(s): a whole string literal (adjacent parts together) in an annotation position.
+.decl ann_string(s: node)
+ann_string(s) :- (annotation(s) ; string_annotation(s)), (kind(s, "string") ; kind(s, "concatenated_string")),
+    !piece(s).
+.decl piece(s: node)  // one part of adjacent literals
+piece(s) :- kind(c, "concatenated_string"), child(c, s, _).
+// no_type_check(s): s is in a def decorated with typing's no_type_check.
+.decl no_type_check(s: node)
+no_type_check(s) :- inside(s, f, "function_definition"), decorator(f, e), imported_sym(e, q), no_type_check_name(q).
+.decl no_type_check_name(q: symbol)
+no_type_check_name("typing.no_type_check"). no_type_check_name("typing_extensions.no_type_check").
+no_type_check_name("_typeshed.no_type_check").
+// not_a_type(s): Ruff does not read s as an annotation: an argument of `Literal[...]`, an argument after the first
+// of `Annotated[T, ...]` (typing or typing_extensions), or a jaxtyping shape (`jaxtyping.X[dtype, "shape"]`).
+//   x: Literal["a b"]                     not reported
+//   y: Annotated[int, "some text"]        not reported
+//   w: list["a b"]                        ← F722
+.decl not_a_type(s: node)
+not_a_type(s) :- sub_arg(h, a, _), imported_sym(h, q), (q = "typing.Literal" ; q = "typing_extensions.Literal"),
+    (s = a ; within(s, a)).
+not_a_type(s) :- sub_arg(h, a, 0), imported_sym(h, q), (q = "typing.Annotated" ; q = "typing_extensions.Annotated"),
+    (s = a ; within(s, a)).
+not_a_type(s) :- sub_arg(h, a, 0), imported_sym(h, q), prefix("jaxtyping.", q), (s = a ; within(s, a)).
+// sub_arg(h, a, first): a is an argument of `h[...]`, first = 1 for the first one. A subscript in an expression,
+// or a generic type where tree-sitter parses an annotation (`[`, then the arguments as `type` nodes).
+.decl sub_arg(h: node, a: node, first: number)
+sub_arg(h, a, f) :- kind(g, "subscript"), field(g, "value", h), field(g, "subscript", a),
+    n = count : { field(g, "subscript", a0), a0 < a }, (n = 0, f = 1 ; n > 0, f = 0).
+sub_arg(h, a, f) :- kind(g, "generic_type"), child(g, h, 0), child(g, tp, 1), kind(tp, "type_parameter"),
+    child(tp, a, i), kind(a, "type"), (i = 1, f = 1 ; i > 1, f = 0).

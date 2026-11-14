@@ -1,0 +1,39 @@
+.policy "react-void-dom-elements-no-children" revision 2
+.description "Give void DOM elements (img, br, input, …) no children."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/void-dom-elements-no-children: React throws when a void element (img, br, input, …) gets content: a
+// child, a children prop or dangerouslySetInnerHTML.
+//   <br>x</br>    <img children="x" />    <hr dangerouslySetInnerHTML={h} />      reported, at the element
+//   React.createElement("br", {}, "x")    React.createElement("img", { children })  reported, at the call
+// Anything between the tags is a child to the rule, even a line break: <br>⏎</br> is reported.
+// createElement is checked only with an object literal as its props, as in the rule.
+#include "tsx/react.rr"
+
+.violation void_children(at: node, msg: symbol)
+    code "react/void-dom-elements-no-children"
+    "{msg}"
+    suppress eslint "react/void-dom-elements-no-children"
+    suppress oxlint "void-dom-elements-no-children"
+    suppress biome "lint/correctness/noVoidElementsWithChildren"
+void_children(e, "Void DOM element cannot receive children.") :- void_el(e, o), field(e, "close_tag", c),
+    node(_, o, _, _, oe), node(_, c, _, cs, _), cs > oe.
+void_children(e, "Remove the children or dangerouslySetInnerHTML prop from this void element; img, br, input and other void elements cannot hold content.") :-
+    void_el(e, o), (jsx_prop(o, "children", _) ; jsx_prop(o, "dangerouslySetInnerHTML", _)).
+void_children(c, "Drop the child arguments from this createElement call; img, br, input and other void elements cannot hold content.") :-
+    void_call(c), call_arg(c, _, 2).
+void_children(c, "Remove children and dangerouslySetInnerHTML from these props; img, br, input and other void elements cannot hold content.") :-
+    void_call(c), (create_key(c, "children", _) ; create_key(c, "dangerouslySetInnerHTML", _)).
+
+// The tag must be the plain name: <br>, not <br.x> or <svg:br>. ESTree's <br/> is a JSXElement too.
+.decl void_el(e: node, o: node)
+void_el(e, o) :- react_open(e, o), plain_tag(o, x), void_tag(x).
+.decl void_call(c: node)  // createElement("br", { … }, …): a string type and an object literal for props
+void_call(c) :- create_tag(c, x), void_tag(x), call_arg(c, p, 1), kind(p, "object"),
+    docof(c, d), react_doc(d).
+.decl void_tag(x: symbol)
+void_tag("area"). void_tag("base"). void_tag("br"). void_tag("col"). void_tag("embed"). void_tag("hr").
+void_tag("img"). void_tag("input"). void_tag("keygen"). void_tag("link"). void_tag("menuitem"). void_tag("meta").
+void_tag("param"). void_tag("source"). void_tag("track"). void_tag("wbr").

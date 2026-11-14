@@ -1,0 +1,15 @@
+^(?:ABC|Protocol)$
+^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$
+^(?:abstractmethod|legacy_async|legacy_sync)$
+^(?:execute)$
+^(?:execute_lazy)$
+^(?:execute_lazy|first_lazy)$
+^(?:execute_lazy|one_lazy)$
+^(?:execute_lazy|one_or_none_lazy)$
+^(?:execute_lazy|select_one_lazy)$
+^(?:first)$
+^(?:one)$
+^(?:one_or_none)$
+^(?:select_one)$
+^(?:select_one_or_raise)$
+^(?:select_one_or_raise_lazy)$

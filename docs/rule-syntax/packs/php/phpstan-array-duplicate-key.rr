@@ -1,0 +1,27 @@
+.policy "phpstan-array-duplicate-key" revision 3
+.description "Remove duplicate keys from PHP array literals, including keys PHP coerces to the same value such as 1 and '1'; the later entry silently overwrites the earlier one."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/arrays.rr"
+//   php_item(a, e)     e is an element of array literal a (literal spreads unpacked)
+//   php_key(a, e, k)   e's key, after PHP's casts and numbering: "i:1" for 1, '1', true and 1.5; "s:a" for 'a'
+
+// PHPStan's DuplicateKeysInLiteralArraysRule (array.duplicateKey, level 0): two elements of one array literal with
+// the same key; the later one overwrites the earlier. Reported once per key, at its first element:
+//   [1 => 'a', '1' => 'b', true => 'c']      at `1 =>`: three elements with key 1
+//   ['x', 0 => 'y']                          at 'x', whose key is 0
+//   [self::A => 1, self::B => 2]             when both constants hold '=' (php/values follows self::)
+//   $k = 'key'; ['key' => 1, $k => 2]        at 'key' (a variable with one write)
+// PHPStan also knows keys from PHPDoc types (`@param 'foo'|'bar' $key`) and `$i++`; those stay unknown here.
+.violation duplicate_key(at: node, v: symbol) code "array.duplicateKey" "Array has duplicate keys with value {v}."
+    suppress phpstan "array.duplicateKey"
+duplicate_key(e, v) :- php_key(a, e, k), php_key(a, f, k), e != f, php_at(e, o), php_at(f, of), o < of,
+    !earlier_same(a, e, k), shown(k, v).
+.decl shown(k: symbol, v: symbol)  // as PHPStan prints the key: 1, 'a'
+shown(k, v) :- php_key(_, _, k), match("i:(?<v>[\\s\\S]*)", k).
+shown(k, cat("'", w, "'")) :- php_key(_, _, k), match("s:(?<w>[\\s\\S]*)", k).
+.decl earlier_same(a: node, e: node, k: symbol)
+earlier_same(a, e, k) :- php_key(a, e, k), php_at(e, o), php_key(a, f, k), php_at(f, of), of < o.

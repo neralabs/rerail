@@ -1,0 +1,20 @@
+.policy "bandit-b508-snmp-insecure-version" revision 2
+.description "Use SNMPv3 instead of SNMPv1 or v2c in pysnmp CommunityData; the older versions send community strings in clear text."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B508 (snmp_insecure_version_check): pysnmp.hlapi.CommunityData called with the keyword mpModel=0
+// (SNMPv1) or mpModel=1 (SNMPv2c).
+//   from pysnmp.hlapi import CommunityData
+//   CommunityData("public", mpModel=0)     B508
+//   CommunityData("public", "x", 1)        not reported: Bandit reads the keyword only
+//   UsmUserData("user", "authkey", "privkey")   not reported (see B509)
+
+#include "python/security.rr"   // qual_call, kw_literal
+
+.violation B508(at: node) code "B508"
+    "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text."
+    suppress nosec "B508"
+B508(c) :- qual_call(c, "pysnmp.hlapi.CommunityData"), kw_literal(c, "mpModel", t, v), old_model(t, v).
+.decl old_model(t: symbol, v: symbol)  // 0 and 1 as Python compares them: 0.0 == 0
+old_model("int", "0"). old_model("int", "1"). old_model("float", "0.0"). old_model("float", "1.0").

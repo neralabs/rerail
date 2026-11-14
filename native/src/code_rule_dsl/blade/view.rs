@@ -61,12 +61,12 @@ use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use tree_sitter::Node as TsNode;
 use tree_sitter::{Parser, Tree};
 
 /// The embedded PHP program and its map back to the template.
-pub(crate) struct View {
+pub struct View {
     text: String,
     segments: SegmentMap,
     tree: Tree,
@@ -275,17 +275,17 @@ pub(crate) fn compiles(name: &str) -> bool {
 }
 
 /// A template as Blade reads it (`View::read`).
-pub(crate) struct Read {
+pub struct Read {
     /// Its syntax errors: Forte's, except in the arguments Forte read after a line break, which
     /// Blade reads as text: there, that text's (`syntax_errors`).
-    pub(crate) syntax_errors: Vec<Range<usize>>,
+    pub syntax_errors: Vec<Range<usize>>,
     /// The program it embeds; `None` where it embeds none.
-    pub(crate) view: Option<View>,
+    pub view: Option<View>,
 }
 
 /// Why a template could not be read (`View::read`).
 #[derive(Debug)]
-pub(crate) enum ReadError {
+pub enum ReadError {
     /// The budget interrupted it (polled before each sub-template is parsed, `Emitter::template`).
     Interrupted,
     /// Forte stopped at a limit on a template the template holds: nothing about its syntax.
@@ -294,7 +294,7 @@ pub(crate) enum ReadError {
 
 impl View {
     /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds.
-    pub(crate) fn read(
+    pub fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
@@ -362,32 +362,32 @@ impl View {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn root(&self) -> TsNode<'_> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn root(&self) -> TsNode<'_> {
         self.tree.root_node()
     }
 
     /// The program's text.
-    #[cfg(test)]
-    pub(crate) fn text(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn text(&self) -> &str {
         &self.text
     }
 
     /// Where the program's text stands in the template.
-    #[cfg(test)]
-    pub(crate) fn segments(&self) -> &SegmentMap {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn segments(&self) -> &SegmentMap {
         &self.segments
     }
 
     /// The template's syntax errors as Blade reads them.
-    #[cfg(test)]
-    pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn syntax_errors(&self) -> &[Range<usize>] {
         &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }
 }

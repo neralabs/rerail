@@ -1,0 +1,40 @@
+.policy "react-hooks-error-boundaries" revision 2
+.description "Build JSX outside try blocks in React components and hooks, and catch rendering errors with an error boundary instead; a try/catch never sees them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/error-boundaries (React Compiler): JSX built inside `try { … } catch` in render code. Making an
+// element does not render it, so the catch never sees the errors of the component it names.
+//   function Page() { try { return <Feed/>; } catch { return null; } }          reported at <Feed/>
+//   function Page() { try { const x = <Feed/>; } catch {} … }                   not: x is never read
+//   try { … } catch { return <Fallback/>; }                                      not: in the catch block
+// The compiler drops JSX whose value is unused before it validates, so a discarded or never-read element is not
+// reported. One finding per outermost element.
+#include "tsx/react-compiler.rr"
+
+.violation error_boundaries(at: node)
+    code "react-hooks/error-boundaries"
+    "Build this JSX outside the try block: React renders it later, so the catch never sees its errors. Wrap the component in an error boundary to handle rendering errors."
+    suppress eslint "react-hooks/error-boundaries"
+    suppress oxlint "error-boundaries"
+error_boundaries(e) :- jsx_el(e), rc_own(e, f), rc_compiled(f), in_try(e, f), !inside(e, _, "jsx_element"),
+    !unused(e).
+
+// in_try(e, f): e is in the block of a try with a catch, in f's own code.
+.decl in_try(e: node, f: node)
+in_try(e, f) :- kind(t, "try_statement"), field(t, "handler", _), field(t, "body", b), within(e, b), rc_own(t, f).
+// unused(e): the element's value goes nowhere: a statement of its own, `void <b/>`, or stored in a variable no one
+// reads (through parentheses, ?:, && and ||).
+.decl unused(e: node)
+unused(e) :- holder(e, x), (child(s, x, _), kind(s, "expression_statement") ;
+    child(u, x, _), kind(u, "unary_expression"), op(u, "void")).
+unused(e) :- holder(e, x), field(d, "value", x), kind(d, "variable_declarator"), !ref_site(_, d).
+unused(e) :- holder(e, x), field(a, "right", x), kind(a, "assignment_expression"), field(a, "left", n),
+    ref_site(n, d), count : { ref_site(r, d), r != n, !assigned(r) } = 0.
+.decl holder(e: node, x: node)  // x carries e's value up
+holder(e, e) :- jsx_el(e).
+holder(e, x) :- holder(e, y), child(x, y, _), (kind(x, "parenthesized_expression") ; kind(x, "ternary_expression"),
+    !field(x, "condition", y) ; kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??"))).
+.decl assigned(r: node)  // r is the target of `=`
+assigned(r) :- kind(a, "assignment_expression"), field(a, "left", r).

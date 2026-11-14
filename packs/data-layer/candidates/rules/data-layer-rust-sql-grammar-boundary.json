@@ -1,0 +1,339 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-rust-sql-grammar-boundary",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer rust_sql_grammar_boundary at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "rust/nera_compiler_sql/src/**/*.rs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "pattern-0",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "type_identifier"
+                  },
+                  {
+                    "kind": "field_identifier"
+                  }
+                ]
+              },
+              {
+                "regex": "^pyo3$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-0"
+      }
+    },
+    {
+      "id": "pattern-1",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "type_identifier"
+                  },
+                  {
+                    "kind": "field_identifier"
+                  }
+                ]
+              },
+              {
+                "regex": "^pythonize$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-1"
+      }
+    },
+    {
+      "id": "pattern-2",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "kind": "generic_type"
+              },
+              {
+                "regex": "\\bPython\\s*<\\s*'_?\\s*>$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-2"
+      }
+    },
+    {
+      "id": "pattern-3",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "type_identifier"
+                  },
+                  {
+                    "kind": "field_identifier"
+                  }
+                ]
+              },
+              {
+                "regex": "^PyResult$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-3"
+      }
+    },
+    {
+      "id": "pattern-4",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "type_identifier"
+                  },
+                  {
+                    "kind": "field_identifier"
+                  }
+                ]
+              },
+              {
+                "regex": "^Py[A-Z][A-Za-z0-9_]*$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-4"
+      }
+    },
+    {
+      "id": "pattern-5",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "has": {
+                      "regex": "generated_value_is_truthy$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\(&runtime::string_value\\(",
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string_literal"
+                      },
+                      {
+                        "kind": "raw_string_literal"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "(?P<AT>generated_value_is_truthy\\(&runtime::string_value\\()"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "capture.AT",
+        "message": "rust_sql_grammar_boundary: pattern-5"
+      }
+    },
+    {
+      "id": "pattern-6",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "has": {
+                      "regex": "runtime::string_value$",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\(\"self\\.",
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string_literal"
+                      },
+                      {
+                        "kind": "raw_string_literal"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "(?P<AT>runtime::string_value\\(\\\"self\\.)"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "capture.AT",
+        "message": "rust_sql_grammar_boundary: pattern-6"
+      }
+    },
+    {
+      "id": "pattern-7",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "field_expression"
+                  },
+                  {
+                    "regex": "\\bast\\.dump$"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string_literal"
+                      },
+                      {
+                        "kind": "raw_string_literal"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "(?P<AT>\\bast\\.dump\\b)"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "capture.AT",
+        "message": "rust_sql_grammar_boundary: pattern-7"
+      }
+    }
+  ]
+}

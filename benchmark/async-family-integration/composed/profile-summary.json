@@ -1,0 +1,137 @@
+{
+  "cpu_seconds": 13.177345,
+  "wall_seconds": 18.185524916,
+  "phases": [
+    [
+      "combine",
+      0.0030749999999999944,
+      0.0006579999999999919,
+      1079.181312,
+      0
+    ],
+    [
+      "parse (worker)",
+      2.743552000000002,
+      0.9857179999999994,
+      1079.181312,
+      0
+    ],
+    [
+      "batch (worker)",
+      7.196203999999996,
+      0.33468800000000015,
+      1079.181312,
+      0
+    ],
+    [
+      "constants",
+      0.00011600000000000499,
+      9.000000000009e-06,
+      1079.181312,
+      0
+    ],
+    [
+      "stats",
+      0.03596700000000019,
+      0.033269999999999994,
+      1079.181312,
+      7
+    ],
+    [
+      "wait",
+      0.026813000000000586,
+      0.10098600000000024,
+      1079.181312,
+      0
+    ],
+    [
+      "local",
+      1.0604079999999994,
+      0.09624299999999975,
+      1079.181312,
+      72
+    ],
+    [
+      "cross",
+      0.0010459999999998804,
+      0.00033800000000000496,
+      1079.181312,
+      1
+    ],
+    [
+      "write",
+      1.399999999995849e-05,
+      0.00022699999999997722,
+      1079.181312,
+      0
+    ]
+  ],
+  "compiler_and_query": [
+    {
+      "allocatedBytes": 781352,
+      "calls": 1,
+      "cpuSeconds": 0.0007600000000000939,
+      "footprintRiseBytes": 0,
+      "freedBytes": 778104,
+      "name": "cross/setup/compile composed query",
+      "ownAllocatedBytes": 268392,
+      "ownCpuSeconds": 0.0003719999999995949,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 414352,
+      "calls": 1,
+      "cpuSeconds": 0.00014799999999981495,
+      "footprintRiseBytes": 0,
+      "freedBytes": 372784,
+      "name": "cross/setup/composed relational query",
+      "ownAllocatedBytes": 281024,
+      "ownCpuSeconds": 9.099999999984121e-05,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 133328,
+      "calls": 1,
+      "cpuSeconds": 5.699999999997374e-05,
+      "footprintRiseBytes": 0,
+      "freedBytes": 96688,
+      "name": "cross/setup/composed relational query/composed query preparation",
+      "ownAllocatedBytes": 133328,
+      "ownCpuSeconds": 5.699999999997374e-05,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 11103448,
+      "calls": 1,
+      "cpuSeconds": 0.00839499999999993,
+      "footprintRiseBytes": 0,
+      "freedBytes": 10316288,
+      "name": "local/run/setup/compile composed query",
+      "ownAllocatedBytes": 9152928,
+      "ownCpuSeconds": 0.006703999999999821,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 1090344544,
+      "calls": 72,
+      "cpuSeconds": 0.8848569999999991,
+      "footprintRiseBytes": 0,
+      "freedBytes": 944124216,
+      "name": "local/run/setup/composed relational query",
+      "ownAllocatedBytes": 1082948480,
+      "ownCpuSeconds": 0.8800719999999999,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 7396064,
+      "calls": 72,
+      "cpuSeconds": 0.004784999999999262,
+      "footprintRiseBytes": 0,
+      "freedBytes": 6926912,
+      "name": "local/run/setup/composed relational query/composed query preparation",
+      "ownAllocatedBytes": 7396064,
+      "ownCpuSeconds": 0.004784999999999262,
+      "ownFootprintRiseBytes": 0
+    }
+  ]
+}

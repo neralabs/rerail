@@ -1,0 +1,264 @@
+// tsx/eslint-a-functions: functions, parameters, methods and accessors as ESLint's function and class rules see
+// them (ESTree), read off the tree-sitter tape. JavaScript and TypeScript.
+//
+// What a rule gets from this library:
+//   fn_param(f, p, i)        p is f's i-th parameter, from 0; an arrow's bare `x => …` is parameter 0
+//   default_param(p)         p has a default: `a = 1`        rest_param(p): `...a`
+//   optional_param(p)        TypeScript `a?: T`              this_param(p, void): TypeScript `this: T`
+//   param_count(f, k)        f has k parameters
+//   fn_block(f, b)           b is f's `{ … }` body (an arrow with an expression body has none)
+//   empty_block(b)           block b has nothing between its braces, not even a comment
+//   before_close(b, x)       child x of block b starts before its `}` (tree-sitter hangs later comments inside)
+//   fn_holder(f, h)          h is the class member or object property f is the value of (ESTree's parent):
+//                            a method is its own holder; `a: function () {}` gives the pair, `f = () => {}` the field
+//   held_value(h, v)         v is the value of pair or class field h
+//   holder_key(h, k)         k is h's key node (a computed key is the computed_property_name)
+//   estree_key(h, k)         the same, without a computed key's brackets: where ESLint reports a key
+//   static_key(h, x)         x is h's key as ESLint's getStaticPropertyName reads it (common's key_static)
+//   private_key(h, x)        h's key is the private name x ("#m")
+//   member_kind(m, k)        a method_definition's kind: "constructor", "get", "set" or "method"
+//   is_static(m)             class member m is `static`;   class_member(h): h is directly in a class body
+//   fn_id(f, x)              f's own name: `function x() {}`;   generator(f): `function*`, `*m() {}`
+//   accessor(l, s, m, k, w)  m is a getter or setter (w "get" | "set") with key k in list l (an object, a class
+//                            body's static s or instance members, a TypeScript type); keys compare as ESLint's
+//   accessor_name(m, s)      how ESLint's messages name accessor m: "static setter 'a'"
+//   accessor_at(m, at)       where ESLint reports accessor m
+//   list_index(l, m, i)      m is l's i-th member, as ESTree numbers them
+//   fn_name_kind(f, s)       ESLint's getFunctionNameWithKind, capitalised: "Async method 'load'", "Arrow function"
+//   fn_words(f, s)           the same in lower case, as ESLint prints it mid-sentence: "async method 'load'"
+//   fn_head(f, at)           where ESLint's getFunctionHeadLoc starts: the holder, the `=>` token, or f
+//   fn_start(f, at)          where ESTree's function node starts: a method's FunctionExpression is at `(` or `<`
+//   own_fn(n, f)             f is the nearest function around n: the function whose code n is
+//   callback(f)              f is a function expression or arrow passed to a call (or called at once)
+//   method_call(c, o, x)     call c is `o.x(…)` for the identifier o: Object.defineProperty(…)
+//
+// Used by the js-1 rules accessor-pairs, grouped-accessor-pairs, class-methods-use-this, func-name-matching,
+// func-style, default-param-last, max-params, max-statements, max-nested-callbacks, max-classes-per-file,
+// no-empty-function, no-empty-static-block, no-dupe-class-members, no-extra-bind and arrow-body-style.
+// Builds on tsx/eslint-a-common (function_node, deparen, key_static, static_prop, call_arg, token_text, this_owner,
+// upper_first, limit) and tsx/modules (fn_region, not_stmt).
+#include "tsx/eslint-a-common.rr"
+
+// ---- functions and parameters ----------------------------------------------------------------------------------
+// The function kinds are modules.rr's (common's function_node): in tree-sitter a method is one node,
+// method_definition, which is both ESTree's MethodDefinition (or Property) and its FunctionExpression value.
+// fn_param(f, p, i): parameters in order. Comments inside the list are skipped.
+//   function f(a, b = 1, ...c) {}       a 0, b = 1 1, ...c 2;   x => x   x 0
+.decl fn_param(f: node, p: node, i: number)
+fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, p, _), !not_stmt(p),
+    i = count : { child(ps, o, _), !not_stmt(o), o < p }.
+fn_param(f, p, 0) :- field(f, "parameter", p).
+// A default is an assignment_pattern in JavaScript, and a parameter with a `value` in TypeScript (whose grammar
+// wraps every parameter in required_parameter or optional_parameter).
+.decl default_param(p: node)
+default_param(p) :- kind(p, "assignment_pattern").
+default_param(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "value", _).
+.decl rest_param(p: node)
+rest_param(p) :- kind(p, "rest_pattern").
+rest_param(p) :- kind(p, "required_parameter"), field(p, "pattern", x), kind(x, "rest_pattern").
+.decl optional_param(p: node)
+optional_param(p) :- kind(p, "optional_parameter").
+// this_param(p, v): TypeScript's `this: T` pseudo-parameter; v = 1 for `this: void`. typescript-eslint keeps it
+// in `params`, so ESLint's max-params counts it unless the rule says not to.
+.decl this_param(p: node, v: number)
+this_param(p, 1) :- field(p, "pattern", x), kind(x, "this"), void_type(p).
+this_param(p, 0) :- field(p, "pattern", x), kind(x, "this"), !void_type(p).
+.decl void_type(p: node)  // p is annotated `: void`
+void_type(p) :- field(p, "type", t), child(t, y, 0), kind(y, "predefined_type"), text(y, "void").
+.decl param_count(f: node, k: number)
+param_count(f, k) :- function_node(f), k = count : { fn_param(f, _, _) }.
+// The `{ … }` of a function. `x => x + 1` has an expression body and no block.
+.decl fn_block(f: node, b: node)
+fn_block(f, b) :- function_node(f), field(f, "body", b), kind(b, "statement_block").
+
+// empty_block(b): `{ }` with nothing between the braces, not even a comment. tree-sitter hangs a comment that
+// follows the `}` on the same line inside the block (`function f() {} // x`), so a comment counts only when
+// it starts before the closing brace.
+.decl empty_block(b: node)
+empty_block(b) :- kind(b, "statement_block"), count : { before_close(b, x) } = 0.
+.decl before_close(b: node, x: node)  // x starts before b's `}`
+// The `}` is b's last character, so every child of b is before it.
+before_close(b, x) :- kind(b, "statement_block"), child(b, x, _).
+
+// ---- methods, properties and keys -------------------------------------------------------------------------------
+// fn_holder(f, h): the node ESLint calls the function's parent when that parent is a Property, MethodDefinition
+// or PropertyDefinition. Parentheses do not count in ESTree: `a: (function () {})` is held by the pair too.
+//   class A { m() {} }         m is its own holder
+//   ({ a: function () {} })    the pair `a: …`
+//   class A { f = () => {} }   the field `f = …`
+.decl fn_holder(f: node, h: node)
+fn_holder(m, m) :- kind(m, "method_definition").
+// An `accessor x = …` field is ESTree's AccessorProperty, which ESLint's helpers do not treat as a holder.
+fn_holder(f, h) :- function_node(f), held_value(h, v), deparen(v, f), !op(h, "accessor").
+.decl held_value(h: node, v: node)  // the value of a pair or a class field
+held_value(h, v) :- kind(h, "pair"), field(h, "value", v).
+held_value(h, v) :- (kind(h, "field_definition") ; kind(h, "public_field_definition")), field(h, "value", v).
+// holder_key(h, k): the key of a method, pair or field. JavaScript's field_definition calls it `property`;
+// TypeScript's public_field_definition and every method form call it `name`.
+.decl holder_key(h: node, k: node)
+holder_key(h, k) :- (kind(h, "method_definition") ; kind(h, "method_signature") ; kind(h, "abstract_method_signature")
+    ; kind(h, "public_field_definition")), field(h, "name", k).
+holder_key(h, k) :- kind(h, "field_definition"), field(h, "property", k).
+holder_key(h, k) :- (kind(h, "pair") ; kind(h, "pair_pattern")), field(h, "key", k).
+// estree_key(h, k): ESTree's `key`, where ESLint reports a member: `[expr]`'s expression, without the brackets.
+.decl estree_key(h: node, k: node)
+estree_key(h, k) :- holder_key(h, k), !kind(k, "computed_property_name").
+estree_key(h, x) :- holder_key(h, k), kind(k, "computed_property_name"), child(k, e, _), !not_stmt(e),
+    deparen(e, x).
+// static_key(h, x): ESLint's getStaticPropertyName. A plain name is its text; a literal key, computed or not,
+// is its value (`"a"`, `1`, `[`a`]`, `[1]`: "a", "1", "a", "1"); `[x]` has no static name.
+//   ({ a() {}, "a"() {}, ["a"]() {} })     all three are "a"
+.decl static_key(h: node, x: symbol)
+static_key(h, x) :- holder_key(h, k), key_static(k, x).
+.decl private_key(h: node, x: symbol)
+private_key(h, x) :- holder_key(h, k), kind(k, "private_property_identifier"), text(k, x).
+// member_kind(m, k): `get a() {}` "get", `set a(v) {}` "set", `constructor() {}` in a class "constructor",
+// else "method". A method named get (`get() {}`) has no `get` token, so it is a plain method.
+.decl member_kind(m: node, k: symbol)
+member_kind(m, "get") :- kind(m, "method_definition"), op(m, "get").
+member_kind(m, "set") :- kind(m, "method_definition"), op(m, "set").
+member_kind(m, "constructor") :- ctor(m).
+member_kind(m, "method") :- kind(m, "method_definition"), !op(m, "get"), !op(m, "set"), !ctor(m).
+.decl ctor(m: node)  // a class's `constructor() {}`: not static, not computed
+ctor(m) :- kind(m, "method_definition"), !op(m, "get"), !op(m, "set"), !is_static(m),
+    child(c, m, _), kind(c, "class_body"), static_key(m, "constructor"), holder_key(m, k),
+    !kind(k, "computed_property_name").
+// The member kinds that take `static`; a class_static_block (`static { }`) is no member, and its kind is all its
+// `static` says (the tape keeps none there).
+.decl is_static(m: node)
+is_static(m) :- kind(m, k), static_member(k), op(m, "static").
+.decl static_member(k: symbol)
+static_member("method_definition"). static_member("public_field_definition"). static_member("field_definition").
+static_member("method_signature"). static_member("abstract_method_signature"). static_member("index_signature").
+
+// ---- accessors ----------------------------------------------------------------------------------------------------
+// accessor(l, s, m, k, w): m is a `get` or `set` accessor (w) with key k, in list l with static s ("static" or
+// ""): an object literal, a class body (static and instance members are two lists), or a TypeScript object type
+// or interface body (method signatures). Keys compare as ESLint compares them: by static name ("=a"), else by
+// the key's tokens ("~a + b"). So `get [a]` and `set [(a)]` pair, and `get a` and `set [a]` do not.
+//   ({ get a() {}, set a(v) {} })      one key "=a", with a get and a set
+.decl accessor(l: node, s: symbol, m: node, k: symbol, w: symbol)
+accessor(o, "", m, k, w) :- kind(o, "object"), child(o, m, _), kind(m, "method_definition"), acc(m, k, w).
+accessor(c, s, m, k, w) :- kind(c, "class_body"), child(c, m, _), kind(m, "method_definition"), acc(m, k, w),
+    (is_static(m), s = "static" ; !is_static(m), s = "").
+accessor(t, "", m, k, w) :- (kind(t, "object_type") ; kind(t, "interface_body")), child(t, m, _),
+    kind(m, "method_signature"), acc(m, k, w).
+.decl acc(m: node, k: symbol, w: symbol)
+acc(m, k, w) :- (op(m, "get"), w = "get" ; op(m, "set"), w = "set"), key_of(m, k).
+.decl key_of(m: node, k: symbol)
+key_of(m, cat("=", x)) :- static_key(m, x).
+key_of(m, cat("~", t)) :- !static_key(m, _), estree_key(m, e), token_text(e, t).
+// accessor_name(m, s): how ESLint names accessor m (getFunctionNameWithKind). A type's method signature has
+// no function value, so ESLint names it from the signature: "setter 'a'".
+.decl accessor_name(m: node, s: symbol)
+accessor_name(m, s) :- kind(m, "method_definition"), acc(m, _, _), fn_words(m, s).
+accessor_name(m, cat(cat(w, "ter '"), cat(x, "'"))) :- kind(m, "method_signature"), acc(m, _, w), static_key(m, x).
+accessor_name(m, cat(w, "ter 'null'")) :- kind(m, "method_signature"), acc(m, _, w), !static_key(m, _).
+// accessor_at(m, at): where ESLint reports it: the function head; a signature's own start.
+.decl accessor_at(m: node, at: loc)
+accessor_at(m, at) :- kind(m, "method_definition"), acc(m, _, _), fn_head(m, at).
+accessor_at(m, m) :- kind(m, "method_signature"), acc(m, _, _).
+// list_index(l, m, i): m is the i-th member of l, from 0, as ESTree's `properties` or `body` counts: comments
+// are not members, and neither are TypeScript decorators (tree-sitter puts them beside the member).
+.decl list_index(l: node, m: node, i: number)
+list_index(l, m, i) :- accessor(l, _, m, _, _), child(l, m, _),
+    i = count : { child(l, o, _), !not_stmt(o), !kind(o, "decorator"), o < m }.
+
+// ---- how ESLint names a function -----------------------------------------------------------------------------------
+// fn_name_kind(f, s): astUtils.getFunctionNameWithKind with its first letter upper-cased, as the rules print it:
+//   function foo() {}              Function 'foo'        () => {}                   Arrow function
+//   class A { static async *#m(){} } Static private async generator method #m
+//   ({ get a() {} })               Getter 'a'            class A { constructor() {} } Constructor
+//   ({ a: function b() {} })       Method 'a'            class A { f = () => {} }    Method 'f'
+// The words: static and private (class members), async, generator, then what it is, then its name.
+.decl fn_name_kind(f: node, s: symbol)
+fn_name_kind(f, s) :- fn_words(f, w), upper_first(w, s).
+upper_first_ask(w) :- fn_words(_, w).
+// fn_words(f, s): the same, as written mid-sentence: "async method 'load'" (no-empty-function's message).
+.decl fn_words(f: node, s: symbol)
+fn_words(f, "constructor") :- ctor(f).
+fn_words(f, s) :- function_node(f), !ctor(f), fn_mods(f, m), fn_what(f, w), fn_label(f, l),
+    s = cat(m, cat(w, l)).
+.decl fn_mods(f: node, s: symbol)  // "static private async generator " or a prefix of it
+fn_mods(f, cat(a, cat(b, cat(c, d)))) :- function_node(f), word_if(f, "static", a), word_if(f, "private", b),
+    word_if(f, "async", c), word_if(f, "generator", d).
+.decl word_if(f: node, w: symbol, s: symbol)
+word_if(f, "static", "static ") :- fn_holder(f, h), class_member(h), is_static(h).
+word_if(f, "static", "") :- function_node(f), !static_member_fn(f).
+word_if(f, "private", "private ") :- fn_holder(f, h), class_member(h), private_key(h, _).
+word_if(f, "private", "") :- function_node(f), !private_member_fn(f).
+word_if(f, "async", "async ") :- function_node(f), op(f, "async").
+word_if(f, "async", "") :- function_node(f), !op(f, "async").
+word_if(f, "generator", "generator ") :- function_node(f), generator(f).
+word_if(f, "generator", "") :- function_node(f), !generator(f).
+.decl static_member_fn(f: node)
+static_member_fn(f) :- fn_holder(f, h), class_member(h), is_static(h).
+.decl private_member_fn(f: node)
+private_member_fn(f) :- fn_holder(f, h), class_member(h), private_key(h, _).
+.decl class_member(h: node)
+class_member(h) :- child(c, h, _), kind(c, "class_body").
+.decl generator(f: node)
+generator(f) :- (kind(f, "generator_function") ; kind(f, "generator_function_declaration")).
+generator(f) :- kind(f, "method_definition"), op(f, "*").
+.decl fn_what(f: node, s: symbol)  // "getter", "setter", "method", "arrow function", "function"
+fn_what(f, "getter") :- member_kind(f, "get").
+fn_what(f, "setter") :- member_kind(f, "set").
+fn_what(f, "method") :- member_kind(f, "method").
+fn_what(f, "method") :- fn_holder(f, h), h != f.
+fn_what(f, "arrow function") :- kind(f, "arrow_function"), !fn_holder(f, _).
+fn_what(f, "function") :- function_node(f), !kind(f, "arrow_function"), !fn_holder(f, _).
+.decl fn_label(f: node, s: symbol)  // " 'name'", " #name" or ""
+fn_label(f, cat(" ", x)) :- fn_holder(f, h), private_key(h, x).
+fn_label(f, cat(" '", cat(x, "'"))) :- fn_holder(f, h), !private_key(h, _), static_key(h, x).
+fn_label(f, cat(" '", cat(x, "'"))) :- fn_holder(f, h), !private_key(h, _), !static_key(h, _), fn_id(f, x).
+fn_label(f, "") :- fn_holder(f, h), !private_key(h, _), !static_key(h, _), !fn_id(f, _).
+fn_label(f, cat(" '", cat(x, "'"))) :- function_node(f), !fn_holder(f, _), fn_id(f, x).
+fn_label(f, "") :- function_node(f), !fn_holder(f, _), !fn_id(f, _).
+.decl fn_id(f: node, x: symbol)  // the function's own name: `function foo() {}`
+fn_id(f, x) :- function_node(f), !kind(f, "method_definition"), field(f, "name", n), text(n, x).
+
+// ---- where ESLint reports a function ------------------------------------------------------------------------------
+// fn_head(f, at): getFunctionHeadLoc's start. A held function starts at its holder (`static async m`), an arrow
+// at its `=>`, any other function at itself.
+.decl fn_head(f: node, at: loc)
+fn_head(f, h) :- fn_holder(f, h).
+// The tape keeps no `=>` (the arrow's kind implies it): it is the last `=>` in the arrow's source before its body.
+fn_head(f, m) :- kind(f, "arrow_function"), !fn_holder(f, _), arrow_op(f, m).
+fn_head(f, f) :- function_node(f), !kind(f, "arrow_function"), !fn_holder(f, _).
+// fn_start(f, at): the start of ESTree's function node. For a method that is its FunctionExpression, which
+// begins at the type parameters or the `(`; every other function is its own node.
+.decl fn_start(f: node, at: node)
+fn_start(f, f) :- function_node(f), !kind(f, "method_definition").
+fn_start(f, n) :- kind(f, "method_definition"), (field(f, "type_parameters", n) ;
+    !field(f, "type_parameters", _), field(f, "parameters", n)).
+
+// ---- nesting -----------------------------------------------------------------------------------------------------
+// own_fn(n, f): f is the innermost function n is in. A method's key is outside its own code (fn_code, from
+// modules.rr): in `({ [g()]() {} })` the call g() belongs to the code around the method.
+.decl own_fn(n: node, f: node)
+own_fn(n, f) :- nearest(n, r, fn_code), fn_region(f, r).
+
+// callback(f): ESLint's max-nested-callbacks counts a function whose ESTree parent is a CallExpression: an
+// argument, or the callee of an immediately invoked function (parentheses are not nodes in ESTree).
+//   foo(function () {})     a callback        (function () {})()    a callback        new Foo(() => {})   not one
+.decl callback(f: node)
+callback(f) :- callback_kind(f), child(a, f, _), kind(a, "arguments"), child(c, a, _), kind(c, "call_expression").
+// With max-nested-callbacks' checkConstructorCallCallbacks, `new Foo(() => {})` counts too.
+callback(f) :- callback_kind(f), option("checkConstructorCallCallbacks", "true"), child(a, f, _),
+    kind(a, "arguments"), child(c, a, _), kind(c, "new_expression").
+callback(f) :- callback_kind(f), kind(c, "call_expression"), field(c, "function", e), deparen(e, f).
+.decl callback_kind(f: node)
+callback_kind(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function") ; kind(f, "generator_function")).
+
+
+// The keys compared by their tokens: those with no static name.
+token_text_ask(e) :- estree_key(h, e), !static_key(h, _).
+
+// ---- calls -------------------------------------------------------------------------------------------------------
+// method_call(c, o, x): call c calls member x of the identifier o, as ESLint's isSpecificMemberAccess reads it:
+//   Object.defineProperty(…)   Object["defineProperty"](…)   Object?.defineProperty(…)     ("Object", "defineProperty")
+// By name only: a local variable called Object counts too, as in ESLint.
+.decl method_call(c: node, o: symbol, x: symbol)
+method_call(c, o, x) :- kind(c, "call_expression"), field(c, "function", m), deparen(m, e),
+    static_prop(e, b, x), kind(b, "identifier"), text(b, o).
+

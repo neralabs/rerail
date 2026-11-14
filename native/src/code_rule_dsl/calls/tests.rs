@@ -1,7 +1,7 @@
 use super::closure::{Bits, Closure, Graph, Hop, Seed, Status};
 use super::names::Name;
 use super::python::path_module;
-use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, callee_at};
+use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, python::callee_at};
 use super::{CallsView, FileSeeds, SeedScope, Through};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -29,7 +29,7 @@ fn summarize(module: &str, source: &str) -> Summary {
     let module = ModulePath::dotted(module).expect("module path");
     let errors = root.root().get_doc().tree.root_node().has_error();
     let table = table(root.root(), &module);
-    Summary::extract(&root.root(), Some(&table), Some(&module), errors)
+    crate::code_rule_dsl::calls::summary::python::extract(&root.root(), Some(&table), Some(&module), errors)
 }
 
 /// `(caller, callee)` for every edge.
@@ -196,7 +196,7 @@ fn a_call_site_names_what_extraction_recorded() {
     let root = GrammarDialect::Python.ast_grep(SERVICE);
     let module = ModulePath::dotted("pkg.sub.api").expect("module path");
     let table = table(root.root(), &module);
-    let summary = Summary::extract(&root.root(), Some(&table), Some(&module), false);
+    let summary = crate::code_rule_dsl::calls::summary::python::extract(&root.root(), Some(&table), Some(&module), false);
     let mut named = std::collections::BTreeSet::new();
     let mut open = 0;
     for node in root.root().dfs().filter(|node| node.kind() == "call") {
@@ -329,6 +329,7 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
     let witnesses = calls
         .iter()
         .map(|(start, end)| crate::code_rule_dsl::violations::Witness {
+            sql_violation: None,
             path: "m.py".into(),
             span: Some(crate::code_rule_dsl::violations::Span {
                 start_byte: *start as usize,
@@ -1360,7 +1361,7 @@ fn an_updated_view_restamps_only_what_an_edit_can_change() {
         stamps.retain(|path, _| files.contains_key(path));
         for path in &affected {
             if let Some(summary) = files.get(path) {
-                stamps.insert(Arc::clone(path), view.stamp(summary, &every));
+                stamps.insert(Arc::clone(path), view.stamp(path, summary, &every));
                 restamped += 1;
             }
         }
@@ -1368,7 +1369,7 @@ fn an_updated_view_restamps_only_what_an_edit_can_change() {
         for (path, summary) in &files {
             assert_eq!(
                 stamps.get(path),
-                Some(&fresh.stamp(summary, &every)),
+                Some(&fresh.stamp(path, summary, &every)),
                 "step {step}: {path}"
             );
             for target in &summary.targets {
@@ -1386,7 +1387,7 @@ fn an_updated_view_restamps_only_what_an_edit_can_change() {
         for through in Through::ALL {
             let sites = |view: &CallsView| {
                 let mut sites = view
-                    .open(through)
+                    .open(through.into())
                     .iter()
                     .map(|def| view.graph.def_site(*def))
                     .map(|(path, start)| (path.to_string(), start))
@@ -1471,7 +1472,7 @@ fn corpus() {
         .ok();
         table_time += started.elapsed().as_micros();
         let started = Instant::now();
-        let summary = Summary::extract(&tree.root(), table.as_ref(), module.as_ref(), errors);
+        let summary = crate::code_rule_dsl::calls::summary::python::extract(&tree.root(), table.as_ref(), module.as_ref(), errors);
         extract += started.elapsed().as_micros();
         bytes += summary.encode().len();
         let relative = path.strip_prefix(&root).unwrap_or(path).to_string_lossy();
@@ -1681,6 +1682,10 @@ fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
         names: vec![Name::new(family, text)],
         defs: vec![],
         edges: vec![],
+        references: vec![],
+        reference_targets: vec![],
+        reference_aliases: vec![],
+        reference_decorators: vec![],
         aliases: vec![],
         targets: vec![],
         opaque: vec![],
@@ -1692,14 +1697,16 @@ fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
     };
     let python = summary(Family::Python, "pkg.f");
     let php = summary(Family::Php, r"\App\f");
-    // Extractor version 9, no module, one name, its length and text, then empty tables.
+    // Extractor version 18, no module, one name, its length and text, then empty tables.
     let bytes = |text: &[u8]| -> Vec<u8> {
-        [9, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0]
-            .into_iter()
-            .chain(u32::try_from(text.len()).unwrap().to_le_bytes())
-            .chain(text.iter().copied())
-            .chain([0; 28])
-            .collect()
+        [
+            18, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+        ]
+        .into_iter()
+        .chain(u32::try_from(text.len()).unwrap().to_le_bytes())
+        .chain(text.iter().copied())
+        .chain([0; 44])
+        .collect()
     };
     let (python_bytes, php_bytes) = (bytes(b"pkg.f"), bytes(br"\App\f"));
     assert_eq!(python.encode(), python_bytes);

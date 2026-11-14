@@ -1,0 +1,165 @@
+.policy "typescript-eslint-no-unused-private-class-members" revision 2
+.description "Remove private and #private class members that nothing in their class reads; they are dead code."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   holder_key, member_kind, is_static, ctor, fn_param, deparen, static_string; through tsx/names: ref_site
+
+// typescript-eslint's no-unused-private-class-members: a `private` or `#private` member that nothing reads. Fields,
+// methods, accessors and `constructor(private x)` parameter properties count. Reads are found the way
+// typescript-eslint's class analyser finds them:
+//   this.x       in a method, or a function that is a field's value (static members from static ones); in a
+//                plain function only with a `this: C` parameter; arrow functions see the `this` around them
+//   C.x          the class's own name: a static member
+//   self.x       `const self = this` never reassigned;   o.x for `o: C` (instance) or `o: typeof C` (static)
+//   const { x } = this     destructuring this
+//   #x           anywhere inside the nearest class that has #x
+// Writes are not reads: `this.x = v`, `this.x += v;` and `this.x++;` as statements, `for (this.x of xs)`, a
+// destructuring target. An accessor counts as used when written, too.
+//   class A { private a = 1; }   class A { #b() {} }   class A { constructor(private c) { this.c = 1; } }  → reported
+//   class A { private a = 1; m() { return this.a; } }                                                   fine
+// For a getter and setter pair the later one is reported, at its name. No options.
+.violation unused_private_member(at: node, x: symbol) code "@typescript-eslint/no-unused-private-class-members" "Remove private member {x}; nothing in its class reads it."
+    suppress eslint "@typescript-eslint/no-unused-private-class-members"
+unused_private_member(at, x) :- final_member(c, m, k, st), private_member(m), member(c, m, k, x, at, st),
+    !used(c, k, st).
+
+// ---- members ----
+.decl class_kind(k: symbol)
+class_kind("class_declaration"). class_kind("class"). class_kind("abstract_class_declaration").
+// member(c, m, k, x, at, st): m is a member of class c under key k (`#x` for a #private name), named x in messages
+// and at node at, in the static or instance map (st).
+.decl member(c: node, m: node, k: symbol, x: symbol, at: node, st: symbol)
+member(c, m, k, k, at, st) :- kind(c, ck), class_kind(ck), field(c, "body", b), child(b, m, _), holder_key(m, at),
+    !ctor(m), member_key(at, k), (is_static(m), st = "static" ; !is_static(m), st = "instance").
+member(c, p, x, x, n, "instance") :- kind(c, ck), class_kind(ck), field(c, "body", b), child(b, m, _), ctor(m),
+    fn_param(m, p, _), field(p, "pattern", n), kind(n, "identifier"), text(n, x),
+    (child(p, a, _), kind(a, "accessibility_modifier") ; ((kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly")) ; child(p, o, _),
+    kind(o, "override_modifier")).
+// member_key(at, k): `x`, `#x`, `"x"`, `1`, `["x"]`, `[`x`]`; other computed keys have none.
+.decl member_key(at: node, k: symbol)
+member_key(at, k) :- (kind(at, "property_identifier") ; kind(at, "private_property_identifier")), text(at, k).
+member_key(at, k) :- (kind(at, "string") ; kind(at, "number")), static_string(at, v), spelled(v, k).
+member_key(at, k) :- kind(at, "computed_property_name"), child(at, e, 0), deparen(e, s),
+    (kind(s, "string") ; kind(s, "number") ; kind(s, "template_string")), static_string(s, v), spelled(v, k).
+.decl spelled(v: symbol, k: symbol)  // the string key "#x" is not the private name #x
+spelled(v, v) :- static_string(_, v), !match("#.*", v).
+spelled(v, cat("'", v)) :- static_string(_, v), match("#.*", v).
+.decl final_member(c: node, m: node, k: symbol, st: symbol)  // the last member under a key: the analyser's Map
+final_member(c, m, k, st) :- member(c, m, k, _, _, st), !later_member(c, m, k, st).
+.decl later_member(c: node, m: node, k: symbol, st: symbol)
+later_member(c, m, k, st) :- member(c, m, k, _, _, st), member(c, o, k, _, _, st), earlier(m, o).
+.decl private_member(m: node)
+private_member(m) :- child(m, a, _), kind(a, "accessibility_modifier"), text(a, "private").
+private_member(m) :- holder_key(m, k), kind(k, "private_property_identifier").
+.decl accessor_member(m: node)
+accessor_member(m) :- member_kind(m, "get") ; member_kind(m, "set").
+accessor_member(m) :- kind(m, "public_field_definition"), op(m, "accessor").
+.decl used(c: node, k: symbol, st: symbol)
+used(c, k, st) :- access(a, c, k, st), !write_only(a).
+used(c, k, st) :- access(a, c, k, st), write_only(a), final_member(c, m, k, st), accessor_member(m).
+
+// ---- this ----
+// ctx(n, c, st): `this` at n is class c's instance (or the class itself, st "static"), or there is no row.
+.decl class_frame(k: symbol)
+class_frame("function_declaration"). class_frame("function_expression"). class_frame("generator_function").
+class_frame("generator_function_declaration"). class_frame("method_definition"). class_frame("class_static_block").
+class_frame("class_declaration"). class_frame("class"). class_frame("abstract_class_declaration").
+.decl ctx(n: node, c: node, st: symbol)
+ctx(n, c, st) :- asks_this(n), nearest(n, f, class_frame), frame_ctx(f, c, st).
+.decl frame_ctx(f: node, c: node, st: symbol)
+frame_ctx(c, c, "instance") :- kind(c, k), class_kind(k).
+frame_ctx(f, c, st) :- kind(f, "method_definition"), child(b, f, _), field(c, "body", b),
+    (is_static(f), st = "static" ; !is_static(f), st = "instance").
+frame_ctx(f, c, st) :- (kind(f, "function_expression") ; kind(f, "generator_function")), field(p, "value", f),
+    kind(p, "public_field_definition"), child(b, p, _), field(c, "body", b),
+    (op(p, "static"), st = "static" ; !op(p, "static"), st = "instance").
+frame_ctx(f, c, "static") :- kind(f, "class_static_block"), child(b, f, _), field(c, "body", b).
+frame_ctx(f, c, "instance") :- class_frame(k), kind(f, k), !class_kind(k), fn_param(f, p, 0), kind(p, "required_parameter"),
+    field(p, "pattern", t), kind(t, "this"), field(p, "type", a), child(a, r, 0), kind(r, "type_identifier"), text(r, x),
+    named_class(f, x, c).
+// named_class(n, x, c): c is the nearest class around n (or n itself) named x.
+.decl named_class(n: node, x: symbol, c: node)
+named_class(n, x, c) :- asks_name(n, x), (inside(n, c, class_kind) ; kind(n, k), class_kind(k), c = n),
+    field(c, "name", i), text(i, x), !nearer_named(n, x, c).
+.decl nearer_named(n: node, x: symbol, c: node)
+nearer_named(n, x, c) :- asks_name(n, x), inside(n, c, class_kind), field(c, "name", i), text(i, x),
+    inside(n, d, class_kind), within(d, c), field(d, "name", j), text(j, x).
+.decl asks_name(n: node, x: symbol)
+asks_name(f, x) :- class_frame(k), kind(f, k), fn_param(f, p, 0), field(p, "pattern", t), kind(t, "this"),
+    field(p, "type", a), child(a, r, 0), text(r, x).
+asks_name(e, x) :- object_of(e, o, _), kind(o, "identifier"), text(o, x).
+asks_name(e, x) :- object_of(e, o, _), ref_site(o, s), typed_site(s, _, x).
+
+// ---- accesses ----
+// object_of(e, o, k): e reads key k of object o: o.k, o["k"], o[`k`], o[1] (not o.#k).
+.decl object_of(e: node, o: node, k: symbol)
+object_of(e, o, k) :- kind(e, "member_expression"), field(e, "property", p), kind(p, "property_identifier"), text(p, k),
+    field(e, "object", w), deparen(w, o).
+object_of(e, o, k) :- kind(e, "subscript_expression"), field(e, "index", i), deparen(i, s),
+    (kind(s, "string") ; kind(s, "number") ; kind(s, "template_string")), static_string(s, k),
+    field(e, "object", w), deparen(w, o).
+.decl asks_this(n: node)
+asks_this(e) :- object_of(e, o, _), kind(o, "this").
+asks_this(e) :- object_of(e, o, _), ref_site(o, s), self_site(s).
+asks_this(p) :- this_pattern(p).
+// access(a, c, k, st): node a touches member k of class c's st map.
+.decl access(a: node, c: node, k: symbol, st: symbol)
+access(e, c, k, st) :- object_of(e, o, k), kind(o, "this"), ctx(e, c, st).
+access(e, c, k, "static") :- object_of(e, o, k), kind(o, "identifier"), text(o, x), named_class(e, x, c).
+access(e, c, k, st) :- object_of(e, o, k), kind(o, "identifier"), text(o, x), !named_class(e, x, _), ref_site(o, s),
+    self_site(s), ctx(e, c, st).
+access(e, c, k, st) :- object_of(e, o, k), kind(o, "identifier"), text(o, x), !named_class(e, x, _), ref_site(o, s),
+    !self_site(s), typed_site(s, st, y), named_class(e, y, c).
+access(q, c, k, st) :- this_pattern(p), ctx(p, c, st), child(p, q, _), pattern_key(q, k).
+// For #x the analyser classifies its parent: `this.#x` or `#x in o`.
+access(a, c, k, st) :- kind(u, "private_property_identifier"), !holder_key(_, u), text(u, k), inside(u, c, class_kind),
+    member(c, _, k, _, _, st), !hash_nearer(u, c, k), child(a, u, _).
+.decl hash_nearer(u: node, c: node, k: symbol)
+hash_nearer(u, c, k) :- kind(u, "private_property_identifier"), text(u, k), inside(u, c, class_kind),
+    member(c, _, k, _, _, _), inside(u, d, class_kind), within(d, c), member(d, _, k, _, _, _).
+// self_site(s): `const self = this` (or let/var), never assigned again.
+.decl self_site(s: node)
+self_site(s) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, t), kind(t, "this"),
+    field(s, "name", n), kind(n, "identifier"), !reassigned(s).
+.decl reassigned(s: node)
+reassigned(s) :- kind(s, "variable_declarator"), (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), deparen(l, i), kind(i, "identifier"), ref_site(i, s).
+// typed_site(s, st, x): the name declared at s is annotated `: x` (instance) or `: typeof x` (static).
+.decl typed_site(s: node, st: symbol, x: symbol)
+typed_site(s, "instance", x) :- site_type(s, r), kind(r, "type_identifier"), text(r, x).
+typed_site(s, "static", x) :- site_type(s, r), kind(r, "type_query"), child(r, i, 0), kind(i, "identifier"), text(i, x).
+.decl site_type(s: node, r: node)
+site_type(s, r) :- kind(s, "variable_declarator"), field(s, "type", a), child(a, r, 0).
+site_type(s, r) :- kind(s, "identifier"), field(p, "pattern", s), field(p, "type", a), child(a, r, 0).
+// this_pattern(p): object pattern p is destructured from this: `const { a } = this`, `({ a } = this)`, `{ a } = this`.
+.decl this_pattern(p: node)
+this_pattern(p) :- kind(d, "variable_declarator"), field(d, "name", p), kind(p, "object_pattern"), field(d, "value", v),
+    deparen(v, t), kind(t, "this").
+this_pattern(p) :- (kind(a, "assignment_expression") ; kind(a, "assignment_pattern")), field(a, "left", p),
+    kind(p, "object_pattern"), field(a, "right", v), deparen(v, t), kind(t, "this").
+.decl pattern_key(q: node, k: symbol)  // a property with a plain, non-computed key
+pattern_key(q, k) :- kind(q, "shorthand_property_identifier_pattern"), text(q, k).
+pattern_key(q, k) :- kind(q, "pair_pattern"), field(q, "key", i), kind(i, "property_identifier"), text(i, k).
+pattern_key(q, k) :- kind(q, "object_assignment_pattern"), field(q, "left", i), text(i, k).
+
+// ---- writes ----
+// write_only(a): access a is only assigned to (ESTree parents, parentheses aside).
+.decl write_only(a: node)
+write_only(a) :- access(a, _, _, _), target_of(a, p), kind(p, "assignment_expression").
+write_only(a) :- access(a, _, _, _), target_of(a, p), kind(p, "augmented_assignment_expression"), up(p, s),
+    kind(s, "expression_statement").
+write_only(a) :- access(a, _, _, _), target_of(a, p), (kind(p, "for_in_statement") ; kind(p, "assignment_pattern") ;
+    kind(p, "array_pattern") ; kind(p, "rest_pattern") ; kind(p, "pair_pattern")).
+write_only(a) :- access(a, _, _, _), up(a, p), kind(p, "update_expression"), up(p, s), kind(s, "expression_statement").
+// target_of(e, p): e is what p writes: an assignment's or a for-in/of head's left, a default's left, an array
+// pattern's element, a rest's argument, an object pattern's property value.
+.decl target_of(e: node, p: node)
+target_of(e, p) :- access(e, _, _, _), deparen(w, e), field(p, "left", w).
+target_of(e, p) :- access(e, _, _, _), deparen(w, e), child(p, w, _), (kind(p, "array_pattern") ; kind(p, "rest_pattern")).
+target_of(e, p) :- access(e, _, _, _), deparen(w, e), field(p, "value", w), kind(p, "pair_pattern").
+.decl up(n: node, p: node)  // p is n's parent, parentheses skipped
+up(n, p) :- (access(n, _, _, _) ; kind(n, "update_expression") ; kind(n, "augmented_assignment_expression")),
+    deparen(w, n), child(p, w, _), !kind(p, "parenthesized_expression").

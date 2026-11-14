@@ -1,0 +1,208 @@
+.policy "typescript-eslint-unified-signatures" revision 6
+.description "Combine TypeScript overloads that differ only in one parameter type or one extra parameter into a single signature with a union or optional parameter."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+#include "tsx/ts-a.rr"
+//   fn_param, deparen
+
+// typescript-eslint's unified-signatures: two overloads of one function, method or signature that could be one.
+//   f(x: number): void;  f(x: string): void;        → at the second x: "… taking `number | string`."
+//   f(): void;           f(x?: number): void;       → at x: "… with an optional parameter." (`...xs`: a rest one)
+//   f(x: number): void;  f(x: number): void;        → at the second: "… with identical parameters."
+// Overloads group by name (computed keys other than literals all share one): `declare function` signatures in the program or a namespace body, a class's bodiless
+// methods (static ones apart), and an interface's or object type's methods, call signatures and construct
+// signatures. Two overloads compare when their return types and type parameters read alike, and both or neither
+// use the class's or interface's type parameters. Every pair in a group is checked; with more than two, the
+// message names the line of the other overload. Types compare by their source text.
+// Options: ignoreDifferentlyNamedParameters (false) skips pairs whose same-place plain parameters are named
+// differently; ignoreOverloadsWithDifferentJSDoc (false) skips pairs whose nearest block comments differ.
+.violation unified_signatures(at: node, msg: symbol) code "@typescript-eslint/unified-signatures" "{msg}"
+    suppress eslint "@typescript-eslint/unified-signatures"
+    suppress oxlint "unified-signatures"
+    suppress biome "lint/style/useUnifiedTypeSignatures"
+unified_signatures(q, msg) :- one_differs(a, b, p, q), opening(a, b, p, s), type_text(p, t1), type_text(q, t2),
+    msg = cat(s, cat(" can be combined into one signature taking `", cat(t1, cat(" | ", cat(t2, "`."))))).
+unified_signatures(at, msg) :- identical(a, b), opening(a, b, a, s), estree_at(b, at),
+    msg = cat(s, " can be combined into one signature with identical parameters.").
+unified_signatures(e, msg) :- one_extra(a, b, e, o), opening(a, b, o, s),
+    (rest(e), w = "a rest parameter" ; !rest(e), w = "an optional parameter"),
+    msg = cat(s, cat(" can be combined into one signature with ", cat(w, "."))).
+// opening(a, b, n, s): "These overloads" for a group of two, else "This overload and the one on line <n's line>".
+.decl opening(a: node, b: node, n: node, s: symbol)
+opening(a, b, n, "These overloads") :- pair(a, b), (one_differs(a, b, n, _) ; one_extra(a, b, _, n) ; identical(a, b), n = a),
+    group_size(a, 2).
+opening(a, b, n, cat("This overload and the one on line ", to_string(l))) :- pair(a, b),
+    (one_differs(a, b, n, _) ; one_extra(a, b, _, n) ; identical(a, b), n = a), group_size(a, k), k > 2, line(n, l).
+// estree_at(s, at): where ESTree's signature starts: a `declare function` at `declare`, a class method's
+// bodiless function at its parameters (or type parameters).
+.decl estree_at(s: node, at: node)
+estree_at(s, a) :- overload(_, _, s), declared(s, a).
+estree_at(s, at) :- overload(g, _, s), kind(g, "class_body"), (field(s, "type_parameters", at) ;
+    !field(s, "type_parameters", _), field(s, "parameters", at)).
+estree_at(s, s) :- overload(g, _, s), !kind(g, "class_body"), !declared(s, _).
+.decl declared(s: node, a: node)
+declared(s, a) :- overload(_, _, s), child(a, s, _), kind(a, "ambient_declaration").
+
+// ---- overload groups ----
+// overload(g, k, sig): signature sig is in container g under key k.
+.decl overload(g: node, k: symbol, sig: node)
+overload(g, k, f) :- kind(f, "function_signature"), lifted(f, t), child(g, t, _), container(g), fn_key(f, t, k).
+overload(g, k, m) :- (kind(m, "method_signature") ; kind(m, "abstract_method_signature")), child(g, m, _),
+    container(g), !op(m, "get"), !op(m, "set"), member_key(m, i),
+    k = cat(c, cat(s, i)), (computed(m), c = "0" ; !computed(m), c = "1"), (op(m, "static"), s = "0" ; !op(m, "static"), s = "1").
+overload(g, "11()", c) :- kind(c, "call_signature"), child(g, c, _), container(g).
+overload(g, "11constructor", c) :- kind(c, "construct_signature"), child(g, c, _), container(g).
+.decl container(g: node)  // the program, a namespace body, a class declaration's body, an interface, an object type
+container(g) :- kind(g, "program") ; kind(g, "interface_body") ; kind(g, "object_type").
+container(g) :- ts_module_body(g).
+container(g) :- kind(g, "class_body"), child(c, g, _), (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")).
+.decl ts_module_body(g: node)
+ts_module_body(g) :- (kind(m, "internal_module") ; kind(m, "module")), field(m, "body", g).
+.decl lifted(f: node, t: node)  // f as its block holds it: through `declare` and `export`
+lifted(f, f) :- kind(f, "function_signature"), child(t, f, _), !kind(t, "ambient_declaration"), !kind(t, "export_statement").
+lifted(f, t) :- kind(f, "function_signature"), child(a, f, _), kind(a, "ambient_declaration"), !exported(a, _),
+    t = a.
+lifted(f, e) :- kind(f, "function_signature"), exported(f, e).
+lifted(f, e) :- kind(f, "function_signature"), child(a, f, _), kind(a, "ambient_declaration"), exported(a, e).
+.decl exported(n: node, e: node)
+exported(n, e) :- child(e, n, _), kind(e, "export_statement").
+// fn_key(f, t, k): a declared function's name; an unnamed `export default function (): T;` keys on the export.
+.decl fn_key(f: node, t: node, k: symbol)
+fn_key(f, t, k) :- lifted(f, t), field(f, "name", n), text(n, k).
+fn_key(f, t, "ExportDefaultDeclaration") :- lifted(f, t), !field(f, "name", _), kind(t, "export_statement").
+.decl member_key(m: node, i: symbol)  // identifier_x, private_identifier_x, or a literal key's source text
+member_key(m, cat("identifier_", x)) :- field(m, "name", n), kind(n, "property_identifier"), text(n, x).
+member_key(m, cat("private_identifier_", x)) :- field(m, "name", n), kind(n, "private_property_identifier"), text(n, y),
+    x = @slice(y, 1, 1000).
+member_key(m, x) :- field(m, "name", n), (kind(n, "string") ; kind(n, "number")), text(n, x).
+member_key(m, x) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, 0), deparen(e, l),
+    (kind(l, "string") ; kind(l, "number")), text(l, x).
+member_key(m, "undefined") :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, 0), deparen(e, l),
+    !kind(l, "string"), !kind(l, "number").
+.decl computed(m: node)
+computed(m) :- field(m, "name", n), kind(n, "computed_property_name").
+.decl group_size(a: node, k: number)
+group_size(a, k) :- overload(g, key, a), k = count : { overload(g, key, _) }.
+.decl pair(a: node, b: node)  // a comes first, both in one group, and they can be unified
+pair(a, b) :- overload(g, k, a), overload(g, k, b), earlier(a, b), same_return(a, b), same_tparams(a, b),
+    (uses_tparam(g, a), uses_tparam(g, b) ; !uses_tparam(g, a), !uses_tparam(g, b)), !named_apart(a, b),
+    !doc_apart(a, b).
+
+// ---- signature parts ----
+.decl sig_param(s: node, i: number, p: node)
+sig_param(s, i, p) :- overload(_, _, s), fn_param(s, p, i).
+.decl params(s: node, n: number)
+params(s, n) :- overload(_, _, s), n = count : { sig_param(s, _, _) }.
+.decl rest(p: node)  // `...xs`
+rest(p) :- sig_param(_, _, p), field(p, "pattern", r), kind(r, "rest_pattern").
+.decl optional(p: node)
+optional(p) :- sig_param(_, _, p), kind(p, "optional_parameter").
+.decl this_first_param(p: node)  // `this: T` first
+this_first_param(p) :- sig_param(_, 0, p), field(p, "pattern", t), kind(t, "this").
+.decl this_void(s: node)  // `this: void` first
+this_void(s) :- sig_param(s, 0, p), this_first_param(p), type_of(p, t), ts_keyword(t, "void").
+.decl type_of(p: node, t: node)  // the type written for a parameter
+type_of(p, t) :- sig_param(_, _, p), field(p, "type", a), kind(a, "type_annotation"), child(a, t, 0).
+.decl type_text(p: node, x: symbol)
+type_text(p, x) :- type_of(p, t), text(t, x).
+type_text(p, "") :- sig_param(_, _, p), !type_of(p, _).
+.decl same_type(p: node, q: node)  // both untyped, or the same text
+same_type(p, q) :- sig_param(a, i, p), sig_param(b, i, q), pairable(a, b), type_text(p, x), type_text(q, x).
+.decl same_sigils(p: node, q: node)
+same_sigils(p, q) :- sig_param(a, _, p), sig_param(b, _, q), pairable(a, b), (rest(p), rest(q) ; !rest(p), !rest(q)),
+    (optional(p), optional(q) ; !optional(p), !optional(q)).
+.decl pairable(a: node, b: node)
+pairable(a, b) :- overload(g, k, a), overload(g, k, b), a != b.
+.decl returns(s: node, x: symbol)
+returns(s, x) :- overload(_, _, s), (field(s, "return_type", r) ; kind(s, "construct_signature"), field(s, "type", r)),
+    child(r, t, 0), text(t, x).
+.decl same_return(a: node, b: node)
+same_return(a, b) :- pairable(a, b), returns(a, x), returns(b, x).
+same_return(a, b) :- pairable(a, b), !returns(a, _), !returns(b, _).
+// same_tparams(a, b): as many type parameters, alike by name and by their constraint's text (or none). The
+// recording's typescript-eslint (8.70) compares constraint text; 8.56 compared only the constraint's node type.
+.decl tparam(s: node, i: number, x: symbol, c: symbol)
+tparam(s, i, x, c) :- overload(_, _, s), field(s, "type_parameters", tp), child(tp, p, _), kind(p, "type_parameter"),
+    i = count : { child(tp, o, _), kind(o, "type_parameter"), o < p }, field(p, "name", n), text(n, x),
+    (field(p, "constraint", k), child(k, t, 0), text(t, c) ; !field(p, "constraint", _), c = "").
+.decl tparams(s: node, n: number)
+tparams(s, n) :- overload(_, _, s), field(s, "type_parameters", _), n = count : { tparam(s, _, _, _) }.
+.decl same_tparams(a: node, b: node)
+same_tparams(a, b) :- pairable(a, b), !tparams(a, _), !tparams(b, _).
+same_tparams(a, b) :- pairable(a, b), tparams(a, n), tparams(b, n), !tparam_apart(a, b).
+.decl tparam_apart(a: node, b: node)
+tparam_apart(a, b) :- pairable(a, b), tparam(a, i, x, c), tparam(b, i, y, d), (x != y ; c != d).
+// uses_tparam(g, s): a parameter's type is one of the container's type parameters, maybe as an array or under
+// `readonly` or `keyof`.
+.decl uses_tparam(g: node, s: node)
+uses_tparam(g, s) :- overload(g, _, s), outer_tparam(g, x), sig_param(s, _, p), type_of(p, t), reaches(t, u),
+    (kind(u, "type_identifier"), text(u, x) ; kind(u, "generic_type"), field(u, "name", n), kind(n, "type_identifier"),
+    text(n, x)).
+.decl outer_tparam(g: node, x: symbol)
+outer_tparam(g, x) :- (kind(g, "class_body") ; kind(g, "interface_body")), child(c, g, _), field(c, "type_parameters", tp),
+    child(tp, p, _), kind(p, "type_parameter"), field(p, "name", n), text(n, x).
+.decl reaches(t: node, u: node)
+reaches(t, t) :- type_of(_, t).
+reaches(t, u) :- reaches(t, v), (kind(v, "array_type") ; kind(v, "readonly_type") ; kind(v, "index_type_query") ;
+    kind(v, "parenthesized_type")), child(v, u, 0).
+
+// ---- the two ways ----
+// one_differs(a, b, p, q): as many parameters, alike but for the one at p (in a) and q (in b), plain on both sides.
+.decl apart(a: node, b: node, i: number)
+apart(a, b, i) :- pair(a, b), params(a, n), params(b, n), sig_param(a, i, p), sig_param(b, i, q),
+    !(same_sigils(p, q), same_type(p, q)).
+.decl identical(a: node, b: node)  // the same parameters, the same types
+identical(a, b) :- pair(a, b), params(a, n), params(b, n), !apart(a, b, _), !this_void(a), !this_void(b).
+.decl one_differs(a: node, b: node, p: node, q: node)
+one_differs(a, b, p, q) :- pair(a, b), !this_void(a), !this_void(b), apart(a, b, i), count : { apart(a, b, _) } = 1,
+    sig_param(a, i, p), sig_param(b, i, q), same_sigils(p, q), !rest(p).
+// one_extra(a, b, e, o): one has more parameters; past the other's count plus one they are all optional or rest,
+// the shared ones have the same types, and the shorter's last is no rest. e is the longer's last parameter, o the
+// shorter signature.
+.decl one_extra(a: node, b: node, e: node, o: node)
+one_extra(a, b, e, o) :- pair(a, b), params(a, m), params(b, n), m != n, (m < n, l = b, o = a, k = m ; n < m, l = a, o = b, k = n),
+    (this_first(a), this_first(b) ; !this_first(a), !this_first(b)), !this_void(a), !this_void(b),
+    !required_past(l, k), !type_apart(a, b, k), !rest_last(o, k), params(l, c), sig_param(l, c - 1, e).
+.decl this_first(s: node)
+this_first(s) :- sig_param(s, 0, p), this_first_param(p).
+.decl required_past(l: node, k: number)  // a parameter of l after index k is neither optional nor rest
+required_past(l, k) :- params(o, k), pairable(l, o), sig_param(l, i, p), i > k, !optional(p), !rest(p).
+.decl type_apart(a: node, b: node, k: number)  // within the first k, a parameter's type differs
+type_apart(a, b, k) :- pair(a, b), params(a, m), params(b, n), (m < n, k = m ; n < m, k = n), sig_param(a, i, p),
+    sig_param(b, i, q), i < k, !same_type(p, q).
+.decl rest_last(o: node, k: number)
+rest_last(o, k) :- params(o, k), k > 0, sig_param(o, k - 1, p), rest(p).
+
+// ---- options ----
+// named_apart(a, b): ignoreDifferentlyNamedParameters, and at some shared place both are plain names (or both
+// rest names), named differently.
+.decl named_apart(a: node, b: node)
+named_apart(a, b) :- option("ignoreDifferentlyNamedParameters", "true"), pairable(a, b), sig_param(a, i, p), sig_param(b, i, q),
+    shape(p, h), shape(q, h), name_of(p, x), name_of(q, y), x != y.
+.decl shape(p: node, h: symbol)  // ESTree's parameter type: "Identifier", "RestElement", "TSParameterProperty", …
+shape(p, "TSParameterProperty") :- sig_param(_, _, p), param_property(p).
+shape(p, h) :- sig_param(_, _, p), field(p, "pattern", n), !param_property(p),
+    (kind(n, "identifier"), h = "Identifier" ; kind(n, "this"), h = "Identifier" ; kind(n, "rest_pattern"), h = "RestElement" ;
+    kind(n, "object_pattern"), h = "ObjectPattern" ; kind(n, "array_pattern"), h = "ArrayPattern").
+.decl name_of(p: node, x: symbol)
+name_of(p, x) :- sig_param(_, _, p), field(p, "pattern", n), (kind(n, "identifier") ; kind(n, "this")), text(n, x).
+name_of(p, x) :- sig_param(_, _, p), field(p, "pattern", n), kind(n, "rest_pattern"), child(n, i, 0), kind(i, "identifier"),
+    text(i, x).
+// doc_apart(a, b): ignoreOverloadsWithDifferentJSDoc, and the last block comment right before each differs.
+.decl doc_apart(a: node, b: node)
+doc_apart(a, b) :- option("ignoreOverloadsWithDifferentJSDoc", "true"), pairable(a, b), sig_doc(a, x), sig_doc(b, y), x != y.
+.decl sig_doc(s: node, x: symbol)  // "" for none
+sig_doc(s, x) :- overload(_, _, s), doc_target(s, t), block_before(t, c), text(c, x), node(_, c, _, a, _),
+    a = max b : { block_before(t, d), node(_, d, _, b, _) }.
+sig_doc(s, "") :- overload(_, _, s), doc_target(s, t), !block_before(t, _).
+.decl doc_target(s: node, t: node)  // where the comment sits: an exported signature's export
+doc_target(s, t) :- overload(_, _, s), lifted(s, t).
+doc_target(s, s) :- overload(_, _, s), !lifted(s, _).
+.decl run_before(t: node, c: node)  // comments right before t
+run_before(t, c) :- doc_target(_, t), next_sibling(c, t), kind(c, "comment").
+run_before(t, c) :- run_before(t, d), next_sibling(c, d), kind(c, "comment").
+.decl block_before(t: node, c: node)
+block_before(t, c) :- run_before(t, c), match("/\\*.*", c).

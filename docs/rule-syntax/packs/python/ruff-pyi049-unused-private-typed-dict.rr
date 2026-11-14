@@ -1,0 +1,27 @@
+.policy "ruff-pyi049-unused-private-typed-dict" revision 2
+.description "Use, make public or remove a private TypedDict that nothing in its file references; an unused private TypedDict is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI049 (flake8-pyi), every file: a private TypedDict, as a class (`class _T(TypedDict)`) or a call
+// (`_T = TypedDict("_T", {…})`), that nothing in the file reads. Class bodies are checked only in stubs
+// (python/typing's unused_private). In a stub, an unread private loop variable of a comprehension in the call
+// is reported too, with the TypedDict.
+//   class _TD(TypedDict): ...              ← PYI049 at `_TD`
+//   _TD2 = TypedDict("_TD2", {"a": int})   ← PYI049 at the statement
+#include "python/typing.rr"
+
+.violation PYI049(at: node, msg: symbol) code "PYI049" "{msg}"
+    suppress ruff "PYI049"
+PYI049(n, cat("Nothing in this file uses the private TypedDict `", x, "`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.")) :-
+    unused_private(_, x, c), kind(c, "class_definition"), class_base_sym(c, q), split_dot(q, m, "TypedDict"),
+    typing_mod(m), field(c, "name", n).
+PYI049(a, cat("Nothing in this file uses the private TypedDict `", x, "`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.")) :-
+    unused_private(_, x, a), typed_dict_call(a, x).
+PYI049(v, cat("The comprehension variable `", y, "` in this stub TypedDict definition is never read. Replace the comprehension with literal fields or plain types; stubs only declare types.")) :-
+    typed_dict_call(a, x), prefix("_", x), unread_comp_var(a, v, y).
+// typed_dict_call(a, x): `x = TypedDict(…)`.
+.decl typed_dict_call(a: node, x: symbol)
+typed_dict_call(a, x) :- simple_assign(a, t, v), plain_target(t, x), kind(v, "call"), field(v, "function", f),
+    typing_sym(f, "TypedDict").

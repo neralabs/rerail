@@ -1,0 +1,25 @@
+.policy "ruff-ruf026-default-factory-kwarg" revision 3
+.description "Pass the default factory to defaultdict as the first positional argument; a default_factory keyword is stored as an ordinary dictionary entry."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF026: `defaultdict(default_factory=f)`. defaultdict takes its factory only by position; the keyword
+// becomes a dict entry named "default_factory", and the dict has no default. Reported when no positional
+// argument is passed and the keyword's value could be a callable (not a literal).
+//   defaultdict(default_factory=list)       ← RUF026  `defaultdict(list)`
+//   defaultdict(default_factory=1)          not reported: meant as an entry
+//   defaultdict(dict, default_factory=list) not reported
+#include "python/ruff.rr"
+
+.violation RUF026(at: node) code "RUF026"
+    "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended."
+    suppress ruff "RUF026"
+RUF026(c) :- call_q(c, "collections.defaultdict"), call_nargs(c, 0), call_kwarg(c, "default_factory", v),
+    unparen(v, m), kind(m, k), !literal_kind(k).
+// literal_kind(k): values that are never callable.
+.decl literal_kind(k: symbol)
+literal_kind("none"). literal_kind("true"). literal_kind("false"). literal_kind("integer"). literal_kind("float").
+literal_kind("string"). literal_kind("concatenated_string"). literal_kind("list"). literal_kind("tuple").
+literal_kind("set"). literal_kind("dictionary"). literal_kind("list_comprehension"). literal_kind("set_comprehension").
+literal_kind("dictionary_comprehension"). literal_kind("ellipsis"). literal_kind("generator_expression").

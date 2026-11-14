@@ -1,0 +1,45 @@
+.policy "ruff-f823-undefined-local" revision 2
+.description "Don't read a variable before the function assigns it, even when an outer scope has the same name; Python raises UnboundLocalError."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F823 (pyflakes): a function reads a name before its own binding of it, while an enclosing def or the
+// module also binds it. Python makes the name local to the whole function, so the read raises
+// UnboundLocalError instead of reading the outer value. Reported at the first such read in each function.
+//   counter = 0
+//   def bump():
+//       counter += 1            ← F823: `+=` reads the local counter first
+//   def show():
+//       print(counter)          ← F823
+//       counter = 1
+//   def ok():
+//       global counter          not reported: the binding is the module's
+//       counter += 1
+//   def shadow():
+//       print(len)              ← F823: a builtin counts as an outer binding
+//       len = 1
+#include "python/pyflakes.rr"
+//   run_scope(n, s, k)  the scope n runs in (a comprehension is a scope of its own; its first iterable is not)
+
+.violation F823(at: node, x: symbol) code "F823"
+    "Assign `{x}` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable."
+    suppress ruff "F823"
+F823(r, x) :- early_read(f, x, _), k = min i : { early_read(f, x, i) }, read(r, x, f, k).
+// read(r, x, f, i): r reads x in function f's own code; i orders the reads. `x += 1` reads x before it binds it.
+.decl read(r: node, x: symbol, f: node, i: number)
+read(r, x, f, r) :- ast_name(r, x), expr_ctx(r, "load"), run_scope(r, f, "function").
+read(r, x, f, r) :- kind(a, "augmented_assignment"), field(a, "left", r), text(r, x), run_scope(r, f, "function").
+// early_read(f, x, i): read i comes before every binding of x in f (a bare annotation binds nothing: a read after
+// `x: int` is early too), f binds or annotates x other than by `except E as x` (Ruff does not report those), and
+// x is bound or annotated outside f (classes skipped, as lookup skips them) or is a builtin. Bindings moved out by `global`/`nonlocal` are not f's.
+.decl early_read(f: node, x: symbol, i: number)
+early_read(f, x, i) :- read(r, x, f, i), local_in(f, x), count : { binding(f, x, b, _), b < r, !within(r, b) } = 0,
+    outer(f, x).
+.decl local_in(f: node, x: symbol)
+local_in(f, x) :- binding(f, x, _, form), form != "except".
+local_in(f, x) :- bare_annotation(_, _, x, f).
+.decl outer(f: node, x: symbol)
+outer(f, x) :- read(_, x, f, _), inside(f, p, fscope), bound_in(p, x).
+outer(f, x) :- read(_, x, f, _), builtin(x).
+outer(f, x) :- read(_, x, f, _), inside(f, p, fscope), bare_annotation(_, _, x, p).

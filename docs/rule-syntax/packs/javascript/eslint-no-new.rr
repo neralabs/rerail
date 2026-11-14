@@ -1,0 +1,20 @@
+.policy "eslint-no-new" revision 4
+.description "Don't call a constructor with new only for its side effects; keep the created object or use a plain function."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen
+
+// ESLint's no-new: a `new` expression that is a whole statement, so the object it makes is thrown away.
+//   new Thing();              → reported
+//   (new Thing());            → reported (ESTree has no parentheses)
+//   const t = new Thing();    fine
+// No options.
+.violation no_new(at: node) code "no-new"
+    "Keep the object this new creates, or replace it with a plain function call if only its side effects matter."
+    suppress eslint "no-new"
+    suppress oxlint "no-new"
+    suppress biome "lint/correctness/noUnusedInstantiation"
+no_new(x) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e, x), kind(x, "new_expression").

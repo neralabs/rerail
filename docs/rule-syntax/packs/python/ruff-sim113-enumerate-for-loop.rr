@@ -1,0 +1,65 @@
+.policy "ruff-sim113-enumerate-for-loop" revision 2
+.description "Use enumerate() instead of a counter that starts at 0 and is incremented by hand in each pass of a for loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM113 (flake8-simplify): `i += 1` directly in the body of a `for` loop (not `async for`), where the
+// `i` it reads was set by `i = 0` (or `n, i = 0, 0`) next to the loop: in the same body, the same function
+// or the same branch. Ruff skips the loop when its body has a `continue` anywhere (nested defs and classes
+// aside), when the loop binds i anywhere else, and when code after the loop reads the counted value. No fix,
+// as in Ruff.
+//   i = 0
+//   for x in xs:
+//       print(i, x)
+//       i += 1         ← SIM113: for i, x in enumerate(xs): …
+//   i = 0
+//   for x in xs:
+//       i += 1         not reported: i is read after the loop
+//   print(i)
+#include "python/simplify.rr"
+//   zero_number; binding, binding_value, nameref, look from python/names
+
+.violation SIM113(at: node, index: symbol) code "SIM113" "Use `enumerate()` for index variable `{index}` in `for` loop"
+    suppress ruff "SIM113"
+SIM113(st, x) :- counter(f, st, t, x, s), start(t, x, s, a), same_parent(f, a),
+    count : { binding(s, x, o, _), within(o, f) } = 1, !read_after(f, x, s).
+
+// counter(f, st, t, x, s): statement st of for loop f's own body is `x += 1`, its target t binding x in s.
+.decl counter(f: node, st: node, t: node, x: symbol, s: node)
+counter(f, st, t, x, s) :- kind(f, "for_statement"), !op(f, "async"), field(f, "body", b), !loop_continue(f),
+    body_stmt(b, st, _), kind(st, "expression_statement"), child(st, g, 0), kind(g, "augmented_assignment"),
+    op(g, "+="), field(g, "right", one), kind(one, "integer"), text(one, "1"), field(g, "left", t),
+    binding(s, x, t, "augassign").
+.decl loop_continue(f: node)  // a `continue` in f's body, outside nested defs and classes
+loop_continue(f) :- kind(f, "for_statement"), field(f, "body", b), has(b, c, "continue_statement"),
+    !inside_def(c, b).
+.decl inside_def(c: node, b: node)
+inside_def(c, b) :- has(b, d, def_kind), inside(c, d, def_kind).
+.decl def_kind(k: symbol)
+def_kind("function_definition"). def_kind("class_definition").
+// start(t, x, s, a): the binding of x that t reads, the latest one above it in s, is the assignment a `x = 0`.
+.decl start(t: node, x: symbol, s: node, a: node)
+start(t, x, s, a) :- counter(_, _, t, x, s), k = max i : { binding(s, x, o, _), earlier(o, t), visit_index(o, i) },
+    binding(s, x, a, "assign"), visit_index(a, k), start_value(a, v), unparen(v, z), kind(z, "integer"),
+    text(z, n), zero_number(n).
+// start_value(a, v): binding site a stores v: `i = v`, or the matching element of `n, i = 0, 0`.
+.decl start_value(a: node, v: node)
+start_value(a, v) :- binding_value(a, v).
+start_value(t, v) :- kind(t, "identifier"), child(l, t, i), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
+    kind(g, "assignment"), field(g, "left", l), field(g, "right", r), unparen(r, m),
+    (kind(m, "expression_list") ; kind(m, "tuple")), child(m, v, i).
+// same_parent(f, a): the loop and the assignment sit in the same statement (or both at module level).
+.decl same_parent(f: node, a: node)
+same_parent(f, a) :- counter(f, _, t, x, s), start(t, x, s, a), nearest(f, p, compound), nearest(a, p, compound).
+.decl compound(k: symbol)
+compound("module"). compound("function_definition"). compound("class_definition"). compound("if_statement").
+compound("for_statement"). compound("while_statement"). compound("with_statement"). compound("try_statement").
+compound("match_statement").
+// read_after(f, x, s): a read of x below the loop sees the binding the loop leaves (no other one in between).
+.decl read_after(f: node, x: symbol, s: node)
+read_after(f, x, s) :- counter(f, _, _, x, s), nameref(r, x), look(r, x, s), earlier(f, r), !within(r, f),
+    !passed_over(f, x, s, r).
+.decl passed_over(f: node, x: symbol, s: node, r: node)
+passed_over(f, x, s, r) :- counter(f, _, _, x, s), nameref(r, x), look(r, x, s), binding(s, x, o, _), earlier(f, o),
+    !within(o, f), earlier(o, r).

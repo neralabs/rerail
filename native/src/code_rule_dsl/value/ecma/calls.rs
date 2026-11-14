@@ -5,6 +5,7 @@
 //! `'a'.length`, `/a/g.flags`). A call folds only through a function on eslint-utils' allowlists
 //! (`builtins.rs`, generated from its source) that is implemented here; anything else is unknown.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 use super::builtins::{BUILTIN_NAMES, CALL_ALLOWED, CALL_PASS_THROUGH, CONSTANTS, GETTER_ALLOWED};
@@ -385,8 +386,7 @@ fn argument_values<D: Doc>(
         }
         if child.kind() == "spread_element" {
             let inner = child
-                .children()
-                .find(|inner| inner.is_named() && inner.kind() != "comment")?;
+                .first_code()?;
             match decode(&inner, context) {
                 Value::Array(items) => values.extend(items),
                 Value::Utf16(units) => {
@@ -440,8 +440,7 @@ fn raw<D: Doc>(template: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         };
         units.extend(chunk(before));
         let Some(expression) = substitution
-            .children()
-            .find(|child| child.is_named() && child.kind() != "comment")
+            .first_code()
         else {
             return Value::Unknown;
         };
@@ -466,7 +465,7 @@ fn raw<D: Doc>(template: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 
 /// The functions implemented, each under every name the allowlists give it. A test checks that
 /// each is on an allowlist; a name on no list is never called.
-pub(super) const IMPLEMENTED: &[&str] = &[
+pub const IMPLEMENTED: &[&str] = &[
     "Array.isArray",
     "Array.of",
     "Array.prototype.at",
@@ -1241,7 +1240,7 @@ fn rounded(mantissa: &BigInt, exponent: i64, scale: i64) -> BigInt {
 /// §21.1.3.5): the `precision` significant digits `n` and exponent `e` for which
 /// `n * 10^(e - precision + 1)` is nearest the number, the larger on a tie, laid out in fixed
 /// notation for `-6 <= e < precision` and in exponential notation otherwise.
-pub(crate) fn to_precision(number: f64, precision: u32) -> String {
+pub fn to_precision(number: f64, precision: u32) -> String {
     debug_assert!(number.is_finite() && (1..=100).contains(&precision));
     let sign = if number < 0.0 { "-" } else { "" };
     let magnitude = number.abs();
@@ -1454,7 +1453,7 @@ fn join(items: &[Value], separator: &[u16], depth: usize) -> Option<Vec<u16>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// `Number.prototype.toPrecision` as Node.js 25 (V8) computes it, exactly: ties go to the

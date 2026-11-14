@@ -1,0 +1,148 @@
+{
+  "cpuNs": 105464000,
+  "execution": "combined production corpus::run_with_options; program; CPU",
+  "flattenCpuNs": 843000,
+  "flattenWallNs": 1351875,
+  "keyCount": 2,
+  "keys": [
+    [
+      "ASYNC210",
+      "test.py",
+      3
+    ],
+    [
+      "ASYNC210",
+      "test.py",
+      4
+    ]
+  ],
+  "out": "/Users/jeremy/orca/artifacts/async-family-comparison/collision-green/rr",
+  "profile": {
+    "decisions": [],
+    "directory": null,
+    "spans": [],
+    "statements": []
+  },
+  "profiling": false,
+  "report": {
+    "chunks": 1,
+    "consulted": [
+      [
+        "doc",
+        "test.py",
+        "19dbeb1f1b8895dd6025162ff9fcf58c77db1e7bde49d6418b7fdf09858e24ff"
+      ]
+    ],
+    "cross": [
+      0,
+      0
+    ],
+    "crossAgain": {},
+    "crossChanged": [],
+    "crossDeltaCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "crossMaintained": [
+      0,
+      0,
+      0
+    ],
+    "crossStrata": null,
+    "files": 1,
+    "memo": [
+      0,
+      0
+    ],
+    "native": 46,
+    "nodes": 43,
+    "phaseRunCount": 0,
+    "phases": [
+      [
+        "stats",
+        0.052607,
+        0.024177999999999998,
+        61.505536,
+        7
+      ],
+      [
+        "parse (worker)",
+        0.000856,
+        0.001144,
+        61.505536,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.00028,
+        0.0009230000000000002,
+        61.505536,
+        0
+      ],
+      [
+        "wait",
+        0.0004310000000000008,
+        0.001075000000000003,
+        61.505536,
+        0
+      ],
+      [
+        "local",
+        0.006164999999999997,
+        0.002787999999999999,
+        61.505536,
+        129
+      ],
+      [
+        "cross",
+        0.0012780000000000014,
+        0.00008800000000000127,
+        61.505536,
+        64
+      ],
+      [
+        "write",
+        0.000017999999999997185,
+        0.0005749999999999991,
+        61.505536,
+        0
+      ]
+    ],
+    "prepared": "prepared",
+    "rounds": {
+      "converged": true,
+      "pending": false,
+      "rows": [],
+      "run": 1
+    },
+    "rows": {
+      "p0_ASYNC210": 2,
+      "p1_ASYNC221": 0,
+      "p2_ASYNC222": 0,
+      "p3_ASYNC230": 0,
+      "rr_diagnostic": 2,
+      "violation": 2
+    },
+    "text": [
+      1,
+      47,
+      0.00043000000000000004
+    ],
+    "typing": "TypingReport { declared: 0, pending: [], conflicts: [], typed_nodes: 0, terms: 0, summaries: 0 }",
+    "typingRunNames": []
+  },
+  "root": "/Users/jeremy/orca/artifacts/async-family-comparison/collision-fixture",
+  "rules": [
+    "ruff-async210-blocking-http-call-in-async-function.rr",
+    "ruff-async221-run-process-in-async-function.rr",
+    "ruff-async222-wait-for-process-in-async-function.rr",
+    "ruff-async230-blocking-open-call-in-async-function.rr"
+  ],
+  "schema": "rerail-async-authored-rr-comparison-v1",
+  "suppression": "declarations retained; raw violation.csv keys",
+  "wallNs": 149491500
+}

@@ -4,14 +4,13 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
+use super::global::evaluate_batched_relations;
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
     Request, apply_request, decode_buffer_request, file_needs_update, inline_input, is_cheap,
     is_file_local, make_file, reclaim_candidate_sets,
 };
-#[cfg(feature = "code-rule-profile")]
-use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
 use super::persisted::{Persisted, candidate_catalog, persist_files};
 use super::results::{
@@ -23,11 +22,10 @@ use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
-use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
-use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::{self, adapter::package_manifests};
 use crate::code_rule_dsl::model::{
@@ -37,7 +35,7 @@ use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::release_allocator_memory;
+use crate::code_rule_dsl::prof::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
@@ -55,16 +53,16 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 #[napi]
 pub struct CodeRuleDslWorkspace {
-    pub(super) state: Arc<Mutex<WorkspaceState>>,
+    #[napi(skip)] pub state: Arc<Mutex<WorkspaceState>>,
     /// Each registered code rule's scope, and whether the code rule reads text
     /// (`CompiledCodeRule::reads_text`), answered without the state lock.
-    pub(super) scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
+    #[napi(skip)] pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    pub(super) closed: Arc<AtomicBool>,
+    #[napi(skip)] pub closed: Arc<AtomicBool>,
 }
 
 impl Default for CodeRuleDslWorkspace {
@@ -94,6 +92,8 @@ impl CodeRuleDslWorkspace {
     /// The host chooses the file (each build owns its own); the binding never derives one. The
     /// store never holds a copy of a file `secret_names` names: such a file is evaluated as any
     /// other and stays resident instead.
+    /// Not in a `headless` build, where `#[napi(object)]` derives nothing (napi-derive `noop`).
+    #[cfg(not(feature = "headless"))]
     #[napi]
     pub fn enable_storage_async(
         &self,
@@ -108,7 +108,7 @@ impl CodeRuleDslWorkspace {
         )?))
     }
 
-    pub(super) fn storage_task(
+    pub fn storage_task(
         &self,
         root: String,
         store_path: String,
@@ -216,6 +216,32 @@ impl CodeRuleDslWorkspace {
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);
+                    }
+                    // P's relational producers (test-only, open item O18).
+                    ClauseKind::Relational(plan) => {
+                        let ids = plan
+                            .inputs
+                            .iter()
+                            .map(|(_, input)| {
+                                let id = compile_relation_producer(
+                                    input,
+                                    Side::Counted,
+                                    clause,
+                                    index,
+                                    code_rule,
+                                );
+                                if plan.per_file {
+                                    let producer = &mut code_rule.clauses[id.1];
+                                    producer.decision = true;
+                                    producer.violation.project.clear();
+                                    producer.violation.each = None;
+                                    producer.violation.node_regexes.clear();
+                                    producer.violation.gap_tests.clear();
+                                }
+                                id
+                            })
+                            .collect();
+                        state.relation_plans.insert((index, clause.id.clone()), ids);
                     }
                     ClauseKind::Llm => {}
                 }
@@ -448,7 +474,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.completion_task())
     }
 
-    pub(super) fn completion_task(&self) -> WorkspaceCompletionTask {
+    pub fn completion_task(&self) -> WorkspaceCompletionTask {
         WorkspaceCompletionTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
@@ -466,7 +492,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
     }
 
-    pub(super) fn result_page_task(
+    pub fn result_page_task(
         &self,
         cursor: u32,
         maximum_bytes: u32,
@@ -645,6 +671,10 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
+        ClauseKind::Relational(plan) => plan
+            .inputs
+            .iter()
+            .any(|(_, input)| in_manifest_family(&input.ast.query)),
     })
 }
 
@@ -703,10 +733,10 @@ pub(super) fn close_poisoned(
     invalid("policy workspace is closed")
 }
 
-pub(super) struct StateLease<'a> {
-    pub(super) guard: Option<MutexGuard<'a, WorkspaceState>>,
-    pub(super) mutex: &'a Mutex<WorkspaceState>,
-    pub(super) closed: &'a AtomicBool,
+pub struct StateLease<'a> {
+    pub guard: Option<MutexGuard<'a, WorkspaceState>>,
+    pub mutex: &'a Mutex<WorkspaceState>,
+    pub closed: &'a AtomicBool,
 }
 impl std::ops::Deref for StateLease<'_> {
     type Target = WorkspaceState;
@@ -728,22 +758,22 @@ impl Drop for StateLease<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs once, inside the next storage attach on this thread, while the attach still holds the
     /// workspace lock: a test lands `close` there.
-    pub(super) static ON_STORAGE_ATTACHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub static ON_STORAGE_ATTACHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The storage retries and the retry wait (nanoseconds) the last apply on this thread
     /// reported: they reach the host only in profile output.
-    pub(super) static LAST_APPLY_STORAGE_RETRIES: std::cell::Cell<(usize, u64)> =
+    pub static LAST_APPLY_STORAGE_RETRIES: std::cell::Cell<(usize, u64)> =
         const { std::cell::Cell::new((0, 0)) };
     /// The files the last apply on this thread left unpublished because the store was busy.
-    pub(super) static LAST_APPLY_UNPUBLISHED_FILES: std::cell::Cell<usize> =
+    pub static LAST_APPLY_UNPUBLISHED_FILES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -774,6 +804,7 @@ pub struct WorkspaceStorageTask {
     secret_names: Arc<SecretNames>,
 }
 
+#[cfg(not(feature = "headless"))]
 impl Task for WorkspaceStorageTask {
     type Output = StorageAttachment;
     type JsValue = StorageAttachment;
@@ -842,7 +873,7 @@ impl Task for WorkspaceStorageTask {
                 ));
             }
             state.storage = Some(context);
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
                 on_attached();
             }
@@ -861,11 +892,11 @@ impl Task for WorkspaceStorageTask {
 }
 
 pub struct WorkspaceApplyTask {
-    pub(super) state: Arc<Mutex<WorkspaceState>>,
-    pub(super) closed: Arc<AtomicBool>,
-    pub(super) request_json: String,
-    pub(super) request_buffer: Option<Vec<u8>>,
-    pub(super) request_direct: Option<Request>,
+    pub state: Arc<Mutex<WorkspaceState>>,
+    pub closed: Arc<AtomicBool>,
+    pub request_json: String,
+    pub request_buffer: Option<Vec<u8>>,
+    pub request_direct: Option<Request>,
 }
 /// The message a workspace task fails with while another apply holds `cpu_slot`: the host reads this
 /// constant (`isWorkspaceBusy`), pauses and calls again.
@@ -874,7 +905,7 @@ pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
 
 /// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
 /// panic does not poison: an apply that panics while holding it frees it for the next one.
-pub(super) fn cpu_slot() -> &'static parking_lot::Mutex<()> {
+pub fn cpu_slot() -> &'static parking_lot::Mutex<()> {
     static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     &SLOT
 }
@@ -897,7 +928,7 @@ impl Task for WorkspaceApplyTask {
     /// own purge.
     fn finally(self, _env: Env) -> Result<()> {
         drop(self);
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
         Ok(())
     }
 }
@@ -978,17 +1009,17 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
+        #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
+        let anchor_corpus = Arc::clone(&state.anchor_corpus);
         // Every job reads the import targets of the files the workspace holds now, over disk
         // below its root as this apply finds it.
         let import_clauses = state.import_clauses.clone();
         let import_generation = state.import_generation;
-        let import_view = (!import_clauses.is_empty()).then(|| {
-            Arc::new(View::new(
-                Arc::clone(&state.import_files),
-                state.import_root.as_deref(),
-            ))
-        });
+        let import_view = (!import_clauses.is_empty())
+            .then(|| state.import_files.view(state.import_root.as_deref()));
         let context = JobContext {
+            #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
+            anchor_corpus: &anchor_corpus,
             code_rules: &code_rules,
             storage: storage.as_ref(),
             closed: &self.closed,
@@ -1172,7 +1203,7 @@ impl WorkspaceApplyTask {
                 metrics.storage_released_files += state.release_unpublished_over_budget();
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             LAST_APPLY_STORAGE_RETRIES.set((
                 metrics.storage_retries,
@@ -1197,8 +1228,10 @@ impl WorkspaceApplyTask {
             let mut file = state.files.remove(&path).expect("checked above");
             if file.stays_resident() {
                 let only = BTreeSet::from([path.clone()]);
+                // A read that failed comes back transient: its clauses are marked below.
                 if let Ok(Some(stored)) =
                     evicted_file_states(&state, Some(&only), false).map(|mut stored| stored.pop())
+                    && !stored.transient_failure
                 {
                     file.join_other_clauses(stored);
                 }
@@ -1231,11 +1264,19 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
+            // Compatibility relational clauses remain batched across dirty rules.
+            let mut relational =
+                evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
-                let mut evaluation = evaluate_global(&state, index, &snapshot)?;
-                #[cfg(test)]
+                let mut evaluation = evaluate_global(
+                    &mut state,
+                    index,
+                    &snapshot,
+                    relational.remove(&index).unwrap_or_default(),
+                )?;
+                #[cfg(any(test, feature = "test-hooks"))]
                 super::pass_deadline_at_test_phase("global-done");
                 // Only exhaustion some step observed cut it short; a finished evaluation is kept.
                 if budget.observed() {
@@ -1243,6 +1284,7 @@ impl WorkspaceApplyTask {
                         overflow_evaluation("runtime", "global evaluation time budget exceeded");
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
+                metrics.observe_native_work(&evaluation.metrics);
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),
@@ -1252,8 +1294,6 @@ impl WorkspaceApplyTask {
             }
         }
         check_closed(&self.closed)?;
-        #[cfg(feature = "code-rule-profile")]
-        record_workspace_residency(&state);
         if quiet {
             let profile = metrics.clone();
             let serialization_started = Instant::now();
@@ -1279,7 +1319,7 @@ struct PurgeAfterApply;
 
 impl Drop for PurgeAfterApply {
     fn drop(&mut self) {
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
     }
 }
 
@@ -1467,12 +1507,12 @@ impl Task for WorkspaceCompletionTask {
             };
             let completed_at = unix_seconds()?;
             let written = if let Some(repository) = &storage.repository {
-                let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
+                let mut manifests = super::ingest::repository_context(
                     repository.worktree_root.join(&storage.repository_prefix),
-                )
-                .reading_server_graphs(server_graph);
+                    server_graph,
+                );
                 let directories =
-                    reusable_directories(repository, &storage.repository_prefix, &mut manifests);
+                    reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
                 storage.store.complete_directories(
                     WorkspaceCompletion {
                         workspace_id: storage.workspace_id,

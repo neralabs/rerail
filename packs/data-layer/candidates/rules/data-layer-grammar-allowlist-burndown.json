@@ -1,0 +1,642 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-grammar-allowlist-burndown",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer grammar_allowlist_burndown at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "scripts/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "set-string": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "set"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "not": {
+                                    "regex": "(?i)^[rub]*f"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "concatenated_string"
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "regex": "(?i)^[rub]*f"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "concatenated_string",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        },
+                        {
+                          "value": {
+                            "type": "str"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "matches": "set-string",
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "set-string",
+                          "stopBy": "neighbor",
+                          "field": "right"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "allowlist-allowlisted_static_classes",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "usage",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:ALLOWLISTED_STATIC_CLASSES)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "matches": "set-string"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "matches": "set-string"
+                                            },
+                                            {
+                                              "nthChild": {
+                                                "position": 1,
+                                                "ofRule": {
+                                                  "not": {
+                                                    "kind": "comment"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "arguments"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path"
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        }
+      },
+      "violation": {
+        "code": "allowlist_grew",
+        "anchor": "witness.span",
+        "message": "Allowlist ALLOWLISTED_STATIC_CLASSES is nonempty"
+      }
+    },
+    {
+      "id": "allowlist-legacy_allowlisted_classes",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "usage",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:LEGACY_ALLOWLISTED_CLASSES)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "matches": "set-string"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "matches": "set-string"
+                                            },
+                                            {
+                                              "nthChild": {
+                                                "position": 1,
+                                                "ofRule": {
+                                                  "not": {
+                                                    "kind": "comment"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "arguments"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path"
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        }
+      },
+      "violation": {
+        "code": "allowlist_grew",
+        "anchor": "witness.span",
+        "message": "Allowlist LEGACY_ALLOWLISTED_CLASSES is nonempty"
+      }
+    },
+    {
+      "id": "allowlist-allowlisted_classes",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "usage",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:ALLOWLISTED_CLASSES)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "matches": "set-string"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "matches": "set-string"
+                                            },
+                                            {
+                                              "nthChild": {
+                                                "position": 1,
+                                                "ofRule": {
+                                                  "not": {
+                                                    "kind": "comment"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "arguments"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path"
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        }
+      },
+      "violation": {
+        "code": "allowlist_grew",
+        "anchor": "witness.span",
+        "message": "Allowlist ALLOWLISTED_CLASSES is nonempty"
+      }
+    },
+    {
+      "id": "allowlist-data_value_params",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "usage",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:DATA_VALUE_PARAMS)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "matches": "set-string"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "matches": "set-string"
+                                            },
+                                            {
+                                              "nthChild": {
+                                                "position": 1,
+                                                "ofRule": {
+                                                  "not": {
+                                                    "kind": "comment"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "arguments"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path"
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        }
+      },
+      "violation": {
+        "code": "allowlist_grew",
+        "anchor": "witness.span",
+        "message": "Allowlist DATA_VALUE_PARAMS is nonempty"
+      }
+    },
+    {
+      "id": "allowlist-operator_params",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "usage",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:OPERATOR_PARAMS)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "matches": "set-string"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "matches": "set-string"
+                                            },
+                                            {
+                                              "nthChild": {
+                                                "position": 1,
+                                                "ofRule": {
+                                                  "not": {
+                                                    "kind": "comment"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "arguments"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path"
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        }
+      },
+      "violation": {
+        "code": "allowlist_grew",
+        "anchor": "witness.span",
+        "message": "Allowlist OPERATOR_PARAMS is nonempty"
+      }
+    }
+  ]
+}

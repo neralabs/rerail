@@ -1,0 +1,50 @@
+.policy "ruff-up018-native-literals" revision 2
+.description "Write literals directly instead of calling str(), bytes(), int(), float(), bool() or complex() on a literal or with no arguments."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP018 (pyupgrade): a call of the builtin str, bytes, int, float, bool or complex that only makes a
+// literal: with no arguments (the empty value), or with one literal of the same type (a sign allowed on a
+// number). The one argument may be passed as `str(object=…)` or `complex(real=…)`; any other keyword or a
+// `*`/`**` argument leaves it. Inside an f-string nested in another one, Ruff leaves the call (the quotes of
+// the literal would clash).
+//   str()   int(-1)   bytes(b"a" b"b")      ← UP018: write "", -1, b"a" b"b"
+//   str(1)  int("1")  int(10, base=2)       not reported
+#include "python/upgrade.rr"
+//   builtin_at(e, x)
+#include "python/upgrade-format.rr"
+//   up_arg, up_kw, up_argc, str_lit
+
+// native(c, t): c calls the builtin t, one of the six, outside a nested f-string.
+.decl native(c: node, t: symbol)
+native(c, t) :- kind(c, "call"), field(c, "function", f), builtin_at(f, t), literal_type(t),
+    count : { inside(c, s, "string"), fstring(s) } < 2.
+.decl literal_type(t: symbol)
+literal_type("str"). literal_type("bytes"). literal_type("int"). literal_type("float"). literal_type("bool").
+literal_type("complex").
+
+.violation call_without_argument(at: node, t: symbol) code "UP018"
+    "Replace this call with the empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex."
+    suppress ruff "UP018"
+call_without_argument(c, t) :- native(c, t), up_argc(c, 0).
+
+.violation call_on_literal(at: node, t: symbol) code "UP018"
+    "Replace this call with the literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing."
+    suppress ruff "UP018"
+call_on_literal(c, t) :- native(c, t), up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, k, a), keyword(t, k)), lit(a, t).
+.decl keyword(t: symbol, k: symbol)
+keyword("str", "object"). keyword("complex", "real").
+
+// lit(e, t): e, through parentheses, is a literal of type t. A number may carry one sign: `-1`, `+1.0`, `-1j`.
+.decl lit(e: node, t: symbol)
+lit(e, "str") :- str_lit(e, _).
+lit(e, "bytes") :- unparen(e, m), count : { lit_piece(m, s), !string_form(s, "bytes") } = 0, lit_piece(m, _).
+lit(e, "bool") :- unparen(e, m), (kind(m, "true") ; kind(m, "false")).
+lit(e, t) :- unparen(e, m), num_lit(m, t).
+lit(e, t) :- unparen(e, m), kind(m, "unary_operator"), (op(m, "-") ; op(m, "+")), field(m, "argument", n),
+    num_lit(n, t).
+.decl num_lit(n: node, t: symbol)  // a number literal of type t: 1, 1.0, 1j
+num_lit(n, "complex") :- (kind(n, "integer") ; kind(n, "float")), suffix("j", @lower(t)), text(n, t).
+num_lit(n, "int") :- kind(n, "integer"), text(n, t), !suffix("j", @lower(t)).
+num_lit(n, "float") :- kind(n, "float"), text(n, t), !suffix("j", @lower(t)).

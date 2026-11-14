@@ -1,0 +1,17 @@
+.policy "bandit-b308-mark-safe" revision 2
+.description "Avoid Django's mark_safe(); it turns off autoescaping and can expose cross-site scripting when the content isn't fully trusted."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B308 (its B001 blacklist): a call to Django's django.utils.safestring.mark_safe.
+//   from django.utils.safestring import mark_safe
+//   mark_safe(html)                            B308
+//   format_html("<b>{}</b>", x)                not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B308(at: node) code "B308"
+    "Build this HTML with format_html() instead of mark_safe so any untrusted parts get escaped."
+    suppress nosec "B308"
+B308(n) :- blacklisted(n, "B308").

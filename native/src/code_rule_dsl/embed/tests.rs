@@ -7,7 +7,7 @@ use crate::code_rule_dsl::language::{GrammarDialect, Via};
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::scope::usage::{BindingId, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
-use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use ast_grep_core::{AstGrep, Doc};
 use std::sync::Arc;
 
@@ -87,7 +87,7 @@ fn a_program_is_a_document_in_the_dialect_its_embedder_built_it_in() {
 fn a_blade_tape_holds_its_compiled_view_as_a_php_document() {
     let source = "{{ $a }}\n{{-- open\n";
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
-    let image = TapeImage::encode_template(&grammar, source, &|| false).expect("encodes");
+    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).expect("encodes");
     let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
         .expect("restores");
     let errors = host.syntax_error_ranges();
@@ -178,7 +178,7 @@ fn a_token_the_program_writes_is_rewritten() {
                 InFile::tape(doc.root().get_doc())
                     .text(&statement)
                     .into_owned(),
-                super::rewritten(&statement),
+                crate::code_rule_dsl::origin::rewritten(&statement),
             )
         })
         .collect::<Vec<_>>();

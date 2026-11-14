@@ -26,12 +26,24 @@ use std::sync::LazyLock;
 
 /// `psalm`: Psalm's `@psalm-suppress` tags.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Psalm {
+pub struct Psalm {
     /// The issues the violation is, and their `Config::getParentIssueType` parents: a tag naming
     /// any of them suppresses it.
     pub(crate) names: Vec<String>,
     /// `suppressAll: true`: `@psalm-suppress all` counts, as with `disableSuppressAll="false"`.
     pub(crate) suppress_all: bool,
+}
+
+/// Psalm's `@psalm-suppress` tags.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "psalm";
+    const DETAIL: &'static str = "psalm: @psalm-suppress tags are Psalm's";
+    type Spec = Psalm;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Psalm> {
+        spec(value, at)
+    }
 }
 
 /// `suppress.psalm`.
@@ -205,7 +217,7 @@ impl PsalmIndex {
     }
 
     /// Whether the file holds no tag Psalm would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.directives.is_empty()
     }
@@ -245,13 +257,13 @@ impl TopLevel {
 }
 
 /// PHP's `T_DOC_COMMENT`: `/**` followed by white space.
-pub(super) fn doc_comment(text: &str) -> bool {
+pub fn doc_comment(text: &str) -> bool {
     text.strip_prefix("/**")
         .is_some_and(|rest| rest.starts_with([' ', '\t', '\n', '\r']))
 }
 
 /// PCRE's `\s` without the UTF flag.
-pub(super) fn pcre_space(c: char) -> bool {
+pub fn pcre_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
 }
 
@@ -426,10 +438,10 @@ pub(crate) fn psalm_issue(issue: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{PsalmIndex, parent_issue_type};
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value;
 

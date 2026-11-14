@@ -1,0 +1,35 @@
+.policy "ruff-sim905-split-static-string" revision 2
+.description "Use a list literal instead of calling split() or rsplit() on a string literal; the result is known in advance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM905 (flake8-simplify): `"a b".split(…)` or `.rsplit(…)` on a str literal (adjacent literals
+// joined; not an f-string or bytes), whose separator, `sep` or the first positional argument, is absent,
+// `None` or a str literal, and whose `maxsplit`, the keyword or the second positional argument, is absent or
+// an int literal, signed or not. Ruff's fix, the list of parts, is safe without comments in the call; it is not
+// offered here: the parts need a str.split this language does not have (see NOTES).
+//   "a,b".split(",")    "a b".split()    "a b c".rsplit(maxsplit=1)      ← SIM905: ["a", "b"], …
+//   "a b".split(sep)    "a b".split(maxsplit=n)    f"{x} y".split()      not reported
+#include "python/simplify.rr"
+//   plain_str(e, v) from python/pyflakes; ruff_arg(c, i, a), call_kwarg(c, x, v), ruff_int(e, v) from python/ruff
+
+.violation SIM905(at: node, method: symbol) code "SIM905" "Consider using a list literal instead of `str.{method}`"
+    suppress ruff "SIM905"
+SIM905(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "split" ; m = "rsplit"),
+    unparen(o, s), kind(s, k), (k = "string" ; k = "concatenated_string"), plain_str(s, _), !fstring(s), !string_form(s, "bytes"),
+    !tstring_lit(s), !bad_arg(c, "sep", 0), !bad_arg(c, "maxsplit", 1).
+// bad_arg(c, x, i): the argument for parameter x (keyword x, else positional i) is not one Ruff can read.
+.decl bad_arg(c: node, x: symbol, i: number)
+bad_arg(c, x, i) :- split_param(x, i), arg_for(c, x, i, v), !readable(x, v).
+.decl split_param(x: symbol, i: number)
+split_param("sep", 0). split_param("maxsplit", 1).
+.decl arg_for(c: node, x: symbol, i: number, v: node)
+arg_for(c, x, i, v) :- split_param(x, i), kind(c, "call"), call_kwarg(c, x, v).
+arg_for(c, x, i, v) :- split_param(x, i), ruff_arg(c, i, v), !call_kwarg(c, x, _).
+.decl readable(x: symbol, v: node)
+readable("sep", v) :- unparen(v, m), kind(m, "none").
+readable("sep", v) :- unparen(v, m), plain_str(m, _), !fstring(m), !string_form(m, "bytes").
+readable("maxsplit", v) :- ruff_int(v, _).
+readable("maxsplit", v) :- unparen(v, m), kind(m, "unary_operator"), op(m, "-"), field(m, "argument", a),
+    ruff_int(a, _).

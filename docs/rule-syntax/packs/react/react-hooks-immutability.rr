@@ -1,0 +1,120 @@
+.policy "react-hooks-immutability" revision 2
+.description "Avoid mutating props, state, hook results and outer values in React components and hooks, reassigning their locals after render, or reading variables before they are declared."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/immutability (React Compiler): values React hands a component are frozen, and a component owns
+// only its locals during the render that made them.
+//   props.title = "x";  state.items[0] = y;  delete ctx.user;          reported: props, state, context and hook
+//                                                                    results are frozen, anywhere in the component
+//   const list = useMemo(() => [], []); list.push(x);                 reported: a memoized value is frozen too
+//   window.title = "x"  (during render)                               reported: a value outside the component
+//   let n = 0; <b onClick={() => { n = 1; }}/>                        reported twice: the assignment, and the
+//                                                                    handler that does it after render
+//   const f = () => { props = {}; }                                   reported: a parameter reassigned in a closure
+// Frozen values are followed through `const { a } = props` and `const t = state.items`, not further. The compiler
+// knows more mutating calls (its type signatures) and more aliasing; NOTES has the clauses left out.
+#include "tsx/react-compiler.rr"
+
+.violation immutability(at: node, msg: symbol)
+    code "react-hooks/immutability"
+    "{msg}"
+    suppress eslint "react-hooks/immutability"
+    suppress oxlint "immutability"
+// A frozen value changed, anywhere inside the compiled function, effects and handlers included.
+immutability(m, cat("Copy `", x, "` into a new local value and change the copy; props, state, context and hook results must not be mutated.")) :-
+    mutated(m, r), text(r, x), ref_site(r, s), frozen(s, f), within(m, f), !rc_ref_site(s).
+// A memoized collection changed by a mutating method: list.push(x).
+immutability(m, cat("Copy `", x, "` into a new local value and change the copy; props, state, context and hook results must not be mutated.")) :-
+    kind(c, "call_expression"), field(c, "function", m), field(m, "object", r), kind(r, "identifier"),
+    field(m, "property", p), mutator(p), text(r, x), ref_site(r, s), memo_result(s).
+// An outer value changed by code that may run during render.
+immutability(m, cat("Move this change to `", x, "` into an effect or a handler passed straight to JSX; code that may run during render must not change values defined outside the component.")) :-
+    mutated(m, r), text(r, x), rc_own(m, h), (rc_render_fn(h, f) ; rc_live_fn(h, f)), !owned(r, f).
+// A local reassigned by a function that runs after render, and the place that function is handed on.
+// The compiler reports the first such assignment in each function.
+immutability(n, cat("Keep `", x, "` in state or a ref instead of a local variable; reassigning it after render is lost on the next render.")) :-
+    late_assign(n, g), visit_index(n, i), i = min j : { late_assign(k, g), visit_index(k, j) }, text(n, x).
+immutability(at, "Keep this value in state or a ref instead of a local variable; this function changes a local variable after render, which the next render does not see.") :-
+    (late_assign(_, g) ; late_mutate(g)), handed(g, at).
+// A closure handed on before a variable it reads is declared: useEffect(() => { show(x); }); const x = …;
+immutability(r, cat("Move the declaration of `", x, "` above the code that reads it; a function the component passes on reads it before it is declared.")) :-
+    early_read(r), text(r, x).
+// A parameter reassigned inside a closure.
+immutability(n, cat("Assign the new value to a new local variable instead of reassigning the parameter `", x, "`; a component's props and a hook's arguments must not be modified.")) :-
+    assign(n), ref_site(n, s), rc_compiled(f), field(f, "parameters", ps), within(s, ps), rc_own(n, g), g != f,
+    within(g, f), text(n, x).
+
+// mutated(m, r): m is a member written (`=`, `+=`, `++`, `delete`) whose object chain starts at identifier r.
+.decl mutated(m: node, r: node)
+mutated(m, r) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", m),
+    chain_root(m, r).
+mutated(m, r) :- kind(a, "update_expression"), field(a, "argument", m), chain_root(m, r).
+mutated(m, r) :- kind(a, "unary_expression"), op(a, "delete"), field(a, "argument", m), chain_root(m, r).
+.decl chain_root(m: node, r: node)  // a.b.c, a[0].b: r is a
+chain_root(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", o),
+    (kind(o, "identifier"), r = o ; chain_root(o, r)).
+// frozen(s, f): binding s of compiled f holds a frozen value.
+.decl frozen(s: node, f: node)
+// props, or a destructured prop: the first parameter of a component (the second is its ref).
+frozen(s, f) :- rc_component(f), fn_param(f, p, 0), (s = p ; within(s, p)).
+// every argument of a hook
+frozen(s, f) :- rc_compiled(f), !rc_component(f), fn_param(f, p, _), (s = p ; within(s, p)).
+// a hook's result, useState's value, a context: const v = useFoo(), const [state] = useState(…)
+frozen(s, f) :- rc_compiled(f), kind(d, "variable_declarator"), within(d, f), field(d, "value", c), rc_hook_call(c),
+    bound(d, s), !setter_of(s).
+// an alias or a part of one: const { a } = props, const t = state.items
+frozen(s, f) :- frozen(s0, f), kind(d, "variable_declarator"), within(d, f), field(d, "value", v0), deparen(v0, v),
+    (kind(v, "identifier"), r = v ; chain_root(v, r)), ref_site(r, s0), bound(d, s).
+// bound(d, s): declarator d binds s: itself for a plain name, else each name in its pattern but a rest, which
+// is a fresh copy: `const { a, ...rest } = props` freezes a, and rest may be changed.
+.decl bound(d: node, s: node)
+bound(d, d) :- field(d, "name", n), kind(n, "identifier").
+bound(d, s) :- field(d, "name", n), !kind(n, "identifier"), ref_site(_, s), within(s, n), !rest_copy(s, n).
+.decl rest_copy(s: node, n: node)  // s is bound by a `...rest` in pattern n
+rest_copy(s, n) :- inside(s, r, "rest_pattern"), within(r, n).
+.decl setter_of(s: node)  // the second name of `const [v, set] = useState(…)` or useReducer
+setter_of(s) :- rc_state_setter(s).
+setter_of(s) :- kind(d, "variable_declarator"), field(d, "value", c), rc_react_call(c, "useReducer"),
+    field(d, "name", p), child(p, s, 1).
+.decl memo_result(s: node)
+memo_result(s) :- kind(s, "variable_declarator"), field(s, "value", c), rc_react_call(c, "useMemo"),
+    within(s, f), rc_compiled(f).
+.decl mutator(p: node)  // Array, Map and Set methods that change their receiver
+mutator(p) :- kind(p, "property_identifier"),
+    glob("{push,pop,shift,unshift,splice,sort,reverse,fill,copyWithin,set,add,delete,clear}", p).
+// owned(r, f): r resolves to a binding inside f (undeclared globals have none).
+.decl owned(r: node, f: node)
+owned(r, f) :- ref_site(r, s), rc_compiled(f), within(s, f).
+
+// late_assign(n, g): `n = …` in deferred function g reassigns a `let` or `var` of the compiled function around g.
+.decl late_assign(n: node, g: node)
+late_assign(n, g) :- assign(n), rc_own(n, g), rc_deferred(g), ref_site(n, s), kind(s, "variable_declarator"),
+    rc_compiled(f), within(g, f), rc_own(s, f).
+// late_mutate(g): deferred g changes a member of a local of the compiled function: obj.foo = true.
+.decl late_mutate(g: node)
+late_mutate(g) :- mutated(m, r), rc_own(m, g), rc_deferred(g), ref_site(r, s), kind(s, "variable_declarator"),
+    rc_compiled(f), within(g, f), rc_own(s, f), !frozen(s, f).
+// early_read(r): r reads a const or let of the compiled function before the declaration has run. Either r is in
+// the function's own code, inside or before the declaration (`const foo = useCallback(…, [foo])`), or, when
+// there is no such read of it, r is in a function passed to a call that comes before or inside the declaration:
+// `const foo = useCallback(() => { foo(); }, [])`, `useEffect(() => { show(x); }); const x = …`.
+.decl early_read(r: node)
+early_read(r) :- render_early(r, _).
+early_read(r) :- early_site(r, s, f), rc_own(r, g), g != f, deparen(a, g), rc_fn(g), call_arg(c, a, _),
+    within(c, f), (within(c, s) ; earlier(c, s)), !render_early(_, s).
+.decl render_early(r: node, s: node)  // in the compiled function's own code
+render_early(r, s) :- early_site(r, s, f), rc_own(r, f), (within(r, s) ; earlier(r, s)).
+.decl early_site(r: node, s: node, f: node)  // r reads lexical binding s of compiled f
+early_site(r, s, f) :- kind(r, "identifier"), ref_site(r, s), lexical(s), rc_compiled(f), rc_own(s, f),
+    within(r, f).
+.decl lexical(s: node)  // declared by let or const (var is hoisted with its value undefined, and is not checked)
+lexical(s) :- inside(s, d, "lexical_declaration").
+.decl assign(n: node)  // n is the variable an `=` or `+=` assigns
+assign(n) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", n),
+    kind(n, "identifier").
+// handed(g, at): g goes to a JSX prop or a hook at `at`: written there, or a reference to the const holding it.
+.decl handed(g: node, at: node)
+handed(g, g) :- rc_later_slot(v), deparen(v, g).
+handed(g, r) :- deparen(v, g), field(d, "value", v), kind(d, "variable_declarator"), ref_site(r, d), rc_later_ref(r).

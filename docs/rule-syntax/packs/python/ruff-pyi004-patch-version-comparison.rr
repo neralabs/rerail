@@ -1,0 +1,16 @@
+.policy "ruff-pyi004-patch-version-comparison" revision 2
+.description "Compare sys.version_info in a stub file against major and minor versions only; type checkers do not understand patch versions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI004 (flake8-pyi), stubs only: an `if` test comparing sys.version_info (or a slice of it) with a
+// tuple of more than two ints. Type checkers read major and minor versions only. The `if` test is checked, or
+// each operand of its top-level `and`/`or`, as PYI003 does.
+//   if sys.version_info >= (3, 8, 1):    ← PYI004
+//   if sys.version_info >= (3, 8):       fine
+#include "python/typing.rr"
+
+.violation PYI004(at: node) code "PYI004" "Compare against the major and minor version only, such as `(3, 8)` instead of `(3, 8, 1)`, picking the minor version this branch should cover; type checkers ignore patch versions."
+    suppress ruff "PYI004"
+PYI004(c) :- stub_test(c), version_cmp(c, f, _, r), f != "other", f != "major", int_tuple(r, k), k > 2.

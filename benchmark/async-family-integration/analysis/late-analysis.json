@@ -1,0 +1,28 @@
+{
+  "costMeaning": "Attributed CPU, not recoverable savings; findings can overlap",
+  "coverage": {
+    "nativePlans": 0,
+    "projectionObservations": 73,
+    "sqlStatements": 11,
+    "tapeCacheObservations": 5726
+  },
+  "findings": [
+    {
+      "action": "Check the named consumers for candidate restrictions before Projection::of; push only semantically valid demands into producers.",
+      "code": "LATE_PROJECTION",
+      "confidence": "observed",
+      "cpuSeconds": 3.9436139999999966,
+      "evidence": "12535139 scalar node visits; 12535139 identities; 4187794 interned batch strings. Consumer paths: text <- async_open_receiver <- p3_ASYNC230",
+      "location": "input projection"
+    },
+    {
+      "action": "Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.",
+      "code": "CACHED_TAPE_REBUILD",
+      "confidence": "investigate",
+      "cpuSeconds": 1.5405849999999774,
+      "evidence": "5726 tape cache hits, 0 misses; restore/core-fact construction: parse the program/parse each program (4)/facts from tape: 1 calls, 0.000031 own CPU s; parse the program/parse each program (4)/tape restore: 1 calls, 0.000023 own CPU s; tree-sitter and facts/facts from tape: 5725 calls, 0.955908 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.584623 own CPU s. Tape hits do not mean core facts were reused.",
+      "location": "input lifecycle"
+    }
+  ],
+  "schema": "rerail-structural-analysis-v1"
+}

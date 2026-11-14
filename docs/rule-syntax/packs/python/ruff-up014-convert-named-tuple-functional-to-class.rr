@@ -1,0 +1,32 @@
+.policy "ruff-up014-convert-named-tuple-functional-to-class" revision 2
+.description "Define named tuples with class syntax instead of the functional NamedTuple call; the class form is easier to read."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP014 (pyupgrade): `X = NamedTuple("X", …)` where a class statement says the same. The fields come as
+// a list (not a tuple) of `("name", type)` pairs, each name a str literal that is an identifier without a leading
+// underscore (NamedTuple forbids those), or as keywords; a list may not be combined with keywords. The finding
+// is at the assignment.
+//   X = NamedTuple("X", [("a", int)])             ← UP014: class X(NamedTuple): a: int
+//   X = NamedTuple("X", a=int)                    ← UP014
+//   X = NamedTuple("X", [("a", int)], b=str)      not reported
+//   X = NamedTuple(typename="X", a=int)           not reported
+//   X = NamedTuple("X", (("a", int),))            not reported: a tuple
+#include "python/upgrade.rr"
+//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_nkwargs(c, n), call_kwsplat(c), identifier(x)
+
+.violation UP014(at: node, x: symbol) code "UP014"
+    "Define `{x}` as `class {x}(NamedTuple):` with one `field: type` line per field, in the same order."
+    suppress ruff "UP014"
+UP014(s, x) :- functional_def(s, x, c, "NamedTuple"), fields_ok(c).
+// fields_ok(c): Ruff's match_named_tuple_assign: ("X") or ("X", a=int, …), or ("X", [pairs]) with no keyword.
+.decl fields_ok(c: node)
+fields_ok(c) :- call_nargs(c, 1), up_arg(c, 0, _), !call_kwsplat(c).
+fields_ok(c) :- call_nargs(c, 2), call_nkwargs(c, 0), up_arg(c, 1, l), kind(l, "list"),
+    !bad_pair(l).
+.decl bad_pair(l: node)  // an element that is no `("name", type)`
+bad_pair(l) :- child(l, e, _), !kind(e, "comment"), !good_pair(e).
+.decl good_pair(e: node)
+good_pair(e) :- kind(e, "tuple"), count : { child(e, o, _), !kind(o, "comment") } = 2, child(e, k, 0),
+    plain_str(k, v), identifier(v), !prefix("_", v), child(e, t, 1), !kind(t, "list_splat").

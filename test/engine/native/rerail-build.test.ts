@@ -14,7 +14,7 @@ import {
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
-const STORE_FILE = "content-v1.sqlite";
+const STORE_FILE = "content-v4.sqlite";
 const MAIN_STORE = process.platform === "win32"
   ? join(homedir(), "AppData", "Local", "rerail", STORE_FILE)
   : join(homedir(), ".cache", "rerail", STORE_FILE);

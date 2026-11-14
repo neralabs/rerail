@@ -1,0 +1,28 @@
+{
+  "costMeaning": "Attributed CPU, not recoverable savings; findings can overlap",
+  "coverage": {
+    "nativePlans": 0,
+    "projectionObservations": 73,
+    "sqlStatements": 11,
+    "tapeCacheObservations": 5727
+  },
+  "findings": [
+    {
+      "action": "Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.",
+      "code": "CACHED_TAPE_REBUILD",
+      "confidence": "investigate",
+      "cpuSeconds": 1.5463029999999662,
+      "evidence": "5727 tape cache hits, 0 misses; restore/core-fact construction: parse the program/parse each program (4)/facts from tape: 2 calls, 0.000049 own CPU s; parse the program/parse each program (4)/tape restore: 2 calls, 0.000038 own CPU s; tree-sitter and facts/facts from tape: 5725 calls, 0.956977 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.589239 own CPU s. Tape hits do not mean core facts were reused.",
+      "location": "input lifecycle"
+    },
+    {
+      "action": "Measure identity-map reuse or a narrower identity projection while preserving global node IDs; do not rebuild scalar facts.",
+      "code": "IDENTITY_PROJECTION",
+      "confidence": "investigate",
+      "cpuSeconds": 0.4268260000000036,
+      "evidence": "12535139 node identities, zero scalar node visits, 23777 batch strings",
+      "location": "input projection"
+    }
+  ],
+  "schema": "rerail-structural-analysis-v1"
+}

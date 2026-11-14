@@ -1,0 +1,21 @@
+.policy "ruff-pth116-os-stat" revision 2
+.description "Use Path.stat(), Path.owner() or Path.group() instead of os.stat(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH116 (flake8-use-pathlib): a call of `os.stat`, however it is imported, with any arguments, unless
+// the path is a file descriptor or `dir_fd` is passed and not None. A call with no path argument (`os.stat()`,
+// `os.stat(*a)`, `os.stat(**kw)`) is not reported either. Reported at the callee.
+//   os.stat("f")                         ← PTH116
+//   os.stat("f", follow_symlinks=False)  ← PTH116: `Path.stat` takes it too
+//   def g(fd: int): os.stat(fd)          not reported: a file descriptor
+//   os.stat("f", dir_fd=d)               not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
+//   kw_set(c, k)        keyword k is not None        arg_value(c, x, i, a)   argument x (python/pathlib)
+
+.violation PTH116(at: node, s: node) code "PTH116"
+    "Use `Path({s}).stat()` instead of `os.stat({s})`, keeping any `follow_symlinks` argument, or `.owner()`/`.group()` for owner or group names; leave bytes paths and file descriptors alone."
+    suppress ruff "PTH116"
+PTH116(f, s) :- pth_call(c, "os.stat", f), arg_value(c, "path", 0, s), !file_descriptor(s), !kw_set(c, "dir_fd").

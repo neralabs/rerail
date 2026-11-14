@@ -1,0 +1,14 @@
+.policy "waves-function-awaits" revision 1
+.description "A function whose body awaits, at any depth: descendants of each def, as a closure over child edges."
+.language python
+.mode steer
+.scope include "**/*"
+// A closure of one level (decision 0095 §5, 0098 §1): a def's descendants, walked down the tree. Each def's subtree
+// is a component of the reach graph, so its bit rows are pieces of their own.
+.decl wf_tree(p: node, c: node)
+wf_tree(p, c) :- child(p, c, _).
+.decl wf_desc(f: node, n: node)
+wf_desc(f, n) :- kind(f, "function_definition"), wf_tree(f, n).
+wf_desc(f, m) :- wf_desc(f, n), wf_tree(n, m).
+.violation WF1(at: node) code "WF1" "this function awaits somewhere in its body"
+WF1(f) :- wf_desc(f, n), kind(n, "await").

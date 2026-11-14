@@ -1,0 +1,20 @@
+.policy "ruff-ruf002-ambiguous-unicode-character-docstring" revision 1
+.description "Replace look-alike Unicode characters in docstrings with the ASCII characters they imitate; they make text read differently from what it is."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF002: RUF001 for docstrings: a look-alike in the docstring of a module, class or function (its
+// first statement, a lone str literal). Which characters and words count: see the table file.
+//   def f():
+//       """Returns the value）"""      ← RUF002 at the fullwidth parenthesis
+#include "python/typing.rr"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+
+.violation RUF002(at: span, ch: symbol) code "RUF002"
+    "Replace the look-alike character `{ch}` in this docstring with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+    suppress ruff "RUF002"
+RUF002(c, x) :- confusable_text(p), confusable_char(p, c), text(c, x).
+
+confusable_text(p) :- docstring(_, e), (s = e ; kind(e, "concatenated_string"), child(e, s, _)),
+    kind(s, "string"), child(s, p, _), kind(p, "string_content").

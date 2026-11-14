@@ -53,11 +53,7 @@
               "not": { "has": { "stopBy": "neighbor", "kind": "keyword_argument", "has": { "stopBy": "neighbor", "field": "name", "regex": "^mode$" } } },
               "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
             },
-            "follows": {
-              "stopBy": { "not": { "kind": "comment" } },
-              "regex": "^,$",
-              "follows": { "stopBy": { "not": { "kind": "comment" } }, "kind": "line_continuation" }
-            }
+            "follows": { "stopBy": { "not": { "kind": "comment" } }, "kind": "line_continuation" }
           }
         }
       }

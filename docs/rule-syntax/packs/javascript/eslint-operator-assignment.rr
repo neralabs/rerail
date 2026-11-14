@@ -1,0 +1,60 @@
+.policy "eslint-operator-assignment" revision 7
+.description "Use compound assignment operators like += when a variable is assigned the result of an operation on itself."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-b-control.rr"
+//   deparen, ref_same, below_unary
+
+// ESLint's operator-assignment. option("option"): "always" (the default) reports `x = x op y` where op has a
+// compound form; for * & ^ | (commutative) also `x = y op x`. The two x's must be the same reference written
+// the same way (`a.b` and `a["b"]` differ). "never" reports every compound assignment but the logical ones.
+//   x = x + 1;   a.b = a.b * 2;   x = 2 * x;           → reported ("always"); fix: x += 1, a.b *= 2 (not the last)
+//   x = 1 + x;   x = x < 1;   a[i] = a[j] + 1;          fine
+//   x += 1;                                            → reported ("never"); fix: x = x + 1;   x ||= y fine
+.violation operator_assignment(at: node, msg: symbol) code "operator-assignment" "{msg}"
+    suppress eslint "operator-assignment"
+    suppress oxlint "operator-assignment"
+    suppress biome "lint/style/useShorthandAssign"
+    fix compound "Use the operator assignment"
+    fix expand "Write it as a plain assignment"
+operator_assignment(a, cat("Assignment (=) can be replaced with operator assignment (", cat(o, "=)."))) :-
+    !option("option", "never"), self_op(a, o, _).
+operator_assignment(a, cat("Expand this ", cat(o, " into a plain assignment that repeats the variable, like x = x + 1."))) :-
+    option("option", "never"), kind(a, "augmented_assignment_expression"), op(a, o),
+    o != "&&=", o != "||=", o != "??=".
+
+// self_op(a, o, side): `x = x o y` (side "left") or, for a commutative o, `x = y o x` ("right").
+.decl self_op(a: node, o: symbol, side: symbol)
+self_op(a, o, "left") :- operand(a, b, o), field(b, "left", y), field(a, "left", x), ref_same(x, y, "exact").
+self_op(a, o, "right") :- operand(a, b, o), commutative(o), field(b, "right", y), field(a, "left", x),
+    ref_same(x, y, "exact"), field(b, "left", z), !ref_same(x, z, "exact").
+ref_same_ask(x, y, "exact") :- operand(a, b, _), field(a, "left", x), (field(b, "left", y) ; field(b, "right", y)).
+.decl operand(a: node, b: node, o: symbol)  // a is `x = b`, b a binary with an operator that has a compound form
+operand(a, b, o) :- kind(a, "assignment_expression"), field(a, "right", r), deparen(r, b), kind(b, "binary_expression"), op(b, o), (commutative(o) ; o = "+" ; o = "-" ; o = "/" ; o = "%" ; o = "<<" ; o = ">>" ; o = ">>>" ; o = "**").
+.decl commutative(o: symbol)
+commutative("*"). commutative("&"). commutative("^"). commutative("|").
+
+// The fixes, where ESLint gives one: both x's a name, or a member of a name or `this` by a name or a literal,
+// and no comment between `=` and the operator.  x = x + 1 → x += 1;  x += y + z → x = x + (y + z)
+compound(a, _) :- self_op(a, o, "left"), fixable(a), field(a, "left", x), fixable_ref(x), operand(a, b, o),
+    field(b, "left", y), fixable_ref(y), field(b, "right", r) => replace(a, `$x $o= $r`).
+expand(a, _) :- kind(a, "augmented_assignment_expression"), op(a, c), o = substr(c, 0, strlen(c) - 1),
+    fixable(a), field(a, "left", x), fixable_ref(x), field(a, "right", r), grouped(r, s) => replace(a, `$x = $x $o $s`).
+.decl fixable(a: node)  // no comment inside the assignment's operators
+fixable(a) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    count : { kind(c, "comment"), within(c, a), !inside_right(c, a) } = 0.
+.decl inside_right(c: node, a: node)
+inside_right(c, a) :- kind(c, "comment"), operand(a, b, _), field(b, "right", s), within(c, s).
+inside_right(c, a) :- kind(c, "comment"), kind(a, "augmented_assignment_expression"), field(a, "right", r), within(c, r).
+.decl fixable_ref(x: node)  // ESLint's canBeFixed
+fixable_ref(x) :- deparen(x, y), kind(y, "identifier").
+fixable_ref(x) :- deparen(x, y), kind(y, "member_expression"), field(y, "object", o), (kind(o, "identifier") ; kind(o, "this")).
+fixable_ref(x) :- deparen(x, y), kind(y, "subscript_expression"), field(y, "object", o), (kind(o, "identifier") ; kind(o, "this")),
+    field(y, "index", i), (kind(i, "string") ; kind(i, "number") ; kind(i, "true") ; kind(i, "false") ; kind(i, "null") ; kind(i, "regex")).
+// grouped(r, s): the right side, in parentheses when it binds looser than a unary operator. ESLint adds them
+// only below the operator's own precedence; extra ones change nothing.
+.decl grouped(r: node, s: symbol)
+grouped(r, cat("(", cat(t, ")"))) :- kind(a, "augmented_assignment_expression"), field(a, "right", r), below_unary(r), text(r, t).
+grouped(r, t) :- kind(a, "augmented_assignment_expression"), field(a, "right", r), !below_unary(r), text(r, t).

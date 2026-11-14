@@ -2,14 +2,14 @@
 //! mentions (capture ordering, `all` order checks, three-valued `all`, memoized utility scopes),
 //! and the metavariables its patterns define (violation templates, `violation.each`).
 
-mod semantic;
+pub mod semantic;
 
 use super::{AstMatcher, Comparison, UtilRef, UtilitySummary};
-#[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use ast_grep_core::matcher::PatternNode;
 use ast_grep_core::meta_var::MetaVariable;
-pub(in crate::code_rule_dsl) use semantic::parse_exported;
+pub use semantic::parse_exported;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A utility's summary key in a `CaptureAnalysis` (`UtilRef::summary_key`).
@@ -21,7 +21,7 @@ type Names = BTreeSet<String>;
 /// and paths reach it. An analysis may span a whole compilation: a utility's summaries are keyed
 /// by which of its compilations they read.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct CaptureAnalysis {
+pub struct CaptureAnalysis {
     binds: UtilitySummary<UtilKey, Names>,
     reads: UtilitySummary<UtilKey, Names>,
     mentions: UtilitySummary<UtilKey, Names>,
@@ -31,8 +31,8 @@ pub(in crate::code_rule_dsl) struct CaptureAnalysis {
 impl CaptureAnalysis {
     /// Names a matcher may bind into the environment it runs in. `not` and `count` keep what they
     /// bind to themselves; a stop rule runs in an environment of its own. A count's own value
-    /// (`as`) is not among them: no other term reads it (`counts`).
-    pub(in crate::code_rule_dsl) fn binds(&mut self, matcher: &AstMatcher) -> Names {
+    /// (`as`) is bound as text; the captures of its counted rule remain local.
+    pub fn binds(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_binds(matcher, &mut self.binds, &mut names);
         names
@@ -45,7 +45,7 @@ impl CaptureAnalysis {
     /// tests or a fresh one. A stop rule reads only what it binds itself. An `any` reads what any
     /// branch reads: another branch binding the same name binds it only when that branch is the
     /// one that matches.
-    pub(in crate::code_rule_dsl) fn reads(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn reads(&mut self, matcher: &AstMatcher) -> Names {
         binds_and_reads(matcher, &mut self.binds, &mut self.reads).1
     }
 
@@ -53,7 +53,7 @@ impl CaptureAnalysis {
     /// `count` too: what could read differently when a sibling that would have bound it was left
     /// unknown. That is what its patterns define, its comparisons read, its constraints name and
     /// its calls pass, through the utilities it reaches.
-    pub(in crate::code_rule_dsl) fn mentions(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn mentions(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_mentions(matcher, &mut self.mentions, &mut names);
         names
@@ -61,7 +61,7 @@ impl CaptureAnalysis {
 
     /// The names counts bind their values under (`as`) in the environment a matcher runs in: not
     /// under `not` or inside a count (a probe each), in a stop rule (a fresh environment), or in a
-    /// call's frame. Only a finding's message reads them.
+    /// call's frame. Messages and source-text comparisons read them.
     pub(in crate::code_rule_dsl) fn counts(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_counts(matcher, &mut self.counts, &mut names);
@@ -115,14 +115,14 @@ fn collect_counts(
         AstMatcher::Constrained(core) => collect_counts(&core.rule, summaries, names),
         // Semantic sub-rules are not followed: a count there is not one a message may name.
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Call(_)
         | AstMatcher::Semantic(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -160,19 +160,21 @@ fn collect_binds(
             names.extend(call.outward(inner).into_iter().map(str::to_owned));
         }
         AstMatcher::Semantic(semantic) => semantic::collect_binds(semantic, summaries, names),
+        AstMatcher::Count(count) => {
+            names.extend(count.binding.iter().map(|binding| binding.name.clone()))
+        }
         AstMatcher::Constrained(core) => {
             collect_binds(&core.rule, summaries, names);
             for (_, constraint) in &core.constraints {
                 collect_binds(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
-        | AstMatcher::Count(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -180,7 +182,7 @@ fn collect_binds(
 /// What a utility's rule binds, in the utility's own names.
 fn utility_binds(util: &UtilRef, summaries: &mut UtilitySummary<UtilKey, Names>) -> Names {
     summaries.summarize(util.summary_key(), Names::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::OrderBinds);
         let mut names = Names::new();
         util.with_target(|rule| collect_binds(rule, summaries, &mut names));
@@ -252,7 +254,11 @@ fn binds_and_reads(
             .map(|rule| binds_and_reads(rule, binds, reads))
             .unwrap_or_default(),
         AstMatcher::Count(count) => (
-            Names::new(),
+            count
+                .binding
+                .iter()
+                .map(|binding| binding.name.clone())
+                .collect(),
             binds_and_reads(&count.relation, binds, reads).1,
         ),
         AstMatcher::Util(util) => (
@@ -284,10 +290,10 @@ fn binds_and_reads(
             read.retain(|name| !bound.contains(name));
             (bound, read)
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             (Names::new(), Names::new())
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => (Names::new(), Names::new()),
     }
 }
@@ -299,7 +305,7 @@ fn utility_reads(
     reads: &mut UtilitySummary<UtilKey, Names>,
 ) -> Names {
     reads.summarize(util.summary_key(), Names::new(), |reads| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::OrderReads);
         util.with_target(|rule| binds_and_reads(rule, binds, reads).1)
             .unwrap_or_default()
@@ -356,7 +362,7 @@ fn collect_mentions(
         AstMatcher::Util(util) => {
             names.extend(
                 summaries.summarize(util.summary_key(), Names::new(), |summaries| {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     record_walk(Walk::OrderMentions);
                     let mut names = Names::new();
                     util.with_target(|rule| collect_mentions(rule, summaries, &mut names));
@@ -373,14 +379,14 @@ fn collect_mentions(
                 collect_mentions(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
-        #[cfg(test)]
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Capture {
+pub enum Capture {
     Single,
     Multiple,
 }
@@ -394,7 +400,7 @@ fn merge_capture(variables: &mut BTreeMap<String, Capture>, name: &str, capture:
 
 /// Metavariables the matcher's patterns define, as ast-grep's `defined_vars`: patterns under `not`
 /// count, `matches` references do not (their utilities are collected on their own).
-pub(crate) fn collect_variables(matcher: &AstMatcher, variables: &mut BTreeMap<String, Capture>) {
+pub fn collect_variables(matcher: &AstMatcher, variables: &mut BTreeMap<String, Capture>) {
     collect_in(matcher, variables, &mut UtilitySummary::new(), false);
 }
 
@@ -428,7 +434,7 @@ fn collect_in(
     match matcher {
         AstMatcher::Pattern(pattern) => pattern_variables(&pattern.node, variables),
         // Comparisons and counts bind nothing; counts are not upstream's.
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Compare(_)
@@ -451,7 +457,7 @@ fn collect_in(
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
@@ -484,7 +490,7 @@ fn framed_variables(
     summaries: &mut UtilitySummary<usize, BTreeMap<String, Capture>>,
 ) -> BTreeMap<String, Capture> {
     summaries.summarize(util.index, BTreeMap::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::CaptureVariables);
         let mut summary = BTreeMap::new();
         util.with_target(|rule| collect_in(rule, &mut summary, summaries, true));

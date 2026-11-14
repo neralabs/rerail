@@ -584,7 +584,7 @@ pub(crate) const KINDS: &[&str] = &[
     "error",
 ];
 
-const G: Grammar = Grammar::RustFormat;
+const G: Grammar = GRAMMAR;
 
 /// The `rustFormat` tree of a decoded template.
 pub(crate) fn tree(text: &str) -> PNode {
@@ -814,4 +814,60 @@ fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
+
+/// The `rustFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct RustFormatGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&RustFormatGrammar);
+
+impl super::LiteralGrammar for RustFormatGrammar {
+    fn name(&self) -> &'static str {
+        "rustFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Rust
+    }
+    fn host(&self) -> &'static str {
+        "Rust strings"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string_literal", "raw_string_literal"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        tree(text)
+    }
+}
+
+/// Parses a Rust `str` literal with a text grammar (`rustFormat`). Spends one step of `spend` per
+/// byte and tree node; `None` when the budget ran out.
+pub(crate) fn parse_string<D: ast_grep_core::Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    grammar: super::Grammar,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    let decoded = match decode(node) {
+        super::offsets::Decode::Known(decoded) => decoded,
+        super::offsets::Decode::Unknown => return Some(super::Parsed::Unknown),
+        super::offsets::Decode::NotString => return Some(super::Parsed::NotString),
+    };
+    if !spend(decoded.text.len() + 1) {
+        return None;
+    }
+    let root = grammar.parse(&decoded.text);
+    if !spend(root.size()) {
+        return None;
+    }
+    let text = decoded.text.clone();
+    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
+        grammar,
+        text,
+        0,
+        root,
+        super::HostMap::Spans(decoded),
+    ))))
+}

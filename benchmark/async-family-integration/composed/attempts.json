@@ -1,0 +1,52 @@
+[
+  {
+    "attempt": "first",
+    "executions": 114,
+    "chunks": 72,
+    "vm_steps": 5241359,
+    "evaluation_vm_steps": 5055466,
+    "sql_bytes": [
+      16642
+    ],
+    "cpu_seconds": 13.416835,
+    "wall_seconds": 16.133513125
+  },
+  {
+    "attempt": "second",
+    "executions": 115,
+    "chunks": 73,
+    "vm_steps": 6822096,
+    "evaluation_vm_steps": 6636203,
+    "sql_bytes": [
+      16465
+    ],
+    "cpu_seconds": 13.111145,
+    "wall_seconds": 58.888757792
+  },
+  {
+    "attempt": "frames",
+    "executions": 80,
+    "chunks": 72,
+    "vm_steps": 5859720,
+    "evaluation_vm_steps": 5785228,
+    "sql_bytes": [
+      1558,
+      16972
+    ],
+    "cpu_seconds": 12.591563,
+    "wall_seconds": 14.141103667
+  },
+  {
+    "attempt": "pruned",
+    "executions": 80,
+    "chunks": 72,
+    "vm_steps": 4944696,
+    "evaluation_vm_steps": 4870204,
+    "sql_bytes": [
+      1558,
+      16901
+    ],
+    "cpu_seconds": 13.14699,
+    "wall_seconds": 28.619303958
+  }
+]

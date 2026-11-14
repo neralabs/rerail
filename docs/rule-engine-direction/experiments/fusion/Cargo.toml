@@ -1,0 +1,13 @@
+[package]
+name = "fusion-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tree-sitter = "=0.25.10"
+tree-sitter-python = "=0.25.0"
+
+[profile.release]
+opt-level = 3
+debug = false
+codegen-units = 1

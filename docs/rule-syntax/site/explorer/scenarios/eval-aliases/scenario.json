@@ -1,0 +1,5 @@
+{
+  "title": "eval, under other names",
+  "rule": "bandit-b307-eval",
+  "note": "B307 matches calls whose callee is the name eval, with or without parentheses around it. Like Bandit, it does not follow eval imported under another name from builtins, nor builtins.eval through a module alias; ast.literal_eval and a method that happens to be called eval are not findings either."
+}

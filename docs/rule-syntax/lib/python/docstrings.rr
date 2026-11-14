@@ -1,0 +1,158 @@
+// python/docstrings: the vocabulary of Ruff's pydocstyle rules (D1xx-D4xx): which definitions are public, which
+// have a docstring, and the docstring's text: its body, quotes, prefix and lines. Sections (Args:, Returns, …)
+// are python/docstrings-sections.
+//
+// Interface
+//   1. Definitions: doc_def(o, k)         o is a definition of kind "module", "class", "nested_class", "function",
+//                                         "nested_function" or "method" (Ruff's MemberKind)
+//                   doc_name(o, nm, x)    a class or def's name node nm and text x (where D1xx/N8xx report)
+//                   doc_public(o)         Ruff's visibility: the package path, `_` names, `__all__`, setters
+//                   doc_ignored(o)        a def decorated with a `pydocstyle.ignore-decorators` entry: no D rule
+//                                         looks at it
+//                   doc_missing(o, k, nm, x)  public definition o of kind k has no docstring and D100-D107 look at
+//                                         it: not a stub, not ignored, not an @overload (nor an @override
+//                                         method); nm and x its name node and name (a module: itself and "")
+//   2. Docstrings:  python/ast's docstring(o, e): o's first statement is the str literal e (a string, adjacent
+//                                         strings, in parentheses or not): o is documented
+//                   doc_of(o, s)          … and it is one string s, which the D2xx-D4xx rules check (Ruff skips
+//                                         an implicitly concatenated docstring)
+//                   doc_checked(s)        doc_of, and the body is not blank: Ruff runs its other docstring rules
+//                                         only then (an empty one is D419)
+//   3. Text:        doc_body(s, b)        the source between the quotes, escapes as written
+//                   doc_opener(s, p, q)   prefix p ("", "r", "u", …) and opening quote q (`"""`, `'`, …)
+//                   doc_triple(s)         triple-quoted;  doc_raw(s): an `r` prefix
+//                   doc_summary(s, t)     the first non-blank line of the body
+//   4. Lines:       doc_nlines(s, n)      the body has n lines
+//                   doc_line(s, i, t)     line i of the body, from 0: line 0 starts after the opening quote, the
+//                                         last ends before the closing one
+//                   doc_blank(s, i)       line i is blank;  doc_lead(s, i, k): its leading whitespace is k bytes
+//                   doc_at(s, i, sp)      the source line holding body line i, as a span to report on
+//                   doc_indent(s, k)      the docstring's column in bytes (Ruff's compute_indentation length)
+//
+// Python and Ruff background
+//   - A docstring is the first statement of a module, class or def when that statement is a str literal
+//     alone: not bytes, not an f-string. Parentheses do not matter (`ast` has none).
+//   - Ruff works on the source text of the body, not its value: `"""a\tb"""` has the body `a\tb`, four
+//     characters. Body lines are lines of the source, broken at \n, \r\n or a lone \r, as Ruff's
+//     UniversalNewlines breaks them (a form feed does not break a line).
+//
+//   class Public:                    doc_def "class", doc_public
+//       def _helper(self): ...       doc_def "method", not public
+//       """Not a docstring."""      not a docstring: a docstring is the first statement
+#include "python/pyflakes.rr"
+//   all_entry(s, x)  string s in the module's `__all__` names x
+#include "python/naming.rr"
+//   dec_target(f, e), typing_dec(f, x), dunder(x)
+
+// ---- 1. definitions ----------------------------------------------------------------------------------------------
+.decl doc_def(o: node, k: symbol)
+doc_def(m, "module") :- kind(m, "module").
+doc_def(c, k) :- kind(c, "class_definition"), nearest(c, p, scope), kind(p, pk), class_kind(pk, k).
+doc_def(f, k) :- kind(f, "function_definition"), nearest(f, p, scope), kind(p, pk), def_kind(pk, k).
+.decl class_kind(parent: symbol, k: symbol)
+class_kind("module", "class"). class_kind("class_definition", "nested_class").
+class_kind("function_definition", "nested_class").
+.decl def_kind(parent: symbol, k: symbol)
+def_kind("module", "function"). def_kind("class_definition", "method"). def_kind("function_definition", "nested_function").
+.decl doc_name(o: node, nm: node, x: symbol)
+doc_name(o, nm, x) :- doc_def(o, k), k != "module", field(o, "name", nm), text(nm, x).
+.decl doc_parent(o: node, p: node)
+doc_parent(o, p) :- doc_def(o, k), k != "module", nearest(o, p, scope).
+
+// doc_public(o): Ruff's Visibility::Public. A module is private when a segment of its package path is private:
+// starts with `_` and is not a dunder (`_impl`, `__x`; `__init__`, `__main__` and `___` are public). The package
+// path is Ruff's: the directories up from the file while each holds an `__init__.py`, then the file's stem; a
+// file outside any package has only its stem. A class or function at module level is private when its module is,
+// when the module binds `__all__` and does not list it, or when its name starts with `_`. A nested class needs a
+// public class around it. A nested function is always private. A method needs a public class; it is public unless
+// its name starts with `_` and it is not a dunder, and a `@x.setter` / `@x.deleter` method is private.
+//   _impl/m.py, no _impl/__init__.py      public: the path is just `m`
+//   pkg/_impl/m.py, both with __init__.py     private: `pkg._impl.m`
+.decl doc_public(o: node)
+doc_public(m) :- kind(m, "module"), docof(m, d), !doc_private_module(d).
+doc_public(o) :- doc_def(o, k), (k = "class" ; k = "function"), doc_parent(o, m), doc_public(m), doc_name(o, _, x),
+    !prefix("_", x), !doc_unlisted(m, x).
+doc_public(o) :- doc_def(o, "nested_class"), doc_parent(o, p), kind(p, "class_definition"), doc_public(p),
+    doc_name(o, _, x), !prefix("_", x).
+doc_public(o) :- doc_def(o, "method"), doc_parent(o, p), doc_public(p), doc_name(o, _, x),
+    (!prefix("_", x) ; dunder(x)), !doc_accessor(o, x).
+// doc_pkg_dir(d, dir): dir is the file's directory or one above it, and it and every directory between hold an
+// `__init__.py` (a path relative to the scanned root).
+.decl doc_pkg_dir(d: number, dir: symbol)
+doc_pkg_dir(d, r) :- doc(d, p, _), contains("/", p), r = @replace_all(p, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
+doc_pkg_dir(d, r) :- doc_pkg_dir(d, c), contains("/", c), r = @replace_all(c, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
+// doc_mod_seg(d, x): a segment of d's package path: the file's stem, and each package directory's name.
+.decl doc_mod_seg(d: number, x: symbol)
+doc_mod_seg(d, x) :- doc(d, p, _), x = @replace_all(p, "^.*/|\\.[^.]*$", "").
+doc_mod_seg(d, x) :- doc_pkg_dir(d, r), x = @replace_all(r, "^.*/", "").
+.decl doc_private_module(d: number)  // Ruff's is_private_module on some segment
+doc_private_module(d) :- doc_mod_seg(d, x), prefix("_", x), !doc_dunder_seg(x).
+.decl doc_dunder_seg(x: symbol)  // a segment that starts and ends with `__` (`__main__`; `__` itself too)
+doc_dunder_seg(x) :- doc_mod_seg(_, x), prefix("__", x), suffix("__", x).
+.decl doc_unlisted(m: node, x: symbol)  // the module binds `__all__` and does not list x
+doc_unlisted(m, x) :- doc_def(o, _), doc_parent(o, m), kind(m, "module"), doc_name(o, _, x), doc_exports(m), docof(m, d),
+    !doc_listed(d, x).
+// doc_exports(m): an assignment, augmented or annotated assignment binds `__all__` at module level (Ruff's Export
+// binding); doc_listed(d, x): one of them names x. `__all__.extend(…)` / `.append(…)` bind nothing, so they do not count.
+.decl doc_exports(m: node)
+doc_exports(m) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l), text(l, "__all__"),
+    nearest(a, m, scope), kind(m, "module").
+.decl doc_listed(d: number, x: symbol)
+doc_listed(d, x) :- all_entry(s, x), docof(s, d), !doc_all_call(s).
+.decl doc_all_call(s: node)  // entry s sits in `__all__.extend(…)` / `__all__.append(…)`
+doc_all_call(s) :- all_entry(s, _), inside(s, c, "call"), field(c, "function", f), attr_of(f, o, meth),
+    (meth = "extend" ; meth = "append"), text(o, "__all__").
+.decl doc_accessor(f: node, x: symbol)  // `@x.setter` or `@x.deleter` on def x
+doc_accessor(f, x) :- doc_name(f, _, x), decorator(f, e), dotted_expr(e, q), (q = cat(x, ".setter") ; q = cat(x, ".deleter")).
+
+// doc_ignored(f): `pydocstyle.ignore-decorators` lists a decorator of def f (by qualified name; a call's callee).
+.decl doc_ignored(f: node)
+doc_ignored(f) :- kind(f, "function_definition"), dec_target(f, c), option_item("pydocstyle.ignore-decorators", _, q),
+    sym_of(c, q).
+.decl doc_missing(o: node, k: symbol, nm: node, x: symbol)
+doc_missing(o, k, nm, x) :- doc_def(o, k), doc_public(o), !docstring(o, _), !doc_ignored(o), docof(o, d), !stub_file(d),
+    (k = "module", nm = o, x = "" ; doc_name(o, nm, x), !typing_dec(o, "overload"),
+    (k != "method" ; !typing_dec(o, "override"))).
+
+// ---- 2. docstrings -----------------------------------------------------------------------------------------------
+.decl doc_of(o: node, s: node)
+doc_of(o, s) :- docstring(o, s), kind(s, "string"), !doc_ignored(o).
+
+.decl doc_checked(s: node)
+doc_checked(s) :- doc_body(s, b), !match("\\s*", b).
+
+// ---- 3. text -----------------------------------------------------------------------------------------------------
+// The body is the string_content token's text; an empty literal (`""""""`) has none.
+.decl doc_body(s: node, b: symbol)
+doc_body(s, b) :- doc_of(_, s), child(s, c, _), kind(c, "string_content"), text(c, b).
+doc_body(s, "") :- doc_of(_, s), !has_content(s).
+.decl has_content(s: node)
+has_content(s) :- child(s, c, _), kind(c, "string_content").
+.decl doc_opener(s: node, p: symbol, q: symbol)
+doc_opener(s, p, q) :- doc_of(_, s), first_token(s, t), text(t, o), match("(?<p>[a-zA-Z]*)(?<q>.*)", o).
+.decl doc_triple(s: node)
+doc_triple(s) :- doc_opener(s, _, q), (q = "\"\"\"" ; q = "'''").
+.decl doc_raw(s: node)
+doc_raw(s) :- doc_opener(s, p, _), icontains("r", p).
+// doc_summary(s, t): the first line of the trimmed body: `"""\n    Sum.\n    """` gives "Sum.".
+.decl doc_summary(s: node, t: symbol)
+doc_summary(s, t) :- doc_body(s, b), match("\\s*(?<t>\\S[^\\n]*)[\\s\\S]*", b).
+
+// ---- 4. lines ----------------------------------------------------------------------------------------------------
+// Body line i is source line line(s) + i. The first and last lines are cut at the quotes, from the body itself;
+// the lines between are whole source lines.
+.decl doc_nlines(s: node, n: number)
+doc_nlines(s, n) :- doc_body(s, _), line(s, a), end_line(s, z), n = z - a + 1.
+.decl doc_line(s: node, i: number, t: symbol)
+doc_line(s, 0, b) :- doc_nlines(s, 1), doc_body(s, b).
+doc_line(s, 0, t) :- doc_nlines(s, n), n > 1, doc_body(s, b), match("(?<t>[^\\n\\r]*)(\\r\\n|\\n|\\r)[\\s\\S]*", b).
+doc_line(s, i, t) :- doc_nlines(s, n), n > 1, i = n - 1, doc_body(s, b), match("[\\s\\S]*(\\n|\\r)(?<t>[^\\n\\r]*)", b).
+doc_line(s, i, t) :- doc_at(s, i, sp), i > 0, doc_nlines(s, n), i < n - 1, text(sp, t).
+.decl doc_at(s: node, i: number, sp: span)
+doc_at(s, i, sp) :- doc_nlines(s, n), line(s, a), docof(s, d), src_line(d, l, sp), l >= a, l < a + n, i = l - a.
+.decl doc_blank(s: node, i: number)
+doc_blank(s, i) :- doc_line(s, i, t), match("\\s*", t).
+.decl doc_lead(s: node, i: number, k: number)
+doc_lead(s, i, k) :- doc_line(s, i, t), match("(?<w>\\s*)[\\s\\S]*", t), k = strlen(w).
+.decl doc_indent(s: node, k: number)
+doc_indent(s, k) :- doc_of(_, s), col(s, k).

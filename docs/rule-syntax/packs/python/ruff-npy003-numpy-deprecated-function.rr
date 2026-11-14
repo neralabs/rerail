@@ -1,0 +1,25 @@
+.policy "ruff-npy003-numpy-deprecated-function" revision 2
+.description "Replace deprecated NumPy functions with their current equivalents."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff NPY003 (NumPy): a read of a function NumPy deprecated in favour of a new name: `round_` (round),
+// `product` (prod), `cumproduct` (cumprod), `sometrue` (any), `alltrue` (all). The fix (safe) writes
+// `np.<new>` with the module's binding; offered here only where the numpy module is bound as written.
+//   np.round_(x)                 ← NPY003: use `np.round`
+//   from numpy import product
+//   product(x)                   ← NPY003 at the read
+#include "python/misc2-numpy.rr"
+//   npy_ref(e, q)
+
+.violation NPY003(at: node, new: symbol) code "NPY003"
+    "`{at}` is deprecated; use `numpy.{new}` instead, which does the same."
+    suppress ruff "NPY003"
+    fix safe to_new "Replace with the current name"
+NPY003(e, new) :- npy_ref(e, q), split_dot(q, "numpy", x), npy_renamed(x, new).
+.decl npy_renamed(x: symbol, new: symbol)
+npy_renamed("round_", "round"). npy_renamed("product", "prod"). npy_renamed("cumproduct", "cumprod").
+npy_renamed("sometrue", "any"). npy_renamed("alltrue", "all").
+// `np.product` becomes `np.prod`: the attribute's object already names numpy.
+to_new(e, new) :- attr_of(e, o, _), ruff_qual(o, "numpy") => replace(e, `$o.$new`).

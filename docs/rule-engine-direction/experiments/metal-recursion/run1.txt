@@ -1,0 +1,40 @@
+nodes 5396512, files 2049, kinds 109, max depth 34, device Apple M5 Max
+
+Q1 fn has Yield, stopBy nested scope (EXISTS)
+  roots 72480, targets 1781, nodes touched 4929644, CPU 1-thread interval   15.624 ms
+  (a) stack DFS, CSR, cap 64         GPU median    3.115 ms  dispatches 1  mismatches 135 (stack overflows 135, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    1.548 ms  dispatches 1  mismatches 0 
+  (b3) postings + owner column       GPU median    0.034 ms  dispatches 2  mismatches 0 
+  (d) frontier waves, indirect       GPU median    3.213 ms  dispatches 70  mismatches 0 (non-empty waves 32, peak frontier 684822, overflow 0)
+
+Q2 fn has Return, stopBy nested scope (EXISTS)
+  roots 72480, targets 25558, nodes touched 4528751, CPU 1-thread interval   23.619 ms
+  (a) stack DFS, CSR, cap 64         GPU median    2.982 ms  dispatches 1  mismatches 127 (stack overflows 127, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    1.791 ms  dispatches 1  mismatches 0 
+  (b3) postings + owner column       GPU median    0.063 ms  dispatches 2  mismatches 0 
+  (d) frontier waves, indirect       GPU median    3.708 ms  dispatches 70  mismatches 0 (non-empty waves 26, peak frontier 562612, overflow 0)
+
+Q3 count Call in fn, stopBy end (COUNT)
+  roots 72480, targets 420719, nodes touched 5305864, CPU 1-thread interval   20.597 ms
+  (a) stack DFS, CSR, cap 64         GPU median    4.810 ms  dispatches 1  mismatches 142 (stack overflows 142, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    1.078 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.023 ms  dispatches 1  mismatches 0 
+  (d) frontier waves, indirect       GPU median    2.880 ms  dispatches 70  mismatches 0 (non-empty waves 32, peak frontier 733298, overflow 0)
+
+Q4 Module has Lambda, stopBy end (COUNT, huge roots)
+  roots 2049, targets 2227, nodes touched 5394463, CPU 1-thread interval   17.974 ms
+  (a) stack DFS, CSR, cap 64         GPU median    5.546 ms  dispatches 1  mismatches 467 (stack overflows 467, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median   10.541 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.005 ms  dispatches 1  mismatches 0 
+  (d) frontier waves, indirect       GPU median    2.530 ms  dispatches 70  mismatches 0 (non-empty waves 34, peak frontier 697171, overflow 0)
+
+Q5 every Call has Lambda, stopBy end (COUNT, 420k nested roots)
+  roots 420719, targets 2227, nodes touched 3467914, CPU 1-thread interval   11.542 ms
+  (a) stack DFS, CSR, cap 64         GPU median    1.021 ms  dispatches 1  mismatches 25 (stack overflows 25, mismatches excl. overflow 0)
+  (b) interval scan + size skip      GPU median    0.472 ms  dispatches 1  mismatches 0 
+  (b2) postings, 2 binary searches   GPU median    0.098 ms  dispatches 1  mismatches 0 
+  (d) frontier waves, indirect       GPU median    1.216 ms  dispatches 70  mismatches 0 (non-empty waves 18, peak frontier 852231, overflow 0)
+
+Q6 every Call inside Try, stopBy scope (ancestor)
+  roots 420719, targets 7738, nodes touched 1196188, CPU 1-thread interval   31.103 ms
+  (e) parent walk                    GPU median    0.120 ms  dispatches 1  mismatches 0 

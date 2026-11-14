@@ -1,0 +1,42 @@
+{
+ "rules": {
+  "data-layer-transaction-patterns": {
+   "compileMs": 743.4224169999998,
+   "wallMs": 287340.36775000003,
+   "cpuMs": 70216.588,
+   "violations": 0,
+   "keys": [],
+   "failures": [],
+   "nFailures": 0,
+   "peakRssBytes": 612433920
+  },
+  "data-layer-async-sync-delegation": {
+   "compileMs": 1410.8184579999652,
+   "wallMs": 545100.525875,
+   "cpuMs": 113462.715,
+   "violations": 0,
+   "keys": [],
+   "failures": [],
+   "nFailures": 0,
+   "peakRssBytes": 612433920
+  },
+  "data-layer-sync-async-signatures": {
+   "compileMs": 152.64762499998324,
+   "wallMs": 234205.439166,
+   "cpuMs": 90513.248,
+   "violations": 0,
+   "keys": [],
+   "failures": [
+    {
+     "clauseId": "transaction-connection",
+     "code": "budget-exceeded",
+     "message": "clause work budget exceeded",
+     "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+     "ruleId": "data-layer-sync-async-signatures"
+    }
+   ],
+   "nFailures": 1,
+   "peakRssBytes": 612433920
+  }
+ }
+}

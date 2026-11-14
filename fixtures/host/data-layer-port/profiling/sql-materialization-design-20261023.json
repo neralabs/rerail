@@ -1,0 +1,400 @@
+{
+  "selfChecks": [
+    "quoted parentheses",
+    "local dependency context differs",
+    "renamed dependency graph shares",
+    "typed parameter values differ"
+  ],
+  "format": "rerail.materialization-placement-audit/v1",
+  "date": "2026-10-23",
+  "reports": [
+    {
+      "workload": "state",
+      "capture": ".rerail/profiles/sql-relation-lifetimes-20261023/final-state-diagnostic/sql/raw/candidate-82708-0.json",
+      "captureSha256": "ab5708e60e201279dbeaff6dc2c91e3a202cf6d80454f04f53625814dc61f5b5",
+      "hostStatements": 1716,
+      "materializedDefinitionPlacements": 10320,
+      "distinctExactDefinitions": 8648,
+      "definitionsInMultipleHostStatements": 248,
+      "duplicateHostPlacements": 1672,
+      "hostsWithMaterializedDefinitions": 1712,
+      "largestHost": [
+        [
+          "result:0",
+          1101
+        ],
+        [
+          "stage:s5964",
+          87
+        ],
+        [
+          "stage:s818",
+          71
+        ],
+        [
+          "stage:s2473",
+          61
+        ]
+      ],
+      "examples": [
+        {
+          "name": "s3",
+          "definitionSha256": "a6beb2690188d047a74f6287090ddbfb9d60df5ce51d5819f0e4be2b38bdaa0f",
+          "distinctHostStatements": 670,
+          "placements": 670,
+          "definitionBytes": 48,
+          "sampleHosts": [
+            "stage:s6",
+            "stage:s26",
+            "stage:s51",
+            "stage:s76",
+            "stage:s97",
+            "stage:s108",
+            "stage:s138",
+            "stage:s144"
+          ],
+          "definition": "s3(fid,pre) AS MATERIALIZED (SELECT 0,0 WHERE 0)"
+        },
+        {
+          "name": "cf",
+          "definitionSha256": "6eb380dfc3d8a35115685f48eb7f21076cfccdbc7072313524698020113f2a81",
+          "distinctHostStatements": 144,
+          "placements": 144,
+          "definitionBytes": 135,
+          "sampleHosts": [
+            "stage:decode_all_nodes",
+            "stage:mark_decoded_files",
+            "stage:s2",
+            "stage:s5",
+            "stage:s8",
+            "stage:s10",
+            "stage:s16",
+            "stage:s17"
+          ],
+          "definition": "cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file))"
+        },
+        {
+          "name": "spans18",
+          "definitionSha256": "cca9cfe6c877804e8e82ed00735efc959f75f0e42158b3c777f3371dcdc40841",
+          "distinctHostStatements": 61,
+          "placements": 61,
+          "definitionBytes": 140,
+          "sampleHosts": [
+            "stage:s26",
+            "stage:s108",
+            "stage:s1118",
+            "stage:s1184",
+            "stage:s1670",
+            "stage:s2312",
+            "stage:s3280",
+            "stage:s3433"
+          ],
+          "definition": "spans18(fid,pre,start,len) AS MATERIALIZED (SELECT s.fid,s.pre,d.start,d.len FROM s17 s JOIN decoded_spans d ON d.fid=s.fid AND d.pre=s.pre)"
+        },
+        {
+          "name": "frontier23",
+          "definitionSha256": "1c28be44aeed7176993c2308185f35bed4fbdd997de4ef58e74fb7708587cce2",
+          "distinctHostStatements": 59,
+          "placements": 59,
+          "definitionBytes": 253,
+          "sampleHosts": [
+            "stage:s26",
+            "stage:s108",
+            "stage:s1118",
+            "stage:s1184",
+            "stage:s1670",
+            "stage:s2312",
+            "stage:s3280",
+            "stage:s3433"
+          ],
+          "definition": "frontier23(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges22 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)"
+        },
+        {
+          "name": "s19",
+          "definitionSha256": "eaa750dfb57ef9185dd70f30ebc83693c315bf79a8bb6929e408ab637cd1662a",
+          "distinctHostStatements": 59,
+          "placements": 59,
+          "definitionBytes": 124,
+          "sampleHosts": [
+            "stage:s26",
+            "stage:s108",
+            "stage:s1118",
+            "stage:s1184",
+            "stage:s1670",
+            "stage:s2312",
+            "stage:s3280",
+            "stage:s3433"
+          ],
+          "definition": "s19(fid,pre) AS MATERIALIZED (SELECT s.fid,s.pre FROM spans18 s WHERE nera_term_matches(?4,nera_slice(s.fid,s.start,s.len)))"
+        },
+        {
+          "name": "ranges22",
+          "definitionSha256": "5bfb3f8fc330ef016e228be32458c04498a809e87341fe8f727085767ba590fd",
+          "distinctHostStatements": 59,
+          "placements": 59,
+          "definitionBytes": 89,
+          "sampleHosts": [
+            "stage:s26",
+            "stage:s108",
+            "stage:s1118",
+            "stage:s1184",
+            "stage:s1670",
+            "stage:s2312",
+            "stage:s3280",
+            "stage:s3433"
+          ],
+          "definition": "ranges22(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props21 s)"
+        },
+        {
+          "name": "s20",
+          "definitionSha256": "56b66118b35e23df53a77d2a36d85cc0bf0f3d45212d1b26021fa42c9ff089e4",
+          "distinctHostStatements": 59,
+          "placements": 59,
+          "definitionBytes": 84,
+          "sampleHosts": [
+            "stage:s26",
+            "stage:s108",
+            "stage:s1118",
+            "stage:s1184",
+            "stage:s1670",
+            "stage:s2312",
+            "stage:s3280",
+            "stage:s3433"
+          ],
+          "definition": "s20(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM s16 UNION SELECT fid,pre FROM s19)"
+        },
+        {
+          "name": "ranges3242",
+          "definitionSha256": "3e569d5dfee7fd63552e7103fca74ba048deddb373f5d8d503ea4f24d6a56349",
+          "distinctHostStatements": 53,
+          "placements": 53,
+          "definitionBytes": 93,
+          "sampleHosts": [
+            "stage:s3249",
+            "stage:s3411",
+            "stage:s3581",
+            "stage:s3731",
+            "stage:s3882",
+            "stage:s4033",
+            "stage:s4183",
+            "stage:s4334"
+          ],
+          "definition": "ranges3242(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props3241 s)"
+        }
+      ],
+      "limitations": [
+        "Static SQL placements, not measured runtime construction counts.",
+        "Equality resolves local CTE and physical-table dependencies and binds parameter types and values within one capture.",
+        "No algebraic equivalence is inferred beyond structural definitions with resolved dependencies.",
+        "Counts do not include recomputation inside other clause databases.",
+        "No CPU savings estimate follows from these counts.",
+        "Generated SQL type and boundary assumptions still require semantic checks before sharing a physical owner."
+      ],
+      "nativeSha256": "86846fe45e731c10b44beecb54cbfb35b7610c2eafb71f199ce3840969c07b6d",
+      "workloadSha256": "7e717b00033140fddcdf2fe4d37077c3edcd7aded43f93a8d6e5b2da857894ba",
+      "policyDigests": {
+        "data-layer-serverplan-state-tripwires": "sha256:8cc2a69de252623b2d6f534fcc0a12ee3913039a2a1a6b76e5fd289b59bc628b"
+      }
+    },
+    {
+      "workload": "ten",
+      "capture": ".rerail/profiles/sql-relation-lifetimes-20261023/before-ten-capture/sql/raw/candidate-81166-0.json",
+      "captureSha256": "c0f755cc3383fdedfcd0177a7d316ee96d788df41a67c4c9f9abbb3955efa9ea",
+      "hostStatements": 3216,
+      "materializedDefinitionPlacements": 19001,
+      "distinctExactDefinitions": 16256,
+      "definitionsInMultipleHostStatements": 420,
+      "duplicateHostPlacements": 2745,
+      "hostsWithMaterializedDefinitions": 3212,
+      "largestHost": [
+        [
+          "result:0",
+          1332
+        ],
+        [
+          "result:1",
+          717
+        ],
+        [
+          "result:2",
+          457
+        ],
+        [
+          "stage:s7477",
+          87
+        ]
+      ],
+      "examples": [
+        {
+          "name": "s8",
+          "definitionSha256": "a6beb2690188d047a74f6287090ddbfb9d60df5ce51d5819f0e4be2b38bdaa0f",
+          "distinctHostStatements": 1168,
+          "placements": 1168,
+          "definitionBytes": 48,
+          "sampleHosts": [
+            "stage:s93",
+            "stage:s190",
+            "stage:s363",
+            "stage:s572",
+            "stage:s583",
+            "stage:s645",
+            "stage:s714",
+            "stage:s760"
+          ],
+          "definition": "s8(fid,pre) AS MATERIALIZED (SELECT 0,0 WHERE 0)"
+        },
+        {
+          "name": "cf",
+          "definitionSha256": "6eb380dfc3d8a35115685f48eb7f21076cfccdbc7072313524698020113f2a81",
+          "distinctHostStatements": 304,
+          "placements": 304,
+          "definitionBytes": 135,
+          "sampleHosts": [
+            "stage:decode_all_nodes",
+            "stage:mark_decoded_files",
+            "stage:s2",
+            "stage:s6",
+            "stage:s9",
+            "stage:s12",
+            "stage:s14",
+            "stage:s20"
+          ],
+          "definition": "cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file))"
+        },
+        {
+          "name": "spans1549",
+          "definitionSha256": "28b9b6b7e85720bc19ed0ae24b5c94fdf3e5ffd6ef97a4c26489e8008f524d03",
+          "distinctHostStatements": 90,
+          "placements": 90,
+          "definitionBytes": 144,
+          "sampleHosts": [
+            "stage:s1557",
+            "stage:s1633",
+            "stage:s2631",
+            "stage:s2697",
+            "stage:s3183",
+            "stage:s3825",
+            "stage:s4793",
+            "stage:s4946"
+          ],
+          "definition": "spans1549(fid,pre,start,len) AS MATERIALIZED (SELECT s.fid,s.pre,d.start,d.len FROM s1548 s JOIN decoded_spans d ON d.fid=s.fid AND d.pre=s.pre)"
+        },
+        {
+          "name": "frontier1554",
+          "definitionSha256": "810916642da15950fcb913d14c138288bb00b53fb5066dc6912510d0d592c51b",
+          "distinctHostStatements": 60,
+          "placements": 60,
+          "definitionBytes": 257,
+          "sampleHosts": [
+            "stage:s1557",
+            "stage:s1633",
+            "stage:s2631",
+            "stage:s2697",
+            "stage:s3183",
+            "stage:s3825",
+            "stage:s4793",
+            "stage:s4946"
+          ],
+          "definition": "frontier1554(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM ranges1553 WHERE lo<hi) WHERE previous IS NULL OR hi>previous)"
+        },
+        {
+          "name": "s1550",
+          "definitionSha256": "91f76d9ba69d7c76826891f626017fed5596e86dfde06cea98b973c4dbe92577",
+          "distinctHostStatements": 60,
+          "placements": 60,
+          "definitionBytes": 129,
+          "sampleHosts": [
+            "stage:s1557",
+            "stage:s1633",
+            "stage:s2631",
+            "stage:s2697",
+            "stage:s3183",
+            "stage:s3825",
+            "stage:s4793",
+            "stage:s4946"
+          ],
+          "definition": "s1550(fid,pre) AS MATERIALIZED (SELECT s.fid,s.pre FROM spans1549 s WHERE nera_term_matches(?78,nera_slice(s.fid,s.start,s.len)))"
+        },
+        {
+          "name": "ranges1553",
+          "definitionSha256": "105e92098dfd60aa8e61ae804c3fe06e0f81bbd359b89bd1f929d68325f01101",
+          "distinctHostStatements": 60,
+          "placements": 60,
+          "definitionBytes": 93,
+          "sampleHosts": [
+            "stage:s1557",
+            "stage:s1633",
+            "stage:s2631",
+            "stage:s2697",
+            "stage:s3183",
+            "stage:s3825",
+            "stage:s4793",
+            "stage:s4946"
+          ],
+          "definition": "ranges1553(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props1552 s)"
+        },
+        {
+          "name": "s1551",
+          "definitionSha256": "7b02d2b04a40ea0dac61d773812837d1cff62771ca8ead5c38e76afd2f8f9f53",
+          "distinctHostStatements": 60,
+          "placements": 60,
+          "definitionBytes": 90,
+          "sampleHosts": [
+            "stage:s1557",
+            "stage:s1633",
+            "stage:s2631",
+            "stage:s2697",
+            "stage:s3183",
+            "stage:s3825",
+            "stage:s4793",
+            "stage:s4946"
+          ],
+          "definition": "s1551(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM s1547 UNION SELECT fid,pre FROM s1550)"
+        },
+        {
+          "name": "ranges4755",
+          "definitionSha256": "1515732ff6d0f4ca17fb8d59039128ef204659379a155417330d39e0400958b4",
+          "distinctHostStatements": 53,
+          "placements": 53,
+          "definitionBytes": 93,
+          "sampleHosts": [
+            "stage:s4762",
+            "stage:s4924",
+            "stage:s5094",
+            "stage:s5244",
+            "stage:s5395",
+            "stage:s5546",
+            "stage:s5696",
+            "stage:s5847"
+          ],
+          "definition": "ranges4755(fid,pre,lo,hi) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre+1,s.end FROM props4754 s)"
+        }
+      ],
+      "limitations": [
+        "Static SQL placements, not measured runtime construction counts.",
+        "Equality resolves local CTE and physical-table dependencies and binds parameter types and values within one capture.",
+        "No algebraic equivalence is inferred beyond structural definitions with resolved dependencies.",
+        "Counts do not include recomputation inside other clause databases.",
+        "No CPU savings estimate follows from these counts.",
+        "Generated SQL type and boundary assumptions still require semantic checks before sharing a physical owner."
+      ],
+      "nativeSha256": "7a193b2a060803b6e5f73e6760066e72c43d962aa673c2fd81f51f38405f6c3b",
+      "workloadSha256": "b9a33bd1b5b9197dbf1ef5f1070dece3c8b35222a2bf77182979e012b98c8a44",
+      "policyDigests": {
+        "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+        "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+        "data-layer-serverplan-state-tripwires": "sha256:8cc2a69de252623b2d6f534fcc0a12ee3913039a2a1a6b76e5fd289b59bc628b",
+        "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+        "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e",
+        "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+        "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+        "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+        "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+        "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714"
+      }
+    }
+  ],
+  "method": "Resolve each host statement local CTE environment and prior physical producers, intern structural definitions, and bind typed parameter values. Count materialized placements across statements.",
+  "scope": "Design analysis only. No new workload timing or runtime implementation.",
+  "auditScriptSha256": "f528b51c87d881901913201d5328dd6e67cb7677a0197c01750a494c4019cf37"
+}

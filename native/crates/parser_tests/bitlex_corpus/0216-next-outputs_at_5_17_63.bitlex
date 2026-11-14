@@ -1,0 +1,16 @@
+# corpus: next: outputs at 5 17 63
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask a = quote
+mask b = next(digit, 5)
+mask c = next(ws, 17) & prev(alpha, 63)
+mask d = next(nul, 63)

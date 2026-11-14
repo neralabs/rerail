@@ -1,0 +1,1555 @@
+{
+  "scope": "Snapshot capture costs are separate; root costs are inclusive and non-additive.",
+  "runs": {
+    "replay/cases/runs.jsonl": {
+      "capture:async_open_receiver": {
+        "runs": 1,
+        "cpu": 0.0002690000000000192,
+        "wall": 0.000271791,
+        "prepareCpu": 0.00037099999999998245,
+        "vm": 6534,
+        "scans": 166,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "capture:async_site": {
+        "runs": 1,
+        "cpu": 0.00015099999999998448,
+        "wall": 0.000152541,
+        "prepareCpu": 0.00028500000000000747,
+        "vm": 4195,
+        "scans": 143,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 144,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:p1_rr_python_arguments_async_argument_demand_": {
+        "runs": 1,
+        "cpu": 0.0004429999999999712,
+        "wall": 0.000523334,
+        "prepareCpu": 0.00045799999999995844,
+        "vm": 10147,
+        "scans": 299,
+        "sorts": 2,
+        "autoindex": 150,
+        "reprepare": 0,
+        "rows": 48,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:p1_rr_python_assigned_async_mode_demand_": {
+        "runs": 1,
+        "cpu": 0.0005350000000000077,
+        "wall": 0.0008695,
+        "prepareCpu": 0.0007369999999999877,
+        "vm": 12731,
+        "scans": 345,
+        "sorts": 4,
+        "autoindex": 291,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:p1_rr_python_qualified_async_mode_value_demand_async_mode_target": {
+        "runs": 1,
+        "cpu": 0.0005189999999999917,
+        "wall": 0.00052175,
+        "prepareCpu": 0.0006140000000000312,
+        "vm": 13321,
+        "scans": 391,
+        "sorts": 4,
+        "autoindex": 291,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:q0_rr_python_qualified_async_reference_async_api_target": {
+        "runs": 1,
+        "cpu": 0.00032399999999999096,
+        "wall": 0.000325459,
+        "prepareCpu": 0.00035500000000002196,
+        "vm": 6788,
+        "scans": 187,
+        "sorts": 2,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:q1_rr_python_qualified_async_reference_async_api_target": {
+        "runs": 1,
+        "cpu": 0.0003039999999999987,
+        "wall": 0.000305875,
+        "prepareCpu": 0.00036600000000003297,
+        "vm": 6389,
+        "scans": 205,
+        "sorts": 2,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 48,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:q2_rr_python_qualified_async_reference_async_api_target": {
+        "runs": 1,
+        "cpu": 0.00023799999999998822,
+        "wall": 0.000240083,
+        "prepareCpu": 0.00030399999999997096,
+        "vm": 4855,
+        "scans": 166,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:q3_rr_python_qualified_async_reference_async_api_target": {
+        "runs": 1,
+        "cpu": 0.00020600000000003948,
+        "wall": 0.000206959,
+        "prepareCpu": 0.0002909999999999857,
+        "vm": 4334,
+        "scans": 143,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 0,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "capture:rr_python_origins_async_receiver_demand_": {
+        "runs": 1,
+        "cpu": 0.00030800000000003047,
+        "wall": 0.001729667,
+        "prepareCpu": 0.00028700000000000947,
+        "vm": 6951,
+        "scans": 189,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "capture:rr_python_qualified_async_constructor_demand_async_path_target": {
+        "runs": 1,
+        "cpu": 0.00029900000000002147,
+        "wall": 0.000301791,
+        "prepareCpu": 0.00032199999999998896,
+        "vm": 7958,
+        "scans": 258,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 24,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "baseline": {
+        "runs": 1,
+        "cpu": 0.009774000000000005,
+        "wall": 0.010237042,
+        "prepareCpu": 3.0000000000030003e-06,
+        "vm": 795264,
+        "scans": 101409,
+        "sorts": 15,
+        "autoindex": 1042,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "planner_order": {
+        "runs": 1,
+        "cpu": 0.008650000000000019,
+        "wall": 0.008653916,
+        "prepareCpu": 0.0035139999999999894,
+        "vm": 725797,
+        "scans": 101738,
+        "sorts": 15,
+        "autoindex": 713,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            240,
+            0,
+            240,
+            960
+          ],
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "inline_site": {
+        "runs": 1,
+        "cpu": 0.010232000000000019,
+        "wall": 0.010912875,
+        "prepareCpu": 0.0040819999999999745,
+        "vm": 801053,
+        "scans": 101266,
+        "sorts": 15,
+        "autoindex": 899,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            456,
+            0,
+            456,
+            1776
+          ],
+          "py_exec_context": [
+            3,
+            0,
+            432,
+            2592
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "site_without_distinct": {
+        "runs": 1,
+        "cpu": 0.010349000000000053,
+        "wall": 0.014739791,
+        "prepareCpu": 0.004234999999999989,
+        "vm": 794831,
+        "scans": 101409,
+        "sorts": 15,
+        "autoindex": 1042,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "planner_order_without_site_distinct": {
+        "runs": 1,
+        "cpu": 0.009763000000000022,
+        "wall": 0.012405125,
+        "prepareCpu": 0.004188999999999998,
+        "vm": 725364,
+        "scans": 101738,
+        "sorts": 15,
+        "autoindex": 713,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            240,
+            0,
+            240,
+            960
+          ],
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "inline_relations": {
+        "runs": 1,
+        "cpu": 0.06590499999999999,
+        "wall": 0.066185542,
+        "prepareCpu": 0.006364000000000036,
+        "vm": 4426281,
+        "scans": 328108,
+        "sorts": 197,
+        "autoindex": 5085,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            147,
+            0,
+            5544,
+            6264
+          ],
+          "py_attribute": [
+            4176,
+            0,
+            3480,
+            11136
+          ],
+          "py_call_site": [
+            10128,
+            0,
+            10128,
+            40416
+          ],
+          "py_exec_context": [
+            70,
+            0,
+            10080,
+            60480
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            3480,
+            0,
+            3480,
+            6960
+          ]
+        }
+      },
+      "snapshot_site": {
+        "runs": 1,
+        "cpu": 0.009659000000000029,
+        "wall": 0.017748583,
+        "prepareCpu": 0.003581000000000001,
+        "vm": 792812,
+        "scans": 101409,
+        "sorts": 15,
+        "autoindex": 1042,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            24,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_1": [
+            1,
+            0,
+            144,
+            432
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "snapshot_prefix": {
+        "runs": 1,
+        "cpu": 0.009605999999999948,
+        "wall": 0.027230541,
+        "prepareCpu": 0.0037710000000000243,
+        "vm": 789129,
+        "scans": 101409,
+        "sorts": 15,
+        "autoindex": 899,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_call_site": [
+            24,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_0": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_1": [
+            1,
+            0,
+            144,
+            432
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ]
+        }
+      },
+      "snapshot_semantics": {
+        "runs": 1,
+        "cpu": 0.008870999999999962,
+        "wall": 0.012485291,
+        "prepareCpu": 0.0014699999999999713,
+        "vm": 808844,
+        "scans": 101508,
+        "sorts": 13,
+        "autoindex": 1062,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "rr_lab_10": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_2": [
+            1,
+            0,
+            48,
+            240
+          ],
+          "rr_lab_3": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_4": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_5": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_6": [
+            1,
+            0,
+            48,
+            96
+          ],
+          "rr_lab_7": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_8": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "rr_lab_9": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "snapshot_semantics_inline": {
+        "runs": 1,
+        "cpu": 0.031294000000000044,
+        "wall": 0.031925791,
+        "prepareCpu": 0.0019659999999999678,
+        "vm": 2747916,
+        "scans": 298719,
+        "sorts": 125,
+        "autoindex": 2045,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            148,
+            0,
+            240,
+            4248
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            123,
+            0,
+            9072,
+            13200
+          ],
+          "py_attribute": [
+            3744,
+            0,
+            3120,
+            9984
+          ],
+          "py_call_site": [
+            3912,
+            0,
+            3912,
+            15600
+          ],
+          "py_exec_context": [
+            27,
+            0,
+            3888,
+            23328
+          ],
+          "rr_lab_10": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_2": [
+            685,
+            0,
+            32880,
+            164400
+          ],
+          "rr_lab_3": [
+            24,
+            0,
+            576,
+            1152
+          ],
+          "rr_lab_4": [
+            1,
+            0,
+            24,
+            48
+          ],
+          "rr_lab_5": [
+            24,
+            0,
+            576,
+            1152
+          ],
+          "rr_lab_6": [
+            14,
+            0,
+            672,
+            1344
+          ],
+          "rr_lab_7": [
+            3,
+            0,
+            72,
+            144
+          ],
+          "rr_lab_8": [
+            3,
+            0,
+            0,
+            0
+          ],
+          "rr_lab_9": [
+            2,
+            0,
+            48,
+            96
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            3120,
+            0,
+            3120,
+            6240
+          ]
+        }
+      },
+      "root_site": {
+        "runs": 1,
+        "cpu": 0.000126000000000015,
+        "wall": 0.000128875,
+        "prepareCpu": 0.0002710000000000212,
+        "vm": 3767,
+        "scans": 143,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 144,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_reference": {
+        "runs": 1,
+        "cpu": 0.000130000000000019,
+        "wall": 0.000131666,
+        "prepareCpu": 0.00023899999999998922,
+        "vm": 4056,
+        "scans": 143,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 144,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_open": {
+        "runs": 1,
+        "cpu": 0.00020599999999998397,
+        "wall": 0.000207292,
+        "prepareCpu": 0.00023400000000001198,
+        "vm": 6490,
+        "scans": 166,
+        "sorts": 0,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 24,
+        "inputs": {
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "root_qualified": {
+        "runs": 1,
+        "cpu": 0.0002969999999999917,
+        "wall": 0.000300125,
+        "prepareCpu": 0.00029599999999990745,
+        "vm": 6941,
+        "scans": 187,
+        "sorts": 2,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 24,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_arguments": {
+        "runs": 1,
+        "cpu": 0.0003569999999999962,
+        "wall": 0.00036,
+        "prepareCpu": 0.0003340000000000565,
+        "vm": 10495,
+        "scans": 346,
+        "sorts": 2,
+        "autoindex": 150,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 48,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_p0_ASYNC210": {
+        "runs": 1,
+        "cpu": 0.0003029999999999977,
+        "wall": 0.000306083,
+        "prepareCpu": 0.00030200000000002447,
+        "vm": 9070,
+        "scans": 210,
+        "sorts": 2,
+        "autoindex": 164,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 24,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_p1_ASYNC221": {
+        "runs": 1,
+        "cpu": 0.0005229999999999957,
+        "wall": 0.000526208,
+        "prepareCpu": 0.001056000000000057,
+        "vm": 22330,
+        "scans": 1682,
+        "sorts": 7,
+        "autoindex": 383,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 48,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_p2_ASYNC222": {
+        "runs": 1,
+        "cpu": 0.00691500000000006,
+        "wall": 0.006917209,
+        "prepareCpu": 0.00029799999999996496,
+        "vm": 663857,
+        "scans": 98469,
+        "sorts": 0,
+        "autoindex": 143,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 24,
+        "inputs": {
+          "py_call_site": [
+            144,
+            0,
+            144,
+            576
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ]
+        }
+      },
+      "root_p3_ASYNC230": {
+        "runs": 1,
+        "cpu": 0.0004429999999999712,
+        "wall": 0.000445042,
+        "prepareCpu": 0.0003509999999999902,
+        "vm": 15860,
+        "scans": 1431,
+        "sorts": 2,
+        "autoindex": 166,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 24,
+        "inputs": {
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "root_rr_diagnostic_at": {
+        "runs": 1,
+        "cpu": 0.009543999999999997,
+        "wall": 0.010660459,
+        "prepareCpu": 0.0022100000000000453,
+        "vm": 745164,
+        "scans": 101293,
+        "sorts": 15,
+        "autoindex": 926,
+        "reprepare": 0,
+        "rows": 1,
+        "failures": [],
+        "parity_checks": 0,
+        "parity_failures": 0,
+        "root_count": 120,
+        "inputs": {
+          "doc": [
+            120,
+            0,
+            120,
+            360
+          ],
+          "line": [
+            120,
+            0,
+            120,
+            360
+          ],
+          "node": [
+            50,
+            0,
+            3648,
+            4008
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "bounded_positions": {
+        "runs": 1,
+        "cpu": 0.0030529999999999724,
+        "wall": 0.003237667,
+        "prepareCpu": 0.0042400000000000215,
+        "vm": 143229,
+        "scans": 3511,
+        "sorts": 15,
+        "autoindex": 1042,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            54,
+            0,
+            10848,
+            11568
+          ],
+          "py_attribute": [
+            1,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      }
+    }
+  }
+}

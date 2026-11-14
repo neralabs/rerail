@@ -1,0 +1,17 @@
+.policy "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture" revision 2
+.description "Don't apply the pytest asyncio marker to a fixture; marks have no effect on fixtures."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT024 (flake8-pytest-style): `@pytest.mark.asyncio` on a fixture, where marks do nothing.
+//   @pytest.mark.asyncio()       ← PT024
+//   @pytest.fixture
+//   async def client(): ...
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), pytest_mark(o, d, e, m)
+
+.violation PT024(at: node) code "PT024"
+    "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead."
+    suppress ruff "PT024"
+PT024(d) :- pytest_fixture(f, _, _), pytest_mark(f, d, _, "asyncio").

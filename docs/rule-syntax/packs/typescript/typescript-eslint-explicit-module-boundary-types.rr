@@ -1,0 +1,129 @@
+.policy "typescript-eslint-explicit-module-boundary-types" revision 2
+.description "Declare return and parameter types on exported TypeScript functions and public class methods; the module's API then doesn't depend on inference."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-a-returns.rr"
+#include "tsx/names.rr"
+//   fn_value, fn_decl, typed_fn, valid_expr_return, ancestor_return, valid_return, immediate_fn, return_head,
+//   held_name; ts-a has_overloads, ts_ctor; names decl_site, ref_site
+
+// typescript-eslint's explicit-module-boundary-types: what a module exports says its parameter and return types.
+//   export function f(a) { return 1; }     both a and the return type are missing
+//   export const g = (a: number): number => a;    fine
+//   function h(a) {}  export { h };        h is exported through its name, so it is checked too
+// The search follows exports into what they name: declarations, `export { a }` and `export default a` (the
+// name's declaration in the module and anything assigned to it), arrays, objects, and classes' members that are
+// not private. A function an exported function only returns is checked as well. Typed places, constructors and
+// setters, and the higher-order and `as const` cases are excused as in explicit-function-return-type.
+.violation explicit_module_boundary_types(at: loc, msg: symbol) code "@typescript-eslint/explicit-module-boundary-types"
+    "{msg}"
+    suppress eslint "@typescript-eslint/explicit-module-boundary-types"
+explicit_module_boundary_types(h, "Add an explicit return type to this exported function.") :-
+    checked_fn(f), !valid_return(f), !valid_expr_return_here(f), return_head(f, h).
+explicit_module_boundary_types(h, "Add an explicit return type to this exported function.") :-
+    checked(s), signature(s), !ts_ctor(s), !op(s, "set"), !field(s, "return_type", _), signature_head(s, h).
+explicit_module_boundary_types(p, "Give this exported function's parameter an explicit type other than `any`.") :-
+    params_checked(f), fn_param(f, p, a), (!field(a, "type", _) ; any_typed(a)).
+
+// ---- what is checked -------------------------------------------------------------------------------------------------
+// checked(x): checkNode reached x.
+.decl checked(x: node)
+checked(d) :- kind(e, "export_statement"), !field(e, "source", _), (field(e, "declaration", d) ; field(e, "value", v), deparen(v, d)).
+// `export = v` (modules.rr's export_assign).
+checked(d) :- export_assign(e), child(e, v, _), !kind(v, "comment"), deparen(v, d).
+checked(d) :- kind(e, "export_statement"), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
+    child(c, s, _), field(s, "name", n), text(n, x), followed(x, d).
+checked(d) :- checked(i), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), !in_function(i),
+    text(i, x), followed(x, d).
+checked(d) :- checked(a), kind(a, "array"), child(a, e, _), deparen(e, d).
+checked(d) :- checked(o), kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "value", v), deparen(v, d).
+checked(m) :- checked(o), kind(o, "object"), child(o, m, _), (kind(m, "method_definition") ; kind(m, "shorthand_property_identifier")).
+checked(m) :- checked(c), (kind(c, "class_declaration") ; kind(c, "class") ; kind(c, "abstract_class_declaration")),
+    field(c, "body", b), child(b, m, _), class_member(m), !private_member(m).
+checked(d) :- checked(m), kind(m, "public_field_definition"), field(m, "value", v), deparen(v, d).
+checked(d) :- checked(l), (kind(l, "lexical_declaration") ; kind(l, "variable_declaration")), child(l, d, _),
+    kind(d, "variable_declarator").
+checked(d) :- checked(v), kind(v, "variable_declarator"), field(v, "value", w), deparen(w, d).
+// A function that a checked function only returns: `export const f = () => (a) => a;`. As upstream, a `return`
+// counts only straight in the function's body: `if (x) return () => 1;` is not followed.
+checked(f) :- fn_value(f), returned_by(f, g), immediate_fn(g), checked(g).
+.decl returned_by(f: node, g: node)
+returned_by(f, g) :- fn_value(f), estree_parent(f, r), kind(r, "return_statement"), child(b, r, _), child(g, b, _),
+    function_node(g).
+returned_by(f, g) :- fn_value(f), estree_parent(f, g), kind(g, "arrow_function"), field(g, "body", b), deparen(b, f).
+
+// followed(x, d): followReference. Upstream looks the name up in the module scope only (`scope.set`): its
+// declarations there (names.rr's decl_site; a `var` in a top-level block is one), and what is assigned to that
+// variable wherever a reference reaches it (names.rr's ref_site), not to a local of the same name. Imports,
+// parameters and catch bindings are not followed. A name used inside a function (a class field's value) sits in
+// another scope and is not followed either.
+.decl followed(x: symbol, d: node)
+followed(x, d) :- module_site(x, s), site_node(s, d).
+followed(x, d) :- module_site(x, s), kind(a, "assignment_expression"), field(a, "left", l), deparen(l, i),
+    kind(i, "identifier"), ref_site(i, s), field(a, "right", r), deparen(r, d).
+.decl module_site(x: symbol, s: node)
+module_site(x, s) :- kind(p, "program"), decl_site(p, x, s, f, "value"), f != "import", f != "param", f != "catch".
+// site_node(s, d): the definition's node: the declarator, or the function or class; a destructured name's
+// declarator.
+.decl site_node(s: node, d: node)
+site_node(s, s) :- module_site(_, s), (kind(s, "variable_declarator") ; kind(s, "function_declaration") ;
+    kind(s, "generator_function_declaration") ; kind(s, "class_declaration") ; kind(s, "abstract_class_declaration")).
+site_node(s, d) :- module_site(_, s), !kind(s, "variable_declarator"), nearest(s, d, "variable_declarator").
+.decl in_function(i: node)
+in_function(i) :- kind(i, k), (k = "identifier" ; k = "shorthand_property_identifier"), inside(i, _, function_kind).
+
+.decl class_member(m: node)
+class_member(m) :- kind(m, k), (k = "method_definition" ; k = "public_field_definition" ; k = "method_signature" ;
+    k = "abstract_method_signature").
+.decl private_member(m: node)
+private_member(m) :- child(m, a, _), kind(a, "accessibility_modifier"), text(a, "private").
+private_member(m) :- field(m, "name", n), kind(n, "private_property_identifier").
+
+// ---- the checks ------------------------------------------------------------------------------------------------------
+// checked_fn(f): checkFunction and checkFunctionExpression, past their excuses: an allowed name, a typed place, a
+// typed function above, and (allowOverloadFunctions) overloads.
+.decl checked_fn(f: node)
+checked_fn(f) :- checked(f), (fn_value(f) ; fn_decl(f)), !allowed_name(f), !typed_fn(f), !ancestor_return(f),
+    !overloaded(f).
+.decl valid_expr_return_here(f: node)
+valid_expr_return_here(f) :- fn_value(f), valid_expr_return(f).
+.decl params_checked(f: node)
+params_checked(f) :- checked_fn(f).
+params_checked(s) :- checked(s), signature(s).
+// A body-less class method: `abstract m(a);` or the overload `m(a): void;`.
+.decl signature(s: node)
+signature(s) :- kind(s, "method_signature"), child(b, s, _), kind(b, "class_body").
+signature(s) :- kind(s, "abstract_method_signature").
+.decl signature_head(s: node, h: node)
+signature_head(s, h) :- signature(s), field(s, "type_parameters", h).
+signature_head(s, h) :- signature(s), !field(s, "type_parameters", _), field(s, "parameters", h).
+
+// allowed_name(f): allowedNames holds the declarator's name, the function's own (a declaration), or a member's
+// static key (getStaticMemberAccessValue: `#a` is "a"). A plain property `a: () => 1` is no method and has no
+// name here.
+.decl allowed_name(f: node)
+allowed_name(f) :- held_name(f, x), option_item("allowedNames", _, x).
+allowed_name(f) :- fn_decl(f), field(f, "name", n), text(n, x), option_item("allowedNames", _, x).
+allowed_name(f) :- kind(f, "method_definition"), member_static(f, x), option_item("allowedNames", _, x).
+allowed_name(f) :- fn_value(f), estree_parent(f, p), kind(p, "public_field_definition"), member_static(p, x),
+    option_item("allowedNames", _, x).
+.decl member_static(m: node, x: symbol)
+member_static(m, x) :- field(m, "name", k), key_static(k, x).
+member_static(m, substr(t, 1, strlen(t) - 1)) :- field(m, "name", k), kind(k, "private_property_identifier"), text(k, t).
+
+// overloaded(f): with allowOverloadFunctions, a function declaration or a class method with overloads.
+.decl overloaded(f: node)
+overloaded(f) :- option("allowOverloadFunctions", "true"), has_overloads(f).
+
+// fn_param(f, p, a): checkParameters. Each parameter but one with a default; a parameter property's own; at
+// a its annotation's holder, at p where the finding goes (the name, the pattern, the `...`).
+.decl fn_param(f: node, p: node, a: node)
+fn_param(f, p, a) :- params_checked(f), field(f, "parameters", ps), child(ps, a, _),
+    (kind(a, "required_parameter") ; kind(a, "optional_parameter")), !field(a, "value", _), field(a, "pattern", p),
+    !kind(p, "this").
+fn_param(f, p, p) :- params_checked(f), field(f, "parameter", p).
+.decl any_typed(a: node)
+any_typed(a) :- !option("allowArgumentsExplicitlyTypedAsAny", "true"), field(a, "type", t), child(t, w, _),
+    type_child(w, y), kind(y, "predefined_type"), text(y, "any").  // `a: (any)` too

@@ -1,0 +1,19 @@
+.policy "bandit-b413-import-pycrypto" revision 2
+.description "Avoid importing the pyCrypto package; it is unmaintained and has known vulnerabilities, so use the cryptography package instead."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B413 (its B001 blacklist): an import from the pyCrypto package: Crypto.Cipher, Hash, IO, Protocol, PublicKey,
+// Random, Signature or Util, or anything under them.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   from Crypto.Cipher import AES               B413
+//   import Crypto.Hash.SHA256                   B413
+//   import Cryptodome.Cipher                    not reported
+//   importlib.import_module("Crypto.Hash")      B413: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B413(at: node) code "B413"
+    "The pyCrypto library is deprecated and unmaintained; consider using pyca/cryptography."
+    suppress nosec "B413"
+B413(n) :- blacklisted(n, "B413").

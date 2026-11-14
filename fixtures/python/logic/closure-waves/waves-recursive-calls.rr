@@ -1,0 +1,21 @@
+.policy "waves-recursive-calls" revision 1
+.description "A function that calls itself, directly or through other functions of its file: the call graph, as a closure."
+.language python
+.mode steer
+.scope include "**/*"
+// The call graph within a file: f's body calls a name that a def of the same document defines. Its closure is a
+// level above the others (it reads the descendants' closure), so it is a wave of its own.
+.decl wr_tree(p: node, c: node)
+wr_tree(p, c) :- child(p, c, _).
+.decl wr_desc(f: node, n: node)
+wr_desc(f, b) :- kind(f, "function_definition"), field(f, "body", b).
+wr_desc(f, m) :- wr_desc(f, n), wr_tree(n, m).
+.decl wr_defines(g: node, x: symbol, d: number)
+wr_defines(g, x, d) :- kind(g, "function_definition"), field(g, "name", nm), text(nm, x), docof(g, d).
+.decl wr_edge(f: node, g: node)
+wr_edge(f, g) :- wr_desc(f, c), kind(c, "call"), field(c, "function", e), kind(e, "identifier"), text(e, x), docof(c, d), wr_defines(g, x, d).
+.decl wr_reach(f: node, g: node)
+wr_reach(f, g) :- wr_edge(f, g).
+wr_reach(f, h) :- wr_reach(f, g), wr_edge(g, h).
+.violation WR1(at: node) code "WR1" "this function calls itself, directly or not"
+WR1(f) :- wr_reach(f, f).

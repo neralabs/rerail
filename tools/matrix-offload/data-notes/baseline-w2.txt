@@ -1,0 +1,10 @@
+workload w2, load average 128, data load 0.06 s CPU, 13088 documents
+distinct names per document: p50 52 p99 602 max 2764; ≤ 2048 (exact in fp16): 13083 of 13088 (99.96%); > 65535: 0
+reads 4263307 bindings 1533941; per document reads p50 96 p99 3656 max 33138, bindings p50 42 p99 1173 max 12211
+brute-force tile work Σ|reads|×|bindings| = 4137039253 comparisons; p99 per document 4301391; max 315241794
+(a) hash join per document: 0.0727 s CPU, 83066745 (read, binding) pairs
+(b) direct-indexed counts per document: 0.0027 s CPU
+(c) brute-force tile: 0.8240 s CPU (5.02 G compares/s)
+(d) hash join emitting rows: 0.2512 s CPU, 83066745 rows (664.5 MB as two u32 columns)
+exported reads.u16/binds.u16 (local name ids per document) with offsets; expected total pairs 83066745
+total CPU 2.54 s

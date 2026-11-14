@@ -1,0 +1,408 @@
+{
+  "calibration_s": 0.132249958,
+  "compile_s": 0.11279925,
+  "distinct_leaf_texts": 211680,
+  "expansions": 239854,
+  "files": 3110,
+  "index_dispatch": true,
+  "keys": [],
+  "load_s": 1.919370875,
+  "nodes": 11791230,
+  "op_classes": {
+    "all": 758,
+    "any": 171,
+    "bind": 29,
+    "call": 3,
+    "compare": 11,
+    "const": 2,
+    "count": 3,
+    "filePath": 103,
+    "kind": 56,
+    "named": 1,
+    "not": 83,
+    "nth": 4,
+    "regex": 150,
+    "rel.neighbor": 412,
+    "rel.range": 64,
+    "util.backref": 5,
+    "value": 4
+  },
+  "ops": 1859,
+  "program_nodes_actual": 339681406,
+  "program_nodes_scope": 423934396,
+  "programs": 36,
+  "regexes": 262,
+  "reordered_all_nodes": 324,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 66749,
+        "evals": 9937288,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 0,
+        "memo_hits": 0,
+        "regex_bytes": 64060269,
+        "regex_calls": 541232,
+        "regex_sym_hits": 735969,
+        "scan_visits": 9762054,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "plain",
+      "ns_per_eval": 17.21521847811999,
+      "ns_per_program_node_actual": 0.503626577664366,
+      "ns_per_program_node_scope": 0.4035355130749995,
+      "ns_per_scope_node": 14.508459592425899,
+      "seconds_min": 0.17107258400000003,
+      "top_files": [
+        [
+          "impl/common/l2070_server_plan/steps/replay_graph_sources.py",
+          1397,
+          0.068434959
+        ],
+        [
+          "l7200_versioned_transactions/versioned_transactions.py",
+          28680,
+          0.039518417
+        ],
+        [
+          "impl/common/l7400_versioned_diff/versioned_diff.py",
+          5301,
+          0.037025583
+        ],
+        [
+          "impl/common/l7500_versioned_materialization/materialization_jobs.py",
+          2018,
+          0.023949042
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/staged_source_resolution.py",
+          934,
+          0.01951575
+        ],
+        [
+          "l5200_vector_index/embedding_compute_provider.py",
+          3126,
+          0.010195209
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/squash_steps.py",
+          20073,
+          0.007527375
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/return_value.py",
+          13481,
+          0.007269208
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-async-sync-delegation",
+          "wrapper-shape",
+          2358930
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-lazy",
+          634319
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-lazy",
+          527398
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-pair",
+          444930
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-pair",
+          414687
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-pair",
+          48617
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-pair",
+          39540
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-lazy",
+          12808
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-lazy",
+          12444
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          0
+        ]
+      ],
+      "wall_seconds_min": 0.264092333
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 978,
+        "dispatch": 66749,
+        "evals": 9739440,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 34409181,
+        "memo_hits": 64730,
+        "regex_bytes": 63098667,
+        "regex_calls": 495758,
+        "regex_sym_hits": 719642,
+        "scan_visits": 9432061,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "memo",
+      "ns_per_eval": 20.82920065219358,
+      "ns_per_program_node_actual": 0.5972206497520216,
+      "ns_per_program_node_scope": 0.4785286400776036,
+      "ns_per_scope_node": 17.20471486011216,
+      "seconds_min": 0.20286475000000026,
+      "top_files": [
+        [
+          "impl/common/l2070_server_plan/steps/versioned_hybrid_search.py",
+          26061,
+          0.074018375
+        ],
+        [
+          "l6500_evidence/delegation_replica_cursors.py",
+          1506,
+          0.0669105
+        ],
+        [
+          "l6500_evidence/delegation_queries.py",
+          2238,
+          0.038784791
+        ],
+        [
+          "l6500_evidence/delegation_records.py",
+          1331,
+          0.035114166
+        ],
+        [
+          "l6500_evidence/sas_service.py",
+          23661,
+          0.0092145
+        ],
+        [
+          "l7200_versioned_transactions/versioned_transactions.py",
+          28680,
+          0.008100084
+        ],
+        [
+          "l2050_transaction/transaction.py",
+          23262,
+          0.004564375
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/versioned_vector_search.py",
+          13269,
+          0.004521209
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-async-sync-delegation",
+          "wrapper-shape",
+          2273600
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-lazy",
+          634319
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-lazy",
+          492899
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-pair",
+          428463
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-pair",
+          395384
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-pair",
+          48617
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-pair",
+          39351
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-lazy",
+          12396
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-lazy",
+          9904
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          0
+        ]
+      ],
+      "wall_seconds_min": 0.369096167
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 978,
+        "dispatch": 66749,
+        "evals": 9739440,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 34409181,
+        "memo_hits": 64730,
+        "regex_bytes": 63098667,
+        "regex_calls": 495758,
+        "regex_sym_hits": 719642,
+        "scan_visits": 9432061,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "mask",
+      "ns_per_eval": 21.23133701732337,
+      "ns_per_program_node_actual": 0.6087508157570447,
+      "ns_per_program_node_scope": 0.487767293597946,
+      "ns_per_scope_node": 17.53687554224622,
+      "seconds_min": 0.2067813329999999,
+      "top_files": [
+        [
+          "l2080_lazy_orm/lazy_table.py",
+          33122,
+          0.050900791
+        ],
+        [
+          "impl/common/l7100_versioned_operations/versioned_operations.py",
+          11488,
+          0.050229041
+        ],
+        [
+          "_internal/bootstrap_dispatch.py",
+          543,
+          0.028238292
+        ],
+        [
+          "l2080_lazy_orm/lazy_column.py",
+          2364,
+          0.02270575
+        ],
+        [
+          "l2080_lazy_orm/cross_branch_table.py",
+          13056,
+          0.013522875
+        ],
+        [
+          "_internal/bootstrap_observation.py",
+          3002,
+          0.009481041
+        ],
+        [
+          "l7200_versioned_transactions/versioned_transactions.py",
+          28680,
+          0.007973209
+        ],
+        [
+          "l9750_graphql/subscription_projection.py",
+          5374,
+          0.00733575
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-async-sync-delegation",
+          "wrapper-shape",
+          2273600
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-lazy",
+          634319
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-lazy",
+          492899
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-pair",
+          428463
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-pair",
+          395384
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_sync-missing-pair",
+          48617
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_module_async-missing-pair",
+          39351
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_sync-missing-lazy",
+          12396
+        ],
+        [
+          "data-layer-async-sync-delegation",
+          "legacy_async-missing-lazy",
+          9904
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          0
+        ]
+      ],
+      "wall_seconds_min": 0.393957125
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-transaction-patterns",
+      "programs": 23,
+      "scope_files": 3095,
+      "scope_nodes": 11767322
+    },
+    {
+      "id": "data-layer-async-sync-delegation",
+      "programs": 13,
+      "scope_files": 3110,
+      "scope_nodes": 11791230
+    }
+  ],
+  "syntax_error_files": [],
+  "trie": true
+}

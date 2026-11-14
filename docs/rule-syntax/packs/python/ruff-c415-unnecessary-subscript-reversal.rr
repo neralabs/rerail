@@ -1,0 +1,27 @@
+.policy "ruff-c415-unnecessary-subscript-reversal" revision 2
+.description "Don't reverse an iterable with a slice before passing it to set, sorted or reversed; each of them reorders or reverses it again anyway."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C415 (flake8-comprehensions): the builtin set, sorted or reversed (by name or as `builtins.x`) whose
+// first argument is `x[::-1]`: a slice with no start or stop and the step `-1` (an int literal, so `-(1)`
+// counts and `-1.0` does not). set and sorted reorder anyway; reversed undoes it.
+//   sorted(x[::-1])    set(x[::-1])     reversed(x[::-1])      ← C415
+//   sorted(x[::-2])    sorted(x[1::-1])                        not reported
+#include "python/comprehensions.rr"
+//   c4_builtin(c, x), c4_first(c, a); slice_part(s, which, e), ruff_int(e, v) from python/ruff
+
+.violation C415(at: node, f: symbol, id: symbol, msg: symbol) code "C415" "{msg}"
+    suppress ruff "C415"
+C415(c, f, "reorders-anyway",
+    "Pass the iterable straight to `{f}()` without the `[::-1]` slice, since `{f}()` reorders the elements anyway; keep the slice only if `sorted()` must keep equal keys in reversed input order.") :-
+    reversal_arg(c, f), (f = "set" ; f = "sorted").
+C415(c, "reversed", "reversed-of-reversal",
+    "`reversed()` of a `[::-1]` slice walks the original order: iterate the sequence itself (or `iter()` of it) instead of reversing it twice.") :-
+    reversal_arg(c, "reversed").
+.decl reversal_arg(c: node, f: symbol)
+reversal_arg(c, f) :- c4_builtin(c, f), c4_first(c, a), kind(a, "subscript"), field(a, "subscript", s),
+    count : { field(a, "subscript", o) } = 1, kind(s, "slice"), !slice_part(s, "lower", _),
+    !slice_part(s, "upper", _), slice_part(s, "step", st), unparen(st, u), kind(u, "unary_operator"), op(u, "-"),
+    field(u, "argument", one), ruff_int(one, "1").

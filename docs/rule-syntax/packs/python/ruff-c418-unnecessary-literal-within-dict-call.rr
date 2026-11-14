@@ -1,0 +1,18 @@
+.policy "ruff-c418-unnecessary-literal-within-dict-call" revision 2
+.description "Remove dict() calls wrapped around a dict literal or dict comprehension; the inner expression already builds a dictionary."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C418 (flake8-comprehensions): `dict(…)` of the builtin dict, whose one argument is a dict display
+// or a dict comprehension. Its fix is unsafe; none here.
+//   dict({})    dict({"a": 1})    dict({x: 1 for x in y})     ← C418: drop the call
+//   dict({}, a=1)                                             not reported
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), list_like(e, k), c4_comp(e, k)
+
+.violation C418(at: node, kind: symbol) code "C418"
+    "Drop the outer `dict()` call and keep the inner dict {kind}; it already builds a new dictionary."
+    suppress ruff "C418"
+C418(c, "literal") :- c4_call(c, "dict"), c4_only(c, a), list_like(a, "dict").
+C418(c, "comprehension") :- c4_call(c, "dict"), c4_only(c, a), c4_comp(a, "dict").

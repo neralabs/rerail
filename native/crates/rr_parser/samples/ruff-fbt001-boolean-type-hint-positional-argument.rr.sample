@@ -1,0 +1,49 @@
+.policy "ruff-fbt001-boolean-type-hint-positional-argument" revision 2
+.description "Make Python function parameters annotated as bool keyword-only; a bare True or False passed by position hides what it switches."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FBT001 (flake8-boolean-trap): a positional parameter annotated as a boolean, so callers write a bare
+// `True`. The annotation is `bool` (by name), `"bool"`, a `|` union with one, or, in a file that imports
+// typing, `Union[…]` or `Optional[…]` with one. Keyword-only parameters are fine, and so are stubs,
+// operators, `__post_init__`, setters and overrides (python/misc-boolean-trap). Reported at the name.
+//   def f(flag: bool): ...                          ← FBT001
+//   def f(x: Union[list, Optional[int | bool]]): ...     ← FBT001
+//   def f(*, flag: bool): ...                       not reported
+#include "python/misc-boolean-trap.rr"
+#include "python/misc-seen.rr"
+
+.violation FBT001(at: node) code "FBT001"
+    "Make the boolean parameter `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
+    suppress ruff "FBT001"
+FBT001(nm) :- trap_param(f, nm, a, _), bool_hint(a), docof(f, d), !bool_rebound(d).
+
+// bool_hint(t): annotation t (a `type` wrapper or a part of one) admits a bool, as Ruff's match_annotation_to_complex_bool.
+.decl hint_part(t: node)
+hint_part(a) :- trap_param(_, _, a, _).
+hint_part(x) :- hint_bare(t, m), kind(m, "binary_operator"), op(m, "|"), (field(m, "left", x) ; field(m, "right", x)).
+hint_part(x) :- hint_arg(t, _, _, x).
+.decl hint_bare(t: node, m: node)
+hint_bare(t, m) :- hint_part(t), kind(t, "type"), child(t, e, 0), unparen(e, m).
+hint_bare(t, m) :- hint_part(t), !kind(t, "type"), unparen(t, m).
+// hint_arg(t, h, i, x): t is `h[…]` with argument x at position i.
+.decl hint_arg(t: node, h: node, i: number, x: node)
+hint_arg(t, h, i, x) :- hint_bare(t, m), kind(m, "generic_type"), child(m, h, 0), child(m, tp, 1),
+    kind(tp, "type_parameter"), child(tp, x, i).
+hint_arg(t, h, i, x) :- hint_bare(t, m), kind(m, "subscript"), field(m, "value", h), field(m, "subscript", x),
+    i = count : { field(m, "subscript", x0), x0 < x }.
+.decl bool_hint(t: node)
+bool_hint(t) :- hint_bare(t, m), kind(m, "identifier"), text(m, "bool").
+bool_hint(t) :- hint_bare(t, m), plain_str(m, "bool").
+bool_hint(t) :- hint_bare(t, m), kind(m, "binary_operator"), op(m, "|"), (field(m, "left", x) ; field(m, "right", x)),
+    bool_hint(x).
+bool_hint(t) :- hint_arg(t, h, _, x), typing_head(h, "Union"), hint_arg(t, _, 1, _), bool_hint(x).
+bool_hint(t) :- hint_arg(t, h, 0, x), typing_head(h, "Optional"), !hint_arg(t, _, 1, _), bool_hint(x).
+.decl typing_head(h: node, x: symbol)
+typing_head(h, x) :- ruff_qual(h, q), (split_dot(q, "typing", x) ; split_dot(q, "typing_extensions", x)), docof(h, d),
+    (seen_module(d, "typing") ; seen_module(d, "typing_extensions")).
+seen_ask("typing"). seen_ask("typing_extensions").
+// bool_rebound(d): the module binds `bool` itself, so the name is not the builtin.
+.decl bool_rebound(d: number)
+bool_rebound(d) :- binding(s, "bool", _, _), kind(s, "module"), docof(s, d).

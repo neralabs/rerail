@@ -1,0 +1,25 @@
+.policy "ruff-dtz901-datetime-min-max" revision 2
+.description "Attach a timezone to the minimum and maximum datetime constants; the bare values are naive and fail when ordered against aware datetimes."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ901 (flake8-datetimez): `datetime.datetime.min` or `.max`, which are naive: ordering them against an
+// aware datetime raises TypeError. Fine when the value is immediately `.replace(tzinfo=…)`d with something
+// other than None, or only its `.time()` is taken. Reported at the constant. Only in a file that imports
+// datetime.
+//   datetime.datetime.max                          ← DTZ901
+//   datetime.min.replace(hour=...)                 ← DTZ901, after `from datetime import datetime`
+//   datetime.datetime.max.replace(tzinfo=...)      not reported
+//   datetime.datetime.min.time()                   not reported
+#include "python/datetime.rr"
+
+.violation DTZ901(at: node, m: symbol) code "DTZ901"
+    "Use `datetime.datetime.{m}.replace(tzinfo=...)` so the value is aware; the bare naive value raises TypeError when ordered against aware datetimes. Keep it only when the other values are naive."
+    suppress ruff "DTZ901"
+DTZ901(e, m) :- ruff_qual(e, q), split_dot(q, "datetime.datetime", m), (m = "min" ; m = "max"), !kind(e, "call"),
+    docof(e, d), seen_module(d, "datetime"), !aware_use(e).
+.decl aware_use(e: node)
+aware_use(e) :- ast_up(e, a), attr_of(a, _, "time"), ast_up(a, c), kind(c, "call").
+aware_use(e) :- ast_up(e, a), attr_of(a, _, "replace"), ast_up(a, c), kind(c, "call"), call_kwarg(c, "tzinfo", v),
+    unparen(v, m), !kind(m, "none").

@@ -1,0 +1,113 @@
+
+running 95 tests
+test code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::already_restricted_helpers_are_stable_and_recursive_only_guards_are_refused ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::multiple_consumers_union_their_safe_demands ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::nested_zero_counts_preserve_outer_groups_in_sql_and_native_execution ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name ... ok
+test code_rule_dsl::logic::rr::tape_tests::a_bad_statement_is_one_error_and_parsing_resumes ... ok
+test code_rule_dsl::logic::rr::tape_tests::a_rule_about_rules_runs_over_rule_files ... ok
+test code_rule_dsl::logic::rr::tape_tests::an_rr_tape_encodes_and_reads_its_kinds_back ... ok
+test code_rule_dsl::logic::rr::tape_tests::every_rule_file_tapes_and_its_leaves_cover_it ... ok
+test code_rule_dsl::logic::rr::tape_tests::python_and_rr_policies_run_over_one_repository ... ok
+test code_rule_dsl::logic::rr::tape_tests::rule_files_have_text_facts ... ok
+test code_rule_dsl::logic::rr::tape_tests::statements_from_the_tape_are_the_parsers ... ok
+test code_rule_dsl::logic::rr::tape_tests::terms_bodies_and_directives_read_as_the_decision_names_them ... ok
+test code_rule_dsl::logic::rr::tape_tests::the_decisions_example_has_the_decisions_tree ... ok
+test code_rule_dsl::logic::rr::tests::a_context_leaves_out_literals_not_tied_to_its_variables ... ok
+test code_rule_dsl::logic::rr::tests::a_context_leaves_out_the_clause_head ... ok
+test code_rule_dsl::logic::rr::tests::a_grammar_the_registry_does_not_have_is_refused ... ok
+test code_rule_dsl::logic::rr::tests::a_library_held_once_is_read_by_each_policy_in_its_own_scope ... ok
+test code_rule_dsl::logic::rr::tests::a_nested_aggregate_keeps_the_rules_variables_it_reads ... ok
+test code_rule_dsl::logic::rr::tests::a_program_with_demands_prints_back_as_itself ... ok
+test code_rule_dsl::logic::rr::tests::a_set_of_tests_on_a_span_tests_its_text ... ok
+test code_rule_dsl::logic::rr::tests::a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text ... ok
+test code_rule_dsl::logic::rr::tests::check_rr_finds_problems ... ok
+test code_rule_dsl::logic::rr::tests::combined_programs_see_guests_by_their_own_policy ... ok
+test code_rule_dsl::logic::rr::tests::components_run_through_rules ... ok
+test code_rule_dsl::logic::rr::tests::decoded_constant_positions_are_public_typed_rows ... ok
+test code_rule_dsl::logic::rr::tests::def_digests_hash_each_definitions_own_code ... ok
+test code_rule_dsl::logic::rr::tests::definition_ids_keep_other_definitions_rows_across_a_body_edit ... ok
+test code_rule_dsl::logic::rr::tests::dfs_first_runs_through_rules ... ok
+test code_rule_dsl::logic::rr::tests::directives_and_functions_lower ... ok
+test code_rule_dsl::logic::rr::tests::doubled_braces_in_a_message_are_text ... ok
+test code_rule_dsl::logic::rr::tests::dynamic_regex_patterns_preserve_whole_string_matching_and_roundtrip ... ok
+test code_rule_dsl::logic::rr::tests::embeds_declare_guests_and_guests_off_leaves_them_out ... ok
+test code_rule_dsl::logic::rr::tests::empty_corpora_run_global_absence_findings ... ok
+test code_rule_dsl::logic::rr::tests::error_directives_survive_public_report_transport ... ok
+test code_rule_dsl::logic::rr::tests::explicit_input_files_preserve_the_callers_document_batch ... ok
+test code_rule_dsl::logic::rr::tests::findings_keep_messages_tags_parameters_and_witnesses ... ok
+test code_rule_dsl::logic::rr::tests::guests_that_do_not_parse_follow_the_policy ... ok
+test code_rule_dsl::logic::rr::tests::hand_written_rules_lowering_report ... ignored, a report: what the hand-written rules need from the lowering
+test code_rule_dsl::logic::rr::tests::input_error_directives_survive_public_report_transport ... ok
+test code_rule_dsl::logic::rr::tests::invalid_or_unsupported_boolean_regex_fails_at_compilation ... ok
+test code_rule_dsl::logic::rr::tests::kind_sets_over_a_guest_are_its_grammars ... ok
+test code_rule_dsl::logic::rr::tests::lf_lines_keep_other_separators_and_the_trailing_empty_line ... ok
+test code_rule_dsl::logic::rr::tests::library_relations_are_shared_and_each_policy_reads_its_own_scope ... ok
+test code_rule_dsl::logic::rr::tests::match_all_captures_spans_over_a_nodes_text_and_over_captures ... ok
+test code_rule_dsl::logic::rr::tests::match_all_captures_spans_over_source_text_and_symbols_over_symbols ... ok
+test code_rule_dsl::logic::rr::tests::match_all_over_nodes_of_a_kind_and_over_captures_gives_spans ... ok
+test code_rule_dsl::logic::rr::tests::match_all_symbol_positions_keep_duplicate_matches_and_unicode_offsets ... ok
+test code_rule_dsl::logic::rr::tests::must_may_relations_run ... ok
+test code_rule_dsl::logic::rr::tests::native_aggregates_and_text_functions_run ... ok
+test code_rule_dsl::logic::rr::tests::native_python_syntax_verdict_keeps_raw_source_available ... ok
+test code_rule_dsl::logic::rr::tests::native_regex_inputs_follow_program_namespaces_and_shared_contexts ... ok
+test code_rule_dsl::logic::rr::tests::negated_nearest_and_compared_aggregates_run ... ok
+test code_rule_dsl::logic::rr::tests::node_sets_and_negated_conjunctions_run ... ok
+test code_rule_dsl::logic::rr::tests::noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines ... ok
+test code_rule_dsl::logic::rr::tests::nullary_relations_preserve_boolean_set_semantics ... ok
+test code_rule_dsl::logic::rr::tests::outputs_do_not_depend_on_the_chunk_size ... ok
+test code_rule_dsl::logic::rr::tests::parse_splice_and_unparse_make_value_documents ... ok
+test code_rule_dsl::logic::rr::tests::pattern_literals_match_and_bind_their_metavariables ... ok
+test code_rule_dsl::logic::rr::tests::precedes_stop_runs ... ok
+test code_rule_dsl::logic::rr::tests::printed_guest_demand_rules_are_not_generated_again ... ok
+test code_rule_dsl::logic::rr::tests::programs_are_kept_by_the_hashes_of_what_they_read ... ok
+test code_rule_dsl::logic::rr::tests::public_rr_report_preserves_compiled_policy_metadata ... ok
+test code_rule_dsl::logic::rr::tests::python_constant_word_runs_preserve_surrogate_boundaries ... ok
+test code_rule_dsl::logic::rr::tests::python_constant_words_use_parsed_interpolation_boundaries ... ok
+test code_rule_dsl::logic::rr::tests::python_split_lines_are_lossless_and_document_local ... ok
+test code_rule_dsl::logic::rr::tests::python_visit_order_follows_ast_fields_instead_of_source_offsets ... ok
+test code_rule_dsl::logic::rr::tests::rdl_programs_translate_to_the_same_program ... ok
+test code_rule_dsl::logic::rr::tests::relations_named_like_sql_keywords_run ... ok
+test code_rule_dsl::logic::rr::tests::repository_inputs_report_missing_and_malformed_without_partial_rows ... ok
+test code_rule_dsl::logic::rr::tests::repository_json_selectors_preserve_typed_rows_and_wildcard_keys ... ok
+test code_rule_dsl::logic::rr::tests::requested_source_and_line_text_remain_exact_without_copying_large_subtrees ... ok
+test code_rule_dsl::logic::rr::tests::rr_programs_print_as_themselves ... ok
+test code_rule_dsl::logic::rr::tests::rule_syntax_files_parse ... ok
+test code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr ... ok
+test code_rule_dsl::logic::rr::tests::scope_drops_findings_outside_the_policy_files ... ok
+test code_rule_dsl::logic::rr::tests::scope_takes_option_dirs_text_documents_and_report_dirs ... ok
+test code_rule_dsl::logic::rr::tests::shared_signing_library_verifies_an_existing_empty_allowlist ... ok
+test code_rule_dsl::logic::rr::tests::signatures_verify_through_rules ... ok
+test code_rule_dsl::logic::rr::tests::signed_allowlist_functor_runs_through_public_rules ... ok
+test code_rule_dsl::logic::rr::tests::souffle_builtins_run ... FAILED
+test code_rule_dsl::logic::rr::tests::source_span_producers_retain_rows_through_local_planning ... ok
+test code_rule_dsl::logic::rr::tests::spellings_lower_to_the_engine_forms ... ok
+test code_rule_dsl::logic::rr::tests::sql_in_python_is_an_sql_tape_hidden_from_unscoped_rules ... ok
+test code_rule_dsl::logic::rr::tests::string_annotations_are_guests_at_their_host_lines ... ok
+test code_rule_dsl::logic::rr::tests::string_steps_give_the_rows_sql_gives ... ok
+test code_rule_dsl::logic::rr::tests::syntax_error_directives_preserve_raw_source_relations ... ok
+test code_rule_dsl::logic::rr::tests::tree_digests_compare_subtrees_without_positions ... ok
+test code_rule_dsl::logic::rr::tests::unlowered_constructs_are_named ... ok
+test code_rule_dsl::logic::rr::tests::value_documents_are_memoised_with_the_files_that_asked ... ok
+test code_rule_dsl::logic::rr::tests::violation_codes_suppressions_and_places_lower ... ok
+test code_rule_dsl::logic::rr::tests::write_rr_translations ... ignored, writes files: the .rr translations of the authored .rdl programs
+
+failures:
+
+---- code_rule_dsl::logic::rr::tests::souffle_builtins_run stdout ----
+
+thread 'code_rule_dsl::logic::rr::tests::souffle_builtins_run' (109632611) panicked at native/src/code_rule_dsl/logic/rr/tests.rs:514:5:
+assertion `left == right` failed
+  left: "12\t12\t2\t12\t10\n7\t7\t2\t10\t7\nx\tNone\tNone\tNone\tNone\n"
+ right: "12\t12\t2\t12\t10\n7\t7\t2\t10\t7\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    code_rule_dsl::logic::rr::tests::souffle_builtins_run
+
+test result: FAILED. 92 passed; 1 failed; 2 ignored; 0 measured; 3164 filtered out; finished in 56.32s

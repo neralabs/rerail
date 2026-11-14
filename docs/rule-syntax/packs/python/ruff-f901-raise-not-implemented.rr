@@ -1,0 +1,21 @@
+.policy "ruff-f901-raise-not-implemented" revision 2
+.description "Raise NotImplementedError, not NotImplemented; NotImplemented is a comparison sentinel and raising it is a TypeError."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F901 (pyflakes): `raise NotImplemented` or `raise NotImplemented(...)`. NotImplemented is the value a
+// binary operator returns, not an exception; raising it is a TypeError. Reported at the name.
+//   raise NotImplemented              ← F901
+//   raise NotImplemented("todo")      ← F901
+//   raise NotImplementedError         not reported
+#include "python/pyflakes.rr"
+
+.violation F901(at: node) code "F901" "`raise NotImplemented` should be `raise NotImplementedError`"
+    suppress ruff "F901"
+// What is raised, with Ruff's tree in mind: parentheses do not count, and a call is looked through once.
+F901(n) :- kind(r, "raise_statement"), child(r, e, 0), unparen(e, m), not_implemented(m, n).
+.decl not_implemented(e: node, n: node)
+not_implemented(e, e) :- kind(e, "identifier"), text(e, "NotImplemented").
+not_implemented(c, n) :- kind(c, "call"), field(c, "function", f), unparen(f, n), kind(n, "identifier"),
+    text(n, "NotImplemented").

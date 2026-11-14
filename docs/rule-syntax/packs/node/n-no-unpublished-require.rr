@@ -1,0 +1,18 @@
+.policy "n-no-unpublished-require" revision 2
+.description "In a file npm publishes, do not require files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-unpublished-require: a published file must not require() what the published package
+// will not have:
+//   require("./test/helper")   reported when npm does not publish test/helper.js (a private file)
+//   require("mocha")           reported when mocha is a devDependency and not a dependency, peer or optional one
+// Only files npm publishes are checked; with ignorePrivate (the default) a package.json with "private": true is
+// skipped. Option allowModules lists packages never reported. What npm publishes is node-package.rr's proposed
+// npm_ignored; the resolved file is node-resolve.rr's proposed spec_resolved. Not read: convertPath.
+
+#include "tsx/node-resolve.rr"   // spec_unpublished
+
+.violation unpublished_require(at: node, msg: symbol) code "n/no-unpublished-require" "{msg}"
+    suppress eslint "n/no-unpublished-require"
+unpublished_require(n, m) :- spec_unpublished(n, "require", m).

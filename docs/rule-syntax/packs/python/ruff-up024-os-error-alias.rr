@@ -1,0 +1,31 @@
+.policy "ruff-up024-os-error-alias" revision 2
+.description "Use the builtin OSError instead of its legacy aliases such as IOError, EnvironmentError, WindowsError and socket.error; since Python 3.3 they are all the same class."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP024 (pyupgrade): an alias of OSError: the builtins EnvironmentError, IOError and WindowsError, and
+// `error` of mmap, resource, select, socket and os. Since Python 3.3 they are all OSError itself. Ruff looks
+// where an exception is named: an except clause, a `raise`, and the function of a call. In an except tuple
+// the tuple is reported once.
+//   except IOError:                       ← UP024 at IOError
+//   except (OSError, socket.error):       ← UP024 at the tuple
+//   raise mmap.error(1)                   ← UP024 at mmap.error
+//   from .mmap import error; raise error  not reported: a local module's error
+#include "python/upgrade-imports.rr"
+//   exc_site(e, how), handler_tuple(t, e), up_qual(e, q)        (python/upgrade-imports)
+//   builtin_at(e, x)                                         (python/upgrade)
+
+.violation UP024(at: node) code "UP024"
+    "Replace `{at}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
+    suppress ruff "UP024"
+UP024(e) :- exc_site(e, _), os_alias(e).
+UP024(t) :- handler_tuple(t, e), os_alias(e).
+.decl os_alias(e: node)
+os_alias(e) :- builtin_at(e, x), old_name(x).
+os_alias(e) :- up_qual(e, q), split_dot(q, m, "error"), error_module(m).
+.decl old_name(x: symbol)
+// WindowsError is a builtin on Windows only; Ruff (and python/names) count it as one everywhere.
+old_name("EnvironmentError"). old_name("IOError"). old_name("WindowsError").
+.decl error_module(m: symbol)
+error_module("mmap"). error_module("resource"). error_module("select"). error_module("socket"). error_module("os").

@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::scope::ScopeTable;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;

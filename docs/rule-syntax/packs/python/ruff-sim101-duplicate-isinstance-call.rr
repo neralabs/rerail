@@ -1,0 +1,27 @@
+.policy "ruff-sim101-duplicate-isinstance-call" revision 2
+.description "Merge isinstance() checks on the same object joined by or into one call with a tuple of types."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM101 (flake8-simplify): an `or` in which two operands next to each other are calls of the builtin
+// isinstance (two positional arguments, no keywords) on the same object, compared as Ruff's ComparableExpr
+// does. One finding per run of such calls, at the `or`. Ruff's fix is unsafe; none here.
+//   isinstance(a, int) or isinstance(a, float)               ← SIM101: isinstance(a, (int, float))
+//   isinstance(a, int) or b or isinstance(a, float)          not reported: not next to each other
+#include "python/simplify.rr"
+//   sim_operand(t, o, i, v); c4_builtin(c, x), call_nargs(c, n), call_nkwargs(c, 0) (comprehensions); cmp_same(a, b) (compare)
+
+.violation SIM101(at: node, target: symbol) code "SIM101" "Multiple `isinstance` calls for {target}, merge into a single call"
+    suppress ruff "SIM101"
+SIM101(t, w) :- run(t, x, _), (unparen(x, n), kind(n, "identifier"), text(n, y), w = cat("`", y, "`") ;
+    unparen(x, n), !kind(n, "identifier"), w = "expression").
+// run(t, x, y): operands i and i + 1 of the `or` t are isinstance calls on x and on y, the same object.
+.decl run(t: node, x: node, y: node)
+run(t, x, y) :- pair(t, x, y), cmp_same(x, y).
+.decl pair(t: node, x: node, y: node)
+pair(t, x, y) :- sim_operand(t, "or", i, a), isinstance_of(a, x), sim_operand(t, "or", i + 1, b), isinstance_of(b, y).
+cmp_same_ask(x, y) :- pair(_, x, y).
+.decl isinstance_of(v: node, x: node)  // v is `isinstance(x, T)`
+isinstance_of(v, x) :- unparen(v, c), c4_builtin(c, "isinstance"), call_nargs(c, 2), call_nkwargs(c, 0), ruff_arg(c, 0, x),
+    ruff_arg(c, 1, _).

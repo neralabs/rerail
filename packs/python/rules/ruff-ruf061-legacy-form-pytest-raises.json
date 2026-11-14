@@ -149,21 +149,21 @@
           },
           "second-arg": {
             "matches": "plain-arg",
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "not": {
+                  "matches": "trivia"
+                }
+              }
+            },
             "follows": {
               "stopBy": {
                 "not": {
                   "matches": "trivia"
                 }
               },
-              "regex": "^,$",
-              "follows": {
-                "stopBy": {
-                  "not": {
-                    "matches": "trivia"
-                  }
-                },
-                "matches": "first-arg"
-              }
+              "matches": "first-arg"
             }
           },
           "func-second": {

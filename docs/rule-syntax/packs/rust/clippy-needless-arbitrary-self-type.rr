@@ -1,0 +1,22 @@
+.policy "clippy-needless-arbitrary-self-type" revision 2
+.description "Write a Rust method receiver as self, &self or &mut self instead of spelling out its Self type."
+.language rust
+.mode steer
+.scope include "**/*"
+
+// Clippy's needless_arbitrary_self_type (complexity): a method receiver that spells out its type as
+// `Self` or a plain reference to it, which `self`, `&self` and `&mut self` already say.
+//   self: Self   mut self: Self   self: &Self   self: &'a mut Self       reported at the parameter
+//   self   &'a self   mut self: &mut Self   self: &&mut Self   self: Box<Self>   not reported
+.violation needless_arbitrary_self_type(at: node, msg: symbol) code "needless_arbitrary_self_type" "{msg}"
+    suppress clippy "clippy::needless_arbitrary_self_type", "clippy::all", "clippy::complexity", "warnings"
+needless_arbitrary_self_type(p, "Write this receiver as self or mut self instead of self: Self.") :-
+    receiver(p, t), self_type(t).
+needless_arbitrary_self_type(p, "Write this receiver in short form, e.g. &self or &'a mut self instead of self: &'a mut Self.") :-
+    receiver(p, t), kind(t, "reference_type"), field(t, "type", s), self_type(s), !mut_binding(p).
+.decl mut_binding(p: node)  // `mut self: …`
+mut_binding(p) :- child(p, m, _), kind(m, "mutable_specifier").
+.decl receiver(p: node, t: node)  // `self: T`, with t the written type
+receiver(p, t) :- kind(p, "parameter"), field(p, "pattern", s), kind(s, "self"), field(p, "type", t).
+.decl self_type(t: node)
+self_type(t) :- kind(t, "type_identifier"), text(t, "Self").

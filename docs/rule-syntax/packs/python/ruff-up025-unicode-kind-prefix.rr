@@ -1,0 +1,35 @@
+.policy "ruff-up025-unicode-kind-prefix" revision 2
+.description "Remove the u prefix from string literals; every Python 3 string is already Unicode."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP025 (pyupgrade): a string literal with a `u` or `U` prefix, each piece of adjacent literals on its own
+// (`f"a" u"b"` too). A string that is a whole annotation which is never evaluated is left alone: under
+// `from __future__ import annotations`, and in a stub, where a `TypeAlias` value is one as well.
+//   x = u"Hello"                ← UP025: write "Hello"
+//   def f(a: u"int"): ...       ← UP025, unless the module has `from __future__ import annotations`
+//   x: list[u"int"]             ← UP025 either way: the string is not the whole annotation
+#include "python/upgrade.rr"
+//   stub_file(d), future_annotations(d); ann_root(t) and unparen (python/ast)
+#include "python/upgrade-format.rr"
+//   u_piece(s), lit_piece(e, s)
+
+.violation UP025(at: node) code "UP025"
+    "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2."
+    suppress ruff "UP025"
+    fix safe remove_u "Remove the `u` prefix"
+UP025(s) :- u_piece(s), !deferred(s).
+// The prefix is the first character of the string's opening token: `u"` becomes `"`.
+remove_u(s) :- child(s, st, 0), kind(st, "string_start"), text(st, t), q = @slice(t, 1, strlen(t)) => replace(st, `$q`).
+
+// deferred(s): s is a piece of the whole of an annotation that Python never evaluates.
+.decl deferred(s: node)
+deferred(s) :- whole(t, s), docof(s, d), (future_annotations(d) ; stub_file(d)).
+deferred(s) :- alias_value(v), lit_piece(v, s), docof(s, d), stub_file(d).
+.decl whole(t: node, s: node)  // s is a piece of the string that annotation t is, through parentheses
+whole(t, s) :- ann_root(t), child(t, e, 0), unparen(e, m), lit_piece(m, s).
+// alias_value(v): the value of `X: TypeAlias = v` (typing's or typing_extensions'), through parentheses.
+.decl alias_value(v: node)
+alias_value(v) :- assign_ann(a, t), child(t, n, 0), (typing_ref(n, "TypeAlias") ; text(n, "TypeAlias")),
+    assign_value(a, v0), unparen(v0, v).

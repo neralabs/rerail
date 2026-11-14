@@ -1,0 +1,43 @@
+// python/typing-context: where Ruff's execution context is "typing", not "runtime": code Python never evaluates
+// as it runs. Ruff's PYI055 reads it (`!semantic.execution_context().is_runtime()`).
+//
+// Interface
+//   typing_only_ctx(n)   n is in typing-only code: below a typing_root, or n is one
+//   typing_root(r)       r is the root of typing-only code (below)
+//
+// Python and Ruff background
+//   - An annotation is evaluated when its statement or def runs, except in these cases:
+//     - in a stub;
+//     - under `from __future__ import annotations` (PEP 563);
+//     - when the code targets Python 3.14 or later (PEP 649);
+//     - for a variable annotation in a function scope: Python never evaluates a local variable's annotation.
+//       A def's parameter and return annotations run when the def does, in any scope, a nested def's too.
+//   - A string annotation is a forward reference. Its parsed tree is typing-only everywhere.
+//   - The value of `type X = …` and the bounds and defaults of PEP 695 type parameters are evaluated lazily.
+//   - The body of `if TYPE_CHECKING:` never runs.
+//   - Everything else runs, in a stub too: a PEP 613 `X: TypeAlias = …` value, `cast(T, …)`'s T, a TypeVar's
+//     bound, and a plain `X = list[int]`.
+//
+//   from typing import TypeAlias
+//   def f(x: type[int] | type[str]): ...      runtime at 3.10 in a .py, nested in a def too; typing-only in a stub,
+//                                             or at 3.14
+//   type Y = type[int] | type[str]            typing-only: typing_root(<value>)
+//   X: TypeAlias = type[int] | type[str]      runtime, in a stub too
+#include "python/typing.rr"
+#include "python/misc2-typecheck.rr"   // tc_block, tc_ann_owner; future_annotations, stub_file, targets
+.decl typing_root(r: node)
+typing_root(r) :- ann_root(r), deferred_ann(r).
+typing_root(s) :- ann_ctx(s), str_node(s), parsed(s, "annotation", _).   // a string annotation
+typing_root(v) :- kind(s, "type_alias_statement"), field(s, "right", v).
+typing_root(b) :- type_param(_, _, _, _, _, b, _), !unset(b).
+typing_root(d) :- type_param(_, _, _, _, _, _, d), !unset(d).
+typing_root(b) :- tc_block(_, b).
+// deferred_ann(r): annotation r is never evaluated.
+.decl deferred_ann(r: node)
+deferred_ann(r) :- ann_root(r), docof(r, d), (stub_file(d) ; future_annotations(d)).
+deferred_ann(r) :- ann_root(r), targets(14).
+deferred_ann(r) :- ann_root(r), tc_ann_owner(r, a), kind(a, "assignment"), nearest(a, s, scope),
+    (kind(s, "function_definition") ; kind(s, "lambda")).
+.decl typing_only_ctx(n: node)
+typing_only_ctx(n) :- typing_root(r), (n = r ; within(n, r)).
+typing_only_ctx(n) :- typing_root(s), str_node(s), parsed(s, "annotation", r), (n = r ; within(n, r)).

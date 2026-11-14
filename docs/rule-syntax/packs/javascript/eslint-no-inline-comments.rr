@@ -1,0 +1,27 @@
+.policy "eslint-no-inline-comments" revision 5
+.description "Put comments on their own line rather than on the same line as code."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-text.rr"
+//   code_before(c), code_after(c), pre_text(c, s), post_text(c, s), eslint_directive(c), js_comment(c, t, v)
+
+// ESLint's no-inline-comments: a comment that shares a line with code.
+//   var a = 1; // why          f(/* x */ 1);          → Unexpected comment inline with code.
+//   // own line                                        not reported
+//   // eslint-disable-line     {/* JSX comment */}     not reported: a directive, a JSX comment child
+// ignorePattern: a regex; a comment whose text matches it anywhere is allowed.
+.violation no_inline_comments(at: node) code "no-inline-comments" "Unexpected comment inline with code."
+    suppress eslint "no-inline-comments"
+    suppress oxlint "no-inline-comments"
+no_inline_comments(c) :- same_line(c), !eslint_directive(c), !jsx_comment(c), !ignored(c).
+.decl ignored(c: node)
+ignored(c) :- option("ignorePattern", p), js_comment(c, _, v), match(cat("[\\s\\S]*(?:", p, ")[\\s\\S]*"), v).
+.decl same_line(c: node)
+same_line(c) :- code_before(c).
+same_line(c) :- code_after(c).
+// jsx_comment(c): `<div>{/* label */}</div>`: the container holds only comments (ESLint's JSXEmptyExpression),
+// and at most its braces are beside c on the line.
+.decl jsx_comment(c: node)
+jsx_comment(c) :- kind(e, "jsx_expression"), child(e, c, _), kind(c, "comment"), count : { child(e, o, _), !kind(o, "comment") } = 0,
+    (!code_before(c) ; pre_text(c, "{")), (!code_after(c) ; post_text(c, "}")).

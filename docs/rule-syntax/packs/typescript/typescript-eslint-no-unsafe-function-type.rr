@@ -1,0 +1,18 @@
+.policy "typescript-eslint-no-unsafe-function-type" revision 4
+.description "Avoid the global Function type in TypeScript; spell out the parameter and return types, since Function accepts any callable."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   type_ref, type_global
+
+// typescript-eslint's no-unsafe-function-type: the global `Function` type accepts any callable and calls return any.
+// Reported where it names a type, an `implements` or an interface's `extends`, unless the file declares its own.
+//   let f: Function;   class A implements Function {}   interface I extends Function {}     → reported
+//   let f: () => void;   type Function = () => void; let g: Function;   let t: typeof Function     fine
+// No options.
+.violation no_unsafe_function_type(at: node) code "@typescript-eslint/no-unsafe-function-type" "The `Function` type accepts any function-like value.\nPrefer explicitly defining any function parameters and return type."
+    suppress eslint "@typescript-eslint/no-unsafe-function-type"
+    suppress oxlint "no-unsafe-function-type"
+no_unsafe_function_type(r) :- type_global(r, "Function").

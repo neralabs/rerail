@@ -1,0 +1,18 @@
+.policy "bandit-b401-import-telnetlib" revision 2
+.description "Remove imports of telnetlib; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B401 (its B001 blacklist): an import of telnetlib or anything under it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import telnetlib                            B401
+//   from telnetlib import Telnet                B401
+//   import telnetlib2                           B401: a prefix
+//   importlib.import_module("telnetlib")        B401: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B401(at: node) code "B401"
+    "Remove this telnetlib import and use SSH or another encrypted protocol instead."
+    suppress nosec "B401"
+B401(n) :- blacklisted(n, "B401").

@@ -1,0 +1,15 @@
+.policy "ruff-ytt102-sys-version2" revision 2
+.description "Use sys.version_info.minor instead of indexing the third character of sys.version; the character is only the first digit of a two-digit minor version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT102 (flake8-2020): `sys.version[2]`, the minor version as one character. On 3.10 it is "1".
+//   sys.version[2]           ← YTT102
+//   sys.version[0]           not this rule (YTT301)
+#include "python/misc2-version.rr"
+
+.violation YTT102(at: node) code "YTT102"
+    "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives `1`)."
+    suppress ruff "YTT102"
+YTT102(v) :- ytt_version_index(v, "2").

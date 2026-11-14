@@ -1,0 +1,16 @@
+.policy "ruff-ytt203-sys-version-info1-cmp-int" revision 2
+.description "Compare sys.version_info to a version tuple instead of testing its minor number alone; a minor-only check misjudges a new major version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT203 (flake8-2020): `sys.version_info[1]` (the minor version) ordered against an int. On Python 4.0,
+// `sys.version_info[1] >= 7` is false.
+//   sys.version_info[1] >= 7      ← YTT203
+//   sys.version_info[1] == 7      not reported: an equality
+#include "python/misc2-version.rr"
+
+.violation YTT203(at: node) code "YTT203"
+    "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info[1]` alone, which misjudges a new major version."
+    suppress ruff "YTT203"
+YTT203(l) :- ytt_single_cmp(_, l, o, r), ytt_order(o), ytt_info_index(l, "1"), ruff_int(r, _).

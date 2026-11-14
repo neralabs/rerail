@@ -1,0 +1,5 @@
+{
+  "title": "pandas inplace=True",
+  "rule": "ruff-pd002-pandas-use-of-inplace-argument",
+  "note": "PD002 flags inplace=True on pandas methods: it rarely saves memory and breaks method chains. Assign the result instead."
+}

@@ -1,0 +1,17 @@
+# corpus: mix: seed 16
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = prev(starts((x | bs)), 30)
+mask m1 = after(prev(digit, 17))
+mask m2 = bs
+mask m3 = (quote & ~m1)
+mask m4 = starts(ws)

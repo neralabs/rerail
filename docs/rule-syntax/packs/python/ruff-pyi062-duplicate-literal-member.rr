@@ -1,0 +1,16 @@
+.policy "ruff-pyi062-duplicate-literal-member" revision 2
+.description "Remove duplicate members from a Literal type; repeating a value adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI062 (flake8-pyi), every file: a member of `Literal[…]` equal to an earlier one, nested Literals
+// flattened. Members compare by value, not spelling: "a" and 'a' are one; True and 1 are two. Separate
+// Literals in a union are not compared (PYI030 merges them).
+//   x: Literal[1, 2, 1]        ← PYI062 at the second 1
+#include "python/typing.rr"
+
+.violation PYI062(at: node) code "PYI062" "Remove the repeated member `{at}` from this Literal; an earlier member already covers it."
+    suppress ruff "PYI062"
+PYI062(m) :- literal_leaf(l, m), lit_key(m, k), literal_leaf(l, e), e < m, lit_key(e, k).
+PYI062(m) :- literal_leaf(l, m), kind(m, t), value(m, v), literal_leaf(l, e), e < m, kind(e, t), value(e, v).

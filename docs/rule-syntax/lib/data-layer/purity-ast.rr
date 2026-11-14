@@ -1,0 +1,102 @@
+// lib/data-layer/purity-ast.rr: the few `ast` idioms the data-layer's purity and authority scripts share, as they
+// spell them. Nothing here resolves a name: the scripts compare spellings, and so do these relations.
+//
+// Interface
+//   ast_walk(f, n)     n is in `ast.walk(f)` for a def or class f, other than f: its body, decorators, defaults and
+//                      annotations, nested defs and lambdas included
+//   short_name(e, x)   the scripts' `_name(e)`: a Name's id, an Attribute's attr, and through a Call its function
+//   walk_name(r, x)    `_names(r)`: x is the id of a Name or the attr of an Attribute in `ast.walk(r)`, r included
+//   body_def(c, f, x)  def f, named x, is a statement of class c's own body (`node.body`), decorated or not
+//   last_body_def(c, f, x)  the last such def named x: a `{m.name: m for m in node.body}` dict keeps that one
+//   class_field(c, x)  `x: T` (an AnnAssign to a bare name) is a statement of class c's own body
+//   deco_at(f, i, e)   e is f's i-th decorator expression, in source order
+//   walk_qualname(f, q)  the `__qualname__` of def or class f, for defs a walk of statement bodies reaches
+//   py_repr(s, r)      r is Python's repr of the str s, for each s of repr_want(s), which the check fills
+//
+// They differ from python/ast's neighbours where the scripts do: call_name looks through subscripts, short_name
+// looks through calls; method_of takes any def whose nearest scope is the class (one under `if` in the class
+// body too), body_def only the body's own statements.
+
+#include "python/ast.rr"
+
+// ast_walk(f, n): `def f(…):` / `class f:` and everything below it, plus its decorators. tree-sitter puts the
+// decorators outside the definition (in a decorated_definition), `ast` inside.
+//   @guard(check_lazy())      ast_walk(<f>, <check_lazy()>): the decorator is part of f
+//   def f(x=default()): …     ast_walk(<f>, <default()>)
+.decl ast_walk(f: node, n: node)
+ast_walk(f, n) :- (kind(f, "function_definition") ; kind(f, "class_definition")), within(n, f).
+ast_walk(f, n) :- decorator(f, e), (n = e ; within(n, e)).
+
+// short_name(e, x): `foo` and `a.foo` give "foo"; `make()()` gives "make", `a.b()` "b". Anything else (a
+// subscript, a lambda) has no name, as `_name` returns None.
+.decl short_name(e: node, x: symbol)
+short_name(e, x) :- kind(e, "identifier"), text(e, x).
+short_name(e, x) :- attr_of(e, _, x).
+short_name(e, x) :- kind(e, "call"), field(e, "function", g), short_name(g, x).
+short_name(e, x) :- kind(e, "parenthesized_expression"), unparen(e, m), m != e, short_name(m, x).  // `(a.foo)`
+
+// walk_name(r, x): `_names(r)`. In `f(a.b, k=c)` the names are f, a, b and c, not k: a keyword's name, a def's
+// name, a parameter and an imported name are not ast.Name nodes.
+.decl walk_name(r: node, x: symbol)
+walk_name(r, x) :- walk_leaf(r, x).
+walk_name(r, x) :- within(n, r), walk_leaf(n, x).
+walk_name(f, x) :- decorator(f, e), (walk_leaf(e, x) ; within(n, e), walk_leaf(n, x)).
+.decl walk_leaf(n: node, x: symbol)  // n itself is a Name x or an Attribute `….x`
+walk_leaf(n, x) :- ast_name(n, x).
+walk_leaf(n, x) :- attr_of(n, _, x).
+
+// body_def(c, f, x): in `class C:` / `def m(self): …` / `@property` / `def p(self): …`, both m and p. A def
+// inside `if TYPE_CHECKING:` in the class body is not one: `node.body` holds the If.
+.decl body_def(c: node, f: node, x: symbol)
+body_def(c, f, x) :- body_def_at(c, _, f), def_name(f, x).
+.decl body_def_at(c: node, s: node, f: node)  // s is the body statement: f itself, or its decorated_definition
+body_def_at(c, f, f) :- kind(c, "class_definition"), field(c, "body", b), child(b, f, _),
+    kind(f, "function_definition").
+body_def_at(c, s, f) :- kind(c, "class_definition"), field(c, "body", b), child(b, s, _),
+    kind(s, "decorated_definition"), field(s, "definition", f), kind(f, "function_definition").
+// last_body_def(c, f, x): `def m` twice in one class body keeps the second, as a dict built from the body does.
+.decl last_body_def(c: node, f: node, x: symbol)
+last_body_def(c, f, x) :- body_def_at(c, s, f), def_name(f, x),
+    count : { body_def_at(c, s2, f2), def_name(f2, x), precedes(s, s2) } = 0.
+
+// class_field(c, x): `class R:` / `user_id: UserId` gives class_field(<R>, "user_id"); `x: int = 0` too;
+// `self.x: int` and `x = 0` do not.
+.decl class_field(c: node, x: symbol)
+class_field(c, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, st, _), asgstmt(a, st),
+    field(a, "type", _), field(a, "left", t), kind(t, "identifier"), text(t, x).
+
+// deco_at(f, i, e): `@a` / `@b(1)` / `def f` gives deco_at(<f>, 0, <a>) and deco_at(<f>, 1, <b(1)>). i counts the
+// decorated_definition's children, so it orders the decorators but need not be dense.
+.decl deco_at(f: node, i: number, e: node)
+deco_at(f, i, e) :- kind(dd, "decorated_definition"), field(dd, "definition", f), child(dd, dc, i),
+    kind(dc, "decorator"), child(dc, e, 0).
+
+// walk_qualname(f, q): the scripts that walk `tree.body`, then each class's and def's `body`, name what they find
+// as `__qualname__` does, "<locals>" after a def. They never look inside `if`, `try`, `with` or loops:
+//   class C:                                walk_qualname(<C>, "C")
+//       def m(self):                        walk_qualname(<m>, "C.m")
+//           def inner(): …                  walk_qualname(<inner>, "C.m.<locals>.inner")
+//   if TYPE_CHECKING:
+//       def hidden(): …                     no row
+// Names are NFKC-normalised, as CPython reads identifiers: `def ｄerive` is "derive". (python/ast's py_qualname
+// follows nearest scopes, so it names `hidden` too.)
+.decl walk_qualname(f: node, q: symbol)
+walk_qualname(f, @nfkc(x)) :- body_member(m, f), kind(m, "module"), def_name(f, x).
+walk_qualname(f, @dot(p, @nfkc(x))) :- walk_qualname(c, p), kind(c, "class_definition"), field(c, "body", b),
+    body_member(b, f), def_name(f, x).
+walk_qualname(f, @dot(@dot(p, "<locals>"), @nfkc(x))) :- walk_qualname(g, p), kind(g, "function_definition"),
+    field(g, "body", b), body_member(b, f), def_name(f, x).
+// body_member(b, f): def or class f is a statement of body b (a module or a block), decorated or not.
+.decl body_member(b: node, f: node)
+body_member(b, f) :- body_node(b), child(b, f, _), (kind(f, "function_definition") ; kind(f, "class_definition")).
+body_member(b, f) :- body_node(b), child(b, s, _), kind(s, "decorated_definition"), field(s, "definition", f).
+
+// py_repr(s, r): `repr(s)` for a str, as messages built from `{x!r}` print it: 'a' in single quotes, "it's" in
+// double quotes when s has a single quote and no double one, backslashes doubled. Control characters are not
+// escaped (\n stays a newline). The check lists the strings it needs in repr_want.
+//   py_repr("cache", "'cache'")      py_repr("'Run'", "\"'Run'\"")
+.decl repr_want(s: symbol)
+.decl py_repr(s: symbol, r: symbol)
+py_repr(s, cat("'", @replace_all(@replace_all(s, "\\\\", "\\\\"), "'", "\\'"), "'")) :- repr_want(s),
+    (!contains("'", s) ; contains("\"", s)).
+py_repr(s, cat("\"", @replace_all(s, "\\\\", "\\\\"), "\"")) :- repr_want(s), contains("'", s), !contains("\"", s).

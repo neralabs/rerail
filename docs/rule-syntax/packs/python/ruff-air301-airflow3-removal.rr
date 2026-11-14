@@ -1,0 +1,176 @@
+.policy "ruff-air301-airflow3-removal" revision 2
+.description "Replace or remove the APIs, arguments and context keys that Airflow 3 removed, so the code keeps working after the upgrade."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR301 (Airflow): an API that Airflow 3 removed, in a file that imports airflow.
+//   - a read of a removed name (a table), at the name or the whole attribute, unless it is an `except ImportError`
+//     fallback for its replacement;
+//   - a removed keyword of DAG, Variable.get, a task handler or an operator (`schedule_interval=`, `sla=`…), at
+//     the keyword's name; any argument to an auth manager; `trigger_rule="none_failed_or_skipped"`;
+//   - a removed method or attribute on a name assigned an instance (`dm = DatasetManager(); dm.create_datasets()`);
+//   - in an `@task` function: a removed context key read from `**context` or get_current_context(), by `["k"]` or
+//     `.get("k")`; `inlet_events["uri"]`; `context["dag_run"].external_trigger`;
+//   - a removed context key as a parameter of an `@task` function or a BaseOperator's `execute`;
+//   - `@apply_defaults`; `operators = […]` and the like in an AirflowPlugin class.
+//   from airflow import DAG
+//   DAG(dag_id="d", schedule_interval="@daily")    ← AIR301: rename the argument to `schedule`
+//   from airflow.utils.dates import days_ago       days_ago(1)  ← AIR301
+//   @task
+//   def t(**context): context["execution_date"]   ← AIR301
+#include "python/misc-airflow.rr"
+#include "python/ruff-classes.rr"   // class_base_expr
+#include "../packs/python/ruff-air301-airflow3-removal.names.rr"   // air301_name(old, how, m, x, msg)
+
+.violation AIR301(at: node, msg: symbol) code "AIR301" "{msg}"
+    suppress ruff "AIR301"
+.violation AIR301_renamed(at: node, k: symbol, new: symbol) code "AIR301"
+    "`{k}` was removed in Airflow 3; use `{new}` instead."
+    suppress ruff "AIR301"
+    fix safe to_new "Use the new name"
+to_new(at, _, new) => replace(at, `$new`).
+.violation AIR301_gone(at: node, k: symbol) code "AIR301"
+    "`{k}` was removed in Airflow 3 with no replacement; delete it, or derive it from what Airflow 3 provides."
+    suppress ruff "AIR301"
+.violation AIR301_key(at: node, k: symbol, hint: symbol) code "AIR301"
+    "The context key `{k}` was removed in Airflow 3; {hint}"
+    suppress ruff "AIR301"
+.violation AIR301_param(at: node, k: symbol, hint: symbol) code "AIR301"
+    "The parameter `{k}` was removed from the task context in Airflow 3; {hint}"
+    suppress ruff "AIR301"
+
+// ---- names -------------------------------------------------------------------------------------------------------
+AIR301(e, msg) :- air_ref(e, _, q), air301_hit(q, m, x, msg), !air_guarded(e, m, x).
+air_needs_guard(e, m, x) :- air_ref(e, _, q), air301_hit(q, m, x, _), m != "".
+.decl air301_hit(q: symbol, m: symbol, x: symbol, msg: symbol)
+air301_hit(q, m, x, msg) :- air_ref(_, _, q), air301_name(p, how, m, x, msg),
+    (q = p ; how = "prefix", prefix(cat(p, "."), q)).
+
+// ---- call arguments, by the callee's class t, in Ruff's match order ----------------------------------------------
+AIR301_renamed(n, k, new) :- air301_callee(c, t), air_kw(c, k, n), air301_kw(t, k, new), new != "".
+AIR301_gone(n, k) :- air301_callee(c, t), air_kw(c, k, n), air301_kw(t, k, "").
+AIR301(al, "The auth manager constructor takes no parameters in Airflow 3; drop the arguments.") :-
+    air301_callee(c, "authmgr"), field(c, "arguments", al), call_item(c, _, _).
+AIR301_renamed(v, "none_failed_or_skipped", "\"none_failed_min_one_success\"") :- air301_trigger_rule(v),
+    plain_str(v, "none_failed_or_skipped").
+AIR301_renamed(v, "TriggerRule.NONE_FAILED_OR_SKIPPED", "TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS") :-
+    air301_trigger_rule(v), ruff_qual(v, "airflow.utils.trigger_rule.TriggerRule.NONE_FAILED_OR_SKIPPED").
+.decl air301_trigger_rule(v: node)  // the value of `trigger_rule=` to a task or an operator
+air301_trigger_rule(v) :- air301_callee(c, t), (t = "task" ; t = "operator"), air_kw(c, "trigger_rule", n),
+    ast_up(n, k), field(k, "value", v0), unparen(v0, v).
+.decl air301_callee(c: node, t: symbol)
+air301_callee(c, t) :- air_call(c, q), air301_class(q, t).
+.decl air301_class(q: symbol, t: symbol)
+air301_class(q, "dag") :- air_dag(q).
+air301_class(q, "variable_get") :- air_call(_, q), match("airflow\\.sdk(\\..*)?\\.Variable\\.get", q).
+air301_class(q, "task") :- air_call(_, q), (q = "airflow.decorators.task" ; q = "airflow.sdk.task").
+air301_class(q, "authmgr") :- air301_authmgr(q), air_call(_, q).
+air301_class(q, "handler") :- air_kind(q, "log", "TaskHandler"), air_call(_, q), !air301_authmgr(q).
+air301_class(q, t) :- air_kind(q, "operators", "Operator"), air_call(_, q), !air301_authmgr(q),
+    !air_kind(q, "log", "TaskHandler"), (t = "operator" ; air301_op_class(x, t), suffix(x, q)).
+air_kind_ask("log", "TaskHandler"). air_kind_ask("operators", "Operator").
+.decl air301_op_class(x: symbol, t: symbol)  // operators with one more removed keyword
+air301_op_class(".operators.trigger_dagrun.TriggerDagRunOperator", "trigger_dagrun").
+air301_op_class(".operators.datetime.BranchDateTimeOperator", "branch").
+air301_op_class(".operators.weekday.BranchDayOfWeekOperator", "branch").
+.decl air301_kw(t: symbol, k: symbol, new: symbol)  // keyword k of a t was removed; new replaces it, "" for none
+air301_kw("dag", "concurrency", "max_active_tasks"). air301_kw("dag", "fail_stop", "fail_fast").
+air301_kw("dag", "schedule_interval", "schedule"). air301_kw("dag", "timetable", "schedule").
+air301_kw("dag", "default_view", ""). air301_kw("dag", "orientation", "").
+air301_kw("variable_get", "default_var", "default"). air301_kw("handler", "filename_template", "").
+air301_kw("operator", "task_concurrency", "max_active_tis_per_dag"). air301_kw("operator", "provide_context", "").
+air301_kw("trigger_dagrun", "execution_date", "logical_date").
+air301_kw("branch", "use_task_execution_day", "use_task_logical_date").
+.decl air301_authmgr(q: symbol)
+air301_authmgr(q) :- (air_call(_, q) ; air_instance(_, q)),
+    match("airflow\\.(auth\\.manager|providers(\\.[^.]+)*\\.auth_manager)(\\.[^.]+)*\\.[^.]*AuthManager", q).
+
+// ---- methods (check_method) and attributes (check_class_attribute) on an instance --------------------------------
+// A class with its own rows takes only those (Ruff's match returns on its arm); the families apply otherwise.
+AIR301_renamed(a, x, new) :- air301_member_use(a, x, q, how), air301_exact(q, x, new, how), new != "".
+AIR301_gone(a, x) :- air301_member_use(a, x, q, "call"), air301_exact(q, x, "", "call").
+AIR301_renamed(a, x, new) :- air301_member_use(a, x, q, "call"), !air301_exact(q, _, _, "call"), air301_family(q, f),
+    air301_family_row(f, x, new).
+.decl air301_member_use(a: node, x: symbol, q: symbol, how: symbol)  // how "call": `o.x(…)`, "attr": any `o.x`
+air301_member_use(a, x, q, "attr") :- attr_of(g, o, x), field(g, "attribute", a), air_instance(o, q).
+air301_member_use(a, x, q, "call") :- air301_member_use(a, x, q, "attr"), ast_up(a, g), ast_up(g, c),
+    field(c, "function", g).
+.decl air301_exact(q: symbol, x: symbol, new: symbol, how: symbol)
+air301_exact("airflow.datasets.manager.DatasetManager", "register_dataset_change", "register_asset_change", "call").
+air301_exact("airflow.datasets.manager.DatasetManager", "create_datasets", "create_assets", "call").
+air301_exact("airflow.datasets.manager.DatasetManager", "notify_dataset_created", "notify_asset_created", "call").
+air301_exact("airflow.datasets.manager.DatasetManager", "notify_dataset_changed", "notify_asset_changed", "call").
+air301_exact("airflow.datasets.manager.DatasetManager", "notify_dataset_alias_created", "notify_asset_alias_created", "call").
+air301_exact("airflow.lineage.hook.HookLineageCollector", "create_dataset", "create_asset", "call").
+air301_exact("airflow.lineage.hook.HookLineageCollector", "add_input_dataset", "add_input_asset", "call").
+air301_exact("airflow.lineage.hook.HookLineageCollector", "add_output_dataset", "add_output_asset", "call").
+air301_exact("airflow.lineage.hook.HookLineageCollector", "collected_datasets", "collected_assets", "call").
+air301_exact(q, "create_dagrun", "", "call") :- (q = "airflow.models.dag.DAG" ; q = "airflow.models.DAG" ; q = "airflow.DAG").
+air301_exact("airflow.providers_manager.ProvidersManager", "initialize_providers_dataset_uri_resources",
+    "initialize_providers_asset_uri_resources", "call").
+air301_exact("airflow.secrets.local_filesystem.LocalFilesystemBackend", "get_connections", "get_connection", "call").
+air301_exact("airflow.providers_manager.ProvidersManager", "dataset_factories", "asset_factories", "attr").
+air301_exact("airflow.providers_manager.ProvidersManager", "dataset_uri_handlers", "asset_uri_handlers", "attr").
+air301_exact("airflow.providers_manager.ProvidersManager", "dataset_to_openlineage_converters",
+    "asset_to_openlineage_converters", "attr").
+air301_exact("airflow.lineage.hook.DatasetLineageInfo", "dataset", "asset", "attr").
+.decl air301_family(q: symbol, f: symbol)  // the first family that q belongs to, in Ruff's order
+air301_family(q, "datasets") :- air301_dataset(q).
+air301_family(q, "backend") :- air_kind(q, "secrets", "Backend"), !air301_dataset(q).
+air301_family(q, "hook") :- air_kind(q, "hooks", "Hook"), !air301_dataset(q), !air_kind(q, "secrets", "Backend").
+air301_family(q, "authmgr") :- air301_authmgr(q), !air301_dataset(q), !air_kind(q, "secrets", "Backend"),
+    !air_kind(q, "hooks", "Hook").
+.decl air301_dataset(q: symbol)
+air301_dataset(q) :- air_instance(_, q), (prefix("airflow.datasets.", q) ; q = "airflow.datasets" ; q = "airflow.Dataset").
+air_kind_ask("secrets", "Backend"). air_kind_ask("hooks", "Hook").
+.decl air301_family_row(f: symbol, x: symbol, new: symbol)
+air301_family_row("datasets", "iter_datasets", "iter_assets"). air301_family_row("datasets", "iter_dataset_aliases", "iter_asset_aliases").
+air301_family_row("backend", "get_conn_uri", "get_conn_value"). air301_family_row("backend", "get_connections", "get_connection").
+air301_family_row("hook", "get_connections", "get_connection").
+air301_family_row("authmgr", "is_authorized_dataset", "is_authorized_asset").
+
+// ---- the task context --------------------------------------------------------------------------------------------
+AIR301(at, "Index `inlet_events` with an `Asset` object such as `inlet_events[Asset(uri=...)]`; string keys were removed in Airflow 3.") :-
+    air301_key(e, v, _, at), air_in_task(e), air301_from_key(v, "inlet_events").
+AIR301_key(at, k, h) :- air301_key(e, v, k, at), air_in_task(e), !air301_from_key(v, "inlet_events"), air301_ctx(v),
+    air301_hint(k, h).
+AIR301_renamed(at, "triggering_dataset_events", "\"triggering_asset_events\"") :- air301_key(e, v, k, at),
+    k = "triggering_dataset_events", air_in_task(e), !air301_from_key(v, "inlet_events"), air301_ctx(v).
+AIR301(a, "`external_trigger` was removed from `dag_run` in Airflow 3; check `dag_run.run_type` instead.") :-
+    attr_of(g, v, "external_trigger"), field(g, "attribute", a), air_in_task(g), air301_from_key(v, "dag_run").
+AIR301_param(nm, x, h) :- (air_task(f) ; air301_execute(f)), sig_param(f, _, nm, _, k, _, _), k != "vararg",
+    k != "kwarg", text(nm, x), air301_hint(x, h).
+.decl air301_hint(k: symbol, h: symbol)  // removed context key k, and what to do instead
+air301_hint("conf", "import `conf` from `airflow.configuration` instead.").
+air301_hint(k, "derive what you need from `logical_date` or the `data_interval_*` context keys instead.") :-
+    (k = "execution_date" ; k = "next_ds" ; k = "next_ds_nodash" ; k = "next_execution_date" ; k = "prev_ds" ;
+     k = "prev_ds_nodash" ; k = "prev_execution_date" ; k = "prev_execution_date_success" ; k = "tomorrow_ds" ;
+     k = "yesterday_ds" ; k = "yesterday_ds_nodash").
+// air301_key(e, v, k, at): e reads key k of v, `v["k"]` or `v.get("k")`; at is the string.
+.decl air301_key(e: node, v: node, k: symbol, at: node)
+air301_key(e, v, k, at) :- kind(e, "subscript"), field(e, "value", v), field(e, "subscript", s), unparen(s, at),
+    plain_str(at, k).
+air301_key(e, v, k, at) :- kind(e, "call"), field(e, "function", f), unparen(f, g), attr_of(g, v, "get"),
+    ruff_arg(e, 0, a), unparen(a, at), plain_str(at, k).
+// air301_ctx(v): v is the context: a `**kwargs` parameter (its one binding), or a name assigned get_current_context().
+.decl air301_ctx(v: node)
+air301_ctx(v) :- unparen(v, m), one_binding(m, _, _, p, "param"), kind(p, "dictionary_splat_pattern").
+air301_ctx(v) :- air_instance(v, "airflow.utils.context.get_current_context").
+// air301_from_key(v, k): v is `context["k"]` or `context.get("k")`, or a name whose current binding is that.
+.decl air301_from_key(v: node, k: symbol)
+air301_from_key(v, k) :- unparen(v, m), air301_key(m, c, k, _), air301_ctx(c).
+air301_from_key(v, k) :- air_value(v, r), unparen(r, m), air301_key(m, c, k, _), air301_ctx(c).
+.decl air301_execute(f: node)  // `execute` of a class with a base `airflow.….BaseOperator`
+air301_execute(f) :- def_name(f, "execute"), nearest(f, c, scope), kind(c, "class_definition"), class_base_expr(c, b),
+    ruff_qual(b, q), prefix("airflow.", q), suffix(".BaseOperator", q), docof(f, d), seen_module(d, "airflow").
+
+// ---- decorators and plugins --------------------------------------------------------------------------------------
+AIR301(dc, "`apply_defaults` is applied automatically in Airflow 3; delete this decorator.") :- decorator(_, e),
+    child(dc, e, 0), kind(dc, "decorator"), unparen(e, m0),
+    (kind(m0, "call"), field(m0, "function", g), ruff_qual(g, q) ; ruff_qual(m0, q)),
+    q = "airflow.utils.decorators.apply_defaults", docof(e, d), seen_module(d, "airflow").
+AIR301(t, cat("`", cat(x, "` was removed from plugins in Airflow 3; import the extension as a regular Python module instead."))) :-
+    kind(c, "class_definition"), class_base_expr(c, b), ruff_qual(b, "airflow.plugins_manager.AirflowPlugin"),
+    binding(c, x, t0, _), (x = "executors" ; x = "operators" ; x = "sensors" ; x = "hooks"),
+    (kind(t0, "assignment"), field(t0, "left", t) ; !kind(t0, "assignment"), t = t0).

@@ -1,0 +1,18 @@
+.policy "bandit-b112-try-except-continue" revision 2
+.description "Don't write a bare or catch-all Exception handler in a loop whose only statement is continue; log or handle the error, or catch the specific exception you expect."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B112 (try_except_continue): an `except:` or `except Exception:` handler whose whole body is
+// `continue`.
+//   for x in xs:
+//       try: work(x)
+//       except Exception: continue       B112, at the except
+//       except KeyError: continue        not reported (check_typed_exception is off, the default)
+
+#include "python/security.rr"   // catch_all_body: the handler Bandit inspects, and its one statement
+
+.violation B112(at: node) code "B112"
+    "This exception is silently discarded by continuing the loop. Handle or log it, or catch a specific expected exception before continuing."
+    suppress nosec "B112"
+B112(x) :- catch_all_body(x, s), kind(s, "continue_statement").

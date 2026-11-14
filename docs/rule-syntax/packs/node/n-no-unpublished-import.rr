@@ -1,0 +1,17 @@
+.policy "n-no-unpublished-import" revision 2
+.description "In a file npm publishes, do not import files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-unpublished-import: a published file must not import what the published package will
+// not have:
+//   import h from "./test/helper.js"   reported when npm does not publish the file (a private file)
+//   import { it } from "mocha"         reported when mocha is a devDependency and not a dependency, peer or optional one
+// The same check as n/no-unpublished-require, on import, export … from and import(). Options: ignorePrivate (default
+// true: skip a "private": true package), allowModules, ignoreTypeImport (skip `import type`). Not read: convertPath.
+
+#include "tsx/node-resolve.rr"   // spec_unpublished, spec_type_skipped
+
+.violation unpublished_import(at: node, msg: symbol) code "n/no-unpublished-import" "{msg}"
+    suppress eslint "n/no-unpublished-import"
+unpublished_import(n, m) :- spec_unpublished(n, st, m), st != "require", !spec_type_skipped(n).

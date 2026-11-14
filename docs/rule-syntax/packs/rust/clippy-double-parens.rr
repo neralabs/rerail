@@ -1,0 +1,45 @@
+.policy "clippy-double-parens" revision 3
+.description "Remove redundant double parentheses around Rust expressions and around a call's only argument."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   paren_inner(p, e)   (e);   sole_group(p, t)   token trees ((…))
+//   expr_tokens(n)      token trees Clippy sees as code
+//   has_comment(n)      a comment among n's children
+
+// Clippy's double_parens (complexity): parentheses that add nothing.
+//   ((0))   ((1, 2))   (())      a parenthesized parenthesis, tuple or unit: reported at the outer `(`
+//   f((0))  x.m((0))             a call's only argument in parentheses: reported at the argument
+//   f((1, 2))   f(())   f((1), 2)   (/* c */ (0))   (foo!())      not reported
+// Clippy lints what macros expand to. Macro bodies and arguments are token trees here, so the two shapes
+// are also read in token trees that hold code: a macro_rules! transcriber (`{((100))}`, `let a = (());`,
+// `identity((5))`), as the JSON does, and the arguments of std's expression macros (assert_eq!(((1, 2)), x)),
+// which the JSON leaves out.
+.violation double_parens(at: node, msg: symbol) code "double_parens" "{msg}"
+    suppress clippy "clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"
+double_parens(p, "Remove the redundant outer parentheses around this expression.") :-
+    paren_inner(p, e), (kind(e, "parenthesized_expression") ; kind(e, "tuple_expression") ;
+    kind(e, "unit_expression")), !has_comment(p).
+double_parens(a, "Remove the extra parentheses around this call's argument.") :-
+    kind(c, "call_expression"), field(c, "arguments", args), child(args, a, 0), !child(args, _, 1),
+    kind(a, "parenthesized_expression"), !has_comment(a).
+
+// In token trees: `((…))` where an expression starts (after `=`, `=>`, `return`, an opening bracket, `;`
+// or `,`), and `f((…))`: a sole group as the only argument of a name or metavariable, not `()` or `$(…)`.
+double_parens(p, "Remove the redundant outer parentheses around this expression.") :-
+    sole_group(p, t), expr_tokens(p), prefix("(", p), prefix("(", t), !has_comment(p),
+    tt_before(p, s), expr_start(s).
+// tt_before(p, s): inside a token tree, s is the token before p.
+.stored tt_before "a token tree's contents are a repeat of choices, so the tape keeps every token in it"
+.decl tt_before(p: node, s: symbol)
+tt_before(p, s) :- sole_group(p, _), child(q, p, _), kind(q, "token_tree"), token_before(p, b), text(b, s).
+double_parens(t, "Remove the extra parentheses around this call's argument.") :-
+    sole_group(p, t), expr_tokens(p), prefix("(", p), prefix("(", t), !has_comment(p),
+    next_sibling(f, p), (kind(f, "identifier") ; kind(f, "metavariable")), node(_, f, _, _, fe), node(_, p, _, ps, _),
+    structural_after(f, g), match("\\s*", g), strlen(g) = ps - fe,
+    !op(t, ","), !match("\\(\\s*(\\)|\\$\\()[\\s\\S]*", t).
+.decl expr_start(tok: symbol)
+expr_start("="). expr_start("=>"). expr_start("return"). expr_start("{"). expr_start("(").
+expr_start("["). expr_start(";"). expr_start(",").

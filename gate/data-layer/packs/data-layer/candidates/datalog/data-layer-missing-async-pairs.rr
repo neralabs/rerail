@@ -1,0 +1,416 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl pair_class(kind: symbol)
+pair_class("class_definition").
+.decl pair_fdef(kind: symbol)
+pair_fdef("function_definition").
+.decl argument_mismatch_count(f: node, k: number)
+.decl argument_mismatch_def(f: node)
+.decl argument_mismatch_found(f: node)
+.decl argument_mismatch_has_pos(f: node)
+.decl argument_mismatch_has_prior(p: node)
+.decl argument_mismatch_matched(f: node, k: number, t: symbol)
+.decl argument_mismatch_param(f: node, k: number, t: symbol)
+.decl argument_mismatch_prior(p: node, q: node)
+.decl argument_mismatch_unmatched(f: node)
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl missing_async_counterpart(f: node, c: node)
+.decl missing_async_paired(f: node)
+.decl missing_async_public(x: symbol)
+.decl missing_sync_paired(f: node)
+.decl missing_sync_public(x: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl out_scope(d: number)
+.decl pair_def(d: number, f: node, g: symbol, x: symbol, s: number, e: number, a: number)
+.decl pair_doc(d: number)
+.decl pair_excluded(x: symbol)
+.decl pair_excluded_async(x: symbol)
+.decl pair_io(f: node)
+.decl pair_io_call(x: symbol)
+.decl pair_io_name(x: symbol)
+.decl pair_later(f: node)
+.decl pair_name_ok(x: symbol)
+.decl pair_not_pos(p: node)
+.decl pair_param_name(p: node, t: symbol)
+.decl pair_pos(ps: node, p: node, i: number, t: symbol)
+.decl pair_public_async(x: symbol)
+.decl pair_public_sync(x: symbol)
+.decl pair_selected(d: number, f: node, g: symbol, x: symbol, a: number)
+.decl pair_splat(p: node)
+.decl pair_splat_kind(kind: symbol)
+.decl pair_star(q: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, node_text
+.output violation
+option_on("sourceGate").
+pair_excluded("__aenter__").
+pair_excluded("__aexit__").
+pair_excluded("__enter__").
+pair_excluded("__exit__").
+pair_excluded("__init__").
+pair_excluded("__repr__").
+pair_excluded("__str__").
+pair_excluded("_sort_key").
+pair_excluded("add_param").
+pair_excluded("aggregate").
+pair_excluded("authorize_internal_access").
+pair_excluded("base_read_transaction").
+pair_excluded("base_revision_id").
+pair_excluded("base_write_transaction").
+pair_excluded("between_revisions").
+pair_excluded("branch").
+pair_excluded("branch_anchor").
+pair_excluded("branch_id").
+pair_excluded("branches").
+pair_excluded("build_versioning_where_conditions").
+pair_excluded("by_session").
+pair_excluded("cache").
+pair_excluded("cached_mapping").
+pair_excluded("cancel").
+pair_excluded("connection_id").
+pair_excluded("cross_branch").
+pair_excluded("cursor_paginate").
+pair_excluded("deferred").
+pair_excluded("diff_bytes").
+pair_excluded("disable_thread_affinity_checks").
+pair_excluded("distinct").
+pair_excluded("domain").
+pair_excluded("ensure_internal_raw_access").
+pair_excluded("excluding").
+pair_excluded("execute_fire_and_forget").
+pair_excluded("execute_later").
+pair_excluded("execute_raw").
+pair_excluded("execute_returning").
+pair_excluded("execute_runtime").
+pair_excluded("extract_fields_from_expression").
+pair_excluded("fetchall_raw").
+pair_excluded("fetchone_raw").
+pair_excluded("filter").
+pair_excluded("filter_eq").
+pair_excluded("filter_gt").
+pair_excluded("filter_gte").
+pair_excluded("filter_in").
+pair_excluded("filter_lt").
+pair_excluded("filter_lte").
+pair_excluded("filter_ne").
+pair_excluded("filter_revision").
+pair_excluded("final_sort_key").
+pair_excluded("for_object").
+pair_excluded("for_objects").
+pair_excluded("for_update").
+pair_excluded("get_cached").
+pair_excluded("get_session_id_sql").
+pair_excluded("get_sparse_column").
+pair_excluded("get_strict_mode_setting").
+pair_excluded("get_thread_checks_disabled").
+pair_excluded("graph").
+pair_excluded("graph_query_builder").
+pair_excluded("group_by").
+pair_excluded("having").
+pair_excluded("include_deleted").
+pair_excluded("insert_into").
+pair_excluded("is_active").
+pair_excluded("is_cancelled").
+pair_excluded("is_committed").
+pair_excluded("is_determined").
+pair_excluded("is_rolled_back").
+pair_excluded("iter_blob_chunks").
+pair_excluded("keyset_paginate").
+pair_excluded("limit").
+pair_excluded("mode").
+pair_excluded("offset").
+pair_excluded("order_by").
+pair_excluded("original_session_id").
+pair_excluded("plan").
+pair_excluded("query").
+pair_excluded("query_unfiltered").
+pair_excluded("quote_col").
+pair_excluded("read_blob_range").
+pair_excluded("record_async_operation").
+pair_excluded("record_sync_operation").
+pair_excluded("reorder_for_update").
+pair_excluded("replacing").
+pair_excluded("reset").
+pair_excluded("revision_history_query").
+pair_excluded("revision_id").
+pair_excluded("revisions").
+pair_excluded("search").
+pair_excluded("select_tuple").
+pair_excluded("session_id").
+pair_excluded("set_disable_thread_checks").
+pair_excluded("set_session_id").
+pair_excluded("set_strict_mode_setting").
+pair_excluded("since").
+pair_excluded("sort_key").
+pair_excluded("speculative_publish_table_names_hint").
+pair_excluded("table_exists").
+pair_excluded("versioned_read").
+pair_excluded("versioned_write").
+pair_excluded("violation_count").
+pair_excluded("where").
+pair_excluded("window").
+pair_excluded("wrapper").
+pair_excluded_async("__aenter___async").
+pair_excluded_async("__aexit___async").
+pair_excluded_async("__enter___async").
+pair_excluded_async("__exit___async").
+pair_excluded_async("__init___async").
+pair_excluded_async("__repr___async").
+pair_excluded_async("__str___async").
+pair_excluded_async("_sort_key_async").
+pair_excluded_async("add_param_async").
+pair_excluded_async("aggregate_async").
+pair_excluded_async("authorize_internal_access_async").
+pair_excluded_async("base_read_transaction_async").
+pair_excluded_async("base_revision_id_async").
+pair_excluded_async("base_write_transaction_async").
+pair_excluded_async("between_revisions_async").
+pair_excluded_async("branch_async").
+pair_excluded_async("branch_anchor_async").
+pair_excluded_async("branch_id_async").
+pair_excluded_async("branches_async").
+pair_excluded_async("build_versioning_where_conditions_async").
+pair_excluded_async("by_session_async").
+pair_excluded_async("cache_async").
+pair_excluded_async("cached_mapping_async").
+pair_excluded_async("cancel_async").
+pair_excluded_async("connection_id_async").
+pair_excluded_async("cross_branch_async").
+pair_excluded_async("cursor_paginate_async").
+pair_excluded_async("deferred_async").
+pair_excluded_async("diff_bytes_async").
+pair_excluded_async("disable_thread_affinity_checks_async").
+pair_excluded_async("distinct_async").
+pair_excluded_async("domain_async").
+pair_excluded_async("ensure_internal_raw_access_async").
+pair_excluded_async("excluding_async").
+pair_excluded_async("execute_fire_and_forget_async").
+pair_excluded_async("execute_later_async").
+pair_excluded_async("execute_raw_async").
+pair_excluded_async("execute_returning_async").
+pair_excluded_async("execute_runtime_async").
+pair_excluded_async("extract_fields_from_expression_async").
+pair_excluded_async("fetchall_raw_async").
+pair_excluded_async("fetchone_raw_async").
+pair_excluded_async("filter_async").
+pair_excluded_async("filter_eq_async").
+pair_excluded_async("filter_gt_async").
+pair_excluded_async("filter_gte_async").
+pair_excluded_async("filter_in_async").
+pair_excluded_async("filter_lt_async").
+pair_excluded_async("filter_lte_async").
+pair_excluded_async("filter_ne_async").
+pair_excluded_async("filter_revision_async").
+pair_excluded_async("final_sort_key_async").
+pair_excluded_async("for_object_async").
+pair_excluded_async("for_objects_async").
+pair_excluded_async("for_update_async").
+pair_excluded_async("get_cached_async").
+pair_excluded_async("get_session_id_sql_async").
+pair_excluded_async("get_sparse_column_async").
+pair_excluded_async("get_strict_mode_setting_async").
+pair_excluded_async("get_thread_checks_disabled_async").
+pair_excluded_async("graph_async").
+pair_excluded_async("graph_query_builder_async").
+pair_excluded_async("group_by_async").
+pair_excluded_async("having_async").
+pair_excluded_async("include_deleted_async").
+pair_excluded_async("insert_into_async").
+pair_excluded_async("is_active_async").
+pair_excluded_async("is_cancelled_async").
+pair_excluded_async("is_committed_async").
+pair_excluded_async("is_determined_async").
+pair_excluded_async("is_rolled_back_async").
+pair_excluded_async("iter_blob_chunks_async").
+pair_excluded_async("keyset_paginate_async").
+pair_excluded_async("limit_async").
+pair_excluded_async("mode_async").
+pair_excluded_async("offset_async").
+pair_excluded_async("order_by_async").
+pair_excluded_async("original_session_id_async").
+pair_excluded_async("plan_async").
+pair_excluded_async("query_async").
+pair_excluded_async("query_unfiltered_async").
+pair_excluded_async("quote_col_async").
+pair_excluded_async("read_blob_range_async").
+pair_excluded_async("record_async_operation_async").
+pair_excluded_async("record_sync_operation_async").
+pair_excluded_async("reorder_for_update_async").
+pair_excluded_async("replacing_async").
+pair_excluded_async("reset_async").
+pair_excluded_async("revision_history_query_async").
+pair_excluded_async("revision_id_async").
+pair_excluded_async("revisions_async").
+pair_excluded_async("search_async").
+pair_excluded_async("select_tuple_async").
+pair_excluded_async("session_id_async").
+pair_excluded_async("set_disable_thread_checks_async").
+pair_excluded_async("set_session_id_async").
+pair_excluded_async("set_strict_mode_setting_async").
+pair_excluded_async("since_async").
+pair_excluded_async("sort_key_async").
+pair_excluded_async("speculative_publish_table_names_hint_async").
+pair_excluded_async("table_exists_async").
+pair_excluded_async("versioned_read_async").
+pair_excluded_async("versioned_write_async").
+pair_excluded_async("violation_count_async").
+pair_excluded_async("where_async").
+pair_excluded_async("window_async").
+pair_excluded_async("wrapper_async").
+pair_io_call("commit").
+pair_io_call("commit_async").
+pair_io_call("count").
+pair_io_call("count_async").
+pair_io_call("delete_by_id").
+pair_io_call("delete_by_id_async").
+pair_io_call("delete_many").
+pair_io_call("delete_many_async").
+pair_io_call("execute").
+pair_io_call("execute_async").
+pair_io_call("first").
+pair_io_call("first_async").
+pair_io_call("insert").
+pair_io_call("insert_async").
+pair_io_call("insert_many").
+pair_io_call("insert_many_async").
+pair_io_call("read").
+pair_io_call("read_async").
+pair_io_call("read_version").
+pair_io_call("read_version_async").
+pair_io_call("select_many").
+pair_io_call("select_many_async").
+pair_io_call("select_one").
+pair_io_call("select_one_async").
+pair_io_call("update").
+pair_io_call("update_async").
+pair_io_call("update_many").
+pair_io_call("update_many_async").
+pair_io_call("upsert").
+pair_io_call("upsert_async").
+pair_io_call("write").
+pair_io_call("write_async").
+pair_io_call("write_version").
+pair_io_call("write_version_async").
+pair_io_name("conn").
+pair_io_name("connection").
+pair_io_name("db").
+pair_io_name("session").
+pair_io_name("session_id").
+pair_io_name("transaction").
+pair_io_name("txn").
+pair_public_async("commit_async").
+pair_public_async("commit_branch_async").
+pair_public_async("count_async").
+pair_public_async("create_branch_async").
+pair_public_async("delete_by_id_async").
+pair_public_async("delete_many_async").
+pair_public_async("execute_async").
+pair_public_async("execute_one_async").
+pair_public_async("find_object_branches_async").
+pair_public_async("find_object_revisions_async").
+pair_public_async("first_async").
+pair_public_async("get_history_async").
+pair_public_async("insert_async").
+pair_public_async("insert_many_async").
+pair_public_async("insert_many_raw_async").
+pair_public_async("rollback_async").
+pair_public_async("select_at_revision_async").
+pair_public_async("select_many_async").
+pair_public_async("select_one_async").
+pair_public_async("update_async").
+pair_public_async("update_many_async").
+pair_public_async("upsert_async").
+pair_public_async("upsert_many_async").
+pair_public_sync("commit").
+pair_public_sync("commit_branch").
+pair_public_sync("count").
+pair_public_sync("create_branch").
+pair_public_sync("delete_by_id").
+pair_public_sync("delete_many").
+pair_public_sync("execute").
+pair_public_sync("execute_one").
+pair_public_sync("find_object_branches").
+pair_public_sync("find_object_revisions").
+pair_public_sync("first").
+pair_public_sync("get_history").
+pair_public_sync("insert").
+pair_public_sync("insert_many").
+pair_public_sync("insert_many_raw").
+pair_public_sync("rollback").
+pair_public_sync("select_at_revision").
+pair_public_sync("select_many").
+pair_public_sync("select_one").
+pair_public_sync("update").
+pair_public_sync("update_many").
+pair_public_sync("upsert").
+pair_public_sync("upsert_many").
+pair_splat_kind("list_splat_pattern").
+pair_splat_kind("dictionary_splat_pattern").
+in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7300_sql_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7248_sparse_versioned_transactions/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+pair_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
+pair_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
+pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), !prefix("_", x).
+pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), suffix("_async", x).
+pair_name_ok(x) :- node(_, f, "function_definition", _, _), field(f, "name", nm), text(nm, x), !pair_excluded(x), !suffix("_lazy", x), !pair_excluded_async(x), (contains("commit", x) ; contains("commit_branch", x) ; contains("count", x) ; contains("create_branch", x) ; contains("delete_by_id", x) ; contains("delete_many", x) ; contains("execute", x) ; contains("execute_one", x) ; contains("find_object_branches", x) ; contains("find_object_revisions", x) ; contains("first", x) ; contains("get_history", x) ; contains("insert", x) ; contains("insert_many", x) ; contains("insert_many_raw", x) ; contains("rollback", x) ; contains("select_at_revision", x) ; contains("select_many", x) ; contains("select_one", x) ; contains("update", x) ; contains("update_many", x) ; contains("upsert", x) ; contains("upsert_many", x)).
+pair_def(d, f, g, x, s, e, 0) :- pair_doc(d), node(d, f, "function_definition", s, e), !inside(f, _, pair_fdef), nearest(f, c, pair_class), field(c, "name", cn), text(cn, g), field(f, "name", nm), text(nm, x), pair_name_ok(x), !op(f, "async").
+pair_def(d, f, g, x, s, e, 1) :- pair_doc(d), node(d, f, "function_definition", s, e), !inside(f, _, pair_fdef), nearest(f, c, pair_class), field(c, "name", cn), text(cn, g), field(f, "name", nm), text(nm, x), pair_name_ok(x), op(f, "async").
+pair_later(f) :- pair_def(d, f, g, x, _, e, a), pair_def(d, _, g, x, s2, _, a), e <= s2.
+pair_selected(d, f, g, x, a) :- pair_def(d, f, g, x, _, _, a), !pair_later(f), g != "_CachedQuery".
+pair_param_name(p, t) :- node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, "identifier", _, _), text(p, t), t != "self".
+pair_param_name(p, t) :- node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, c, _), node(_, c, "identifier", _, _), text(c, t), t != "self".
+pair_param_name(p, t) :- node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, "default_parameter", _, _), field(p, "name", c), node(_, c, "identifier", _, _), text(c, t), t != "self".
+pair_param_name(p, t) :- node(_, ps, "parameters", _, _), child(ps, p, _), node(_, p, "typed_default_parameter", _, _), field(p, "name", c), node(_, c, "identifier", _, _), text(c, t), t != "self".
+pair_splat(p) :- pair_param_name(p, _), node(_, p, k, _, _), pair_splat_kind(k).
+pair_splat(p) :- pair_param_name(p, _), node(_, p, "typed_parameter", _, _), child(p, c, _), node(_, c, k, _, _), pair_splat_kind(k).
+pair_star(q) :- node(_, q, "keyword_separator", _, _).
+pair_star(q) :- node(_, q, "list_splat_pattern", _, _).
+pair_star(q) :- node(_, q, "typed_parameter", _, _), child(q, c, _), node(_, c, "list_splat_pattern", _, _).
+pair_not_pos(p) :- pair_param_name(p, _), child(ps, p, i), child(ps, q, j), j > i, node(_, q, "positional_separator", _, _).
+pair_not_pos(p) :- pair_param_name(p, _), child(ps, p, i), child(ps, q, j), j < i, pair_star(q).
+pair_pos(ps, p, i, t) :- pair_param_name(p, t), child(ps, p, i), !pair_splat(p), !pair_not_pos(p).
+pair_io(f) :- pair_selected(_, f, _, _, _), field(f, "parameters", ps), pair_pos(ps, p, _, t), pair_io_name(t), node(_, p, "identifier", _, _).
+pair_io(f) :- pair_selected(_, f, _, _, _), field(f, "parameters", ps), pair_pos(ps, p, _, _), child(p, c, _), node(_, c, "identifier", _, _), text(c, t), pair_io_name(t).
+pair_io(f) :- pair_selected(_, f, _, _, _), node(_, c, "call", _, _), inside(c, f, pair_fdef), field(c, "function", fn), node(_, fn, "attribute", _, _), field(fn, "attribute", at), text(at, t), pair_io_call(t).
+missing_async_counterpart(f, c) :- pair_selected(d, f, g, x, 0), y = @concat(x, "_async"), pair_def(d, c, g, y, _, _, 1).
+missing_async_counterpart(f, c) :- pair_selected(d, f, g, x, 0), !suffix("_async", x), pair_def(d, c, g, x, _, _, 1).
+missing_async_paired(f) :- missing_async_counterpart(f, _).
+missing_async_public(x) :- pair_selected(_, _, _, x, 0), !prefix("_", x).
+missing_async_public(x) :- pair_selected(_, _, _, x, 0), pair_public_sync(x).
+violation("data-layer-missing-async-pairs", "missing-async", "missing_pair", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), pair_io(f), !missing_async_paired(f), doc(d, p, _), line(f, l).
+missing_sync_paired(f) :- pair_selected(d, f, g, x, 1), pair_def(d, _, g, y, _, _, 0), x = @concat(y, "_async").
+missing_sync_paired(f) :- pair_selected(d, f, g, x, 1), !suffix("_async", x), pair_def(d, _, g, x, _, _, 0).
+missing_sync_public(x) :- pair_selected(_, _, _, x, 1), !prefix("_", x).
+missing_sync_public(x) :- pair_selected(_, _, _, x, 1), pair_public_async(x).
+violation("data-layer-missing-async-pairs", "missing-sync", "missing_pair", p, l) :- pair_selected(d, f, _, x, 1), missing_sync_public(x), pair_io(f), !missing_sync_paired(f), doc(d, p, _), line(f, l).
+argument_mismatch_def(f) :- pair_selected(_, f, _, _, 0).
+argument_mismatch_def(c) :- missing_async_counterpart(_, c).
+argument_mismatch_has_pos(f) :- argument_mismatch_def(f), field(f, "parameters", ps), pair_pos(ps, _, _, _).
+argument_mismatch_count(f, 0) :- argument_mismatch_def(f), !argument_mismatch_has_pos(f).
+argument_mismatch_count(f, k) :- argument_mismatch_has_pos(f), field(f, "parameters", ps), k = count : { pair_pos(ps, _, _, _) }.
+argument_mismatch_prior(p, q) :- argument_mismatch_def(f), field(f, "parameters", ps), pair_pos(ps, p, i, _), pair_pos(ps, q, j, _), j < i.
+argument_mismatch_has_prior(p) :- argument_mismatch_prior(p, _).
+argument_mismatch_param(f, 0, t) :- argument_mismatch_def(f), field(f, "parameters", ps), pair_pos(ps, p, _, t), !argument_mismatch_has_prior(p).
+argument_mismatch_param(f, k, t) :- argument_mismatch_def(f), field(f, "parameters", ps), pair_pos(ps, p, _, t), argument_mismatch_has_prior(p), k = count : { argument_mismatch_prior(p, _) }.
+argument_mismatch_matched(f, k, t) :- argument_mismatch_param(f, k, t), missing_async_counterpart(f, c), argument_mismatch_param(c, k, t).
+argument_mismatch_unmatched(f) :- pair_selected(_, f, _, _, 0), argument_mismatch_param(f, k, t), !argument_mismatch_matched(f, k, t).
+argument_mismatch_found(f) :- missing_async_counterpart(f, c), argument_mismatch_count(f, n), argument_mismatch_count(c, m), n != m.
+argument_mismatch_found(f) :- missing_async_paired(f), argument_mismatch_unmatched(f).
+violation("data-layer-missing-async-pairs", "argument-mismatch", "signature_mismatch", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), argument_mismatch_found(f), doc(d, p, _), line(f, l).

@@ -1,0 +1,25 @@
+.policy "ruff-air001-airflow-variable-name-task-id-mismatch" revision 2
+.description "Name each Airflow operator variable after the task id it creates, so the Dag code reads the same as the task graph it builds."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR001 (Airflow): `name = SomeOperator(task_id="other", …)`, a task assigned to a variable whose name is
+// not its task id. The operator is any class from `airflow.operators…` or a provider's `…operators.<module>…`;
+// the task id must be a string literal and the statement a plain assignment to one name. Only in a file that
+// imports airflow. Reported at the variable.
+//   incorrect_name = PythonOperator(task_id="my_task")     ← AIR001
+//   my_task = PythonOperator(task_id="my_task")            not reported
+//   incorrect_name = MyOperator(task_id="my_task")         not reported: `airflow.MyOperator` is not an operator module
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+.violation AIR001(at: node, tv: symbol) code "AIR001"
+    "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
+    suppress ruff "AIR001"
+AIR001(t, tv) :- kind(a, "assignment"), field(a, "left", t), kind(t, "identifier"), field(a, "right", v), !field(a, "type", _),
+    unparen(v, c), call_q(c, q), operator_class(q), call_kwarg(c, "task_id", k), unparen(k, s), plain_str(s, tv),
+    !text(t, tv), docof(a, d), seen_module(d, "airflow").
+seen_ask("airflow").
+.decl operator_class(q: symbol)
+operator_class(q) :- call_q(_, q), (prefix("airflow.operators.", q) ; match("airflow\\.providers(\\.[^.]+)*\\.operators\\..+", q)).

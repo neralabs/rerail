@@ -1,0 +1,19 @@
+.policy "complexity-cyclomatic-rust" revision 2
+.description "Keep Rust functions at cyclomatic complexity 6 or below, counting each if, for, while, match, match guard, ? and && or ||; branch-heavy functions are hard to follow and test."
+.language rust
+.mode steer
+.scope include "**/*.rs"
+.scope exclude "**/target/**", "**/generated/**", "**/tests/**", "**/tests.rs", "**/*_test.rs", "**/*_tests.rs"
+
+#include "complexity/rust.rr"
+//   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
+
+// The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, for, while, `?`, &&, ||, let-chain
+// `&&`, match arm guard, and match once. Each fn is scored on its own; a closure's conditions count toward its fn.
+// Reported over the fn:
+//   fn grade(s: u8) -> Option<char> { if a {…} else if b && c {…} for …{…} while …{…} let v = f()?; … }
+//   -> `grade` has cyclomatic complexity 7, over the ceiling of 6.
+// lizard counts `where`, `?Sized`, a closure's `||` and the operators inside macros; this follows the pack's
+// README (Deviations).
+.violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
+complexity(f, msg) :- cc_report(f, msg).

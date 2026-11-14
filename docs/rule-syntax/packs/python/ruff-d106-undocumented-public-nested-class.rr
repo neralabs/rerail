@@ -1,0 +1,18 @@
+.policy "ruff-d106-undocumented-public-nested-class" revision 2
+.description "Add a docstring to each public nested class; it does not inherit the docstring of the class that encloses it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D106 (pydocstyle): a public class nested in a public class, with no docstring. A class inside a function
+// is private. `.pyi` stubs are not checked.
+//   class Outer:
+//       """Doc."""
+//       class Meta:            ← D106 at `Meta`
+//           pass
+#include "python/docstrings.rr"
+
+.violation D106(at: node, x: symbol) code "D106"
+    "Add a docstring to nested class `{x}` describing its purpose; it does not inherit its enclosing class's docstring."
+    suppress ruff "D106"
+D106(nm, x) :- doc_missing(_, "nested_class", nm, x).

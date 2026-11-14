@@ -1,0 +1,203 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-bootstrap-eager-resolve",
+  "revision": 1,
+  "mode": "log",
+  "description": "Exact port of nera-data-layer bootstrap_eager_resolve at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l3200_metadata/bootstrap_state.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "bootstrap-sql",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_name_repr"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,ast_name_repr AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "iterations",
+            "query": "WITH RECURSIVE it(__path,root,id) AS (\n SELECT n.__path,n.id,v.id FROM a n JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='iter' WHERE n.kind IN ('For','AsyncFor')\n UNION ALL SELECT it.__path,it.root,v.id FROM it JOIN calls c ON c.__path=it.__path AND c.id=it.id\n JOIN a v ON v.__path=c.__path AND v.parent=c.id AND v.field='args' AND v.position=0 WHERE c.callee_kind='Name' AND c.callee IN ('list','tuple','set','sorted'))\n SELECT n.*,v.name AS iter_name,v.name_repr AS iter_repr FROM it JOIN a v ON v.__path=it.__path AND v.id=it.id JOIN a n ON n.__path=it.__path AND n.id=it.root WHERE v.kind='Name'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BLB-001' AS issue,'bootstrap full query_lazy(...).execute_lazy() must move to proof/keyed SQL before hard-fail' AS message,n.id||':BLB-001:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.callee_kind='Attribute' AND n.callee='execute_lazy' AND EXISTS(SELECT 1 FROM calls r WHERE r.__path=n.__path AND r.id=n.receiver AND r.callee_kind='Attribute' AND r.callee='query_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BLB-004' AS issue,'bootstrap eager schema probe '||n.callee||' must route through BootstrapScopeProof providers' AS message,n.id||':BLB-004:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.callee IN ('physical_table_exists_many','physical_table_exists_many_async','table_exists_many','table_exists_many_async','table_exists_many_for_schema_batch','table_exists_many_for_schema_batch_async') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BLB-003' AS issue,'bootstrap/server-plan Python model materializer '||n.callee||' must stay out of lowering paths' AS message,n.id||':BLB-003:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.callee_kind='Attribute' AND n.callee IN ('model_dump','model_copy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'BLB-002' AS issue,'bootstrap Python row iteration over '||n.iter_repr||' must move to SQL/proof-owned matching' AS message,n.id||':BLB-002:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM iterations n WHERE n.iter_name IN ('existing_rows','generation_rows','manifest_rows','rows','schema_state_rows','system_session_rows')) WHERE instr(path,'bootstrap')>0",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "\\b\\B"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "(?s).*"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

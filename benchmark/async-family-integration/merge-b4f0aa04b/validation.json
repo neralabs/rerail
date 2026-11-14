@@ -1,0 +1,375 @@
+[
+  {
+    "label": "test-facts__core__",
+    "passed": 6,
+    "ignored": 0,
+    "cpu": 0.035733,
+    "wall": 1.603346958057955,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "facts::core::",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-tape__tests__",
+    "passed": 35,
+    "ignored": 3,
+    "cpu": 0.242162,
+    "wall": 0.24608712503686547,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "tape::tests::",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-facts__vtab__syntax__",
+    "passed": 28,
+    "ignored": 1,
+    "cpu": 5.336034,
+    "wall": 5.999442750005983,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "facts::vtab::syntax::",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__plan__compose__tests__",
+    "passed": 9,
+    "ignored": 0,
+    "cpu": 0.2658569999999997,
+    "wall": 0.28710204106755555,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::plan::compose::tests::",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__profile__analysis",
+    "passed": 14,
+    "ignored": 0,
+    "cpu": 0.01942599999999972,
+    "wall": 0.02253316598944366,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::profile::analysis",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__native__setfix__posted_tests__",
+    "passed": 6,
+    "ignored": 0,
+    "cpu": 0.012625999999999804,
+    "wall": 0.014145374996587634,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::native::setfix::posted_tests::",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-authored_rr_batched_positive_documents_preserve_all_four_labels",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.6358360000000001,
+    "wall": 0.6657010420458391,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "authored_rr_batched_positive_documents_preserve_all_four_labels",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__combined_programs_see_guests_by_their_own_policy",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.3410099999999996,
+    "wall": 0.36427379201631993,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::combined_programs_see_guests_by_their_own_policy",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__guests_that_do_not_parse_follow_the_policy",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.45125500000000063,
+    "wall": 0.47635537502355874,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::guests_that_do_not_parse_follow_the_policy",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__string_annotations_are_guests_at_their_host_lines",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.28911599999999993,
+    "wall": 0.3101142910309136,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::string_annotations_are_guests_at_their_host_lines",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__match_all_captures_spans_over_a_nodes_text_and_over_captures",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.2755800000000004,
+    "wall": 0.2962494579842314,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::match_all_captures_spans_over_a_nodes_text_and_over_captures",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__match_all_captures_spans_over_source_text_and_symbols_over_symbols",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.22653100000000004,
+    "wall": 0.24445483298040926,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::match_all_captures_spans_over_source_text_and_symbols_over_symbols",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__requested_source_and_line_text_remain_exact_without_copying_large_subtrees",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.22904499999999994,
+    "wall": 0.2606042498955503,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::requested_source_and_line_text_remain_exact_without_copying_large_subtrees",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__python_split_lines_are_lossless_and_document_local",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.23228399999999927,
+    "wall": 0.25062812492251396,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::python_split_lines_are_lossless_and_document_local",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__lf_lines_keep_other_separators_and_the_trailing_empty_line",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.21392900000000026,
+    "wall": 0.23142616706900299,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::lf_lines_keep_other_separators_and_the_trailing_empty_line",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "test-logic__rr__tests__definition_ids_keep_other_definitions_rows_across_a_body_edit",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.23512999999999962,
+    "wall": 0.2520639169961214,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "logic::rr::tests::definition_ids_keep_other_definitions_rows_across_a_body_edit",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "preorder-projection_axes_and_token_spans_are_demanded_without_renumbering",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.008420999999999568,
+    "wall": 0.011646124999970198,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "projection_axes_and_token_spans_are_demanded_without_renumbering",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "preorder-authored_rr_batched_positive_documents_preserve_all_four_labels",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.7658930000000002,
+    "wall": 0.7992842909879982,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "authored_rr_batched_positive_documents_preserve_all_four_labels",
+      "--nocapture",
+      "--test-threads=1"
+    ]
+  },
+  {
+    "label": "edge-1f85485a7075",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.14445500000000067,
+    "wall": 0.15268262499012053,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ]
+  },
+  {
+    "label": "edge-38094aa6ac7e",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.13583599999999985,
+    "wall": 0.13961729197762907,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ]
+  },
+  {
+    "label": "edge-483985bd330e",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.1419889999999988,
+    "wall": 0.15035212505608797,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ]
+  },
+  {
+    "label": "edge-c6d2d16e3195",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 0.1579919999999997,
+    "wall": 0.17128445801790804,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ]
+  },
+  {
+    "label": "corpus",
+    "passed": 1,
+    "ignored": 0,
+    "cpu": 3.8629910000000005,
+    "wall": 2.640929040964693,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ]
+  }
+]

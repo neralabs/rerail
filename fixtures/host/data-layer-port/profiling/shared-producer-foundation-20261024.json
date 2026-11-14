@@ -1,0 +1,274 @@
+{
+  "format": "rerail.shared-producer-foundation/v1",
+  "date": "2026-10-24",
+  "status": "WP1 catalog/export and early storage contract implemented; physical coalescing and recovery acceptance remain open",
+  "baselineCommit": "e847fd7b",
+  "tddRedCommit": "9db86048",
+  "implementation": {
+    "catalog": "native/src/code_rule_dsl/producers/",
+    "declarations": "native/src/code_rule_dsl/matcher/anchors/sql/decode.rs",
+    "contracts": [
+      "syntax.node_properties.v1",
+      "syntax.source_spans.v1",
+      "syntax.child_fields.v1"
+    ],
+    "identity": "complete ordered contract, input, typed integer option and optional sealed-domain definitions; no digest establishes sharing",
+    "normalReuse": "same-selector decoder reuse uses registered binding IDs",
+    "sourceResolution": "lowering-local language input slots; exports resolve workspace database and ordered (fid,language,digest) membership at capture time",
+    "provenance": [
+      "rule ID",
+      "compiled clause ID",
+      "policy digest",
+      "result index",
+      "selector name"
+    ],
+    "scope": "trusted engine definitions and structural integer options; no pack declaration syntax or completion executor"
+  },
+  "correctness": {
+    "nativeFacingTests": 307,
+    "standaloneSqlTests": 33,
+    "fixedBudgetNodeTests": 11,
+    "sharedWorkPythonTests": 25,
+    "sourceReplay": {
+      "nativeCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "a982b7e2d471f59ca94c42d00b8379c2d32b8b29e55aab1d1798a6b261392aa9"
+    }
+  },
+  "storageContract": {
+    "selected": "one workspace writer; two scoped readers; physical public SQL owner table",
+    "productionComponents": [
+      "SQLite session configuration",
+      "relational SQL authorizer"
+    ],
+    "passed": [
+      "uncommitted rows invisible",
+      "old reader retains pinned WAL snapshot",
+      "later reader sees complete committed rows",
+      "failed publication rolls back",
+      "private scratch remains separate and survives publication",
+      "public owner and aggregate reads allowed",
+      "private backing reads, CTE aliases to unrelated private tables, schema reads and writes denied",
+      "reader closure preserves remaining reader and owner"
+    ],
+    "rejectedViewExperiment": {
+      "countShortcut": "SQLite reports an additional backing read without a view accessor; existing authorizer rejects count(*)",
+      "cteAccessor": "a CTE can impersonate the accessor label used by the existing generated-view exception",
+      "decision": "do not extend the legacy view exception for shared owners; select direct physical public ownership",
+      "existingBehavior": "existing generated-view exception is unchanged and is not a general isolation guarantee",
+      "evidence": [
+        "storage-unit-labeled/stderr.log",
+        "storage-unit-projection/stderr.log",
+        "storage-direct-owner"
+      ]
+    }
+  },
+  "compilerExports": {
+    "manifests": 8,
+    "checkerValid": true,
+    "bindingGroups": 56,
+    "sharedGroups": 56,
+    "errors": [],
+    "clashes": [],
+    "maximumSpanConsumerSelectorReferences": 117,
+    "normalFrontierSpanFillStatements": [
+      22,
+      22,
+      22,
+      22
+    ],
+    "qualification": "one semantic binding does not imply one construction; separate SQL fills remain"
+  },
+  "guard": {
+    "limit": 100,
+    "engineSubmitted": 9113,
+    "sqliteInternal": 994,
+    "totalObserved": 10107,
+    "connections": 136,
+    "status": "budget-exceeded",
+    "coverageProblems": [],
+    "unknownOrigins": 0,
+    "enginePhases": {
+      "connectionSetup": 372,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 4588,
+      "cleanup": 2324,
+      "relationalEvaluation": 1781
+    },
+    "firstOverBudget": {
+      "startNs": 1080923583,
+      "session": "profile-63075-32.json",
+      "query": 40,
+      "sql": "\nCREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN\n    DELETE FROM ftsk WHERE rowid=OLD.fid;\nEND;",
+      "context": {
+        "component": "ast-index",
+        "stage": "schema"
+      },
+      "thread": "ThreadId(1)"
+    },
+    "parity": {
+      "nativeCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "a982b7e2d471f59ca94c42d00b8379c2d32b8b29e55aab1d1798a6b261392aa9"
+    }
+  },
+  "priorGuard": {
+    "engineSubmitted": 9095,
+    "sqliteInternal": 994,
+    "source": "sql-stage-schema-recovery-20261023.json"
+  },
+  "countQualification": "The production candidate order still depends on allocation addresses. No count improvement is claimed; current capture increases by 18 submissions.",
+  "matchedCpu": {
+    "prior": {
+      "nativeSha256": "7d67ddb3bd0247edc610e897f4abaa9d805cb87e9c49df402de73de1f351e2c8",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2287.78,
+          "systemMs": 103.172,
+          "cpuMs": 2390.952,
+          "wallMs": 6038.098542000001,
+          "maxRSSRaw": 416576,
+          "memory": {
+            "rss": 369059448,
+            "heapTotal": 105283584,
+            "heapUsed": 34170848,
+            "external": 47867801,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2326.716,
+          "systemMs": 121.139,
+          "cpuMs": 2447.855,
+          "wallMs": 6493.479333,
+          "maxRSSRaw": 412064,
+          "memory": {
+            "rss": 366945384,
+            "heapTotal": 107757568,
+            "heapUsed": 40291872,
+            "external": 52803319,
+            "arrayBuffers": 45177299
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2236.687,
+          "systemMs": 132.823,
+          "cpuMs": 2369.51,
+          "wallMs": 7389.070250000001,
+          "maxRSSRaw": 353200,
+          "memory": {
+            "rss": 308012880,
+            "heapTotal": 107773952,
+            "heapUsed": 40142648,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2390.952,
+      "minCpuMs": 2369.51,
+      "maxCpuMs": 2447.855,
+      "medianReportedMaxRSSKiB": 412064
+    },
+    "catalog": {
+      "nativeSha256": "a982b7e2d471f59ca94c42d00b8379c2d32b8b29e55aab1d1798a6b261392aa9",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2236.436,
+          "systemMs": 100.888,
+          "cpuMs": 2337.324,
+          "wallMs": 6024.796875,
+          "maxRSSRaw": 357616,
+          "memory": {
+            "rss": 310011560,
+            "heapTotal": 109871104,
+            "heapUsed": 40191816,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2137.213,
+          "systemMs": 86.612,
+          "cpuMs": 2223.825,
+          "wallMs": 4798.138666999999,
+          "maxRSSRaw": 330624,
+          "memory": {
+            "rss": 283780488,
+            "heapTotal": 106987520,
+            "heapUsed": 40474208,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2197.627,
+          "systemMs": 101.872,
+          "cpuMs": 2299.499,
+          "wallMs": 6308.747708999999,
+          "maxRSSRaw": 334976,
+          "memory": {
+            "rss": 289826304,
+            "heapTotal": 104497152,
+            "heapUsed": 34172664,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2299.499,
+      "minCpuMs": 2223.825,
+      "maxCpuMs": 2337.324,
+      "medianReportedMaxRSSKiB": 334976
+    },
+    "medianChangePercent": -3.824961772549196
+  },
+  "method": {
+    "workers": 4,
+    "order": "three alternating fresh-process pairs; no own builds, tests or diagnostic captures overlap timing",
+    "tracing": false,
+    "build": "opt1 engine, deps3, no LTO, 256 codegen units, code-rule-profile feature in both binaries",
+    "allocator": "same system allocator shim",
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "cpuScope": "process.cpuUsage around complete replay including compilation, snapshot and workspace evaluation, parity, and cleanup",
+    "memory": "process.resourceUsage maxRSS in KiB; not ownership or leak evidence",
+    "qualification": "shared host, three small trials; no aggregate speedup, memory recovery, or causal attribution to the catalog",
+    "commandScript": ".rerail/profiles/shared-producers-20261024/cpu.py"
+  },
+  "validation": [
+    "native Clippy with profiling",
+    "native Clippy without profiling",
+    "standalone all-target Clippy",
+    "npm run check",
+    "native and standalone Rust formatting",
+    "git diff --check"
+  ],
+  "remaining": [
+    "union ready selector demand by binding and dependency wave",
+    "publish rows and completed coverage atomically, including empty results",
+    "eliminate repeated physical producer construction across rules and packets",
+    "whole-job publication and remaining compiler/session lifetimes",
+    "preserve admission and source generations across edits and cancellation",
+    "private authored-stage export and authored file/line provenance are not supplied by this catalog",
+    "fix or replace legacy generated-view assumptions before broader reader integration",
+    "full corpus, repository CPU, memory and 100-submission acceptance"
+  ],
+  "evidenceDirectory": ".rerail/profiles/shared-producers-20261024"
+}

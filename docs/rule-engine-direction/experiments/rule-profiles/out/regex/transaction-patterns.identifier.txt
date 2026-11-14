@@ -1,0 +1,6 @@
+Connection
+Connection|^conn$
+^(?:ConnectionId)$
+^(?:__init__)$
+^(?:read|schema_transaction|write)$
+^(?:self)$

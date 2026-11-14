@@ -1,0 +1,28 @@
+.policy "ruff-npy001-numpy-deprecated-type-alias" revision 2
+.description "Use the builtin int, float, complex, object or str instead of NumPy's removed aliases for them."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff NPY001 (NumPy): a read of `numpy.int`, `float`, `complex`, `object`, `str` or `unicode`, aliases of the
+// builtins that NumPy 1.24 removed. The fix writes the builtin (`str` for `unicode`), safe.
+//   np.int                       ← NPY001, with `import numpy as np`
+//   from numpy import float
+//   float(1)                     ← NPY001 at the read, not at the import
+//   np.int64                     not reported
+#include "python/misc2-numpy.rr"
+//   npy_ref(e, q)
+
+.violation NPY001(at: node, b: symbol) code "NPY001"
+    "Replace `{at}`, a removed NumPy alias, with the builtin `{b}` and drop its NumPy import if nothing else uses it."
+    suppress ruff "NPY001"
+    fix safe to_builtin "Replace with the builtin"
+NPY001(e, b) :- npy_ref(e, q), split_dot(q, "numpy", x), npy_builtin_alias(x, b).
+.decl npy_builtin_alias(x: symbol, b: symbol)
+npy_builtin_alias("int", "int"). npy_builtin_alias("float", "float"). npy_builtin_alias("complex", "complex").
+npy_builtin_alias("object", "object"). npy_builtin_alias("str", "str"). npy_builtin_alias("unicode", "str").
+// Safe only where the builtin is not shadowed; Ruff then imports it from builtins, which this fix does not.
+to_builtin(e, b) :- !npy_shadowed(e, b) => replace(e, `$b`).
+.decl npy_shadowed(e: node, b: symbol)
+// Any scope around e that binds the builtin's name shadows it (Ruff's is_available).
+npy_shadowed(e, b) :- NPY001(e, b), within(e, s), kind(s, k), lscope(k), bound_in(s, b).

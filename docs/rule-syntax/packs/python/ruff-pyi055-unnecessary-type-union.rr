@@ -1,0 +1,19 @@
+.policy "ruff-pyi055-unnecessary-type-union" revision 2
+.description "Combine several type-of-class members of a union into one type over the union of those classes; the meaning is unchanged and the annotation is shorter."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI055 (flake8-pyi): a union with two or more builtin `type[…]` members, which can be one `type[A | B]`,
+// in code Python never evaluates (python/typing-context): an annotation in a stub, under `from __future__ import
+// annotations`, at Python 3.14+ (the `pythonVersion` option; Ruff's default is 3.10), or of a local variable
+// (not a nested def's parameters); a `type X = …` value; an `if TYPE_CHECKING:` body. `typing.Type[…]` and the
+// invalid `type[A, B]` are not counted.
+//   def f(x: type[int] | type[str]): ...     ← PYI055 in a stub: write `type[int | str]`
+//   X: TypeAlias = type[int] | type[str]     fine: the value runs, in a stub too
+#include "python/typing-context.rr"
+
+.violation PYI055(at: node, msg: symbol) code "PYI055" "{msg}"
+    suppress ruff "PYI055"
+PYI055(u, "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.") :-
+    union_top(u), typing_only_ctx(u), count : { union_leaf(u, m), builtin_sub(m, "type"), tsub_n(m, 1) } >= 2.

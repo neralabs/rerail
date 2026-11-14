@@ -1,0 +1,70 @@
+[
+  {
+    "name": "baseline"
+  },
+  {
+    "name": "snapshot_prefix_order",
+    "snapshots": [
+      "async_site",
+      "async_open_receiver"
+    ],
+    "replacements": [
+      [
+        " CROSS JOIN ",
+        " __keep_cross__ "
+      ],
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ],
+      [
+        " __keep_cross__ ",
+        " CROSS JOIN "
+      ]
+    ]
+  },
+  {
+    "name": "snapshot_semantics_order",
+    "snapshots": [
+      "rr_python"
+    ],
+    "replacements": [
+      [
+        " CROSS JOIN ",
+        " __keep_cross__ "
+      ],
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ],
+      [
+        " __keep_cross__ ",
+        " CROSS JOIN "
+      ]
+    ]
+  },
+  {
+    "name": "semantic_facts_narrow_driver",
+    "snapshots": [
+      "rr_python"
+    ],
+    "replacements": [
+      [
+        "FROM async_open_receiver t1 JOIN async_path_value t2",
+        "FROM async_path_value t2 CROSS JOIN async_open_receiver t1"
+      ],
+      [
+        " CROSS JOIN ",
+        " __keep_cross__ "
+      ],
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ],
+      [
+        " __keep_cross__ ",
+        " CROSS JOIN "
+      ]
+    ]
+  }
+]

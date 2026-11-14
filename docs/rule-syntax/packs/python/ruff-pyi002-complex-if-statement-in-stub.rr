@@ -1,0 +1,21 @@
+.policy "ruff-pyi002-complex-if-statement-in-stub" revision 2
+.description "Use only simple comparisons of sys.version_info or sys.platform as if tests in stub files; type checkers cannot evaluate other conditions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI002 (flake8-pyi), stubs only: an `if` test that type checkers cannot evaluate. A test, or each operand
+// of a top-level `and`/`or`, must be one comparison (not a chain) whose left side is a subscript or
+// `sys.version_info` / `sys.platform`. Only the `if` clause is checked, not its elifs.
+//   if sys.version_info >= (3, 8) and sys.platform == "linux":   fine
+//   if sys.platform.startswith("linux"):                         ← PYI002: a call
+//   if a and (b or c):                                           ← PYI002 at `b or c`: nested and/or
+#include "python/typing.rr"
+
+.violation PYI002(at: node) code "PYI002" "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
+    suppress ruff "PYI002"
+PYI002(v) :- if_test(_, t), in_stub(t), test_part(t, v), !simple_test(v).
+// simple_test(v): `L op R` with L a subscript (any: PYI003 judges it) or sys.version_info / sys.platform.
+.decl simple_test(v: node)
+simple_test(v) :- cmp(v, _, l0, _), unparen(l0, l), (kind(l, "subscript") ; sys_attr(l, "version_info") ;
+    sys_attr(l, "platform")).

@@ -1,0 +1,19 @@
+.policy "ruff-td006-invalid-todo-capitalization" revision 2
+.description "Write the TODO tag in uppercase; lowercase and mixed-case tags are easy to overlook when searching for open work."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TD006 (flake8-todos): a TODO tag that is not all capitals. The fix (safe, as Ruff's) writes `TODO`.
+//   # todo: fix this       ← TD006, fixed to `# TODO: fix this`
+//   # ToDo(x): this        ← TD006
+//   # TODO: fix this       not reported
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+
+.violation TD006(at: span, tag: symbol) code "TD006"
+    "Write the `{tag}` tag in uppercase as `TODO`."
+    suppress ruff "TD006"
+    fix safe td006_upper "Write `TODO`"
+TD006(t, D) :- todo_item(c, D, _), match("[tT][oO][dD][oO]", D), D != "TODO", todo_at(c, t).
+// The fix rewrites the comment whole: the text before the tag, TODO, the text after it.
+td006_upper(t, _) :- todo_at(_, t) => replace(t, `TODO`).

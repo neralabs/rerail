@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 
 /// A node as `kind=value:"text"[children]`.
 fn describe(text: &str, node: &PNode) -> String {

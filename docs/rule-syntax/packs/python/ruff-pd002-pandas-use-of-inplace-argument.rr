@@ -1,0 +1,36 @@
+.policy "ruff-pd002-pandas-use-of-inplace-argument" revision 2
+.description "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PD002 (pandas-vet): `inplace=True` passed to a pandas method that takes it (`drop`, `fillna`,
+// `sort_values`, …). The method is known by its name alone, called on anything, in a file that imports pandas.
+// When `inplace=` is given twice the last one decides. Reported at the keyword. (Ruff's fix, assigning the
+// result, is unsafe; none here.)
+//   x.drop(["a"], axis=1, inplace=True)        ← PD002
+//   x.drop(["a"], axis=1, inplace=False)       not reported
+//   x.rotate_z(45, inplace=True)               not reported: not a pandas method
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+.violation PD002(at: node) code "PD002"
+    "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
+    suppress ruff "PD002"
+PD002(k) :- last_inplace(c, k), field(k, "value", v), unparen(v, m), kind(m, "true"), docof(c, d),
+    seen_module(d, "pandas").
+seen_ask("pandas").
+
+// last_inplace(c, k): k is the last `inplace=` keyword of call c, a call of a method that takes one.
+.decl last_inplace(c: node, k: node)
+last_inplace(c, k) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, _, x), inplace_method(x),
+    call_item(c, k, j), inplace_kw(k), count : { call_item(c, k2, j2), j2 > j, inplace_kw(k2) } = 0.
+.decl inplace_kw(k: node)
+inplace_kw(k) :- kind(k, "keyword_argument"), field(k, "name", n), text(n, "inplace").
+.decl inplace_method(x: symbol)
+inplace_method("where"). inplace_method("mask"). inplace_method("query"). inplace_method("clip").
+inplace_method("eval"). inplace_method("backfill"). inplace_method("bfill"). inplace_method("ffill").
+inplace_method("fillna"). inplace_method("interpolate"). inplace_method("dropna"). inplace_method("pad").
+inplace_method("replace"). inplace_method("drop"). inplace_method("drop_duplicates"). inplace_method("rename").
+inplace_method("rename_axis"). inplace_method("reset_index"). inplace_method("set_index").
+inplace_method("sort_values"). inplace_method("sort_index"). inplace_method("set_names").

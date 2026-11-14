@@ -1,0 +1,19 @@
+.policy "bandit-b509-snmp-weak-cryptography" revision 2
+.description "Pass authentication and privacy keys to pysnmp UsmUserData; without them SNMPv3 runs with no authentication or encryption."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B509 (snmp_crypto_check): pysnmp.hlapi.UsmUserData called with fewer than three positional
+// arguments (user name, auth key, privacy key). Keywords are not counted.
+//   from pysnmp.hlapi import UsmUserData
+//   UsmUserData("user")                                  B509: noAuthNoPriv
+//   UsmUserData("user", "authkey")                       B509: authNoPriv
+//   UsmUserData("user", authKey="a", privKey="p")        B509: Bandit counts positional arguments only
+//   UsmUserData("user", "authkey", "privkey")            not reported
+
+#include "python/security.rr"   // qual_call, arg_count
+
+.violation B509(at: node) code "B509"
+    "Pass authentication and privacy keys to this UsmUserData call; without them SNMPv3 runs with no authentication or encryption."
+    suppress nosec "B509"
+B509(c) :- qual_call(c, "pysnmp.hlapi.UsmUserData"), arg_count(c, k), k < 3.

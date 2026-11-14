@@ -1,0 +1,16 @@
+# corpus: mix: seed 45
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = after(prev(toggle(x), 31))
+mask m1 = (aligned(bs, 7) ^ prev(alpha, 9))
+mask m2 = ~m0
+mask m3 = ~ws

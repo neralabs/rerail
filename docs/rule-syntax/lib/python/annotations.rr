@@ -1,0 +1,189 @@
+// python/annotations: function signatures as Ruff's flake8-annotations rules (ANN) read them: which defs are
+// checked, which parameters, which return code applies, and when an annotation amounts to `Any`.
+//
+// Interface
+//   1. Defs:        ann_def(f)                 def f is one ANN checks: every def except an overload's
+//                                              implementation (a def right after an @overload of its name)
+//                   ann_method(f)              f sits directly in a class body (Ruff's MemberKind::Method)
+//                   ann_static(f), ann_classmethod(f)  f is decorated with the builtin staticmethod / classmethod,
+//                                              written bare (`@staticmethod`)
+//                   ann_overload(f), ann_override(f)   decorated typing.overload / typing.override
+//                                              (typing_extensions too)
+//                   ann_private(f)             Ruff's Visibility::Private for def or class f (see section 2)
+//   2. Parameters:  ann_param(f, nm, x, k, a)  a parameter ANN checks: name node nm, name x, kind k (sig_param's
+//                                              kinds), annotation a (unset when none). Every parameter, except
+//                                              the first non-variadic one of a method that is not static
+//   3. Returns:     ann_missing_return(f, code)  f has no return annotation, and code is the one Ruff reports:
+//                                              ANN206 class method, ANN205 static method, ANN204 `__init__` or a
+//                                              dunder method, else ANN201 public or ANN202 private
+//   4. Any:         ann_any_type(t)            annotation t amounts to Any (Ruff's type_hint_resolves_to_any)
+//
+// Ruff background
+//   - Ruff reads each def with its decorators resolved through imports. `@staticmethod` must be the builtin
+//     itself, unshadowed; `@classmethod` likewise. A def that is not directly in a class is never a method.
+//   - Visibility follows Ruff's definitions: a module is private when its file name (or a package above it)
+//     starts with `_` and is not a dunder (`_util.py`, not `__init__.py`). A top-level def or class is private
+//     when its module is, when the module has an `__all__` that does not list it, or when its name starts with
+//     `_`. A def nested in a def is always private; a class nested in a def too. A method is private when its
+//     class is, or when it is a property setter or deleter, or when its name starts with `_` and is not a dunder.
+//   - Overloads: Ruff walks definitions in its visit order (a def's body after the whole enclosing scope) and
+//     skips a def named like the @overload def visited just before it. "Just before" here is the latest def or
+//     class in the same def body (or module), nested class bodies included.
+//   - Any: `Any`; bare `Optional` (`Optional[Any]` really); `Annotated[T, …]` when T is; a Union, `|` union,
+//     Optional or quoted type with a member that is. Literal, None, object and every other type are not.
+//
+//   @overload
+//   def f(x: int) -> int: ...       ann_def, ann_overload
+//   def f(x): ...                   not ann_def: the implementation
+//   class C:
+//       def m(self, a, *args: Any):  ann_method; ann_param a and args (not self); ann_any_type(<Any>)
+//           ...                      ann_missing_return(<m>, "ANN201")
+#include "python/ruff.rr"   // ruff_qual
+
+// ---- 1. defs -----------------------------------------------------------------------------------------------------
+.decl ann_def(f: node)
+ann_def(f) :- kind(f, "function_definition"), !annt_overload_impl(f).
+.decl ann_method(f: node)
+ann_method(f) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").
+.decl ann_static(f: node)
+ann_static(f) :- decorator(f, e), ruff_qual(e, "builtins.staticmethod").
+.decl ann_classmethod(f: node)
+ann_classmethod(f) :- decorator(f, e), ruff_qual(e, "builtins.classmethod").
+.decl ann_overload(f: node)
+ann_overload(f) :- decorator(f, e), annt_typing(e, "overload").
+.decl ann_override(f: node)
+ann_override(f) :- decorator(f, e), annt_typing(e, "override").
+// annt_typing(e, x): e resolves to typing.x or typing_extensions.x.
+.decl annt_typing(e: node, x: symbol)
+annt_typing(e, x) :- ruff_qual(e, q), split_dot(q, m, x), (m = "typing" ; m = "typing_extensions").
+
+// The overload implementation: the definition visited just before f is an @overload def of the same name.
+.decl annt_unit_kind(k: symbol)
+annt_unit_kind("function_definition"). annt_unit_kind("module").
+.decl annt_defn(g: node, u: node, s: number)   // definition g, in def body (or module) u, starting at s
+annt_defn(g, u, s) :- (kind(g, "function_definition") ; kind(g, "class_definition")), nearest(g, u, annt_unit_kind),
+    node(_, g, _, s, _).
+.decl annt_overload_impl(f: node)
+annt_overload_impl(f) :- annt_defn(f, u, s), kind(f, "function_definition"), !ann_overload(f), def_name(f, x),
+    m = max t : { annt_defn(_, u, t), t < s }, annt_defn(p, u, m), ann_overload(p), def_name(p, x).
+
+// ---- visibility --------------------------------------------------------------------------------------------------
+// annt_private_module(d): the file, or a package above it, has a name Ruff calls private: a leading `_`, not a
+// dunder.
+.decl annt_private_module(d: number)
+annt_private_module(d) :- file_name(d, n), match("_([^_.][^.]*|_[^.]*[^_.]|_[^.]*[^_.]_)?\\.pyi?", n).
+annt_private_module(d) :- pkg(d, p), match("(.*\\.)?_([^_.][^.]*|_[^.]*[^_.]|_[^.]*[^_.]_)?(\\..*)?", p).
+// annt_hidden(g): a top-level def or class that `__all__` leaves out.
+.decl annt_hidden(g: node)
+annt_hidden(g) :- def_name(g, x), docof(g, d), all_value(v), docof(v, d), !annt_listed(d, x).
+.decl annt_listed(d: number, x: symbol)
+annt_listed(d, x) :- all_entry(s, x), docof(s, d).
+.decl annt_parent(g: node, p: node)
+.decl annt_parent_kind(k: symbol)
+annt_parent_kind("function_definition"). annt_parent_kind("class_definition"). annt_parent_kind("module").
+annt_parent(g, p) :- (kind(g, "function_definition") ; kind(g, "class_definition")), nearest(g, p, annt_parent_kind).
+.decl ann_private(g: node)
+ann_private(g) :- annt_parent(g, m), kind(m, "module"), docof(g, d), annt_private_module(d).
+ann_private(g) :- annt_parent(g, m), kind(m, "module"), annt_hidden(g).
+ann_private(g) :- annt_parent(g, m), kind(m, "module"), def_name(g, x), prefix("_", x).
+ann_private(g) :- annt_parent(g, p), kind(p, "function_definition").
+ann_private(g) :- annt_parent(g, c), kind(c, "class_definition"), ann_private(c).
+ann_private(g) :- annt_parent(g, c), kind(c, "class_definition"), kind(g, "class_definition"), def_name(g, x),
+    prefix("_", x).
+ann_private(f) :- ann_method(f), def_name(f, x), prefix("_", x), !glob("__*__", x).
+ann_private(f) :- ann_method(f), def_name(f, x), decorator(f, e), dotted_expr(e, q),
+    (q = cat(x, ".setter") ; q = cat(x, ".deleter")).
+
+// ---- 2. parameters -----------------------------------------------------------------------------------------------
+.decl annt_fixed(k: symbol)
+annt_fixed("posonly"). annt_fixed("pos"). annt_fixed("kwonly").
+.decl annt_skipped(f: node, i: number)   // the receiver: a non-static method's first non-variadic parameter
+annt_skipped(f, i) :- ann_method(f), !ann_static(f), i = min j : { sig_param(f, _, _, j, k, _, _), annt_fixed(k) }.
+.decl ann_param(f: node, nm: node, x: symbol, k: symbol, a: loc)
+ann_param(f, nm, x, k, a) :- kind(f, "function_definition"), sig_param(f, _, nm, i, k, a, _), text(nm, x),
+    !annt_skipped(f, i).
+
+// ---- 3. returns --------------------------------------------------------------------------------------------------
+.decl ann_missing_return(f: node, code: symbol)
+ann_missing_return(f, c) :- ann_def(f), !field(f, "return_type", _), annt_return_code(f, c).
+.decl annt_return_code(f: node, code: symbol)
+annt_return_code(f, "ANN206") :- ann_method(f), ann_classmethod(f).
+annt_return_code(f, "ANN205") :- ann_method(f), !ann_classmethod(f), ann_static(f).
+annt_return_code(f, "ANN204") :- ann_method(f), !ann_classmethod(f), !ann_static(f), def_name(f, x), glob("__*__", x).
+annt_return_code(f, c) :- kind(f, "function_definition"), !annt_special(f),
+    (ann_private(f), c = "ANN202" ; !ann_private(f), c = "ANN201").
+// annt_special(f): one of the three method codes above applies.
+.decl annt_special(f: node)
+annt_special(f) :- ann_method(f), (ann_classmethod(f) ; ann_static(f)).
+annt_special(f) :- ann_method(f), def_name(f, x), glob("__*__", x).
+
+// ---- 4. Any ------------------------------------------------------------------------------------------------------
+// Ruff sorts an annotation into one of these forms (its TypingTarget), then asks whether it contains Any:
+//   "any"        Any                          "optional0"  bare Optional (no subscript)
+//   "union"      Union[a, b]  or  a | b       "optional"   Optional[a]       "annotated"  Annotated[a, …]
+//   "forward"    "a", a quoted type           "invalid"    a string that does not parse as a type
+// Anything else (a name, None, Literal[…], a generic) has no form here: it never contains Any.
+// annt_in(e): every expression the test reaches: the annotations of parameters and returns, and their parts.
+.decl annt_in(e: node)
+annt_in(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+annt_in(t) :- kind(f, "function_definition"), field(f, "return_type", t).
+annt_in(a) :- annt_in(e), annt_part(e, _, a).
+annt_in(r) :- annt_in(e), annt_bare(e, s), annt_quoted(s, r).
+// annt_bare(e, m): e without `type` wrappers and parentheses.
+.decl annt_strip_dom(e: node)
+annt_strip_dom(e) :- annt_in(e).
+annt_strip_dom(c) :- annt_strip_dom(e), unparen(e, t), kind(t, "type"), child(t, c, 0).
+.decl annt_bare(e: node, m: node)
+annt_bare(e, m) :- annt_strip_dom(e), unparen(e, m), !kind(m, "type").
+annt_bare(e, m) :- annt_strip_dom(e), unparen(e, t), kind(t, "type"), child(t, c, 0), annt_bare(c, m).
+// annt_sub(e, h, i, a): e is h[…] with a as its i-th element (a tuple slice gives its elements).
+.decl annt_sub(e: node, h: node, i: number, a: node)
+annt_sub(e, h, i, a) :- annt_bare(e, m), kind(m, "subscript"), field(m, "value", h), field(m, "subscript", a0),
+    !kind(a0, "tuple"), i = count : { field(m, "subscript", b), b < a0 }, a = a0.
+annt_sub(e, h, i, a) :- annt_bare(e, m), kind(m, "subscript"), field(m, "value", h), field(m, "subscript", t),
+    kind(t, "tuple"), count : { field(m, "subscript", _) } = 1, child(t, a, i).
+annt_sub(e, h, i, a) :- annt_bare(e, m), kind(m, "generic_type"), child(m, h, 0), child(m, tp, 1),
+    kind(tp, "type_parameter"), child(tp, a, i).
+// annt_form(e, f): e's form; annt_part(e, f, a): a is a member that form looks inside.
+.decl annt_form(e: node, f: symbol)
+annt_form(e, f) :- annt_sub(e, h, _, _), annt_typing(h, x), annt_sub_form(x, f).
+annt_form(e, "union") :- annt_bare(e, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")).
+annt_form(e, f) :- annt_bare(e, m), (kind(m, "identifier") ; kind(m, "attribute")), annt_typing(m, x),
+    annt_name_form(x, f).
+annt_form(e, "forward") :- annt_bare(e, s), annt_parses(s).
+annt_form(e, "invalid") :- annt_bare(e, s), (kind(s, "string") ; kind(s, "concatenated_string")), !annt_parses(s).
+// annt_quoted(s, r): string s holds the type expression r. annt_parses(s): r is not itself a string (Ruff
+// refuses a quoted string inside a quoted annotation).
+.decl annt_quoted(s: node, r: node)
+annt_quoted(s, r) :- annt_bare(_, s), str_node(s), parsed(s, "annotation", r0),
+    unparen(r0, r1), (kind(r1, "type"), child(r1, r, 0) ; !kind(r1, "type"), r = r1).
+.decl annt_parses(s: node)
+annt_parses(s) :- annt_quoted(s, r), !kind(r, "string"), !kind(r, "concatenated_string").
+.decl annt_sub_form(x: symbol, f: symbol)
+annt_sub_form("Union", "union"). annt_sub_form("Optional", "optional"). annt_sub_form("Annotated", "annotated").
+.decl annt_name_form(x: symbol, f: symbol)
+annt_name_form("Any", "any"). annt_name_form("Optional", "optional0").
+.decl annt_part(e: node, f: symbol, a: node)
+annt_part(e, "union", a) :- annt_sub(e, h, _, a), annt_typing(h, "Union").
+annt_part(e, "optional", a) :- annt_sub(e, h, _, a), annt_typing(h, "Optional").
+annt_part(e, "annotated", a) :- annt_sub(e, h, 0, a), annt_typing(h, "Annotated").
+annt_part(e, "union", a) :- annt_bare(e, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")),
+    child(m, a, _).
+annt_part(e, "forward", r) :- annt_bare(e, s), annt_parses(s), annt_quoted(s, r).
+// annt_contains_any(e): Ruff's contains_any: a member is Any, contains it, or is a string that does not parse.
+.decl annt_contains_any(e: node)
+annt_contains_any(e) :- annt_form(e, "any").
+annt_contains_any(e) :- annt_form(e, f), annt_part(e, f, a), (annt_form(a, "invalid") ; annt_contains_any(a)).
+// ann_any_type(t): at the top, bare Optional is Any too; Annotated is Any when its type is; a quoted annotation is
+// read as the type it holds, and one that does not parse is not reported.
+.decl ann_any_type(t: node)
+ann_any_type(t) :- annt_top(t, e), annt_any_top(e).
+.decl annt_top(t: node, e: node)
+annt_top(t, t) :- annt_in(t), !annt_part(_, _, t), annt_bare(t, m), !kind(m, "string"), !kind(m, "concatenated_string").
+annt_top(t, r) :- annt_in(t), !annt_part(_, _, t), annt_bare(t, s), annt_quoted(s, r).
+.decl annt_any_top(e: node)
+annt_any_top(e) :- annt_form(e, "any").
+annt_any_top(e) :- annt_form(e, "optional0").
+annt_any_top(e) :- annt_form(e, "annotated"), annt_part(e, "annotated", a), annt_any_top(a).
+annt_any_top(e) :- annt_form(e, f), f != "annotated", annt_contains_any(e).
+annt_any_top(e) :- annt_form(e, "invalid").

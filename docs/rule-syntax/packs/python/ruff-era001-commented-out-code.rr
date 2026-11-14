@@ -1,0 +1,113 @@
+.policy "ruff-era001-commented-out-code" revision 2
+.description "Remove commented-out code; version control keeps the history, and dead code left in comments goes stale."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ERA001 (eradicate): a comment on its own line that holds code. Ruff strips the leading `#`s and spaces,
+// then: no code sign (a bracket, `:`, `=`, `%`, return, break, continue, import) means prose; two names in a row
+// (`this is`) mean prose; a first word that is a task tag (TODO, FIXME, XXX), a tool pragma (`noqa`,
+// `type: ignore`, `fmt: off`, `pylint`…) or `#` and a digit (`Issue #12`) means not code. A trailing `\`, or an
+// `else:` / `except …:` header, a dict entry `"k": v,`, an assignment opening a bracket, or brackets alone mean
+// code; otherwise the text is code when it parses as a Python module. The block of a `# /// script` header
+// (PEP 723), up to its last `# ///`, is skipped.
+//   #import os              ← ERA001
+//   # x = foo(1, 2)         ← ERA001
+//   # This is a (real) comment.    not reported: `This is`
+//   # Issue #999: not code         not reported: `#9`
+// Ruff's last test is its parser on the text. Until a native one exists (NOTES: py_parses), it is approximated:
+// brackets and quotes balance (to a depth of five), and the text has the shape of a Python statement in a small
+// grammar of expressions (names, literals, brackets, calls, attributes, operators, lambda, `x if c else y`),
+// targets, simple statements and one-line compound statements. Text over 200 characters is not tested.
+#include "python/misc2-noqa.rr"
+//   own_line_comment(c): no token comes before comment c on its line
+
+.violation ERA001(at: node) code "ERA001"
+    "Delete this commented-out code; version control keeps the history. Leave it only if the comment is prose or an example that merely looks like code."
+    suppress ruff "ERA001"
+ERA001(c) :- era_line(c, l), own_line_comment(c), !era_script(c), !era_prose(l),
+    (match("[\\s\\S]*\\\\", l) ; era_header(l) ; era_parses(l)).
+
+// era_line(c, l): comment c's text without its leading `#`s and spaces, nor trailing spaces, when it has a code sign.
+.decl era_line(c: node, l: symbol)
+era_line(c, l) :- comment(c, _), text(c, s), match("[#\\s]*(?<l>[\\s\\S]*?)\\s*", s),
+    match("[\\s\\S]*([()\\[\\]{}:=%]|return|break|continue|import)[\\s\\S]*", l).
+.decl era_prose(l: symbol)
+// Two names in a row, neither a keyword, before any string or `#`, the second not followed by a quote: prose
+// (`see the docs`). The words are read one at a time (era_word), so every adjacent pair is tried.
+era_prose(l) :- era_word(l, a, s, r), s != "", match("[A-Za-z_][\\s\\S]*", a), !era_kw(a), !era_kw(b),
+    match("(?<b>[A-Za-z_][A-Za-z0-9_]*)(?<t>[\\s\\S]*)", r), !match("['\"][\\s\\S]*", t).
+// era_word(l, w, s, r): in the code part of l (before any quote or `#`), a word w (letters, digits, `_`), then
+// the blanks s after it, then the rest r.
+.decl era_word(l: symbol, w: symbol, s: symbol, r: symbol)
+era_word(l, w, s, r) :- era_rest(l, r0), match("[^A-Za-z0-9_'\"#]*(?<w>[A-Za-z0-9_]+)(?<s>[ \\t]*)(?<r>[\\s\\S]*)", r0).
+.decl era_rest(l: symbol, r: symbol)
+era_rest(l, l) :- era_line(_, l).
+era_rest(l, r) :- era_word(l, _, _, r).
+// era_kw(w): a keyword, soft ones and `lazy` included; era_hard(w): the same without `lazy`.
+.decl era_hard(w: symbol)
+era_hard("and"). era_hard("as"). era_hard("assert"). era_hard("async"). era_hard("await"). era_hard("break").
+era_hard("case"). era_hard("class"). era_hard("continue"). era_hard("def"). era_hard("del"). era_hard("elif").
+era_hard("else"). era_hard("except"). era_hard("finally"). era_hard("for"). era_hard("from"). era_hard("global").
+era_hard("if"). era_hard("import"). era_hard("in"). era_hard("is"). era_hard("lambda"). era_hard("match").
+era_hard("nonlocal"). era_hard("not"). era_hard("or"). era_hard("pass"). era_hard("raise"). era_hard("return").
+era_hard("try"). era_hard("type"). era_hard("while"). era_hard("with"). era_hard("yield").
+.decl era_kw(w: symbol)
+era_kw(w) :- era_hard(w).
+era_kw("lazy").
+era_prose(l) :- era_line(_, l), match("(?:TODO|FIXME|XXX)(?:[ :(][\\s\\S]*)?", l).
+era_prose(l) :- era_line(_, l), match("(?:pyright|pyrefly|ruff\\s*:\\s*(?:disable|enable|ignore|file-ignore)|mypy:|type:\\s*ignore|ty:\\s*ignore|SPDX-License-Identifier:|fmt:\\s*(?:on|off|skip)|region|endregion|[nN][oO][qQ][aA]|[pP][yY][lL][iI][nN][tT]|[nN][oO][sS][eE][cC]|[iI][sS][oO][rR][tT]:\\s*(?:on|off|skip|skip_file|split|dont-add-imports)|(?:[eE][nN])?[cC][oO][dD][iI][nN][gG][:=][ \\t]*[-_.A-Za-z0-9]+|language=[-_.a-zA-Z0-9]+)[\\s\\S]*", l).
+era_prose(l) :- era_line(_, l), match("[\\s\\S]*#[0-9][\\s\\S]*", l).
+// era_header(l): Ruff's POSITIVE_CASES.
+.decl era_header(l: symbol)
+era_header(l) :- era_line(_, l), (match("(?:elif\\s+.*\\s*:.*|else\\s*:.*|try\\s*:.*|finally\\s*:.*|except.*:.*|case\\s+.*\\s*:.*)", l) ;
+    match("['\"]\\w+['\"]\\s*:.+[,{]\\s*(#.*)?", l) ; match("(?:[(\\[]\\s*)?(?:\\w+\\s*,\\s*)*\\w+\\s*([)\\]]\\s*)?=.*[(\\[{]\\s*(#.*)?", l) ;
+    match("[()\\[\\]{}\\s]+\\s*(#.*)?", l)).
+// era_parses(l): l balances and has a statement's shape (the approximation of Ruff's parse_module(l).is_ok()).
+.decl era_parses(l: symbol)
+era_parses(l) :- era_line(_, l), strlen(l) <= 200, era_bal(4, b), match(cat(b, "(?:#.*)?"), l), era_re("STMT", r),
+    match(r, l), !era_bad(l).
+// era_bad(l): before any string or `#`, two operands in a row (a number or a closing bracket, then a name or
+// number: `OK (88 characters)`, `foo() bar`), or an operator before a keyword that cannot start an operand
+// (`[useless-else-on-loop]`, `(and x)`).
+.decl era_bad(l: symbol)
+era_bad(l) :- era_line(_, l), match("(?<c>[^'\"#]*)[\\s\\S]*", l),
+    match_all("(?:(?:^|[^A-Za-z0-9_.])[0-9][A-Za-z0-9_.]*|[)\\]}])[ \\t]+(?<w>[A-Za-z0-9_]+)", c), !era_hard(w).
+era_bad(l) :- era_line(_, l), match("[^'\"#]*?[-+*/%&|^@<>=~,(\\[{][ \\t]*(?:and|or|else|elif|in|is|if|for|from|as|import|def|class|return|pass|break|continue|raise|del|global|nonlocal|assert|try|except|finally|while|with)(?:[^A-Za-z0-9_][\\s\\S]*)?", l).
+// era_bal(i, r): r matches text whose brackets nest at most i + 1 deep and balance, strings closed, no `#`.
+.decl era_bal(i: number, r: symbol)
+era_bal(0, "(?:[^()\\[\\]{}'\"#]|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")*").
+era_bal(i + 1, cat("(?:[^()\\[\\]{}'\"#]|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|\\(", b, "\\)|\\[", b,
+    "\\]|\\{", b, "\\})*")) :- era_bal(i, b), i < 4.
+// era_re(k, r): the statement grammar, piece by piece: N name, NUM number, STR string, OPD operand (an atom with
+// its calls, subscripts and attributes), TGT assignment target, BIN binary operator, EXPR, LIST (a tuple), TGTS,
+// IMP import, KW keyword statement, SIMPLE simple statement, HEAD one-line compound statement, STMT the line.
+.decl era_re(k: symbol, r: symbol)
+era_re("N", "[A-Za-z_][A-Za-z0-9_]*").
+era_re("NUM", "(?:[0-9][0-9_]*(?:\\.[0-9_]*)?|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?[jJ]?").
+era_re("STR", "[rRbBuUfF]{0,2}(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")").
+era_re("OPD", cat("(?:(?:await\\s+|not\\s+|[-+~]\\s*)*(?:\\.\\.\\.|", r_n, "|", r_num, "|", r_str, "(?:\\s*", r_str, ")*|\\(.*\\)|\\[.*\\]|\\{.*\\})(?:\\s*(?:\\.\\s*", r_n, "|\\(.*\\)|\\[.*\\]))*)")) :- era_re("N", r_n), era_re("NUM", r_num), era_re("STR", r_str).
+era_re("TGT", cat("(?:\\*?(?:", r_n, "|\\(.*\\)|\\[.*\\])(?:\\s*(?:\\.\\s*", r_n, "|\\[.*\\]|\\(.*\\)\\s*(?:\\.\\s*", r_n, "|\\[.*\\])))*)")) :- era_re("N", r_n).
+era_re("BIN", "(?:[-+*/%&|^@<>]|//|\\*\\*|<<|>>|==|!=|<=|>=|not\\s+in\\b|in\\b|is\\s+not\\b|is\\b|and\\b|or\\b|if\\b|else\\b)").
+era_re("EXPR", cat("(?:(?:lambda\\b[^:]*:\\s*)?", r_opd, "(?:\\s*", r_bin, "\\s*(?:lambda\\b[^:]*:\\s*)?", r_opd, ")*)")) :- era_re("OPD", r_opd), era_re("BIN", r_bin).
+era_re("LIST", cat("(?:\\*?", r_expr, "(?:\\s*,\\s*\\*?", r_expr, ")*(?:\\s*,)?)")) :- era_re("EXPR", r_expr).
+era_re("TGTS", cat("(?:", r_tgt, "(?:\\s*,\\s*", r_tgt, ")*(?:\\s*,)?)")) :- era_re("TGT", r_tgt).
+era_re("IMP", cat("(?:import\\s+[\\w.]+(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*[\\w.]+(?:\\s+as\\s+", r_n, ")?)*|from\\s+\\.*[\\w.]*\\s+import\\s+(?:\\*|\\(?\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?)*\\s*,?\\s*\\)?))")) :- era_re("N", r_n).
+era_re("KW", cat("(?:return(?:\\s+", r_list, ")?|pass|break|continue|raise(?:\\s+", r_expr, "(?:\\s+from\\s+", r_expr, ")?)?|del\\s+", r_list, "|(?:global|nonlocal)\\s+", r_n, "(?:\\s*,\\s*", r_n, ")*|assert\\s+", r_expr, "(?:\\s*,\\s*", r_expr, ")?|yield(?:\\s+from)?(?:\\s+", r_list, ")?)")) :- era_re("LIST", r_list), era_re("EXPR", r_expr), era_re("N", r_n).
+era_re("SIMPLE", cat("(?:", r_list, "|(?:", r_tgts, "\\s*=\\s*)+(?:", r_list, "|yield\\b.*)|", r_tgt, "\\s*(?:[-+*/%&|^@]|//|\\*\\*|<<|>>)=\\s*", r_list, "|", r_tgt, "\\s*:\\s*", r_expr, "(?:\\s*=\\s*", r_list, ")?|", r_kw, "|", r_imp, ")")) :- era_re("LIST", r_list), era_re("TGTS", r_tgts), era_re("TGT", r_tgt), era_re("EXPR", r_expr), era_re("KW", r_kw), era_re("IMP", r_imp).
+era_re("HEAD", cat("(?:(?:if|elif|while)\\s+", r_expr, "|(?:async\\s+)?for\\s+", r_tgts, "\\s+in\\s+", r_list, "|(?:async\\s+)?with\\s+", r_expr, "(?:\\s+as\\s+", r_tgt, ")?(?:\\s*,\\s*", r_expr, "(?:\\s+as\\s+", r_tgt, ")?)*|(?:async\\s+)?def\\s+", r_n, "\\s*\\(.*\\)(?:\\s*->\\s*", r_expr, ")?|class\\s+", r_n, "(?:\\s*\\[.*\\])?(?:\\s*\\(.*\\))?)\\s*:\\s*", r_simple)) :- era_re("EXPR", r_expr), era_re("TGTS", r_tgts), era_re("LIST", r_list), era_re("TGT", r_tgt), era_re("N", r_n), era_re("SIMPLE", r_simple).
+era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\s*;?)\\s*(?:#.*)?")) :- era_re("HEAD", r_head), era_re("SIMPLE", r_simple).
+
+// era_script(c): c lies in a PEP 723 block: a line `# /// script`, then lines `#` or `# …` (from column 0) up to the
+// last `# ///` before the first other line.
+.decl era_script(c: node)
+era_script(c) :- comment(c, _), docof(c, d), line(c, l), era_block(d, l0, e), l0 <= l, l <= e.
+.decl era_cline(d: number, l: number, s: symbol)
+era_cline(d, l, s) :- era_has_script(d), src_line(d, l, sp), text(sp, s), match("#(?: [\\s\\S]*)?", s).
+.decl era_has_script(d: number)
+era_has_script(d) :- comment(c, _), text(c, "# /// script"), docof(c, d).
+.decl era_run(d: number, l0: number, l: number)
+era_run(d, l0, l0) :- era_cline(d, l0, "# /// script").
+era_run(d, l0, l + 1) :- era_run(d, l0, l), era_cline(d, l + 1, _).
+.decl era_block(d: number, l0: number, e: number)
+era_block(d, l0, e) :- era_run(d, l0, _), e = max l : { era_run(d, l0, l), era_cline(d, l, "# ///") }.

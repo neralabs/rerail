@@ -6,10 +6,10 @@ use super::spend_util_step;
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::identifier::name_in;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::scope::Lookup;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::{Reference, ScopeTable};
+use crate::code_rule_dsl::transducer::semantic_facts::{BindingRequest, Facts, Target, slot};
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -18,12 +18,13 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `resolves.binding` (a Rerail extension): the node is a reference to a file-local binding, and
 /// each listed sub-rule matches that binding's node: its site, its value, its annotation. The
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
-pub(crate) struct BindingTest {
+pub struct BindingTest {
     pub(crate) language: GrammarDialect,
     /// How the binding is read: through `global` or not, and whether it must be the first.
     pub(crate) lookup: Lookup,
@@ -43,15 +44,15 @@ pub(crate) struct BindingTest {
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// Filters over the binding, as `binds` has.
-    pub(crate) filter: BindingFilter,
+    pub filter: BindingFilter,
     /// Matches the construct that binds the name (`Site::node`).
-    pub(crate) site: Option<AstMatcher>,
+    pub site: Option<AstMatcher>,
     /// Matches the value the binding carries (`ScopeTable::binding`).
-    pub(crate) value: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
     /// Matches the binding's annotation.
-    pub(crate) annotation: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
     /// TypeScript: matches some definition name or reference of the binding's variable.
-    pub(crate) occurrence: Option<AstMatcher>,
+    pub occurrence: Option<AstMatcher>,
 }
 
 thread_local! {
@@ -221,13 +222,13 @@ fn resolved_index(
     name: &str,
     lookup: Lookup,
 ) -> Option<(u32, usize)> {
-    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::index(table, reference, name, lookup))
+    { let pack = language_pack::pack(table.family); pack.scope_index(table, reference, name, lookup) }
 }
 
 /// Whether a read's binding is not known, though some binding may reach it (PHP's flow: several
 /// may, a path may reach none, or PHP's dynamic symbol table may decide).
 fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
-    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::undecided(table, reference))
+    { let pack = language_pack::pack(table.family); pack.scope_undecided(table, reference) }
 }
 
 /// Matches `rule` at the first of `occurrences` (nodes of `anchor`'s file) where it matches,
@@ -311,4 +312,222 @@ pub(super) fn match_binding_nodes<'tree, D: Doc>(
         *env = Cow::Owned(bound);
     }
     Some(())
+}
+
+impl BindingTest {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn facts<'tree, D: Doc>(
+        &self,
+        node: Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+        facts: &mut Facts<'tree, D>,
+        request: BindingRequest,
+    ) {
+        let reference = unparenthesized(&self.paren_kinds, node.clone());
+        if self.write_last {
+            return self.anchor_facts(reference, env, facts, request);
+        }
+        if !self.reference_kinds.contains(&reference.kind_id()) {
+            return;
+        }
+        let Some(table) = file_table(
+            &reference,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        ) else {
+            return;
+        };
+        let Some(found) = table.reference(&reference.range()) else {
+            return;
+        };
+        let name = name_in(self.language, reference.text());
+        if undecided(&table, found) {
+            facts.gate(-1, Target::None);
+            return;
+        }
+        let Some((binding, value)) = table.binding_by(found, &name, self.lookup) else {
+            return;
+        };
+        let Some((scope, index)) = resolved_index(&table, found, &name, self.lookup) else {
+            return;
+        };
+        let id = crate::code_rule_dsl::scope::usage::BindingId {
+            scope,
+            name: &name,
+            index,
+        };
+        let usage = if self.filter.reads_usage() || request.occurrence {
+            let Some(usage) = file_usage(&reference, &table) else {
+                return;
+            };
+            Some(usage)
+        } else {
+            None
+        };
+        let region = |capture: &str| capture_range(env, capture);
+        match self.filter.verdict(&table, usage.as_deref(), id, &region) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                facts.gate(-1, Target::None);
+                return;
+            }
+        }
+        facts.gate(1, Target::None);
+        binding_node_facts(
+            &reference,
+            [
+                (request.site, slot::SITE, binding.site.node),
+                (
+                    request.value,
+                    slot::VALUE,
+                    self.value_of(binding.site.node, value),
+                ),
+                (
+                    request.annotation,
+                    slot::ANNOTATION,
+                    binding.site.annotation,
+                ),
+            ],
+            0,
+            facts,
+        );
+        if request.occurrence
+            && let Some(usage) = &usage
+        {
+            occurrence_facts(&reference, usage.occurrences(id), 0, facts);
+        }
+    }
+
+    /// `resolves.write: "last"` (see `match_anchor`).
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    fn anchor_facts<'tree, D: Doc>(
+        &self,
+        reference: Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+        facts: &mut Facts<'tree, D>,
+        request: BindingRequest,
+    ) {
+        let kind = reference.kind_id();
+        if !self.reference_kinds.contains(&kind) && !self.name_kinds.contains(&kind) {
+            return;
+        }
+        let Some(table) = file_table(
+            &reference,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        ) else {
+            return;
+        };
+        let Some(usage) = file_usage(&reference, &table) else {
+            return;
+        };
+        let range = reference.range();
+        let name = reference.text();
+        let id = match table.reference(&range) {
+            Some(found) => {
+                let Some((scope, index)) = table.resolve_lexical_index(found, &name) else {
+                    return;
+                };
+                crate::code_rule_dsl::scope::usage::BindingId {
+                    scope,
+                    name: &name,
+                    index,
+                }
+            }
+            None => match usage.named_at(range.start, range.end, kind).next() {
+                Some(id) => id,
+                None => return,
+            },
+        };
+        let anchor = (range.start as u32, range.end as u32);
+        if usage.facts(id).anchor != Some(anchor)
+            || (self.lookup.only && table.chain(id).len() != 1)
+        {
+            return;
+        }
+        let region = |capture: &str| capture_range(env, capture);
+        match self.filter.verdict(&table, Some(&usage), id, &region) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                facts.gate(-1, Target::None);
+                return;
+            }
+        }
+        facts.gate(1, Target::None);
+        let binding = table.binding_of(id);
+        let definitions = table.chain(id).len();
+        let value = binding
+            .site
+            .value
+            .filter(|_| definitions == 1 && binding.writes == 0);
+        binding_node_facts(
+            &reference,
+            [
+                (request.site, slot::SITE, binding.site.node),
+                (
+                    request.value,
+                    slot::VALUE,
+                    self.value_of(binding.site.node, value),
+                ),
+                (
+                    request.annotation,
+                    slot::ANNOTATION,
+                    binding.site.annotation,
+                ),
+            ],
+            0,
+            facts,
+        );
+        if request.occurrence {
+            occurrence_facts(&reference, usage.occurrences(id), 0, facts);
+        }
+    }
+}
+
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub(super) fn binding_node_facts<'tree, D: Doc>(
+    anchor: &Node<'tree, D>,
+    targets: [(bool, u16, Option<NodeRef>); 3],
+    key: i64,
+    facts: &mut Facts<'tree, D>,
+) {
+    let root = anchor.root().root();
+    for (requested, slot, target) in targets {
+        if !requested {
+            continue;
+        }
+        match target {
+            None => facts.push(slot, key, 0, Target::None),
+            Some(target) => facts.push(
+                slot,
+                key,
+                1,
+                target
+                    .find_near(root.clone(), anchor)
+                    .map_or(Target::None, Target::Node),
+            ),
+        };
+    }
+}
+
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub(super) fn occurrence_facts<'tree, D: Doc>(
+    anchor: &Node<'tree, D>,
+    occurrences: &[NodeRef],
+    key: i64,
+    facts: &mut Facts<'tree, D>,
+) {
+    let root = anchor.root().root();
+    for occurrence in occurrences {
+        facts.push(
+            slot::OCCURRENCE,
+            key,
+            1,
+            occurrence
+                .find_near(root.clone(), anchor)
+                .map_or(Target::None, Target::Node),
+        );
+    }
 }

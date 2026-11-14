@@ -1,0 +1,30 @@
+.policy "ruff-up022-replace-stdout-stderr" revision 2
+.description "Use capture_output=True in subprocess.run() instead of sending both stdout and stderr to subprocess.PIPE."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP022 (pyupgrade): `subprocess.run(…, stdout=subprocess.PIPE, stderr=subprocess.PIPE)` on Python 3.7
+// or later, where `capture_output=True` says the same. Both keywords must be `subprocess.PIPE` itself (through
+// imports); the finding is at the call. When `capture_output=` is passed as well, Ruff still reports it: a true
+// one with the two keywords raises ValueError.
+//   subprocess.run(["ls"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)     ← UP022
+//   subprocess.run(["ls"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)   not reported
+#include "python/upgrade.rr"
+//   targets(m), sym_at(e, q)
+#include "python/upgrade-format.rr"
+//   call_kw(c, k, v), up_kwarg(c, k, ka)
+
+.decl piped(c: node)  // subprocess.run with stdout and stderr both subprocess.PIPE
+piped(c) :- targets(7), kind(c, "call"), field(c, "function", f), sym_at(f, "subprocess.run"),
+    call_kw(c, "stdout", o), sym_at(o, "subprocess.PIPE"), call_kw(c, "stderr", e), sym_at(e, "subprocess.PIPE").
+
+.violation use_capture_output(at: node) code "UP022"
+    "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6."
+    suppress ruff "UP022"
+use_capture_output(c) :- piped(c), !up_kwarg(c, "capture_output", _).
+
+.violation merge_into_capture_output(at: node) code "UP022"
+    "Remove `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` and pass `capture_output=True` instead; a true `capture_output` combined with them raises ValueError."
+    suppress ruff "UP022"
+merge_into_capture_output(c) :- piped(c), up_kwarg(c, "capture_output", _).

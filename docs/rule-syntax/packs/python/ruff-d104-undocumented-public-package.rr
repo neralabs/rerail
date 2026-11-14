@@ -1,0 +1,16 @@
+.policy "ruff-d104-undocumented-public-package" revision 2
+.description "Give each public Python package a docstring at the top of its init module that describes what the package provides."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D104 (pydocstyle): a public package's `__init__.py` with no docstring, reported at line 1. Public: no
+// segment of the package's dotted name starts with `_` (dunders aside). An empty `__init__.py` is reported too.
+// `.pyi` stubs are not checked.
+//   pkg/__init__.py:  import os        ← D104 at line 1
+#include "python/docstrings.rr"
+
+.violation D104(at: span) code "D104"
+    "Add a docstring as the first statement of this package's `__init__.py`, summarizing what the package provides."
+    suppress ruff "D104"
+D104(@place(p, 1)) :- doc_missing(m, "module", _, _), docof(m, d), file_name(d, "__init__.py"), doc(d, p, _).

@@ -1,0 +1,29 @@
+.policy "eslint-plugin-vue-no-watch-after-await" revision 2
+.description "Call watch and watchEffect before any await in a Vue setup() function, or keep their stop handle; a watcher made after an await is not tied to the component and leaks."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vsetup(o, f), vvue_import_call(c, x), estree_parent(x, p)
+
+// eslint-plugin-vue's no-watch-after-await: in a component's setup(), a watch() or watchEffect() (imported from Vue)
+// that comes after an `await` of setup's own code, and whose stop handle is dropped. Code of a nested function is
+// its own: an await or watch inside a callback does not count. No options.
+//   async setup() { await load(); watch(a, f) }                   reported
+//   async setup() { await load(); const stop = watch(a, f) }      not reported: the handle is kept
+.violation watch_after_await(at: node) code "vue/no-watch-after-await"
+    "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount."
+    suppress eslint "vue/no-watch-after-await"
+watch_after_await(c) :- vsetup(_, f), watcher(c), own(c, f), kind(w, "await_expression"), own(w, f), earlier(w, c),
+    !handle_kept(c).
+.decl watcher(c: node)
+watcher(c) :- vvue_import_call(c, x), (x = "watch" ; x = "watchEffect").
+.decl own(n: node, f: node)  // n is in function f's own code
+own(n, f) :- nearest(n, f, vfn_kind).
+// handle_kept(c): isMaybeUsedStopHandle: the result is declared, assigned, passed, put in an object or an array.
+.decl handle_kept(c: node)
+handle_kept(c) :- watcher(c), holder(c, p), kind(p, k), keeps(k).
+.decl holder(c: node, p: node)  // ESTree parent, through `?.` chains
+holder(c, p) :- watcher(c), estree_parent(c, p).
+.decl keeps(k: symbol)
+keeps("variable_declarator"). keeps("assignment_expression"). keeps("arguments"). keeps("pair"). keeps("array").

@@ -1,0 +1,5 @@
+{
+  "title": "assert False",
+  "rule": "ruff-b011-assert-false",
+  "note": "B011 flags assert False: python -O removes asserts, so the line does nothing there. Raise AssertionError instead."
+}

@@ -18,7 +18,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Runs `work`, returning its result, or a `GenericFailure` naming `what` and the panic message
 /// when it panics.
-pub(crate) fn contain_panic<T>(what: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn contain_panic<T>(what: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
     // Unwind-safe in effect: what a panic could leave half-updated is behind a mutex it poisons.
     catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|payload| {
         let message = payload
@@ -34,7 +34,7 @@ pub(crate) fn contain_panic<T>(what: &str, work: impl FnOnce() -> Result<T>) -> 
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::contain_panic;
 
     #[test]

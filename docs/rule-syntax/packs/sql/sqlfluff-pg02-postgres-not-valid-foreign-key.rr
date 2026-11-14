@@ -1,0 +1,18 @@
+.policy "sqlfluff-pg02-postgres-not-valid-foreign-key" revision 2
+.description "Add PostgreSQL foreign keys with NOT VALID and validate them in a separate step; checking existing rows at once locks the table."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's PG02 (postgres.not_valid_foreign_key), PostgreSQL only. ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY
+// without NOT VALID checks every existing row under a lock; the finding is at ALTER:
+//   ALTER TABLE foo ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES b (c)              reported
+//   ALTER TABLE foo ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES b (c) NOT VALID    fine
+//   (then ALTER TABLE foo VALIDATE CONSTRAINT fk, which takes a weaker lock)
+
+#include "sql/syntax.rr"
+
+.violation PG02(at: node) code "PG02" "Add the foreign key with NOT VALID, then VALIDATE CONSTRAINT in a separate statement, so the table is not locked."
+    suppress sqlfluff "PG02", "all", "postgres", "postgres.not_valid_foreign_key"
+PG02(s) :- kind(s, "alter_table"), child(s, a, _), kind(a, "add_constraint"), child(a, c, _), kind(c, "constraint"),
+    child(c, f, _), kind(f, "keyword_foreign"), count : { child(a, v, _), kind(v, "keyword_valid") } = 0,
+    !routine_body(s).

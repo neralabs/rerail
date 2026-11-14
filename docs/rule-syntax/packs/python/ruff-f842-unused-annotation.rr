@@ -1,0 +1,28 @@
+.policy "ruff-f842-unused-annotation" revision 2
+.description "Remove local variables that are annotated but never assigned or read; the annotation alone does nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F842 (pyflakes): a local name that is annotated (`x: int`, no value) and never read. Ruff keeps a
+// name's first binding: a later bare annotation is ignored, and if the function binds x at all (`x = 1`, before or
+// after), the annotation is not reported (an unused `x = 1` is F841's business). A read or `del x` below the
+// annotation counts as a use; a read above it does not. Names
+// matching Ruff's dummy-variable pattern (`_`, `_unused`) are skipped, and so are names declared global/nonlocal.
+//   def f():
+//       name: str               ← F842
+//       name: bytes             not reported: only the first annotation counts
+//       age: int                not reported: read below
+//       print(age)
+#include "python/pyflakes.rr"
+//   bare_annotation(a, l, x, f)   `x: T` with no value in scope f
+
+.violation F842(at: node, x: symbol) code "F842" "Local variable `{x}` is annotated but never used"
+    suppress ruff "F842"
+F842(l, x) :- bare_annotation(a, l, x, f), kind(f, "function_definition"), !match("_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9]", x),
+    !decl(f, x, _), count : { binding(f, x, _, _) } = 0, count : { bare_annotation(a2, _, x, f), a2 < a } = 0,
+    count : { walk(r, x, f), r > a, read_or_del(r) } = 0.
+// read_or_del(r): r is a load of a name or a `del` target. A read above the annotation does not use it.
+.decl read_or_del(r: node)
+read_or_del(r) :- expr_ctx(r, "load").
+read_or_del(r) :- expr_ctx(r, "del").

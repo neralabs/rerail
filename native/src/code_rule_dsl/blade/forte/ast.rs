@@ -32,14 +32,14 @@
 
 use super::node::{FlatNode, NONE, NodeKind, StructureRole};
 use super::token::Token;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::token::TokenType;
 use std::borrow::Cow;
 use std::ops::Range;
 
 /// The class `Document` wraps an element in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ElementClass {
+pub enum ElementClass {
     Element,
     Component,
     Slot,
@@ -47,67 +47,67 @@ pub(crate) enum ElementClass {
 
 /// `ComponentMetadata`: the fields the oracle records.
 #[cfg_attr(
-    not(test),
+    not(any(test, feature = "test-hooks")),
     expect(
         dead_code,
         reason = "the oracle's AST reads, which only the tests compare"
     )
 )]
-pub(crate) struct Component<'a> {
+pub struct Component<'a> {
     /// `type`.
-    pub(crate) kind: Cow<'a, [u8]>,
-    pub(crate) prefix: Cow<'a, [u8]>,
+    pub kind: Cow<'a, [u8]>,
+    pub prefix: Cow<'a, [u8]>,
     /// `componentName`.
-    pub(crate) name: Cow<'a, [u8]>,
-    pub(crate) slot_name: Option<Cow<'a, [u8]>>,
+    pub name: Cow<'a, [u8]>,
+    pub slot_name: Option<Cow<'a, [u8]>>,
 }
 
 /// What `ElementNode` reads.
-#[cfg(test)]
-pub(crate) struct Element<'a> {
-    pub(crate) class: ElementClass,
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct Element<'a> {
+    pub class: ElementClass,
     /// `tagNameText()`.
-    pub(crate) tag: Cow<'a, [u8]>,
+    pub tag: Cow<'a, [u8]>,
     /// `isVoid()`.
-    pub(crate) void: bool,
+    pub void: bool,
     /// `isSelfClosing()`.
-    pub(crate) self_closing: bool,
+    pub self_closing: bool,
     /// `isPaired()`.
-    pub(crate) paired: bool,
+    pub paired: bool,
     /// `ComponentNode::getMetadata()`, for components and slots.
-    pub(crate) component: Option<Component<'a>>,
+    pub component: Option<Component<'a>>,
 }
 
 /// What `Attribute` reads.
-#[cfg(test)]
-pub(crate) struct Attribute<'a> {
-    pub(crate) index: usize,
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct Attribute<'a> {
+    pub index: usize,
     /// `type()`.
-    pub(crate) kind: &'static str,
-    pub(crate) raw_name: Cow<'a, [u8]>,
-    pub(crate) name: Cow<'a, [u8]>,
-    pub(crate) value: Option<Cow<'a, [u8]>>,
-    pub(crate) quote: Option<u8>,
+    pub kind: &'static str,
+    pub raw_name: Cow<'a, [u8]>,
+    pub name: Cow<'a, [u8]>,
+    pub value: Option<Cow<'a, [u8]>>,
+    pub quote: Option<u8>,
 }
 
 /// What `DirectiveBlockNode` reads.
-pub(crate) struct Block {
-    pub(crate) start: Option<usize>,
-    pub(crate) end: Option<usize>,
+pub struct Block {
+    pub start: Option<usize>,
+    pub end: Option<usize>,
     #[cfg_attr(
-        not(test),
+        not(any(test, feature = "test-hooks")),
         expect(
             dead_code,
             reason = "the oracle's AST reads, which only the tests compare"
         )
     )]
-    pub(crate) mid: Vec<usize>,
+    pub mid: Vec<usize>,
 }
 
 /// `PhpTagNode::phpType()`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PhpTagType {
+pub enum PhpTagType {
     Php,
     Echo,
 }
@@ -116,29 +116,29 @@ pub(crate) enum PhpTagType {
 const COMPONENT_PREFIXES: [&[u8]; 3] = [b"x-", b"livewire:", b"flux:"];
 
 /// `VoidElements::$voidElements`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const VOID_ELEMENTS: [&[u8]; 14] = [
     b"area", b"base", b"br", b"col", b"embed", b"hr", b"img", b"input", b"link", b"meta", b"param",
     b"source", b"track", b"wbr",
 ];
 
 /// `AttributeType`.
-mod attribute_type {
-    #[cfg(test)]
+pub mod attribute_type {
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const BOUND: &str = "bound";
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const ESCAPED: &str = "escaped";
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const SHORTHAND: &str = "shorthand";
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const STATIC: &str = "static";
     /// `Attribute::type()` of a Blade construct in attribute position.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const STANDALONE: &str = "standalone";
 }
 
 /// A parsed template, read as Forte's AST API reads its `Document`.
-pub(crate) struct Ast<'a> {
+pub struct Ast<'a> {
     source: &'a [u8],
     tokens: &'a [Token],
     nodes: &'a [FlatNode],
@@ -165,7 +165,7 @@ fn php_substr(len: usize, offset: i64, length: Option<i64>) -> Range<usize> {
 }
 
 /// `str_starts_with` then strip: the rest of `range` after `prefix`, if `range` starts with it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn strip_start(source: &[u8], range: Range<usize>, prefix: &[u8]) -> Range<usize> {
     if source[range.clone()].starts_with(prefix) {
         range.start + prefix.len()..range.end
@@ -175,7 +175,7 @@ fn strip_start(source: &[u8], range: Range<usize>, prefix: &[u8]) -> Range<usize
 }
 
 /// `str_ends_with` then `substr(..., 0, -strlen($suffix))`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn strip_end(source: &[u8], range: Range<usize>, suffix: &[u8]) -> Range<usize> {
     if source[range.clone()].ends_with(suffix) {
         range.start..range.end - suffix.len()
@@ -185,7 +185,7 @@ fn strip_end(source: &[u8], range: Range<usize>, suffix: &[u8]) -> Range<usize> 
 }
 
 /// `ltrim($text, $chars)`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn ltrim_chars<'b>(text: &'b [u8], chars: &[u8]) -> &'b [u8] {
     let start = text
         .iter()
@@ -289,7 +289,7 @@ fn is_internal_kind(kind: NodeKind) -> bool {
 }
 
 /// `Attributes::isStandaloneAttributeKind`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn is_standalone_attribute_kind(kind: NodeKind) -> bool {
     matches!(
         kind,
@@ -305,7 +305,7 @@ fn is_standalone_attribute_kind(kind: NodeKind) -> bool {
 }
 
 impl<'a> Ast<'a> {
-    pub(crate) fn new(source: &'a [u8], tokens: &'a [Token], nodes: &'a [FlatNode]) -> Self {
+    pub fn new(source: &'a [u8], tokens: &'a [Token], nodes: &'a [FlatNode]) -> Self {
         Self {
             source,
             tokens,
@@ -313,13 +313,13 @@ impl<'a> Ast<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn source(&self) -> &'a [u8] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn source(&self) -> &'a [u8] {
         self.source
     }
 
-    #[cfg(test)]
-    pub(crate) fn nodes(&self) -> &'a [FlatNode] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn nodes(&self) -> &'a [FlatNode] {
         self.nodes
     }
 
@@ -359,13 +359,13 @@ impl<'a> Ast<'a> {
     }
 
     /// `getSourceSlice($start, $end)`: `substr($source, $start, $end - $start)`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_source_slice(&self, start: i64, end: i64) -> Range<usize> {
         php_substr(self.source.len(), start, Some(end - start))
     }
 
     /// `getTokenRangeContent`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_token_range_content(&self, token_start: i32, token_count: i32) -> Range<usize> {
         if token_count == 0 || token_start < 0 || token_start as usize >= self.tokens.len() {
             return 0..0;
@@ -381,7 +381,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `getNodeTokenContent`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_node_token_content(&self, index: usize) -> Range<usize> {
         match self.nodes.get(index) {
             Some(flat) => self.get_token_range_content(flat.token_start, flat.token_count),
@@ -391,7 +391,7 @@ impl<'a> Ast<'a> {
 
     /// `Node::startOffset` (-1 for a node without tokens; `getToken` throws past the end, which
     /// no tree Forte builds reaches).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn start_offset(&self, flat: &FlatNode) -> i64 {
         if flat.token_start < 0 {
             return -1;
@@ -401,7 +401,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Node::endOffset`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn end_offset(&self, flat: &FlatNode) -> i64 {
         if flat.token_start < 0 || flat.token_count <= 0 {
             return -1;
@@ -412,7 +412,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Node::getDocumentContent`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_document_content(&self, index: usize) -> Range<usize> {
         match self.nodes.get(index) {
             Some(flat) => self.get_source_slice(self.start_offset(flat), self.end_offset(flat)),
@@ -501,7 +501,7 @@ impl<'a> Ast<'a> {
 
     /// `ElementNode::tagNameText` (`tagName()`'s `ElementNameNode::name()`: its token text). An
     /// element without an `ElementName` child, where Forte throws, reads as the empty name.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn tag_name_text(&self, index: usize) -> Cow<'a, [u8]> {
         match self
             .child_links(index)
@@ -513,7 +513,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `ManagesElementClosing::getClosingNameIndex`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_closing_name_index(&self, flat: &FlatNode) -> Option<usize> {
         if flat.last_child == NONE {
             return None;
@@ -530,8 +530,8 @@ impl<'a> Ast<'a> {
     }
 
     /// What `ElementNode` (or `ComponentNode`/`SlotNode`) reads for an element node.
-    #[cfg(test)]
-    pub(crate) fn element(&self, index: usize) -> Element<'a> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn element(&self, index: usize) -> Element<'a> {
         let Some(flat) = self.nodes.get(index) else {
             return Element {
                 class: ElementClass::Element,
@@ -572,7 +572,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `ManagesAst::findOpeningTagEndPosition`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn find_opening_tag_end_position(&self, element_index: usize) -> i64 {
         let Some(element) = self.nodes.get(element_index) else {
             return self.source.len() as i64;
@@ -608,8 +608,8 @@ impl<'a> Ast<'a> {
 
     /// `ElementNode::attributes()->all()` (`Attributes::ensureLoaded`), each attribute read as
     /// the oracle reads it.
-    #[cfg(test)]
-    pub(crate) fn attributes(&self, element: usize) -> Vec<Attribute<'a>> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn attributes(&self, element: usize) -> Vec<Attribute<'a>> {
         let mut items = Vec::new();
         let opening_tag_end_pos = self.find_opening_tag_end_position(element);
         for (child_index, child) in self.child_links(element) {
@@ -640,7 +640,7 @@ impl<'a> Ast<'a> {
     }
 
     /// An `Attribute`'s reads: `type`, `rawName`, `nameText`, `valueText`, `quote`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn attribute(&self, index: usize, is_blade_construct: bool) -> Attribute<'a> {
         let name_idx = self.get_name_node_index(index);
         let kind = self.attribute_type(name_idx, is_blade_construct);
@@ -665,7 +665,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Attribute::getNameNodeIndex`: the first child, when it is an `AttributeName`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_name_node_index(&self, index: usize) -> Option<usize> {
         let flat = self.nodes.get(index)?;
         let child = self.node(flat.first_child)?;
@@ -673,7 +673,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Attribute::getValueNodeIndex`: the name's next sibling, when it is an `AttributeValue`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn get_value_node_index(&self, name_idx: usize) -> Option<usize> {
         let name = self.nodes.get(name_idx)?;
         let value = self.node(name.next_sibling)?;
@@ -681,7 +681,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Attribute::type`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn attribute_type(&self, name_idx: Option<usize>, is_blade_construct: bool) -> &'static str {
         if is_blade_construct {
             return attribute_type::STANDALONE;
@@ -705,7 +705,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Attribute::valueText` of an attribute with a value node: its tokens without the quotes.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn value_text(&self, value_idx: usize) -> Range<usize> {
         let Some(value) = self.nodes.get(value_idx) else {
             return 0..0;
@@ -747,7 +747,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `Attribute::quote` of an attribute with a value node: the opening quote's byte.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn quote(&self, value_idx: usize) -> Option<u8> {
         let value = self.nodes.get(value_idx)?;
         if value.token_count == 0 {
@@ -766,7 +766,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `DirectiveBlockNode::startDirective`, `endDirective` and `getIntermediateDirectives`.
-    pub(crate) fn block(&self, index: usize) -> Block {
+    pub fn block(&self, index: usize) -> Block {
         let Some(flat) = self.nodes.get(index) else {
             return Block {
                 start: None,
@@ -801,8 +801,8 @@ impl<'a> Ast<'a> {
     }
 
     /// `EchoNode::content()`, as a range of the template.
-    #[cfg(test)]
-    pub(crate) fn echo_content(&self, index: usize) -> Range<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn echo_content(&self, index: usize) -> Range<usize> {
         let raw = self.get_document_content(index);
         // `stripBraces`.
         let (open, close): (&[u8], &[u8]) = match self.nodes.get(index).map(|flat| flat.kind) {
@@ -816,16 +816,16 @@ impl<'a> Ast<'a> {
     }
 
     /// `PhpBlockNode::content()` (`HasDelimitedContent`), as a range of the template.
-    #[cfg(test)]
-    pub(crate) fn php_block_content(&self, index: usize) -> Range<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn php_block_content(&self, index: usize) -> Range<usize> {
         let raw = self.get_document_content(index);
         let raw = strip_start(self.source, raw, b"@php");
         strip_end(self.source, raw, b"@endphp")
     }
 
     /// `PhpTagNode::phpType()` and `content()`, as a range of the template.
-    #[cfg(test)]
-    pub(crate) fn php_tag(&self, index: usize) -> (PhpTagType, Range<usize>) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn php_tag(&self, index: usize) -> (PhpTagType, Range<usize>) {
         let raw = self.get_document_content(index);
         let text = &self.source[raw.clone()];
         let kind = if text.starts_with(b"<?=") {
@@ -847,7 +847,7 @@ impl<'a> Ast<'a> {
 }
 
 /// `AttributeName::stripPrefix`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn strip_prefix<'b>(kind: &str, content: &'b [u8]) -> &'b [u8] {
     match kind {
         attribute_type::BOUND => ltrim_chars(content, b":"),

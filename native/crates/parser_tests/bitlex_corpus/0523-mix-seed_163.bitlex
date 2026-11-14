@@ -1,0 +1,16 @@
+# corpus: mix: seed 163
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = span(digit, 3)
+mask m1 = op
+mask m2 = after(bs)
+mask m3 = (next(after_odd_run(starts(m0)), 12) & ((after_odd_run(quote) & after(m1)) & next(m0, 3)))

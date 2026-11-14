@@ -1,0 +1,19 @@
+.policy "ruff-async210-blocking-http-call-in-async-function" revision 2
+.description "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC210 (flake8-async): a blocking HTTP call inside an async def: `urllib.request.urlopen`,
+// `urllib3.request`, or one of requests' and httpx's module functions (get, post, request, …). Methods of a
+// client object (`session.get`) are not resolved and are not reported.
+//   async def f(): requests.get(url)       ← ASYNC210
+//   async def f(): await client.get(url)   not reported
+#include "python/async-demand.rr"
+
+.violation ASYNC210(at: node) code "ASYNC210"
+    "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options."
+    suppress ruff "ASYNC210"
+ASYNC210(f) :- async_blocking(_, f, q), async_http(q).
+
+async_api_target(q) :- async_http(q).

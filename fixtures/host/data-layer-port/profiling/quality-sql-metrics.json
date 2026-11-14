@@ -1,0 +1,18 @@
+{
+  "quality-contracts-1": [
+    { "relation": "nodes", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM nodes" },
+    { "relation": "nodes", "metric": "identifierRows", "query": "SELECT count(*) FROM nodes WHERE kind='identifier'" },
+    { "relation": "nodes", "metric": "functionRows", "query": "SELECT count(*) FROM nodes WHERE kind='function_definition'" },
+    { "relation": "descendants", "metric": "roots", "query": "SELECT count(DISTINCT root) FROM descendants" },
+    { "relation": "descendants", "metric": "keyTextBytes", "query": "SELECT coalesce(sum(length(CAST(__path AS BLOB))+length(CAST(root AS BLOB))+length(CAST(node AS BLOB))),0) FROM descendants" },
+    { "relation": "functions", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM functions" },
+    { "relation": "calls", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM calls" },
+    { "relation": "methods", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM methods" }
+  ],
+  "quality-contracts-2": [
+    { "relation": "nodes", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM nodes" }
+  ],
+  "quality-contracts-3": [
+    { "relation": "nodes", "metric": "textBytes", "query": "SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM nodes" }
+  ]
+}

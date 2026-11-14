@@ -202,15 +202,54 @@ jobs:
           filters: |
             rust:
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
+              - 'docs/rule-syntax/**'
+              - 'gate/data-layer/**'
               - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
+              - 'scripts/profiling/reachability/**'
+              - 'scripts/profiling/preparation/**'
+              - 'scripts/profiling/composition.py'
+              - 'test/scripts/test_sql_composition.py'
+              - 'scripts/profiling/reachability_*.py'
+              - 'scripts/profiling/native_*_*.py'
+              - 'test/scripts/test_reachability.py'
+              - 'test/scripts/test_native_relations.py'
+              - 'test/scripts/test_native_sql_plan.py'
+              - 'scripts/profiling/producer-shape.mjs'
+              - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/sql-budget-recording.json'
+              - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
+              - 'scripts/profiling/sql-report.mjs'
+              - 'scripts/profiling/sql-session.mjs'
+              - 'benchmark/sql-profile/**'
+              - 'test/scripts/sql-execution-budget.test.mjs'
+              - 'test/scripts/sql-profile.test.mjs'
+              - 'test/scripts/sql-profile/**'
+              - 'test/engine/native/relational-batch.test.ts'
+              - 'test/engine/native/relational-completed.test.ts'
+              - 'test/engine/native/candidate-admission.test.ts'
+              - 'test/engine/native/candidate-publication.test.ts'
+              - 'test/engine/native/compiler-schema.test.ts'
+              - 'test/engine/native/shared-producers.test.ts'
+              - 'test/engine/native/frontier-determinism.test.ts'
+              - 'test/engine/native/recovery/child-demand.test.ts'
+              - 'test/engine/native/recovery/relational-storage.test.ts'
+              - 'test/engine/native/recovery/input-admission.test.ts'
+              - 'test/engine/native/recovery/eponymous-sources.test.ts'
+              - 'test/engine/native/recovery/state-syntax-domain.test.ts'
+              - 'test/engine/native/recovery/selector-materialization.test.ts'
+              - 'scripts/profiling/frontier-audit.mjs'
+              - 'scripts/profiling/post_c_spikes/**'
+              - 'test/scripts/test_post_c_spikes.py'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -231,9 +270,12 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.gitattributes'
-            # The native engine the build job makes: its crate, and the language registry its build.rs reads.
+            # The native engine the build job makes: its crates (native/crates/, and the accelerators' accel/ and
+            # forest/ it depends on), and the language registry its build.rs reads.
             engine: &engine
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'languages/**'
             # The package the build job makes and the daemon runs from source: every source file (tsc compiles all of
             # src/), the page, the bundled model, the hosts' hooks, skills and plugin manifests, the build scripts.
@@ -407,9 +449,13 @@ jobs:
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time on
-  # a runner: the workspace's (much of it waiting out the store's busy timeouts) and the anchor index's, then every other,
-  # the second skipping exactly what the first runs.
+  # saved, so the job runs where that job does (the note at the top). The tests run in five legs: the workspace's (much
+  # of it waiting out the store's busy timeouts), the anchor index's, the waves' and the transducer's, with the
+  # profiling labs' checks after them (`profiling`); the logic engine's rule files and converters; the rest of the logic
+  # engine with the typing phases; the SQL executor and the slice; then every other, skipping exactly what the first
+  # four run. On the 4-vCPU runner (2 cores, hyperthreaded) the slowest legs run 14 to 15 minutes of tests after a build
+  # of up to 12, and no leg can be cut below its longest test (the slice's real-file check, 14 minutes): the timeout is
+  # 40 minutes, so each leg ends with at least 5 to spare.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data]
@@ -422,7 +468,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
@@ -433,11 +479,21 @@ jobs:
             name: fmt, clippy
             run: npm run check:native
           - task: test
-            name: tests, workspace and anchors
-            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
+            name: tests, workspace, anchors, waves and transducer
+            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors:: code_rule_dsl::waves:: code_rule_dsl::transducer::"
+            profiling: true
+          - task: test
+            name: tests, logic rules and converters
+            run: "npm run test:native -- -- code_rule_dsl::logic::rr:: code_rule_dsl::logic::convert::"
+          - task: test
+            name: tests, logic and typing
+            run: "npm run test:native -- -- code_rule_dsl::logic:: code_rule_dsl::typing:: --skip code_rule_dsl::logic::rr:: --skip code_rule_dsl::logic::convert::"
+          - task: test
+            name: tests, SQL executor and slice
+            run: "npm run test:native -- -- code_rule_dsl::sql_executor:: code_rule_dsl::slice::"
           - task: test
             name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors::"
+            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors:: --skip code_rule_dsl::waves:: --skip code_rule_dsl::transducer:: --skip code_rule_dsl::logic:: --skip code_rule_dsl::typing:: --skip code_rule_dsl::sql_executor:: --skip code_rule_dsl::slice::"
     # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
     # bloats the cache, since dependencies never build incrementally.
     env:
@@ -452,7 +508,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
+      # The clippy leg only compiles the tests; the tests legs run them, and three read pack test data: Ruff's fixtures,
       # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
@@ -474,6 +530,17 @@ jobs:
           pack: vue
           tool: eslint-plugin-vue
           fetch: "false"
+
+      # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
+      - if: matrix.task == 'test'
+        name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - if: matrix.task == 'test'
+        name: Put CPython 3.13 on PATH
+        run: |
+          uv python install 3.13
+          dirname "$(uv python find 3.13)" >> "$GITHUB_PATH"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -500,6 +567,96 @@ jobs:
 
       - name: Run ${{ matrix.name }}
         run: ${{ matrix.run }}
+
+      - name: Check isolated reachability spike
+        if: matrix.task == 'clippy'
+        run: |
+          cargo fmt --manifest-path scripts/profiling/reachability/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
+
+      - name: Build isolated reachability extension
+        if: matrix.profiling
+        run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
+
+      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host. The runner's
+      # Python links the system SQLite 3.45.1 (the CPython 3.13 put on PATH above links its own, older one, statically):
+      # build the amalgamation the lock resolves and load it into the runner's Python for the tests.
+      - name: Build the SQLite the reachability extension is bound to
+        if: matrix.profiling
+        run: |
+          sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
+          mkdir -p "$RUNNER_TEMP/sqlite"
+          gcc -O2 -shared -fPIC -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_LOAD_EXTENSION=1 -DSQLITE_ENABLE_MATH_FUNCTIONS \
+            -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
+
+      - name: Test SQL and Rust reachability adapters
+        if: matrix.profiling
+        env:
+          RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
+          PYTHONDONTWRITEBYTECODE: "1"
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sqlite
+        run: |
+          /usr/bin/python3 test/scripts/test_reachability.py
+          /usr/bin/python3 test/scripts/test_native_relations.py
+          /usr/bin/python3 test/scripts/test_native_sql_plan.py
+
+      # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
+      # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
+      # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
+      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
+      # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
+      # The shape gate requires profiling spans and must never silently skip on a production addon.
+      # Keep this debug addon separate from the package's release artifact.
+      - uses: ./.github/actions/node-deps
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+
+      - name: Build profiling addon for the producer shape gate
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        run: |
+          cargo build --manifest-path native/Cargo.toml --features code-rule-profile
+          cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
+
+      - name: Enforce broad producer execution shape
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:producer-shape
+
+      - name: Enforce 100 engine SQL submissions for the complete cold job
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
+
+      - name: Preserve SQL execution budget evidence
+        if: always() && matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sql-execution-budget
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/rerail-sql-budget/provenance.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-b-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-c-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/summary.md
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
+
+      - name: Test SQL statement capture and deferred explanations
+        if: matrix.profiling
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
+
+      - name: Check and test captured SQL replay and composition kernels
+        if: matrix.profiling
+        run: |
+          cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
+          cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
@@ -640,9 +797,12 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6. On
-    # a miss the second shard also makes a debug build of the engine for its Rust tests, which the limit leaves room for.
-    timeout-minutes: 45
+    # A shard takes about 9 minutes when the cache holds the engine; its tests take 5 to 6. On a miss each shard builds
+    # the split engine cold, release: 30 to 37 minutes on windows-2025 (bd25268a26's run). So the first shard needs about
+    # 2 minutes of set-up, up to 40 of build and 8 of tests, 50 in all: 60 leaves 10 to spare. On a miss the second
+    # shard also makes a cold debug build of rerail-engine's and rerail-lang-ecma's tests for the Windows-only Rust tests,
+    # which had run 11 minutes without finishing; up to 25 more with its tests, about 75 in all: 90 leaves 15.
+    timeout-minutes: ${{ matrix.shard == 2 && 90 || 60 }}
     permissions:
       contents: read
     strategy:
@@ -713,14 +873,16 @@ jobs:
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       # The engine's #[cfg(windows)] tests (process starts, Windows import roots) are compiled out on Linux, where the
-      # rust job runs every other test; these filters select them and the Windows-neutral tests beside them. A debug
-      # build, as in the rust job, so none of the release build above is reused.
+      # rust job runs every other test; these filters select them and the Windows-neutral tests beside them: the process
+      # tests are the engine's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rr` library's
+      # canonical path is joined with `/` by `bootstrap.rr`, which only Windows' verbatim paths broke: its test runs here
+      # too. A debug build, as in the rust job, so none of the release build above is reused.
       - name: Engine Windows tests
         if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: "0"
-        run: "cargo test --manifest-path native/Cargo.toml --lib -- process:: code_rule_dsl::import_target::"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Build the package
         run: npm run build:js
@@ -960,6 +1122,7 @@ jobs:
       - name: Script tests and reference examples
         run: |
           npm run test:scripts
+          npm run test:profiling
           npm run test:reference
 
       # The not-gated and pending lists may only shrink against the base: the pull request's base, or the push's previous
@@ -1145,8 +1308,9 @@ jobs:
         )
       }}
     runs-on: macos-15
-    # Three provider attempts of up to 3 minutes each, on top of a cold native build.
-    timeout-minutes: 25
+    # Three provider attempts of up to 3 minutes each, on top of a cold native build: about 26 minutes on
+    # macos-15 for the split engine (its release build with one codegen unit and thin LTO).
+    timeout-minutes: 45
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
       ANTHROPIC_FOUNDRY_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}

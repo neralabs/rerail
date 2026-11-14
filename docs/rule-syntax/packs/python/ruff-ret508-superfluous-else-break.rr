@@ -1,0 +1,20 @@
+.policy "ruff-ret508-superfluous-else-break" revision 2
+.description "Remove the else or elif after an if branch that breaks out of the loop, and dedent its code; the branch already exits the loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET508 (flake8-return): an `elif` or `else` right after an `if` body whose first jump is a `break`. That
+// branch leaves the loop, so the rest can be dedented. Only an if's first elif/else clause is
+// paired with its body, and only the body's own statements are looked at, in order: the first return, raise,
+// break or continue decides which rule fires. Checked in each def RET reads (python/flow-return); reported
+// at the keyword.
+//   if x:
+//       break
+//   else:                      ← RET508 "Unnecessary `else` after `break` statement"
+//       y()
+#include "python/flow-return.rr"
+
+.violation RET508(at: span, w: symbol) code "RET508" "Unnecessary `{w}` after `break` statement"
+    suppress ruff "RET508"
+RET508(kw, w) :- else_after_jump(kw, w, "break").

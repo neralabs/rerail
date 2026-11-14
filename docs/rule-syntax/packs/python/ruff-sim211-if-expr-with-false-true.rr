@@ -1,0 +1,17 @@
+.policy "ruff-sim211-if-expr-with-false-true" revision 2
+.description "Use not on the condition instead of a conditional expression that yields False when it holds and True otherwise."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM211 (flake8-simplify): `False if c else True`, the literals as written. Ruff's fix (`not c`) is
+// unsafe; none here.
+//   y = False if x else True       ← SIM211: y = not x
+//   y = False if x else False      not reported
+#include "python/ruff.rr"
+//   unparen(e, m)
+
+.violation SIM211(at: node) code "SIM211" "Use `not ...` instead of `False if ... else True`"
+    suppress ruff "SIM211"
+SIM211(e) :- kind(e, "conditional_expression"), child(e, b, 0), unparen(b, f), kind(f, "false"), child(e, o, 2),
+    unparen(o, t), kind(t, "true").

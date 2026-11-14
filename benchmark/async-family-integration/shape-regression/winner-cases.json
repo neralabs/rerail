@@ -1,0 +1,27 @@
+[
+  {
+    "name": "baseline"
+  },
+  {
+    "name": "planner_order",
+    "replacements": [
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ]
+    ]
+  },
+  {
+    "name": "bounded_positions_and_order",
+    "replacements": [
+      [
+        "rdl_int(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rdl_int WHERE i<4096)",
+        "rdl_int(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rdl_int WHERE i<(SELECT coalesce(max(length(sym_text(c2))),1) FROM q2_async_blocking))"
+      ],
+      [
+        " JOIN ",
+        " CROSS JOIN "
+      ]
+    ]
+  }
+]

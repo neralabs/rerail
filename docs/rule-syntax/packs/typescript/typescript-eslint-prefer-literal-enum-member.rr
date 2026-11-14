@@ -1,0 +1,64 @@
+.policy "typescript-eslint-prefer-literal-enum-member" revision 6
+.description "Initialize TypeScript enum members only with literal strings or numbers, not computed values or references to other members."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   enum_member, enum_init
+#include "tsx/eslint-a-common.rr"
+//   deparen, static_string
+
+// typescript-eslint's prefer-literal-enum-member: an enum member's value is a literal, so its value is plain to see.
+// A literal is a string, a number, `true`, `null`, a regex, a template with no `${}`, or one of these after unary
+// `+` or `-`. Reported at the member's name.
+//   enum E { A = f(), B = A, C = 1 + 1, D = `${x}` }        → each reported
+//   enum E { A = 1, B = -1, C = "c", D = `d` }               fine
+// Option allowBitwiseExpressions (default false): `~x` and `x | y` (also & ^ << >> >>>) are fine too, where each
+// operand is again a literal or names a member of the same enum: `A`, `E.A`, `E["A"]`. Only inside such an
+// expression may a member be named: `B = A` stays reported.
+.violation prefer_literal_enum_member(at: node, msg: symbol) code "@typescript-eslint/prefer-literal-enum-member" "{msg}"
+    suppress eslint "@typescript-eslint/prefer-literal-enum-member"
+    suppress oxlint "prefer-literal-enum-member"
+    suppress biome "lint/style/useLiteralEnumMembers"
+prefer_literal_enum_member(at, msg) :- enum_init(m, v), deparen(v, x), !literal_ok(x, 0),
+    (field(m, "name", at) ; !field(m, "name", _), at = m),
+    (option("allowBitwiseExpressions", "true"),
+        msg = "Explicit enum value must only be a literal value (string or number) or a bitwise expression." ;
+     !option("allowBitwiseExpressions", "true"),
+        msg = "Explicit enum value must only be a literal value (string or number).").
+
+// literal_ok(x, b): expression x is allowed, with b = 1 inside a bitwise expression. Asked top down, from each
+// initialiser through the operands the rule descends into (asked), so the recursion stays inside initialisers.
+.decl asked(x: node, b: number, e: node)  // x is examined with flag b, within enum e
+asked(x, 0, e) :- enum_member(e, m, _, _), enum_init(m, v), deparen(v, x).
+asked(y, b, e) :- asked(x, b, e), kind(x, "unary_expression"), (op(x, "-") ; op(x, "+")), field(x, "argument", a),
+    deparen(a, y).
+asked(y, 1, e) :- asked(x, _, e), bitwise(), kind(x, "unary_expression"), op(x, "~"), field(x, "argument", a),
+    deparen(a, y).
+asked(y, 1, e) :- asked(x, _, e), bitwise(), bit_op(x), (field(x, "left", a) ; field(x, "right", a)), deparen(a, y).
+.decl literal_ok(x: node, b: number)
+literal_ok(x, 1) :- asked(x, 1, e), self_member(e, x).
+literal_ok(x, b) :- asked(x, b, _), kind(x, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ;
+    k = "null" ; k = "regex").
+literal_ok(x, b) :- asked(x, b, _), kind(x, "template_string"), !has(x, _, "template_substitution").
+literal_ok(x, b) :- asked(x, b, _), kind(x, "unary_expression"), (op(x, "-") ; op(x, "+")),
+    field(x, "argument", a), deparen(a, y), literal_ok(y, b).
+literal_ok(x, b) :- asked(x, b, _), bitwise(), kind(x, "unary_expression"), op(x, "~"), field(x, "argument", a),
+    deparen(a, y), literal_ok(y, 1).
+literal_ok(x, b) :- asked(x, b, _), bitwise(), bit_op(x), field(x, "left", l), deparen(l, y), literal_ok(y, 1),
+    field(x, "right", r), deparen(r, z), literal_ok(z, 1).
+.decl bitwise()
+bitwise() :- option("allowBitwiseExpressions", "true").
+.decl bit_op(x: node)
+bit_op(x) :- kind(x, "binary_expression"), (op(x, "&") ; op(x, "|") ; op(x, "^") ; op(x, "<<") ; op(x, ">>") ;
+    op(x, ">>>")).
+// self_member(e, x): x names a member of enum e: `A`, or through the enum's own name, `E.A`, `E["A"]`.
+.decl self_member(e: node, x: node)
+self_member(e, x) :- asked(x, 1, e), kind(x, "identifier"), text(x, n), enum_member(e, _, _, n).
+self_member(e, x) :- asked(x, 1, e), kind(x, "member_expression"), field(x, "object", o), kind(o, "identifier"),
+    text(o, y), field(e, "name", id), text(id, y), field(x, "property", p), kind(p, "property_identifier"),
+    text(p, n), enum_member(e, _, _, n).
+self_member(e, x) :- asked(x, 1, e), kind(x, "subscript_expression"), field(x, "object", o), kind(o, "identifier"),
+    text(o, y), field(e, "name", id), text(id, y), field(x, "index", i), static_string(i, n), n != "",
+    enum_member(e, _, _, n).

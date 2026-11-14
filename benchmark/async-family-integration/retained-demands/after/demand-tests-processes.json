@@ -1,0 +1,164 @@
+[
+  {
+    "name": "aggregate-demand",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "logic::rr::aggregate_demand::tests",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 10.41066288948059,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "retained-demands",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "logic::plan::native_demand::",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.8828520774841309,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "posting-parity",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "facts::producers::python::families::tests::py_families_equal_s_producers",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.1424880027770996,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "import-screen",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "facts::producers::python::import_screen::tests",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.0182950496673584,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "semantic-cache",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "python_demand::tests",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.027439117431640625,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "async-shape",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "async_demand_uses_semantic_batches",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 2.1457889080047607,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "semantic-locality",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "semantic_operators_do_not_claim_document_locality",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.03476524353027344,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "semantic-contracts",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "semantic_helpers_share_exact_contracts",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.035340070724487305,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  },
+  {
+    "name": "async-positive",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "authored_rr_batched_positive_documents_preserve_all_four_labels",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.9097919464111328,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off"
+    }
+  }
+]

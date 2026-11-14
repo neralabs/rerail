@@ -1,0 +1,39 @@
+{
+  "mergedHead": "547a99099282b298038ca8741a64fe018fa6755d",
+  "integrationTip": "4ab83ed5190d1af7675f6a66544f9b35b972d9b1",
+  "sourceSha256": {
+    "native/src/code_rule_dsl/facts/core.rs": "a8d99be59736cfbd95569da8df85ac2b4f9f7998b44a77c39e6f61d2c5c79dd5",
+    "native/src/code_rule_dsl/facts/core/input_spike.rs": "8afc5ff2ee1750fc67bbe7f5eb967a5ab14d0b6ba137aa5e1b62730f71691df5",
+    "native/src/code_rule_dsl/facts/vtab/syntax.rs": "830303edd7daa6650ca9c4ad4d59a3f199e13659706287f6fb28a9400380a7e6",
+    "native/src/code_rule_dsl/logic/profile/analysis.rs": "3a2b4fe907e0e74a2b9b7ad79fa71bda1f7cf587c387e72e21e85d8561492ea3"
+  },
+  "binarySha256": "3c01b2c2d987f73c98e6c99e79a217ba31a6fe7678786cb1c7f0eb95a704fcc1",
+  "buildCommand": "PATH=/Users/jeremy/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin:$PATH CARGO_TARGET_DIR=/Users/jeremy/orca/artifacts/async-family-comparison/target nice -n 19 cargo test -p rerail-engine --lib --profile profiling --no-run",
+  "profiles": [
+    "baseline-profile",
+    "lines-profile",
+    "postings-profile",
+    "reserve-profile",
+    "combined-profile",
+    "baseline-warm-profile20",
+    "combined-warm-profile21",
+    "baseline-warm-profile22"
+  ],
+  "fullCorpusRuns": 47,
+  "focusedTestsPerArm": 45,
+  "focusedArms": [
+    "baseline",
+    "combined"
+  ],
+  "positiveFindingsPerArm": 120,
+  "warmBaselineProfiles": [
+    "baseline-warm-profile20",
+    "baseline-warm-profile22"
+  ],
+  "caveats": [
+    "Host variability is material; report all paired deltas.",
+    "Profiled CPU is attributed cost, not recoverable savings.",
+    "Payload/capacity sums are cumulative, not peak RSS.",
+    "Spikes are compiled only into tests."
+  ]
+}

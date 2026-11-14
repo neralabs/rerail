@@ -1,0 +1,26 @@
+.policy "react-no-render-return-value" revision 2
+.description "Don't use the return value of ReactDOM.render(); put a callback ref on the root element to get the instance instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-render-return-value: ReactDOM.render(…) whose value is kept: the call is (parentheses aside) a variable's
+// initializer, a property value, a returned value, an arrow's body or an assignment's right side.
+//   const inst = ReactDOM.render(<App />, root);     reported, at the callee
+//   ReactDOM.render(<App />, root);                  not: the value is dropped
+//   const h = ReactDOM?.render(<App />, root);       not: ESTree wraps an optional chain in a ChainExpression
+// For React 0.13 and 0.14 the plugin also checks React.render; the recording assumes the latest React.
+#include "tsx/react-class.rr"
+
+.violation no_render_return_value(at: node)
+    code "react/no-render-return-value"
+    "Stop using the return value of ReactDOM.render(); put a callback ref on the root element to get the instance."
+    suppress eslint "react/no-render-return-value"
+    suppress oxlint "no-render-return-value"
+no_render_return_value(f) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), kind(o, "identifier"), text(o, "ReactDOM"), field(f, "property", p), text(p, "render"),
+    !field(f, "optional_chain", _), !field(c, "optional_chain", _), estree_parent(c, q), kind(q, k), keeps_value(k),
+    docof(c, d), react_doc(d).
+.decl keeps_value(k: symbol)
+keeps_value("variable_declarator"). keeps_value("pair"). keeps_value("return_statement").
+keeps_value("arrow_function"). keeps_value("assignment_expression"). keeps_value("augmented_assignment_expression").

@@ -1,0 +1,28 @@
+.policy "eslint-no-nonoctal-decimal-escape" revision 4
+.description "Avoid the \\8 and \\9 escape sequences in strings; they are not valid escapes and just produce the digit, which misleads readers."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-nonoctal-decimal-escape: `\8` and `\9` in a string literal. They are not octal escapes (8 and 9
+// are not octal digits); sloppy code reads them as the digit itself, and strict code may reject them.
+//   '\8'   'foo\9bar'   '\0\8'      → reported, once per escape
+//   '\\8'  '8'  `\8` (a template: a syntax error, not a string)      fine
+// tree-sitter parses each escape as its own escape_sequence node, so `\\8` is the escape `\\` and a plain 8.
+// No options. ESLint offers suggestions only: write the digit, or escape the backslash.
+.violation no_nonoctal_decimal_escape(at: node, esc: symbol) code "no-nonoctal-decimal-escape"
+    "Replace '{esc}' with the plain digit, or escape the backslash if you meant a literal backslash."
+    suppress eslint "no-nonoctal-decimal-escape"
+    suppress oxlint "no-nonoctal-decimal-escape"
+    suppress biome "lint/correctness/noNonoctalDecimalEscape"
+    fix to_digit "Replace the escape with the digit it stands for."
+    fix escape_backslash "Escape the backslash, to keep it in the string."
+no_nonoctal_decimal_escape(e, x) :- kind(e, "escape_sequence"), text(e, x), glob("\\\\[89]", x),
+    child(s, e, _), kind(s, "string").
+
+// After `\0` the digit would join it: '\0\8' becomes '\u00008', not '\08' (a legacy octal escape).
+to_digit(e, x) :- after_nul(e, z), u = "\\u0000", d = substr(x, 1, 1) => replace(z, `$u`), replace(e, `$d`).
+to_digit(e, x) :- !after_nul(e, _), d = substr(x, 1, 1) => replace(e, `$d`).
+escape_backslash(e, x) :- b = cat("\\", x) => replace(e, `$b`).
+.decl after_nul(e: node, z: node)  // the escape just before e is `\0`
+after_nul(e, z) :- no_nonoctal_decimal_escape(e, _), kind(z, "escape_sequence"), text(z, "\\0"), next_sibling(z, e).

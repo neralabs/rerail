@@ -1,0 +1,19 @@
+.policy "ruff-em102-f-string-in-exception" revision 2
+.description "Assign an f-string exception message to a variable before raising instead of building it inline; the traceback otherwise shows the message twice."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff EM102 (flake8-errmsg): the raised exception's first positional argument is an f-string (or adjacent
+// literals one of which is). The traceback prints the raise line, so the message appears twice. t-strings
+// and `typing.cast(…)` are not reported.
+//   raise RuntimeError(f"This is an {example} exception")   ← EM102
+//   raise RuntimeError(t"{x}")                              not reported: a Template, not a str
+//   msg = f"bad {x}"; raise RuntimeError(msg)               not reported
+#include "python/misc2-messages.rr"
+
+.violation EM102(at: node) code "EM102"
+    "Assign this f-string to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
+    suppress ruff "EM102"
+EM102(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+    msg_form(a, "fstr").

@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-admin-async-purity",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer admin_async_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l8000_admin/tools/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/*test_*"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "pattern-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "attribute"
+              },
+              {
+                "regex": "\\basyncio\\s*\\.\\s*to_thread$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "asyncio.to_thread(): use native async operations in admin tools."
+      }
+    },
+    {
+      "id": "pattern-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^run_in_executor$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "run_in_executor(): use native async operations in admin tools."
+      }
+    },
+    {
+      "id": "pattern-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "regex": "^disable_sync_in_async_check$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "AAP001",
+        "anchor": "witness.span",
+        "message": "disable_sync_in_async_check(): use native async operations in admin tools."
+      }
+    }
+  ]
+}

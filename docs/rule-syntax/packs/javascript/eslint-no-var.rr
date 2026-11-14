@@ -1,0 +1,51 @@
+.policy "eslint-no-var" revision 3
+.description "Use let or const instead of var in JavaScript; they are block-scoped and avoid hoisting surprises."
+.language typescript
+.mode steer
+.scope include "**/*"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+
+#include "tsx/eslint-b-scope.rr"
+//   var_decl, for_head, keyword, decl_stmt, declarator (tsx/statements); ref_site, site_only (tsx/names)
+
+// ESLint's no-var: every `var` declaration, in a statement or a for head.
+//   var a = 1;   for (var k in o) {}   declare var x: number;   → reported (a for head at its `var`)
+//   let a = 1;   const b = 2;   declare global { var g: T }   → not: a global augmentation must use var
+// No options. ESLint fixes `var` to `let` where that cannot change the program; the fix here is a smaller,
+// sure subset of those cases (to_let, below).
+.violation no_var(at: loc) code "no-var" "Unexpected var, use let or const instead."
+    suppress eslint "no-var"
+    suppress oxlint "no-var"
+    suppress biome "lint/suspicious/noVar"
+    fix safe to_let "Replace var with let"
+no_var(x) :- var_decl(d, "var"), decl_stmt(d, x), !in_global_augmentation(d).
+no_var(t) :- for_head(f, "var"), keyword(f, t).
+// `declare global { var x: T }` adds x to the global object, which let cannot do.
+.decl in_global_augmentation(d: node)
+// `declare global { }`: the ambient declaration's first child is its block (the kind and block imply `global`).
+in_global_augmentation(d) :- kind(a, "ambient_declaration"), child(a, b, 0), kind(b, "statement_block"), within(d, a).
+
+// to_let: `var` becomes `let` where nothing can tell them apart. The declaration is a statement of a function's
+// own body (not the global scope, where var makes a property of the global object; not a loop, a block or a
+// switch case), it binds plain names declared nowhere else in the function, none of them is called `let`,
+// and every use of them comes after the declaration (no use in the temporal dead zone). A use inside a
+// nested function declaration counts as early: the declaration is hoisted and may run first.
+//   function f() { var a = 1; g(a); }          → function f() { let a = 1; g(a); }
+//   function f() { g(a); var a = 1; }          no fix: a is used before its declaration
+//   function f(a) { var a = 1; }   function f() { var a; function a() {} }    no fix: a is declared twice
+//   function f() { g(); var a = 1; function g() { return a; } }    no fix: g runs before `let a` would
+// The kind implies `var` (the tape keeps none): it is the first word of x's source.
+to_let(x) :- var_decl(x, "var"), fn_body_stmt(x), !unsafe(x), match("(?s)(?<t>var)\\b.*", x) => replace(t, `let`).
+.decl fn_body_stmt(x: node)
+fn_body_stmt(x) :- child(b, x, _), kind(b, "statement_block"), field(f, "body", b), kind(f, k), function_kind(k).
+.decl unsafe(x: node)
+unsafe(x) :- declarator(x, v, _), field(v, "name", n), !kind(n, "identifier").
+unsafe(x) :- declarator(x, v, _), !site_only(v).
+// Any other declaration of the name in eslint-scope's variable (a parameter, a function, another var).
+unsafe(x) :- declarator(x, v, _), field(v, "name", n), text(n, y), var_site(s, y, n), var_site(s, y, o), o != n.
+unsafe(x) :- declarator(x, v, _), field(v, "name", n), text(n, "let").
+unsafe(x) :- declarator(x, v, _), ref_site(r, v), node(_, r, _, b, _), node(_, x, _, _, e), b < e.
+unsafe(x) :- declarator(x, v, _), ref_site(r, v), inside(r, h, hoisted_fn), fn_body_stmt(x), within(h, x0),
+    child(x0, x, _).
+.decl hoisted_fn(k: symbol)  // function declarations, which run before the statements around them
+hoisted_fn("function_declaration"). hoisted_fn("generator_function_declaration").

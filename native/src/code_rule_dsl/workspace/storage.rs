@@ -7,7 +7,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
+    CapacityState, ContentStore, OperationDeadline, SnapshotId, StoreError,
     StoreResult, WorkspaceId, WorkspaceRegistration,
 };
 use crate::git_workspace;
@@ -17,15 +17,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-pub(super) struct StoreRegistryEntry {
+pub struct StoreRegistryEntry {
     store: std::sync::Weak<ContentStore>,
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub(super) static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
+pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(super) fn shared_content_store(
+pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
     let mut stores = CONTENT_STORES
@@ -58,7 +58,7 @@ pub(super) fn shared_content_store(
     Ok((store, maintenance))
 }
 
-pub(super) struct StorageMaintenance {
+pub struct StorageMaintenance {
     stop: StdArc<AtomicBool>,
     workspaces: StdArc<Mutex<HashMap<WorkspaceId, (String, usize)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -70,9 +70,7 @@ impl StorageMaintenance {
         let workspaces = StdArc::new(Mutex::new(HashMap::<WorkspaceId, (String, usize)>::new()));
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-maintenance".to_owned())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
                 let mut search_index_cursor = None;
                 loop {
                     std::thread::park_timeout(Duration::from_secs(30));
@@ -94,11 +92,20 @@ impl StorageMaintenance {
                             .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
                             .collect::<Vec<_>>();
                         let _ = store.renew_workspace_leases(&leases, now + 120);
-                        if store
+                        // Above the soft limit, or with corpus runs' collection due (decision 0053): passes
+                        // for up to a second of each wake, each a bounded transaction.
+                        let pressed = store
                             .capacity()
-                            .is_ok_and(|capacity| !matches!(capacity.state, CapacityState::Normal))
-                        {
-                            let _ = store.collect(now, MAX_COLLECTION_BATCH);
+                            .is_ok_and(|capacity| !matches!(capacity.state, CapacityState::Normal));
+                        let policy = crate::content_store::CorpusPolicy::default();
+                        if pressed || store.corpus_pass_wanted(&policy, now).unwrap_or(false) {
+                            let started = Instant::now();
+                            while started.elapsed() < Duration::from_secs(1) && !thread_stop.load(Ordering::Acquire) {
+                                match store.collect_corpus_pass(&policy, now) {
+                                    Ok(pass) if pass.did_work() => {}
+                                    _ => break,
+                                }
+                            }
                         }
                     }
                     index_stored_tapes(&store, &thread_stop, &mut search_index_cursor);
@@ -141,7 +148,7 @@ impl StorageMaintenance {
 /// The keyset cursor only moves forward until the backlog after it is empty, so a batch this build
 /// cannot index never pins it; then it starts over and picks up tapes stored below it meanwhile.
 /// A tape this build can never decode leaves the backlog with an incomplete index set.
-pub(super) fn index_stored_tapes(
+pub fn index_stored_tapes(
     store: &ContentStore,
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
@@ -183,14 +190,14 @@ pub(super) fn index_stored_tapes(
             && store
                 .put_unavailable_search_indexes(
                     &undecodable,
-                    crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                    crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 )
                 .is_err()
         {
             return;
         }
         if !tapes.is_empty()
-            && crate::code_rule_dsl::transducer::persist_search_index_batch(
+            && crate::code_rule_dsl::search_index::persist_search_index_batch(
                 store, &tapes, &documents,
             )
             .is_err()
@@ -241,7 +248,7 @@ impl Drop for StorageMaintenance {
     }
 }
 
-pub(super) struct StorageRegistration {
+pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
 }
@@ -253,18 +260,18 @@ impl Drop for StorageRegistration {
 }
 
 #[derive(Clone)]
-pub(super) struct StorageContext {
-    pub(super) store: StdArc<ContentStore>,
-    pub(super) repository: Option<StdArc<git_workspace::GitWorkspace>>,
+pub struct StorageContext {
+    pub store: StdArc<ContentStore>,
+    pub repository: Option<StdArc<git_workspace::GitWorkspace>>,
     /// The workspace root relative to the repository worktree (`""`, or `dir/` with a trailing
     /// slash). Workspace paths are root-relative; `repository_prefix + path` is the repository path.
-    pub(super) repository_prefix: String,
-    pub(super) workspace_id: WorkspaceId,
-    pub(super) snapshot_id: SnapshotId,
-    pub(super) owner: String,
+    pub repository_prefix: String,
+    pub workspace_id: WorkspaceId,
+    pub snapshot_id: SnapshotId,
+    pub owner: String,
     /// The names the host judges secret-like: a file so named is never written to the store.
-    pub(super) secret_names: StdArc<SecretNames>,
-    pub(super) _maintenance: Option<StdArc<StorageRegistration>>,
+    pub secret_names: StdArc<SecretNames>,
+    pub _maintenance: Option<StdArc<StorageRegistration>>,
 }
 
 impl StorageContext {
@@ -281,8 +288,8 @@ pub(super) fn unix_seconds() -> Result<i64> {
 
 /// A workspace's storage context over an explicit store file, discovering its Git worktree, with
 /// no secret-like names.
-#[cfg(test)]
-pub(super) fn storage_context_in(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn storage_context_in(
     root: &str,
     store_path: std::path::PathBuf,
 ) -> Result<StorageContext> {
@@ -371,8 +378,7 @@ pub(super) fn attach_storage(
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = std::path::Path::new(root)
-        .canonicalize()
+    let root = dunce::canonicalize(std::path::Path::new(root))
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

@@ -1,0 +1,169 @@
+// python/pytest-collect (draft, not compiled): an estimate of what
+// `pytest --collect-only` reports, from the source alone.
+//
+// Interface
+//   collect_file(d)        document d is a test module pytest collects
+//   collect_item(t, k)     test function t yields k items
+//   collect_open(t)        t's count is a floor: some factor was unknown
+//   collected(n)           the sum of collect_item over all test modules
+//   collected_dir(g, n)    the same per directory group, as the budget
+//                          script keys it (conform/<g>/..., or "root")
+#include "python/ast.rr"
+#include "python/names.rr"    // sym_of, class_def, subclass, binding
+#include "python/pytest.rr"   // pytest_deco, pytest_fixture, pytest_mark
+
+// ---- 1. which files ---------------------------------------------------
+// The patterns come from [tool.pytest.ini_options] in pyproject.toml.
+// Missing piece: a TOML reader (today: json, yaml, lines, file).
+.decl cfg_files(p: symbol)
+.input cfg_files(IO=toml, filename="pyproject.toml",
+    path="/tool/pytest/ini_options/python_files")
+.decl files_pat(p: symbol)
+files_pat(p) :- cfg_files(p).
+files_pat("test_*.py") :- !cfg_files(_).    // pytest's defaults
+files_pat("*_test.py") :- !cfg_files(_).
+// The budget script hands pytest conform/**/test_*.py, so the scope
+// is conform/; the patterns still decide the file name.
+.decl collect_file(d: number)
+collect_file(d) :- doc(d, p, _), prefix("conform/", p),
+    file_name(d, x), files_pat(g), glob(g, x).
+
+// ---- 2. which names ---------------------------------------------------
+// python_functions = ["test_*"] and python_classes = ["Test*"]: globs
+// on the name, not prefixes ("testing" is not "test_*").
+.decl fn_pat(p: symbol)
+fn_pat("test_*").      // read from the same TOML table in the real rule
+.decl cls_pat(p: symbol)
+cls_pat("Test*").
+.decl test_name(x: symbol)
+test_name(x) :- def_name(_, x), fn_pat(g), glob(g, x).
+.decl class_name_ok(x: symbol)
+class_name_ok(x) :- def_name(_, x), cls_pat(g), glob(g, x).
+
+// A module's namespace is what pytest walks: its own defs and also the
+// names it imports. `from .base import test_shared` collects test_shared
+// again in this module (pytest's own pitfall, and it happens here).
+.decl ns_entry(d: number, x: symbol, f: node)
+ns_entry(d, x, f) :- collect_file(d), modnode(d, m), stmt_def(m, f),
+    def_name(f, x).
+ns_entry(d, x, f) :- collect_file(d), modnode(d, m),
+    binding(m, x, site, "import"), sym_of(site, q), qualname(f, q).
+
+// ---- 3. classes -------------------------------------------------------
+// A Test* class is skipped when it or any base defines __init__ or
+// __new__, or sets __test__ = False. Bases resolve across files.
+.decl has_init(q: symbol)
+has_init(q) :- method(q, x, _), (x = "__init__" ; x = "__new__").
+has_init(q) :- subclass(q, b), has_init(b).
+.decl test_off(q: symbol)
+test_off(q) :- class_def(c, q), field(c, "body", b), body_stmt(b, s, _),
+    assign_target(s, t), text(t, "__test__"), assign_value(s, v),
+    kind(v, "false").
+test_off(q) :- subclass(q, b), test_off(b).
+.decl test_class(d: number, q: symbol)
+test_class(d, q) :- ns_entry(d, x, c), kind(c, "class_definition"),
+    class_name_ok(x), class_def(c, q), !has_init(q), !test_off(q).
+// Nested Test* classes are collected too.
+test_class(d, q2) :- test_class(d, q), class_def(c, q), field(c, "body", b),
+    stmt_def(b, c2), def_name(c2, x), class_name_ok(x), class_def(c2, q2),
+    !has_init(q2), !test_off(q2).
+
+// ---- 4. test functions (item templates) -------------------------------
+// t is the template: (module doc, owning class or "", def node).
+// Inherited methods count once per name, in each subclass that is
+// collected; mro_method is names.rr's approximate MRO.
+.decl test_fn(d: number, owner: symbol, f: node)
+test_fn(d, "", f) :- ns_entry(d, x, f), kind(f, "function_definition"),
+    test_name(x), !pytest_fixture(f, _, _).
+test_fn(d, q, f) :- test_class(d, q), mro_method(q, x, f), test_name(x),
+    !pytest_fixture(f, _, _).
+
+// ---- 5. lengths of argvalues ------------------------------------------
+// seq_len(e, k): e evaluates to a sequence of k elements. Literals count
+// their children; a spread `*xs` adds xs's length; names follow their
+// binding, in this file or another (sym_of). No row = unknown.
+.decl seq_kind(k: symbol)
+seq_kind("list"). seq_kind("tuple"). seq_kind("set").
+seq_kind("dictionary").
+.decl elem(l: node, i: number, e: node)
+elem(l, i, e) :- kind(l, k), seq_kind(k), child(l, e, i), !kind(e, "comment").
+// len_upto(l, i, k): the elements before child i contribute k. A fold
+// over child order; recursion with addition, no aggregate in the cycle.
+.decl len_upto(l: node, i: number, k: number)
+len_upto(l, 0, 0) :- kind(l, k), seq_kind(k).
+len_upto(l, i + 1, k + 1) :- len_upto(l, i, k), elem(l, i, e),
+    !kind(e, "list_splat"), !kind(e, "dictionary_splat").
+len_upto(l, i + 1, k + w) :- len_upto(l, i, k), elem(l, i, e),
+    kind(e, "list_splat"), child(e, x, 0), seq_len(x, w).
+len_upto(l, i + 1, k) :- len_upto(l, i, k), child(l, e, i), kind(e, "comment").
+.decl seq_len(e: node, k: number)
+seq_len(l, k) :- len_upto(l, n, k), n = count : { child(l, _, _) }.
+seq_len(e, k) :- kind(e, "parenthesized_expression"), child(e, x, 0),
+    seq_len(x, k).
+// a + b
+seq_len(e, a + b) :- kind(e, "binary_operator"), op(e, "+"),
+    field(e, "left", l), field(e, "right", r), seq_len(l, a), seq_len(r, b).
+// A name: a module-level constant here or in another module.
+.decl const_of(q: symbol, v: node)
+const_of(q, v) :- modnode(_, m), binding(m, x, site, "assign"),
+    site_only(site), binding_value(site, v), modname(m, mq), q = @dot(mq, x).
+seq_len(e, k) :- kind(e, "identifier"), sym_of(e, q), const_of(q, v),
+    seq_len(v, k).
+seq_len(e, k) :- kind(e, "attribute"), sym_of(e, q), const_of(q, v),
+    seq_len(v, k).
+// list(xs), tuple(xs), sorted(xs); range(a, b) with literal bounds.
+seq_len(e, k) :- call_arg(e, 0, "", a), callee(e, g), sym_of(g, q),
+    (q = "builtins.list" ; q = "builtins.tuple" ; q = "builtins.sorted"),
+    seq_len(a, k).
+// A comprehension without `if`: the product of its iterables' lengths.
+// (One generator shown; several need the same fold as len_upto.)
+seq_len(e, k) :- kind(e, "list_comprehension"), child(e, g, 1),
+    kind(g, "for_in_clause"), field(g, "right", it), seq_len(it, k),
+    count : { child(e, c, _), kind(c, "if_clause") } = 0,
+    count : { child(e, c, _), kind(c, "for_in_clause") } = 1.
+
+// ---- 6. parametrize factors -------------------------------------------
+// factor(d, o, f, site, k): template (d, o, f) is multiplied by k at site.
+// Marks stack: on the def, on each enclosing class, and pytestmark.
+.decl pz(o: node, call: node)  // a @pytest.mark.parametrize(...) on o
+pz(o, e) :- pytest_mark(o, _, e, "parametrize"), kind(e, "call").
+.decl pz_len(e: node, k: number)
+pz_len(e, k) :- call_arg(e, 1, "", v), seq_len(v, n), k = max(n, 1).
+pz_len(e, k) :- call_arg(e, -1, "argvalues", v), seq_len(v, n),
+    k = max(n, 1).                 // an empty list still yields one item
+.decl pz_open(e: node)
+pz_open(e) :- pz(_, e), !pz_len(e, _).
+// The names a parametrize supplies directly: they hide fixtures.
+.decl pz_name(e: node, x: symbol)
+pz_name(e, x) :- pz(_, e), call_arg(e, 0, "", s), str(s, v),
+    split_names(v, x).             // "a, b" -> a, b (pytest.rr has the split)
+
+.decl factor(d: number, o: symbol, f: node, site: node, k: number)
+factor(d, o, f, e, k) :- test_fn(d, o, f), pz(f, e), pz_len(e, k).
+factor(d, o, f, e, k) :- test_fn(d, o, f), o != "", class_def(c, o),
+    pz(c, e), pz_len(e, k).
+// pytestmark = [pytest.mark.parametrize(...)] at module level: left out
+// here; the same shape, keyed by the module.
+
+// ---- 7. fixtures with params= -----------------------------------------
+// fx_def(scope_dir, x, f): fixture x is defined by f in a conftest.py of
+// scope_dir, or in the test module itself (scope_dir = its path).
+// visible(d, x, f): the nearest definition of x seen from module d.
+// needs(d, o, t, x): the template's closure of fixture names: its
+// arguments, autouse fixtures, usefixtures marks, then each fixture's
+// own arguments, transitively. Recursive, no aggregate in the cycle.
+// A parametrize name x (pz_name) stops the walk at x.
+// fx_factor(d, o, f, x, k): fixture x in the closure has params of k.
+//   ... (rules as in section 6, with pytest_fixture's `params` keyword)
+
+// ---- 8. the count -----------------------------------------------------
+// Missing piece: a product aggregate. With it:
+//   collect_item(d, o, f, k) :- test_fn(d, o, f),
+//       k = product w : { factor(d, o, f, _, w) ; fx_factor(d, o, f, _, w) }.
+// Without it, the same fold as len_upto over a ranked factor list.
+.decl collect_item(d: number, o: symbol, f: node, k: number)
+.decl collected(n: number)
+.output collected
+collected(n) :- n = sum k : { collect_item(_, _, _, k) }.
+.decl collect_open(d: number, o: symbol, f: node)
+collect_open(d, o, f) :- test_fn(d, o, f), pz(f, e), pz_open(e).

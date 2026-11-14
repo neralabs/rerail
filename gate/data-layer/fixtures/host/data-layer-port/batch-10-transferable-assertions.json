@@ -1,0 +1,3290 @@
+{
+  "format": "rerail.data-layer-transferable-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 1471,
+  "cases": {
+    "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root": {
+      "source": "def test_paths_are_under_repo_root() -> None:\n    assert CONDITIONAL_STEP_FILE.is_relative_to(ROOT)\n    assert CONDITIONAL_DIALECT_TEST_FILE.is_relative_to(ROOT)",
+      "sha256": "a48fe6217b23bf5f2e25f82837f8f5d5864a09f3513385e547aff4683d752313",
+      "assertions": [
+        {
+          "source": "CONDITIONAL_STEP_FILE.is_relative_to(ROOT)",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        },
+        {
+          "source": "CONDITIONAL_DIALECT_TEST_FILE.is_relative_to(ROOT)",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_all_identifiers": {
+      "source": "def test_banned_intent_graph_all_identifiers() -> None:\n    for s in BANNED_INTENT_GRAPH_SYMBOLS:\n        assert s.isidentifier()",
+      "sha256": "673a04296c3a986540dcc1a6ece85b5eda0be8b3aaaa39e70056d6018652becd",
+      "assertions": [
+        {
+          "source": "s.isidentifier()",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_nonempty": {
+      "source": "def test_banned_intent_graph_nonempty() -> None:\n    assert BANNED_INTENT_GRAPH_SYMBOLS",
+      "sha256": "0ae4a6d19a821c9506457f1148c4994ff148382f49d4a4330d52aa9a1843de57",
+      "assertions": [
+        {
+          "source": "BANNED_INTENT_GRAPH_SYMBOLS",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_all_identifiers": {
+      "source": "def test_banned_intent_graph_symbols_all_identifiers() -> None:\n    for sym in BANNED_INTENT_GRAPH_SYMBOLS:\n        assert sym.isidentifier()\n        assert sym",
+      "sha256": "1d03b9a06b0b6a86fa0e47bc4333f11b832c2ae924f2ed2019afd1d1d08705b8",
+      "assertions": [
+        {
+          "source": "sym.isidentifier()",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        },
+        {
+          "source": "sym",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_complete_set": {
+      "source": "def test_banned_intent_graph_symbols_complete_set() -> None:\n    expected = {\n        \"_GraphQueryTerminalMode\",\n        \"_clone_graph_pattern\",\n        \"GraphQueryTerminalIntent\",\n        \"GraphQueryTerminalStep\",\n    }\n    assert BANNED_INTENT_GRAPH_SYMBOLS == expected",
+      "sha256": "fcdb12ec746270132df69c838ed40ba689cd8875cfb226cbb011fa18f46cb90d",
+      "assertions": [
+        {
+          "source": "BANNED_INTENT_GRAPH_SYMBOLS == expected",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_is_frozenset": {
+      "source": "def test_banned_intent_graph_symbols_is_frozenset() -> None:\n    assert isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)\n    assert \"GraphQueryTerminalIntent\" in BANNED_INTENT_GRAPH_SYMBOLS",
+      "sha256": "2088302b6eeec3e8d4cef9648b259fafb936af0430ca2c1d7d2f69306f477fb2",
+      "assertions": [
+        {
+          "source": "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        },
+        {
+          "source": "'GraphQueryTerminalIntent' in BANNED_INTENT_GRAPH_SYMBOLS",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_size_exactly_four": {
+      "source": "def test_banned_intent_graph_symbols_size_exactly_four() -> None:\n    assert len(BANNED_INTENT_GRAPH_SYMBOLS) == 4",
+      "sha256": "b1b4228381b413360a21c81acd9d8ef87629d5fedb752f459431d634cbc33254",
+      "assertions": [
+        {
+          "source": "len(BANNED_INTENT_GRAPH_SYMBOLS) == 4",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_are_frozensets": {
+      "source": "def test_banned_symbols_are_frozensets() -> None:\n    assert isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)\n    assert isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)",
+      "sha256": "b1356f41b5bdac20239587594e22cdc113f031b74e9aa0fefb39322d5a1864af",
+      "assertions": [
+        {
+          "source": "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        },
+        {
+          "source": "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_disjoint": {
+      "source": "def test_banned_symbols_disjoint() -> None:\n    assert not (BANNED_VERSIONED_LAZY_SYMBOLS & BANNED_INTENT_GRAPH_SYMBOLS)",
+      "sha256": "a16e1135ac118dbafd248e714368743e06206fe729a5ce7d6ef75fa2f8dd42d7",
+      "assertions": [
+        {
+          "source": "not BANNED_VERSIONED_LAZY_SYMBOLS & BANNED_INTENT_GRAPH_SYMBOLS",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_all_identifiers": {
+      "source": "def test_banned_versioned_lazy_all_identifiers() -> None:\n    for s in BANNED_VERSIONED_LAZY_SYMBOLS:\n        assert s.isidentifier()",
+      "sha256": "f9c12ba1cab5ef55a734aaba96cd1cb21660456dd9e3ed6ba177690ac846461a",
+      "assertions": [
+        {
+          "source": "s.isidentifier()",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_nonempty": {
+      "source": "def test_banned_versioned_lazy_nonempty() -> None:\n    assert BANNED_VERSIONED_LAZY_SYMBOLS",
+      "sha256": "b6d517c01b1d9307ba31f2fe310a78413d0f5f19d2a66428c3cada07bb3900d7",
+      "assertions": [
+        {
+          "source": "BANNED_VERSIONED_LAZY_SYMBOLS",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_all_identifiers": {
+      "source": "def test_banned_versioned_lazy_symbols_all_identifiers() -> None:\n    for sym in BANNED_VERSIONED_LAZY_SYMBOLS:\n        assert sym.isidentifier()\n        assert sym",
+      "sha256": "cd31212dbd66664d2c15060e2bf50e3b6cb40e5e72c2f2d66e0e8f91d78dfe46",
+      "assertions": [
+        {
+          "source": "sym.isidentifier()",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        },
+        {
+          "source": "sym",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_complete_set": {
+      "source": "def test_banned_versioned_lazy_symbols_complete_set() -> None:\n    expected = {\n        \"_get_or_create_plan_flush_context\",\n        \"_lazy_result_for_plan_ref\",\n        \"_add_plan_intent\",\n        \"_MappedLazyContext\",\n        \"_map_lazy\",\n        \"_make_graph_query_builder\",\n        \"_TxnBoundGraphQueryBuilder\",\n        \"_PlanBackedGraphTraversal\",\n        \"_PlanBackedGraphQuery\",\n    }\n    assert BANNED_VERSIONED_LAZY_SYMBOLS == expected",
+      "sha256": "7c82d7c23786a216b686267acb8d140232daed3c90086702a9c5cb267e939557",
+      "assertions": [
+        {
+          "source": "BANNED_VERSIONED_LAZY_SYMBOLS == expected",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_is_frozenset": {
+      "source": "def test_banned_versioned_lazy_symbols_is_frozenset() -> None:\n    assert isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)\n    assert \"_PlanBackedGraphQuery\" in BANNED_VERSIONED_LAZY_SYMBOLS",
+      "sha256": "d397664f8c5b418af92e46ba829d713d9fe12b6f657f386b18ee1e508ab7849a",
+      "assertions": [
+        {
+          "source": "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        },
+        {
+          "source": "'_PlanBackedGraphQuery' in BANNED_VERSIONED_LAZY_SYMBOLS",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_size_exactly_nine": {
+      "source": "def test_banned_versioned_lazy_symbols_size_exactly_nine() -> None:\n    assert len(BANNED_VERSIONED_LAZY_SYMBOLS) == 9",
+      "sha256": "2a6f2f67e159d7a3415d99078b32abc499a3262b241c140d9de4aedce99a5f72",
+      "assertions": [
+        {
+          "source": "len(BANNED_VERSIONED_LAZY_SYMBOLS) == 9",
+          "contract": "constants",
+          "reason": "Exact denied vocabulary and its value constraints in the shipped program"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_graph_lazy_sql_is_py_file": {
+      "source": "def test_graph_lazy_sql_is_py_file() -> None:\n    assert GRAPH_LAZY_SQL.suffix == \".py\"",
+      "sha256": "cde499daee7b5b650be34dcfa13fedd788b0eeb51502bd25d7807d7f3e6426f7",
+      "assertions": [
+        {
+          "source": "GRAPH_LAZY_SQL.suffix == '.py'",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_is_py_file": {
+      "source": "def test_intent_graph_is_py_file() -> None:\n    assert INTENT_GRAPH.suffix == \".py\"",
+      "sha256": "b6d5fd83b0d8e4e3d30cb9df563c95d9c96f3e874351810d16465ad5305955ad",
+      "assertions": [
+        {
+          "source": "INTENT_GRAPH.suffix == '.py'",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_path_is_inside_root": {
+      "source": "def test_intent_graph_path_is_inside_root() -> None:\n    assert INTENT_GRAPH.is_relative_to(ROOT)",
+      "sha256": "99421c1500dba31f4be95cd38c057d27f10d962bbbe5d678afd4c126e2de5778",
+      "assertions": [
+        {
+          "source": "INTENT_GRAPH.is_relative_to(ROOT)",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_exits_zero": {
+      "source": "def test_main_help_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--help\"])\n    with pytest.raises(SystemExit) as exc:\n        main()\n    assert exc.value.code == 0",
+      "sha256": "429c8f77062ae56f94f5736d6c55a061f60e456feb1613bf99d0ed2cc8600658",
+      "assertions": [
+        {
+          "source": "pytest.raises(SystemExit)",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "exc.value.code == 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [
+          "--help"
+        ],
+        "findings": [],
+        "stdout": "usage: lint_graph_lazy_sql_plan.py [-h] [--check]\n\nLint the interim graph lazy SQL intent plan contract\n\noptions:\n  -h, --help  show this help message and exit\n  --check     Exit non-zero on violations\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": true
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_flag_returns_zero": {
+      "source": "def test_main_help_flag_returns_zero(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--help\"])\n    with pytest.raises(SystemExit) as exc_info:\n        main()\n    assert exc_info.value.code == 0\n    out = capsys.readouterr().out\n    assert \"--check\" in out",
+      "sha256": "62063b7eb3df75057c493baab46d4424dcaf1ad1d953440add900e534db98bdc",
+      "assertions": [
+        {
+          "source": "pytest.raises(SystemExit)",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "exc_info.value.code == 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'--check' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [
+          "--help"
+        ],
+        "findings": [],
+        "stdout": "usage: lint_graph_lazy_sql_plan.py [-h] [--check]\n\nLint the interim graph lazy SQL intent plan contract\n\noptions:\n  -h, --help  show this help message and exit\n  --check     Exit non-zero on violations\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": true
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_is_callable_returns_int": {
+      "source": "def test_main_is_callable_returns_int(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(linter, \"run_checks\", list)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    rc = main()\n    capsys.readouterr()\n    assert isinstance(rc, int)",
+      "sha256": "512a45301ad95e621c4c70037ebe9320843ec5eb500b19d2c4e2478c27663504",
+      "assertions": [
+        {
+          "source": "isinstance(rc, int)",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [],
+        "findings": [],
+        "stdout": "Graph lazy SQL intent plan linter: clean.\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_output_format_has_code_path_line_and_message": {
+      "source": "def test_main_output_format_has_code_path_line_and_message(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(\n        linter,\n        \"run_checks\",\n        lambda: [Violation(\"GLSP-099\", \"some/file.py\", 42, \"my-message\")],\n    )\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--check\"])\n    rc = main()\n    out = capsys.readouterr().out\n    assert rc == 1\n    assert \"GLSP-099 some/file.py:42: my-message\" in out",
+      "sha256": "5cf40bdd8872eecb49cfda7a7d13e28c46dfe2754e90776c2063815553cd9ab8",
+      "assertions": [
+        {
+          "source": "rc == 1",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'GLSP-099 some/file.py:42: my-message' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-099",
+          "file_path": "some/file.py",
+          "line_number": 42,
+          "message": "my-message"
+        }
+      ],
+      "command": {
+        "arguments": [
+          "--check"
+        ],
+        "findings": [
+          {
+            "code": "GLSP-099",
+            "file_path": "some/file.py",
+            "line_number": 42,
+            "message": "my-message"
+          }
+        ],
+        "stdout": "GLSP-099 some/file.py:42: my-message\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 1,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_prints_violation_details": {
+      "source": "def test_main_prints_violation_details(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    def _fake_run_checks() -> list[Violation]:\n        return [Violation(code=\"X1\", file_path=\"foo.py\", line_number=42, message=\"bad thing\")]\n\n    monkeypatch.setattr(linter, \"run_checks\", _fake_run_checks)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    main()\n    out = capsys.readouterr().out\n    assert \"X1\" in out\n    assert \"foo.py\" in out\n    assert \"42\" in out\n    assert \"bad thing\" in out",
+      "sha256": "47f1224677f421cab716314cee21a8742f91c547398c6eeaf060863da3f5d5ae",
+      "assertions": [
+        {
+          "source": "'X1' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'foo.py' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'42' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'bad thing' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "X1",
+          "file_path": "foo.py",
+          "line_number": 42,
+          "message": "bad thing"
+        }
+      ],
+      "command": {
+        "arguments": [],
+        "findings": [
+          {
+            "code": "X1",
+            "file_path": "foo.py",
+            "line_number": 42,
+            "message": "bad thing"
+          }
+        ],
+        "stdout": "X1 foo.py:42: bad thing\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_reports_plural_violation_count": {
+      "source": "def test_main_reports_plural_violation_count(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(\n        linter,\n        \"run_checks\",\n        lambda: [\n            Violation(\"GLSP-099\", \"x.py\", 1, \"a\"),\n            Violation(\"GLSP-100\", \"x.py\", 2, \"b\"),\n        ],\n    )\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--check\"])\n    rc = main()\n    out = capsys.readouterr().out\n    assert rc == 1\n    assert \"Found 2 graph lazy SQL plan violation\" in out",
+      "sha256": "4c1a825f1289d05952d2ff0216cd16a89ee2bdfcc57d1cd28a2c9dd52d9e4266",
+      "assertions": [
+        {
+          "source": "rc == 1",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'Found 2 graph lazy SQL plan violation' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-099",
+          "file_path": "x.py",
+          "line_number": 1,
+          "message": "a"
+        },
+        {
+          "code": "GLSP-100",
+          "file_path": "x.py",
+          "line_number": 2,
+          "message": "b"
+        }
+      ],
+      "command": {
+        "arguments": [
+          "--check"
+        ],
+        "findings": [
+          {
+            "code": "GLSP-099",
+            "file_path": "x.py",
+            "line_number": 1,
+            "message": "a"
+          },
+          {
+            "code": "GLSP-100",
+            "file_path": "x.py",
+            "line_number": 2,
+            "message": "b"
+          }
+        ],
+        "stdout": "GLSP-099 x.py:1: a\nGLSP-100 x.py:2: b\n\nFound 2 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 1,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_int_when_clean": {
+      "source": "def test_main_returns_int_when_clean(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(linter, \"run_checks\", list)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    rc = main()\n    capsys.readouterr()\n    assert rc == 0",
+      "sha256": "77e290b5ed62ac254281d1e7070c5037569d48bdfb14d35978ade09826f603f3",
+      "assertions": [
+        {
+          "source": "rc == 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [],
+        "findings": [],
+        "stdout": "Graph lazy SQL intent plan linter: clean.\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_one_on_violations_with_check": {
+      "source": "def test_main_returns_one_on_violations_with_check(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    def _fake_run_checks() -> list[Violation]:\n        return [Violation(code=\"X\", file_path=\"a.py\", line_number=1, message=\"m\")]\n\n    monkeypatch.setattr(linter, \"run_checks\", _fake_run_checks)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--check\"])\n    assert main() == 1\n    out = capsys.readouterr().out\n    assert \"Found 1 graph lazy SQL plan violation\" in out",
+      "sha256": "f812299910bdee2c8423d833e49532a887480f3dc5bcd8214a05eb86dbabe476",
+      "assertions": [
+        {
+          "source": "main() == 1",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'Found 1 graph lazy SQL plan violation' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ],
+      "command": {
+        "arguments": [
+          "--check"
+        ],
+        "findings": [
+          {
+            "code": "X",
+            "file_path": "a.py",
+            "line_number": 1,
+            "message": "m"
+          }
+        ],
+        "stdout": "X a.py:1: m\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 1,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_exits_nonzero": {
+      "source": "def test_main_unknown_flag_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--nope\"])\n    with pytest.raises(SystemExit) as exc:\n        main()\n    assert exc.value.code != 0",
+      "sha256": "fc3f8dee8583127db2de355c21c1e709abcfa25615992542ee627f0c6dee9ebc",
+      "assertions": [
+        {
+          "source": "pytest.raises(SystemExit)",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "exc.value.code != 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [
+          "--nope"
+        ],
+        "findings": [],
+        "stdout": "",
+        "stderr": "usage: lint_graph_lazy_sql_plan.py [-h] [--check]\nlint_graph_lazy_sql_plan.py: error: unrecognized arguments: --nope\n",
+        "exitCode": 2,
+        "raised": true
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_raises_systemexit": {
+      "source": "def test_main_unknown_flag_raises_systemexit(\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--unknown\"])\n    with pytest.raises(SystemExit):\n        main()",
+      "sha256": "c8dc75f5985ffaf9f7c7851e00eaa4fb8685b7da6d6d5039c323b0117d372c6a",
+      "assertions": [
+        {
+          "source": "pytest.raises(SystemExit)",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [
+          "--unknown"
+        ],
+        "findings": [],
+        "stdout": "",
+        "stderr": "usage: lint_graph_lazy_sql_plan.py [-h] [--check]\nlint_graph_lazy_sql_plan.py: error: unrecognized arguments: --unknown\n",
+        "exitCode": 2,
+        "raised": true
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_print_trailing_blank_line": {
+      "source": "def test_main_violations_print_trailing_blank_line(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(\n        linter,\n        \"run_checks\",\n        lambda: [Violation(\"GLSP-099\", \"x.py\", 1, \"a\")],\n    )\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    main()\n    out = capsys.readouterr().out\n    # The linter prints each violation then an empty line before the summary.\n    assert \"\\n\\n\" in out",
+      "sha256": "42cf4ece283ab7664b0859b0af81ae0ee50b8e261491471ed445c74932cdb923",
+      "assertions": [
+        {
+          "source": "'\\n\\n' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-099",
+          "file_path": "x.py",
+          "line_number": 1,
+          "message": "a"
+        }
+      ],
+      "command": {
+        "arguments": [],
+        "findings": [
+          {
+            "code": "GLSP-099",
+            "file_path": "x.py",
+            "line_number": 1,
+            "message": "a"
+          }
+        ],
+        "stdout": "GLSP-099 x.py:1: a\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_without_check_returns_zero": {
+      "source": "def test_main_violations_without_check_returns_zero(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    def _fake_run_checks() -> list[Violation]:\n        return [Violation(code=\"X\", file_path=\"a.py\", line_number=1, message=\"m\")]\n\n    monkeypatch.setattr(linter, \"run_checks\", _fake_run_checks)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    assert main() == 0\n    capsys.readouterr()",
+      "sha256": "fe8ec107c098435b8c58649bddaf15e185b13fcbb9da3afcfd07b8bc507f6120",
+      "assertions": [
+        {
+          "source": "main() == 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ],
+      "command": {
+        "arguments": [],
+        "findings": [
+          {
+            "code": "X",
+            "file_path": "a.py",
+            "line_number": 1,
+            "message": "m"
+          }
+        ],
+        "stdout": "X a.py:1: m\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_and_check_returns_one": {
+      "source": "def test_main_with_violations_and_check_returns_one(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(\n        linter,\n        \"run_checks\",\n        lambda: [Violation(\"GLSP-099\", \"x.py\", 10, \"synthetic\")],\n    )\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\", \"--check\"])\n    rc = main()\n    out = capsys.readouterr().out\n    assert rc == 1\n    assert \"GLSP-099\" in out\n    assert \"synthetic\" in out\n    assert \"Found 1 graph lazy SQL plan violation\" in out",
+      "sha256": "3b97e843d91fa59bea919f520378e919d51dec2a09d1532d405f995813e05800",
+      "assertions": [
+        {
+          "source": "rc == 1",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'GLSP-099' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'synthetic' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'Found 1 graph lazy SQL plan violation' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-099",
+          "file_path": "x.py",
+          "line_number": 10,
+          "message": "synthetic"
+        }
+      ],
+      "command": {
+        "arguments": [
+          "--check"
+        ],
+        "findings": [
+          {
+            "code": "GLSP-099",
+            "file_path": "x.py",
+            "line_number": 10,
+            "message": "synthetic"
+          }
+        ],
+        "stdout": "GLSP-099 x.py:10: synthetic\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 1,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_without_check_returns_zero": {
+      "source": "def test_main_with_violations_without_check_returns_zero(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(\n        linter,\n        \"run_checks\",\n        lambda: [Violation(\"GLSP-099\", \"x.py\", 1, \"synthetic\")],\n    )\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    rc = main()\n    out = capsys.readouterr().out\n    assert rc == 0\n    assert \"GLSP-099\" in out",
+      "sha256": "3081df4ffeece0469f228661b514cc7b1156ca3c7109b3ba97d1d7ad451f44c5",
+      "assertions": [
+        {
+          "source": "rc == 0",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'GLSP-099' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-099",
+          "file_path": "x.py",
+          "line_number": 1,
+          "message": "synthetic"
+        }
+      ],
+      "command": {
+        "arguments": [],
+        "findings": [
+          {
+            "code": "GLSP-099",
+            "file_path": "x.py",
+            "line_number": 1,
+            "message": "synthetic"
+          }
+        ],
+        "stdout": "GLSP-099 x.py:1: synthetic\n\nFound 1 graph lazy SQL plan violation(s).\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_without_violations_no_violation_count_printed": {
+      "source": "def test_main_without_violations_no_violation_count_printed(\n    monkeypatch: pytest.MonkeyPatch,\n    capsys: pytest.CaptureFixture[str],\n) -> None:\n    monkeypatch.setattr(linter, \"run_checks\", list)\n    monkeypatch.setattr(sys, \"argv\", [\"lint_graph_lazy_sql_plan.py\"])\n    main()\n    out = capsys.readouterr().out\n    assert \"clean\" in out\n    assert \"Found\" not in out",
+      "sha256": "71dc4b240f6f44d27f905613555b66caf2bbbc5bdb933c97cee08b6ae9870b70",
+      "assertions": [
+        {
+          "source": "'clean' in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        },
+        {
+          "source": "'Found' not in out",
+          "contract": "command",
+          "reason": "Native command arguments, output, or exit behavior"
+        }
+      ],
+      "values": [],
+      "command": {
+        "arguments": [],
+        "findings": [],
+        "stdout": "Graph lazy SQL intent plan linter: clean.\n",
+        "stderr": "",
+        "exitCode": 0,
+        "raised": false
+      }
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_docstring_present": {
+      "source": "def test_module_docstring_present() -> None:\n    assert linter.__doc__ is not None\n    assert \"graph\" in linter.__doc__.lower()",
+      "sha256": "bd267c2bc924f6a8a3bb8624a5391bfa6d6f4fb74deb1e3c9619646019537784",
+      "assertions": [
+        {
+          "source": "linter.__doc__ is not None",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        },
+        {
+          "source": "'graph' in linter.__doc__.lower()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_paths_exist": {
+      "source": "def test_module_paths_exist() -> None:\n    assert ROOT.is_dir()\n    assert VERSIONED_LAZY_MIXIN.is_file()\n    assert VERSIONED_TRANSACTIONS.is_file()\n    assert GRAPH_LAZY_SQL.is_file()\n    assert INTENT_GRAPH.is_file()",
+      "sha256": "d9de015edd0ff402e5ad9ab4fcc27b6735ca67e3b59a87bf776484922523e179",
+      "assertions": [
+        {
+          "source": "ROOT.is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        },
+        {
+          "source": "VERSIONED_LAZY_MIXIN.is_file()",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        },
+        {
+          "source": "VERSIONED_TRANSACTIONS.is_file()",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        },
+        {
+          "source": "GRAPH_LAZY_SQL.is_file()",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        },
+        {
+          "source": "INTENT_GRAPH.is_file()",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_are_absolute": {
+      "source": "def test_path_constants_are_absolute() -> None:\n    for p in (VERSIONED_LAZY_MIXIN, VERSIONED_TRANSACTIONS, GRAPH_LAZY_SQL, INTENT_GRAPH):\n        assert p.is_absolute()",
+      "sha256": "f91e82ce154d086a60d3fea7920ef0525ca631c51605666d3339fe5b56fa7873",
+      "assertions": [
+        {
+          "source": "p.is_absolute()",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_end_with_py": {
+      "source": "def test_path_constants_end_with_py() -> None:\n    for p in (VERSIONED_LAZY_MIXIN, VERSIONED_TRANSACTIONS, GRAPH_LAZY_SQL, INTENT_GRAPH):\n        assert p.suffix == \".py\"",
+      "sha256": "7c4bb681093fbeb86233ab74bc490ae848f9cc6285a77d04e5ea2f23522ca107",
+      "assertions": [
+        {
+          "source": "p.suffix == '.py'",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_is_directory": {
+      "source": "def test_root_is_directory() -> None:\n    assert ROOT.is_dir()",
+      "sha256": "ab1901192ce1019b420b0bcc6864e54e91aa831b65764505fdab72d4feeb55f0",
+      "assertions": [
+        {
+          "source": "ROOT.is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_resolves_to_repo_root": {
+      "source": "def test_root_resolves_to_repo_root() -> None:\n    assert (ROOT / \"scripts\").is_dir()\n    assert (ROOT / \"data_layer\").is_dir()",
+      "sha256": "6fb7e7c693a7e7b641c493dac5364d45814f5c3c068058f5fb1521665c430da1",
+      "assertions": [
+        {
+          "source": "(ROOT / 'scripts').is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        },
+        {
+          "source": "(ROOT / 'data_layer').is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_is_py_file": {
+      "source": "def test_versioned_lazy_mixin_is_py_file() -> None:\n    assert VERSIONED_LAZY_MIXIN.suffix == \".py\"",
+      "sha256": "cf1bbb5bf3a527506def713f47f6f4abe0db0346ca6601c7d4902279d69c9d09",
+      "assertions": [
+        {
+          "source": "VERSIONED_LAZY_MIXIN.suffix == '.py'",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_path_is_inside_root": {
+      "source": "def test_versioned_lazy_mixin_path_is_inside_root() -> None:\n    assert VERSIONED_LAZY_MIXIN.is_relative_to(ROOT)",
+      "sha256": "fc4184ec843b0d08599bb6be9fcd16ad11e969f31420b19b50c6667472140031",
+      "assertions": [
+        {
+          "source": "VERSIONED_LAZY_MIXIN.is_relative_to(ROOT)",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_paths_are_inside_root": {
+      "source": "def test_versioned_paths_are_inside_root() -> None:\n    for p in (VERSIONED_LAZY_MIXIN, VERSIONED_TRANSACTIONS, GRAPH_LAZY_SQL, INTENT_GRAPH):\n        assert p.is_relative_to(ROOT), p",
+      "sha256": "7805075add047d62e7fcc0067c2f907ff08435b534ee8c9467af41c31b2e6bcd",
+      "assertions": [
+        {
+          "source": "p.is_relative_to(ROOT)",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_transactions_is_py_file": {
+      "source": "def test_versioned_transactions_is_py_file() -> None:\n    assert VERSIONED_TRANSACTIONS.suffix == \".py\"",
+      "sha256": "1d284c0a154345d01fdbfa8a140a1dbf3057e21fbc3828e8b66e5b9850681de0",
+      "assertions": [
+        {
+          "source": "VERSIONED_TRANSACTIONS.suffix == '.py'",
+          "contract": "scope",
+          "reason": "Relative target identity, Python suffix, and admission in the native rule scope"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_and_fields": {
+      "source": "def test_violation_equality_and_fields() -> None:\n    a = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    b = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    assert a == b\n    assert a.code == \"GLSP-001\"\n    assert a.file_path == \"f.py\"\n    assert a.line_number == 1\n    assert a.message == \"m\"",
+      "sha256": "40dcea2df6114be07955cb55ec4823831a5175dbd5284bf99aebfd7215084a7f",
+      "assertions": [
+        {
+          "source": "a == b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "a.code == 'GLSP-001'",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "a.file_path == 'f.py'",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "a.line_number == 1",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "a.message == 'm'",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_by_value": {
+      "source": "def test_violation_equality_by_value() -> None:\n    a = Violation(code=\"X\", file_path=\"a\", line_number=1, message=\"m\")\n    b = Violation(code=\"X\", file_path=\"a\", line_number=1, message=\"m\")\n    assert a == b",
+      "sha256": "577d0ca07e8d6339cded40e1ddb488093f54e88d0b39e536f644509ccb8b5863",
+      "assertions": [
+        {
+          "source": "a == b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_fields_have_types": {
+      "source": "def test_violation_fields_have_types() -> None:\n    v = Violation(code=\"X\", file_path=\"a\", line_number=42, message=\"m\")\n    assert isinstance(v.code, str)\n    assert isinstance(v.file_path, str)\n    assert isinstance(v.line_number, int)\n    assert isinstance(v.message, str)",
+      "sha256": "290bceea2de89090a93c228bdec66a4912b6a23f90ce3ef9fdecf2ba74f3a488",
+      "assertions": [
+        {
+          "source": "isinstance(v.code, str)",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "isinstance(v.file_path, str)",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "isinstance(v.line_number, int)",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        },
+        {
+          "source": "isinstance(v.message, str)",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 42,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_frozen_rejects_setattr_runtime": {
+      "source": "def test_violation_frozen_rejects_setattr_runtime() -> None:\n    \"\"\"Frozen dataclass raises FrozenInstanceError via ``setattr``.\"\"\"\n    from dataclasses import FrozenInstanceError\n\n    v = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    # ``setattr`` goes through the overridden ``__setattr__`` that frozen\n    # dataclasses install, which raises FrozenInstanceError. This avoids\n    # type-checker complaints that direct attribute assignment would\n    # otherwise provoke.\n    for attr in (\"file_path\", \"code\", \"line_number\", \"message\"):\n        with pytest.raises(FrozenInstanceError):\n            setattr(v, attr, \"anything\")",
+      "sha256": "a416b21fd5477c3f12d31e251e4825a976e19bf082df32ad534d43b8397f1ab1",
+      "assertions": [
+        {
+          "source": "pytest.raises(FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_has_four_fields": {
+      "source": "def test_violation_has_four_fields() -> None:\n    from dataclasses import fields as _dc_fields\n\n    names = {f.name for f in _dc_fields(Violation)}\n    assert names == {\"code\", \"file_path\", \"line_number\", \"message\"}",
+      "sha256": "86155ec9966d9d850c55637ac55ff4e1ac3ec58fe7950e0136dee3904e0946ea",
+      "assertions": [
+        {
+          "source": "names == {'code', 'file_path', 'line_number', 'message'}",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": []
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_hashable": {
+      "source": "def test_violation_hashable() -> None:\n    v = Violation(code=\"X\", file_path=\"a\", line_number=1, message=\"m\")\n    assert hash(v) == hash(\n        Violation(code=\"X\", file_path=\"a\", line_number=1, message=\"m\"),\n    )",
+      "sha256": "0f63dba5de9617f703a67fff1088b57f5bb032892976d6c67f60a7a029283139",
+      "assertions": [
+        {
+          "source": "hash(v) == hash(Violation(code='X', file_path='a', line_number=1, message='m'))",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_in_set_with_duplicates_dedups": {
+      "source": "def test_violation_in_set_with_duplicates_dedups() -> None:\n    a = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    b = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    assert len({a, b}) == 1",
+      "sha256": "f565d2ed6202745ed075576f6cfb3608b11b330960250754963bbe4bd59cfb96",
+      "assertions": [
+        {
+          "source": "len({a, b}) == 1",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_code": {
+      "source": "def test_violation_inequality_on_code() -> None:\n    a = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    b = Violation(\"GLSP-002\", \"f.py\", 1, \"m\")\n    assert a != b",
+      "sha256": "d33a5f116795722ff30cb9b5e25115b8961703da9ab5d580b0b6691888256af8",
+      "assertions": [
+        {
+          "source": "a != b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "GLSP-002",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_file_path": {
+      "source": "def test_violation_inequality_on_file_path() -> None:\n    a = Violation(\"GLSP-001\", \"a.py\", 1, \"m\")\n    b = Violation(\"GLSP-001\", \"b.py\", 1, \"m\")\n    assert a != b",
+      "sha256": "e5be0dc835e8445eab0779a0e7e82828d38fcd7aee383732b052711b7954ceac",
+      "assertions": [
+        {
+          "source": "a != b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "a.py",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "GLSP-001",
+          "file_path": "b.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_line_number": {
+      "source": "def test_violation_inequality_on_line_number() -> None:\n    a = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    b = Violation(\"GLSP-001\", \"f.py\", 2, \"m\")\n    assert a != b",
+      "sha256": "f0b61e3f9466918cee9019b228bfda524a3f0b48d157e7115cb68cc9e153d933",
+      "assertions": [
+        {
+          "source": "a != b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        },
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 2,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_message": {
+      "source": "def test_violation_inequality_on_message() -> None:\n    a = Violation(\"GLSP-001\", \"f.py\", 1, \"a\")\n    b = Violation(\"GLSP-001\", \"f.py\", 1, \"b\")\n    assert a != b",
+      "sha256": "d3ae790ea494bbe03ec03aca82a6bc3c61e5d242526fbf1f5188087de6ae51af",
+      "assertions": [
+        {
+          "source": "a != b",
+          "contract": "values",
+          "reason": "Diagnostic field names, types, equality, or field-specific inequality"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "a"
+        },
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "b"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen": {
+      "source": "def test_violation_is_frozen() -> None:\n    from dataclasses import FrozenInstanceError\n\n    v = Violation(\"GLSP-001\", \"file.py\", 10, \"msg\")\n    with pytest.raises(FrozenInstanceError):\n        v.line_number = 11",
+      "sha256": "ce5acb6ec2949e99903723e853d05fa8a85b79ee635cf729d6f7386d88d4c137",
+      "assertions": [
+        {
+          "source": "pytest.raises(FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "file.py",
+          "line_number": 10,
+          "message": "msg"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen_raises": {
+      "source": "def test_violation_is_frozen_raises() -> None:\n    import dataclasses\n\n    v = Violation(code=\"X\", file_path=\"a\", line_number=1, message=\"m\")\n    with pytest.raises(dataclasses.FrozenInstanceError):\n        v.code = \"Y\"",
+      "sha256": "72a16115f7d327c944b7a65466f077b48944c72e1cf7b8eb3000dd738cea79fb",
+      "assertions": [
+        {
+          "source": "pytest.raises(dataclasses.FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "X",
+          "file_path": "a",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    },
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_hashable": {
+      "source": "def test_violation_is_hashable() -> None:\n    v = Violation(\"GLSP-001\", \"f.py\", 1, \"m\")\n    s = {v}\n    assert v in s",
+      "sha256": "307862861152a72677141805248826534364633ae5c43a38169d8571d77c609d",
+      "assertions": [
+        {
+          "source": "v in s",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "values": [
+        {
+          "code": "GLSP-001",
+          "file_path": "f.py",
+          "line_number": 1,
+          "message": "m"
+        }
+      ]
+    }
+  },
+  "originalCaseOutcomes": {
+    "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_all_identifiers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_nonempty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_all_identifiers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_complete_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_is_frozenset": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_size_exactly_four": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_are_frozensets": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_disjoint": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_all_identifiers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_nonempty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_all_identifiers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_complete_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_is_frozenset": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_size_exactly_nine": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_graph_lazy_sql_is_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_is_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_path_is_inside_root": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_exits_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_flag_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_is_callable_returns_int": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_output_format_has_code_path_line_and_message": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_prints_violation_details": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_reports_plural_violation_count": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_int_when_clean": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_one_on_violations_with_check": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_exits_nonzero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_raises_systemexit": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_print_trailing_blank_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_without_check_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_and_check_returns_one": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_without_check_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_without_violations_no_violation_count_printed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_docstring_present": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_paths_exist": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_are_absolute": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_end_with_py": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_is_directory": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_resolves_to_repo_root": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_is_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_path_is_inside_root": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_paths_are_inside_root": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_transactions_is_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_and_fields": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_by_value": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_fields_have_types": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_frozen_rejects_setattr_runtime": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_has_four_fields": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_hashable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_in_set_with_duplicates_dedups": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_code": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_file_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_line_number": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_message": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen_raises": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_hashable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "bannedGroups": [
+    {
+      "name": "BANNED_VERSIONED_LAZY_SYMBOLS",
+      "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+      "symbols": [
+        "_MappedLazyContext",
+        "_PlanBackedGraphQuery",
+        "_PlanBackedGraphTraversal",
+        "_TxnBoundGraphQueryBuilder",
+        "_add_plan_intent",
+        "_get_or_create_plan_flush_context",
+        "_lazy_result_for_plan_ref",
+        "_make_graph_query_builder",
+        "_map_lazy"
+      ]
+    },
+    {
+      "name": "BANNED_INTENT_GRAPH_SYMBOLS",
+      "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+      "symbols": [
+        "GraphQueryTerminalIntent",
+        "GraphQueryTerminalStep",
+        "_GraphQueryTerminalMode",
+        "_clone_graph_pattern"
+      ]
+    }
+  ],
+  "detectorCases": [
+    {
+      "test": "transfer-ban-_MappedLazyContext-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_MappedLazyContext",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _MappedLazyContext:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_MappedLazyContext` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_MappedLazyContext-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_MappedLazyContext",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _MappedLazyContext_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_MappedLazyContext-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_MappedLazyContext",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _MappedLazyContext:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphQuery-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphQuery",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _PlanBackedGraphQuery:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_PlanBackedGraphQuery` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphQuery-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphQuery",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _PlanBackedGraphQuery_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphQuery-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphQuery",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _PlanBackedGraphQuery:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphTraversal-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphTraversal",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _PlanBackedGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_PlanBackedGraphTraversal` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphTraversal-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphTraversal",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _PlanBackedGraphTraversal_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_PlanBackedGraphTraversal-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_PlanBackedGraphTraversal",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _PlanBackedGraphTraversal:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_TxnBoundGraphQueryBuilder-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_TxnBoundGraphQueryBuilder",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _TxnBoundGraphQueryBuilder:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_TxnBoundGraphQueryBuilder` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_TxnBoundGraphQueryBuilder-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_TxnBoundGraphQueryBuilder",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _TxnBoundGraphQueryBuilder_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_TxnBoundGraphQueryBuilder-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_TxnBoundGraphQueryBuilder",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _TxnBoundGraphQueryBuilder:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_add_plan_intent-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_add_plan_intent",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _add_plan_intent:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_add_plan_intent` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_add_plan_intent-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_add_plan_intent",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _add_plan_intent_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_add_plan_intent-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_add_plan_intent",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _add_plan_intent:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_get_or_create_plan_flush_context-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_get_or_create_plan_flush_context",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _get_or_create_plan_flush_context:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_get_or_create_plan_flush_context` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_get_or_create_plan_flush_context-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_get_or_create_plan_flush_context",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _get_or_create_plan_flush_context_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_get_or_create_plan_flush_context-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_get_or_create_plan_flush_context",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _get_or_create_plan_flush_context:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_lazy_result_for_plan_ref-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_lazy_result_for_plan_ref",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _lazy_result_for_plan_ref:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_lazy_result_for_plan_ref` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_lazy_result_for_plan_ref-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_lazy_result_for_plan_ref",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _lazy_result_for_plan_ref_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_lazy_result_for_plan_ref-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_lazy_result_for_plan_ref",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _lazy_result_for_plan_ref:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_make_graph_query_builder-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_make_graph_query_builder",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _make_graph_query_builder:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_make_graph_query_builder` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_make_graph_query_builder-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_make_graph_query_builder",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _make_graph_query_builder_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_make_graph_query_builder-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_make_graph_query_builder",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _make_graph_query_builder:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_map_lazy-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_map_lazy",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _map_lazy:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-001",
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 9,
+          "message": "Banned graph lazy implementation symbol `_map_lazy` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_map_lazy-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_map_lazy",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _map_lazy_allowed:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_map_lazy-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_map_lazy",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _map_lazy:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalIntent-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalIntent",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass GraphQueryTerminalIntent:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-010",
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "line": 29,
+          "message": "Banned interim graph terminal symbol `GraphQueryTerminalIntent` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalIntent-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalIntent",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass GraphQueryTerminalIntent_allowed:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalIntent-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalIntent",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass GraphQueryTerminalIntent:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalStep-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalStep",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass GraphQueryTerminalStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-010",
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "line": 29,
+          "message": "Banned interim graph terminal symbol `GraphQueryTerminalStep` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalStep-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalStep",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass GraphQueryTerminalStep_allowed:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-GraphQueryTerminalStep-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "GraphQueryTerminalStep",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass GraphQueryTerminalStep:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_GraphQueryTerminalMode-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_GraphQueryTerminalMode",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _GraphQueryTerminalMode:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-010",
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "line": 29,
+          "message": "Banned interim graph terminal symbol `_GraphQueryTerminalMode` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_GraphQueryTerminalMode-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_GraphQueryTerminalMode",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _GraphQueryTerminalMode_allowed:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_GraphQueryTerminalMode-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_GraphQueryTerminalMode",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _GraphQueryTerminalMode:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_clone_graph_pattern-positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_clone_graph_pattern",
+      "variant": "positive",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _clone_graph_pattern:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-010",
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "line": 29,
+          "message": "Banned interim graph terminal symbol `_clone_graph_pattern` must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "transfer-ban-_clone_graph_pattern-lookalike",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_clone_graph_pattern",
+      "variant": "lookalike",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass _clone_graph_pattern_allowed:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "transfer-ban-_clone_graph_pattern-other-family",
+      "check": "graph_lazy_sql_plan",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "symbol": "_clone_graph_pattern",
+      "variant": "other-family",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\nclass _clone_graph_pattern:\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "class LazyVersionedReadTransaction:\n\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_paths_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "def _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    pass\n\n    def cte_column_type_hints(self):\n        return (SqlColumnTypeHints, _binding_node_sys_id_alias, _binding_edge_alias, uuid_columns, text_columns, integer_columns)\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n"
+        }
+      ],
+      "expected": []
+    }
+  ],
+  "scopes": [
+    {
+      "rule": "data-layer-graph-lazy-sql-plan",
+      "paths": [
+        "l7200_versioned_transactions/versioned_lazy_mixin.py",
+        "l7200_versioned_transactions/versioned_transactions.py",
+        "l7200_versioned_transactions/graph_lazy_sql.py",
+        "impl/common/l2070_server_plan/steps/intent_graph.py"
+      ]
+    },
+    {
+      "rule": "data-layer-conditional-architecture",
+      "paths": [
+        "l2070_batching/conditional_step.py",
+        "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py"
+      ]
+    }
+  ]
+}

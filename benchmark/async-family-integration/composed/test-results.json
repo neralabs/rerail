@@ -1,0 +1,27 @@
+[
+  {
+    "name": "unit-final",
+    "test": "logic::plan::compose::tests",
+    "exit_code": 0
+  },
+  {
+    "name": "frame-unit-final",
+    "test": "facts::vtab::demand::tests",
+    "exit_code": 0
+  },
+  {
+    "name": "semantic-final",
+    "test": "logic::plan::native_demand::",
+    "exit_code": 0
+  },
+  {
+    "name": "rr-tests-final",
+    "test": "logic::rr::",
+    "exit_code": 0
+  },
+  {
+    "name": "file-local-tests-final",
+    "test": "file_local::",
+    "exit_code": 0
+  }
+]

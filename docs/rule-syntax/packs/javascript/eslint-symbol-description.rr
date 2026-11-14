@@ -1,0 +1,18 @@
+.policy "eslint-symbol-description" revision 2
+.description "Give every Symbol() call a description; it identifies the symbol when debugging."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-b-scope.rr"
+//   builtin_ref, called, arg_count
+
+// ESLint's symbol-description: a call of the global Symbol with no arguments.
+//   Symbol()   → reported
+//   Symbol("cache")   Symbol(name)   var Symbol = f; Symbol()   → not
+// No options.
+.violation symbol_description(at: node) code "symbol-description" "Expected Symbol to have a description."
+    suppress eslint "symbol-description"
+    suppress oxlint "symbol-description"
+    suppress biome "lint/style/useSymbolDescription"
+symbol_description(c) :- builtin_ref(r, "Symbol"), called(c, r), call_arg_count(c, 0).

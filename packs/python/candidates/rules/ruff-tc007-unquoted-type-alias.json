@@ -112,10 +112,21 @@
                     {
                       "kind": "tuple_pattern",
                       "not": {
-                        "has": {
-                          "stopBy": "end",
-                          "regex": "^,$"
-                        }
+                        "any": [
+                          {
+                            "has": {
+                              "regex": "^,$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "has": {
+                                "regex": "^,$"
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   ],

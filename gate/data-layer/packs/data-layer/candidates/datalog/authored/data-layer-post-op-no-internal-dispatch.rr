@@ -1,0 +1,228 @@
+// data-layer-post-op-no-internal-dispatch: every clause authored, from
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-post-op-no-internal-dispatch.json. The policy has no
+// options.
+//
+// Every clause ends in the same module test (`MODULE_RX`: the node is, or is inside, a `module` whose text matches
+// ResultMaterializationKind|…|runtime_builder_post_op). W's regex reads the module's full text, comments and strings
+// included, so it is `node_text` of the module (`pod_doc`). The converter wrote it as "some name of the file contains
+// one of the words", which misses words only in comments or strings: so the three clauses it converted
+// (domain-helper, removed-base, removed-keyword) are authored here too, with the exact test.
+//
+// Shared shapes (relations `pod_*`, used by several clauses):
+// - `$LEFT == $RIGHT` / `$LEFT is $RIGHT` / `$KEY in $CONTAINER`: a comparison_operator of two operands whose one
+//   operator token is that one (`pod_binary_cmp`: `op_at(c, 0, s)`, no second). `is not` / `not in` are other
+//   tokens, never matched.
+// - `nthChild: k` (no ofRule) counts every named child of the parent from 1, comments included (matcher/
+//   nth_child.rs); `child` leaves comments out, so a child's position is its `child` index + 1 + the comments
+//   (`token` rows of the parent whose text starts with `#`) before it (`pod_nth`). Exact.
+// - ENUMCMP: the operand at nthChild 1 is `E.M` with E one of the enum names, capturing ENUM = E, MEMBER = M;
+//   else, the child at nthChild 1 not being one, the one at nthChild 2 is.
+// - IN_FN / the materializer test: `inside` a function_definition with `stopBy: {kind: function_definition}` is the
+//   nearest function_definition (ast-grep's stop node is tested, inclusive), `nearest(n, f, pod_fdef)`.
+// - A string operand `(?i)^[ru]*["']` with `value: {regex: "(?s).*"}`: a `string` node whose prefix letters are only
+//   r/u (strprefix, lowercased) whose value is a str (W's regex reads strings only; it accepts any):
+//   `value_type_of(n, "str")`.
+//
+// Replay: 18 of 18 recorded events exact (batch-07 recording and probes).
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared ----------------------------------------------------------------------------------------------------
+// A document the rule reads: in scope, parsed (`syntax: valid`), and its module text has one of the words.
+.decl pod_doc(d: number)
+pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node_text(m, s),
+    match("(?s:.*)(?:ResultMaterializationKind|ResultRowMaterializer|RuntimeBuilderKind|RuntimeBuilderName|RuntimeBuilderSpec|_RUNTIME_BUILDER_NAMES_BY_KIND|_materialize_|literal_payload|materialize_runtime_builder|row_materializer|runtime_builder_post_op)(?s:.*)", s).
+
+.decl pod_fdef(kind: symbol)
+pod_fdef("function_definition").
+
+// A comparison of two operands (named children 0 and 1, no third) with the one operator s.
+.decl pod_binary_cmp(c: node, s: symbol)
+pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2),
+    op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
+
+// pod_nth(p, x, k): x is p's k-th named child counting comments, as `nthChild: k` counts (comparisons, a call's
+// `arguments`: the parents the clauses' nthChild tests read).
+.decl pod_nth_parent(p: node)
+pod_nth_parent(c) :- pod_binary_cmp(c, _).
+pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
+.decl pod_nth(p: node, x: node, k: number)
+pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _),
+    j = count : { token(p, _, t, s, _), prefix("#", t), s < xs }, k = i + 1 + j.
+
+// `E.M`, E one of the dispatch enums: ENUM e, MEMBER m (the attribute field's identifier).
+.decl pod_enum_name(s: symbol)
+pod_enum_name("ResultMaterializationKind"). pod_enum_name("RuntimeBuilderKind"). pod_enum_name("RuntimeBuilderName").
+.decl pod_enum_attr(a: node, e: symbol, m: symbol)
+pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, e),
+    pod_enum_name(e), field(a, "attribute", x), text(x, m).
+.decl pod_is_enum_attr(a: node)
+pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).
+
+// ENUMCMP with IN_FN and MODULE_RX: comparison c in document d, its nearest function f, ENUM e, MEMBER m.
+.decl pod_first_enum(c: node)
+pod_first_enum(c) :- pod_nth(c, a, 1), pod_is_enum_attr(a).
+.decl pod_enum_cmp(d: number, c: node, f: node, e: symbol, m: symbol)
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), pod_nth(c, a, 1), pod_enum_attr(a, e, m),
+    nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), !pod_first_enum(c),
+    pod_nth(c, a, 2), pod_enum_attr(a, e, m), nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
+
+// A function named ^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$ (its `name`, an
+// identifier).
+.decl pod_builder_fn(f: node)
+pod_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s),
+    (s = "materialize_result" ; s = "materialize_runtime_builder").
+pod_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s),
+    glob("materialize_*builder", s).
+// That, or a `_materialize_…` function of l2070_batching/post_op.py.
+.decl pod_materializer_fn(f: node)
+pod_materializer_fn(f) :- pod_builder_fn(f).
+pod_materializer_fn(f) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x),
+    text(x, s), prefix("_materialize_", s).
+
+// A string literal with an r/u-only prefix whose value is a str.
+.decl pod_plain_string(n: node)
+pod_plain_string(n) :- node(_, n, "string", _, _), strprefix(n, p), match("[ru]*", p), value_type_of(n, "str").
+
+// `"…" in X` with X kwargs/literal_kwargs or a `….keys()` call, in the nearest function, a materializer: the shape
+// literal-kwargs flags and payload-aliases' key_calls and direct_membership give.
+.decl pod_keys_call(n: node)
+pod_keys_call(n) :- node(_, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", x),
+    node(_, x, "identifier", _, _), text(x, "keys").
+.decl pod_kwargs_container(n: node)
+pod_kwargs_container(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "kwargs" ; s = "literal_kwargs").
+pod_kwargs_container(n) :- pod_keys_call(n).
+.decl pod_key_membership(d: number, c: node)
+pod_key_membership(d, c) :- pod_binary_cmp(c, "in"), pod_nth(c, k, 1), pod_plain_string(k), pod_nth(c, x, 2), pod_kwargs_container(x),
+    nearest(c, f, pod_fdef), pod_materializer_fn(f), node(d, c, _, _, _), pod_doc(d).
+
+// ---- duplicate-enum (POSTOPDISPATCH001): budget, group (path, function, ENUM, MEMBER), count <= 1 ----------------
+// A group over the limit is one finding at its first row (`query::crossfile`: "a group's anchor is its first row"),
+// the row of least start (rows come in match order).
+.decl duplicate_enum_start(d: number, f: node, e: symbol, m: symbol, s: number)
+duplicate_enum_start(d, f, e, m, s) :- pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _).
+.decl duplicate_enum_first(d: number, f: node, e: symbol, m: symbol, s: number)
+duplicate_enum_first(d, f, e, m, s) :- duplicate_enum_start(d, f, e, m, _), k = count : { duplicate_enum_start(d, f, e, m, _) }, k > 1,
+    s = min t : { duplicate_enum_start(d, f, e, m, t) }.
+violation("data-layer-post-op-no-internal-dispatch", "duplicate-enum", "POSTOPDISPATCH001", p, l) :-
+    duplicate_enum_first(d, f, e, m, s), pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _), doc(d, p, _), line(c, l).
+
+// ---- builder-name (POSTOPDISPATCH002): ENUMCMP with ENUM RuntimeBuilderName, in a builder function -------------------
+// The constraint reads the ENUM the comparison captured (the left operand's where it is one, else the right's).
+violation("data-layer-post-op-no-internal-dispatch", "builder-name", "POSTOPDISPATCH002", p, l) :-
+    pod_enum_cmp(d, c, f, "RuntimeBuilderName", _), pod_builder_fn(f), doc(d, p, _), line(c, l).
+
+// ---- literal-kwargs (POSTOPDISPATCH003) --------------------------------------------------------------------------
+violation("data-layer-post-op-no-internal-dispatch", "literal-kwargs", "POSTOPDISPATCH003", p, l) :-
+    pod_key_membership(d, c), doc(d, p, _), line(c, l).
+
+// ---- multi-enum-builder (POSTOPDISPATCH004): budget, group (path, function), count <= 1, at the function -----------
+// The rows: ENUMCMP in a nearest function named ^materialize_.*builder$ (its `name` child, any kind).
+.decl multi_enum_builder_fn(f: node)
+multi_enum_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), glob("materialize_*builder", s).
+.decl multi_enum_builder_row(d: number, f: node, c: node)
+multi_enum_builder_row(d, f, c) :- pod_enum_cmp(d, c, f, _, _), multi_enum_builder_fn(f).
+violation("data-layer-post-op-no-internal-dispatch", "multi-enum-builder", "POSTOPDISPATCH004", p, l) :-
+    multi_enum_builder_row(d, f, _), k = count : { multi_enum_builder_row(d, f, _) }, k > 1, doc(d, p, _), line(f, l).
+
+// ---- removed-surface (POSTOPDISPATCH005) ------------------------------------------------------------------------
+.decl removed_surface_name(s: symbol)
+removed_surface_name("ResultMaterializationKind"). removed_surface_name("RuntimeBuilderKind"). removed_surface_name("RuntimeBuilderName").
+removed_surface_name("RuntimeBuilderSpec"). removed_surface_name("_RUNTIME_BUILDER_NAMES_BY_KIND").
+removed_surface_name("materialize_runtime_builder"). removed_surface_name("runtime_builder_post_op").
+.decl removed_surface_imports(kind: symbol)
+removed_surface_imports("import_statement"). removed_surface_imports("import_from_statement").
+// The exclusions: in an import (any depth); the parent's field (attribute.attribute, keyword_argument.name,
+// function_definition.name, class_definition.name, default_parameter.name, typed_default_parameter.name); a direct
+// child of parameters / list_splat_pattern / dictionary_splat_pattern; the first non-comment named child of a
+// typed_parameter (`nthChild {position 1, ofRule: not comment}` is `child` index 0: comments are not nodes).
+.decl removed_surface_excluded(n: node)
+removed_surface_excluded(n) :- inside(n, _, removed_surface_imports).
+removed_surface_excluded(n) :- field(q, "attribute", n), node(_, q, "attribute", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "keyword_argument", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "function_definition", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "class_definition", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "default_parameter", _, _).
+removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "typed_default_parameter", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "parameters", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "list_splat_pattern", _, _).
+removed_surface_excluded(n) :- child(q, n, _), node(_, q, "dictionary_splat_pattern", _, _).
+removed_surface_excluded(n) :- child(q, n, 0), node(_, q, "typed_parameter", _, _).
+.decl removed_surface_hit(n: node)
+removed_surface_hit(n) :- node(_, n, "identifier", _, _), text(n, s), removed_surface_name(s), !removed_surface_excluded(n).
+removed_surface_hit(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s),
+    removed_surface_name(s).
+violation("data-layer-post-op-no-internal-dispatch", "removed-surface", "POSTOPDISPATCH005", p, l) :-
+    removed_surface_hit(n), node(d, n, _, _, _), pod_doc(d), doc(d, p, _), line(n, l).
+
+// ---- domain-helper (POSTOPDISPATCH006): a `_materialize_…` function of post_op.py not in the allowed list ---------
+.decl domain_helper_allowed(s: symbol)
+domain_helper_allowed("_materialize_assertion_from_row"). domain_helper_allowed("_materialize_by_post_op_behavior").
+domain_helper_allowed("_materialize_hydrate_dict_many"). domain_helper_allowed("_materialize_hydrate_dict_one").
+domain_helper_allowed("_materialize_scalar_column"). domain_helper_allowed("_materialize_scalar_column_list").
+domain_helper_allowed("_materialize_scalar_row_value"). domain_helper_allowed("_materialize_scalar_tuple").
+domain_helper_allowed("_materialize_terminal_array"). domain_helper_allowed("_materialize_terminal_object").
+domain_helper_allowed("_materialize_terminal_scalar").
+.decl domain_helper_allowed_name(f: node)
+domain_helper_allowed_name(f) :- field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), domain_helper_allowed(s).
+violation("data-layer-post-op-no-internal-dispatch", "domain-helper", "POSTOPDISPATCH006", p, l) :-
+    node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x), text(x, s),
+    prefix("_materialize_", s), !domain_helper_allowed_name(f), pod_doc(d), doc(d, p, _), line(f, l).
+
+// ---- payload-aliases (POSTOPDISPATCH007): relational, partitioned by file ----------------------------------------
+// functions: every function of a pod_doc file. assignments: `T = V` (left an identifier), its owner the innermost
+// function holding it (byte containment, which is ancestry: `nearest`), PAYLOAD set when V is, or has below it, an
+// attribute `….literal_payload`.
+.decl payload_aliases_lp(q: node)
+payload_aliases_lp(q) :- node(_, q, "attribute", _, _), field(q, "attribute", x), node(_, x, "identifier", _, _), text(x, "literal_payload").
+.decl payload_aliases_assign(d: number, a: node, f: node, t: symbol, s: number, v: node)
+payload_aliases_assign(d, a, f, t, s, v) :- node(d, a, "assignment", s, _), pod_doc(d), field(a, "left", x), node(_, x, "identifier", _, _),
+    text(x, t), field(a, "right", v), nearest(a, f, pod_fdef).
+.decl payload_aliases_payload(a: node)
+payload_aliases_payload(a) :- payload_aliases_assign(d, a, _, _, _, v), node(d, v, _, vs, ve), payload_aliases_lp(q), node(d, q, _, qs, qe),
+    vs <= qs, qe <= ve.
+// aliases: (owner, 'literal_payload', -1) per function; (owner, T, start) per payload assignment; (owner, T, start)
+// per assignment from an alias already live there (`old.since <= a.__start`), V an identifier. The SQL keeps
+// min(since) per name; the query asks for some since <= the probe's start, which any row answers as the min does.
+.decl payload_aliases_alias(f: node, name: symbol, since: number)
+payload_aliases_alias(f, "literal_payload", -1) :- node(d, f, "function_definition", _, _), pod_doc(d).
+payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, a, f, t, s, _), payload_aliases_payload(a).
+payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, _, f, t, s, v), node(_, v, "identifier", _, _), text(v, w),
+    payload_aliases_alias(f, w, s0), s0 <= s.
+// probes, in the nearest function, a materializer: `R.get("…", …)` (the arguments' nthChild 1 a plain string),
+// `R["…"]` (a plain string in the subscript field), `"…" in R`; R an identifier.
+.decl payload_aliases_probe(d: number, n: node, r: symbol)
+payload_aliases_probe(d, n, r) :- node(d, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _),
+    field(g, "object", o), node(_, o, "identifier", _, _), text(o, r), field(g, "attribute", x), node(_, x, "identifier", _, _),
+    text(x, "get"), field(n, "arguments", args), pod_nth(args, k, 1), pod_plain_string(k).
+payload_aliases_probe(d, n, r) :- node(d, n, "subscript", _, _), field(n, "value", o), node(_, o, "identifier", _, _), text(o, r),
+    field(n, "subscript", k), pod_plain_string(k).
+payload_aliases_probe(d, n, r) :- pod_binary_cmp(n, "in"), pod_nth(n, k, 1), pod_plain_string(k), pod_nth(n, o, 2),
+    node(_, o, "identifier", _, _), text(o, r), node(d, n, _, _, _).
+.decl payload_aliases_owned_probe(d: number, n: node, f: node, r: symbol, s: number)
+payload_aliases_owned_probe(d, n, f, r, s) :- payload_aliases_probe(d, n, r), pod_doc(d), nearest(n, f, pod_fdef), pod_materializer_fn(f),
+    node(d, n, _, s, _).
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :-
+    payload_aliases_owned_probe(d, n, f, r, s), payload_aliases_alias(f, r, s0), s0 <= s, doc(d, p, _), line(n, l).
+// key_calls and direct_membership.
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :-
+    pod_key_membership(d, c), doc(d, p, _), line(c, l).
+
+// ---- removed-base (POSTOPDISPATCH008): a class with ResultRowMaterializer (or x.ResultRowMaterializer) among its
+// superclasses' direct children. `each: BASE` with the witness span: one finding per base, all at the class.
+.decl removed_base_name(n: node)
+removed_base_name(n) :- node(_, n, "identifier", _, _), text(n, "ResultRowMaterializer").
+removed_base_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, "ResultRowMaterializer").
+violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :-
+    node(d, c, "class_definition", _, _), field(c, "superclasses", sc), child(sc, b, _), removed_base_name(b), pod_doc(d),
+    doc(d, p, _), line(c, l).
+
+// ---- removed-keyword (POSTOPDISPATCH009): a call with a `row_materializer=` keyword argument, at the call --------
+violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :-
+    node(d, c, "call", _, _), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _),
+    field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "row_materializer"), pod_doc(d), doc(d, p, _), line(c, l).

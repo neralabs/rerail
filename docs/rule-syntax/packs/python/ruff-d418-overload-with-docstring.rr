@@ -1,0 +1,17 @@
+.policy "ruff-d418-overload-with-docstring" revision 2
+.description "Document an overloaded Python function on its implementation instead of its overload signatures, which the implementation replaces at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D418 (pydocstyle): an `@overload` signature with a (non-empty) docstring. `.pyi` stubs are not checked.
+//   @overload
+//   def f(x: int) -> int:
+//       """Doc."""               ← D418 at `f`
+#include "python/docstrings.rr"
+
+.violation D418(at: node) code "D418"
+    "Remove the docstring from this `@overload` signature and document the function on its implementation instead."
+    suppress ruff "D418"
+D418(nm) :- doc_of(f, s), doc_checked(s), kind(f, "function_definition"), typing_dec(f, "overload"),
+    doc_name(f, nm, _), docof(f, d), !stub_file(d).

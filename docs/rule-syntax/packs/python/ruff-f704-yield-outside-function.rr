@@ -1,0 +1,26 @@
+.policy "ruff-f704-yield-outside-function" revision 2
+.description "Use yield and await only inside function bodies; Python rejects them at module or class level, and yield inside a comprehension."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F704 (pyflakes): `yield`, `yield from` or `await` outside a function. CPython rejects the file.
+//   - yield must run in a def or lambda: at module level, in a class body or in a comprehension it is an error;
+//   - await may also run in a generator expression (it makes an async generator), and a list, set or dict
+//     comprehension is transparent to it: `[await x for x in y]` is fine in an async def, not at module level.
+// A comprehension's first iterable runs in the enclosing scope.
+//   yield 1                          ← F704
+//   (await c for c in cors)          not reported: a generator expression
+//   (c async for c in await f())     ← F704: the first iterable runs at module level
+//   def f(): type X = (yield)        not reported: Ruff gives this another error, not F704
+#include "python/pyflakes.rr"
+//   run_scope(n, s, k)  n runs in scope s of kind k (function, lambda, class, module, comprehension, generator)
+
+.violation F704(at: node) code "F704" "`yield` or `await` outside of a function"
+    suppress ruff "F704"
+F704(y) :- kind(y, "yield"), run_scope(y, _, k), k != "function", k != "lambda".
+F704(a) :- kind(a, "await"), !await_ok(a).
+// await_ok(n): n runs where `await` is allowed, looking through list, set and dict comprehensions.
+.decl await_ok(n: node)
+await_ok(n) :- run_scope(n, _, k), (k = "function" ; k = "lambda" ; k = "generator").
+await_ok(n) :- run_scope(n, c, "comprehension"), await_ok(c).

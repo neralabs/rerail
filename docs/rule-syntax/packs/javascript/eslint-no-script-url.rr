@@ -1,0 +1,19 @@
+.policy "eslint-no-script-url" revision 5
+.description "Avoid javascript: URLs in strings and template literals; running code from a URL is a form of eval."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+//   static_string
+
+// ESLint's no-script-url: a string, or a template without substitutions, whose value starts with
+// `javascript:` in any case. A tagged template is not a string: the tag decides what it means.
+//   location.href = "javascript:void(0)";   `JavaScript:f()`      → reported
+//   tag`javascript:x`    `javascript:${x}`    "url:javascript:"    fine
+// No options.
+.violation no_script_url(at: node) code "no-script-url" "Script URL is a form of eval."
+    suppress eslint "no-script-url"
+    suppress oxlint "no-script-url"
+    suppress biome "lint/security/noScriptUrl"
+no_script_url(s) :- (kind(s, "string") ; kind(s, "template_string"), !tagged_template(s)), static_string(s, v),
+    iprefix("javascript:", v).

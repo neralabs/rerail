@@ -1,0 +1,23 @@
+.policy "ruff-log002-invalid-get-logger-argument" revision 2
+.description "Pass __name__ to logging.getLogger() instead of __file__ or __cached__; logger names should be dotted module names, not file paths."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG002 (flake8-logging): `logging.getLogger(__file__)` or `(__cached__)`. Logger names are dotted module
+// names, so the logger is cut off from its package's configuration; `__name__` is meant. The argument is the
+// first positional or `name=`, and must be the builtin itself (not a rebound name). Only in a file that imports
+// `logging`. Reported at the argument. (Ruff's fix, to `__name__`, is unsafe; none here.)
+//   getLogger(__file__)               ← LOG002
+//   logging.getLogger(name=__cached__)    ← LOG002
+//   logging.getLogger(__name__)       not reported
+#include "python/logging.rr"
+
+.violation LOG002(at: node) code "LOG002"
+    "Pass `__name__` to `logging.getLogger()` instead of `__file__` or `__cached__`; logger names should be dotted module names, not paths. Keep it only if existing config targets the path-named logger."
+    suppress ruff "LOG002"
+LOG002(e) :- call_q(c, "logging.getLogger"), path_arg(c, a), unparen(a, e), resolves_builtin(e, x),
+    (x = "__file__" ; x = "__cached__"), docof(c, d), seen_module(d, "logging").
+.decl path_arg(c: node, a: node)
+path_arg(c, a) :- call_q(c, "logging.getLogger"), ruff_arg(c, 0, a).
+path_arg(c, a) :- call_q(c, "logging.getLogger"), call_kwarg(c, "name", a).

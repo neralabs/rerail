@@ -1,0 +1,189 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-removed-compat-surfaces",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer removed_compat_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/**/*.py",
+      "impl/**/*.py",
+      "l4100_queue/**/*.py",
+      "l4400_scheduler/**/*.py",
+      "l4250_timers/**/*.py",
+      "l4300_timers/**/*.py",
+      "l4350_timer_driver/**/*.py",
+      "l7000_versioned_schema/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "definitions",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "function_definition",
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:AdvisoryLockCoordinator|ApplicationTickProvider|ApplyClaimedTimersConfig|ClaimDueTimersConfig|CypherLeaseCoordinator|FileLockCoordinator|LeaseDocumentCoordinator|RowLockCoordinator|SchedulerTick|SupersedeTimerConfig|TickCoordinator|TimerClaim|TimerScanConfig|_apply_claimed_timers_runtime|_claim_due_timers_runtime|_claimed_queue_prefix_rows_query_spec|_claimed_queue_rows_query_spec|_coalesce_branch_tip_materialization_alias|_reconcile_due_timers_runtime|_recover_abandoned_timer_claims_runtime|_schedule_timer_runtime|_supersede_timer_runtime|apply_claimed_timers|apply_claimed_timers_async|apply_timer_driver_claims|apply_timer_driver_claims_async|claim_due_timer|claim_due_timer_async|claim_due_timers|claim_due_timers_async|claim_local_timer_responsibilities|claim_local_timer_responsibilities_async|dispatch_due_jobs|dispatch_due_jobs_lazy|recover_abandoned_timer_claims|recover_abandoned_timer_claims_async)$",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "kind": "class_definition",
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:AdvisoryLockCoordinator|ApplicationTickProvider|ApplyClaimedTimersConfig|ClaimDueTimersConfig|CypherLeaseCoordinator|FileLockCoordinator|LeaseDocumentCoordinator|RowLockCoordinator|SchedulerTick|SupersedeTimerConfig|TickCoordinator|TimerClaim|TimerScanConfig|_apply_claimed_timers_runtime|_claim_due_timers_runtime|_claimed_queue_prefix_rows_query_spec|_claimed_queue_rows_query_spec|_coalesce_branch_tip_materialization_alias|_reconcile_due_timers_runtime|_recover_abandoned_timer_claims_runtime|_schedule_timer_runtime|_supersede_timer_runtime|apply_claimed_timers|apply_claimed_timers_async|apply_timer_driver_claims|apply_timer_driver_claims_async|claim_due_timer|claim_due_timer_async|claim_due_timers|claim_due_timers_async|claim_local_timer_responsibilities|claim_local_timer_responsibilities_async|dispatch_due_jobs|dispatch_due_jobs_lazy|recover_abandoned_timer_claims|recover_abandoned_timer_claims_async)$",
+                  "pattern": "$NAME"
+                }
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "RCS001",
+        "anchor": "witness.span",
+        "message": "removed compatibility surface '$NAME' must not be reintroduced"
+      }
+    },
+    {
+      "id": "names",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?:AdvisoryLockCoordinator|ApplicationTickProvider|ApplyClaimedTimersConfig|ClaimDueTimersConfig|CypherLeaseCoordinator|FileLockCoordinator|LeaseDocumentCoordinator|RowLockCoordinator|SchedulerTick|SupersedeTimerConfig|TickCoordinator|TimerClaim|TimerScanConfig|_apply_claimed_timers_runtime|_claim_due_timers_runtime|_claimed_queue_prefix_rows_query_spec|_claimed_queue_rows_query_spec|_coalesce_branch_tip_materialization_alias|_reconcile_due_timers_runtime|_recover_abandoned_timer_claims_runtime|_schedule_timer_runtime|_supersede_timer_runtime|apply_claimed_timers|apply_claimed_timers_async|apply_timer_driver_claims|apply_timer_driver_claims_async|claim_due_timer|claim_due_timer_async|claim_due_timers|claim_due_timers_async|claim_local_timer_responsibilities|claim_local_timer_responsibilities_async|dispatch_due_jobs|dispatch_due_jobs_lazy|recover_abandoned_timer_claims|recover_abandoned_timer_claims_async)$",
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "import_statement"
+                      },
+                      {
+                        "kind": "import_from_statement"
+                      },
+                      {
+                        "kind": "global_statement"
+                      },
+                      {
+                        "kind": "nonlocal_statement"
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "function_definition",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "class_definition",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "keyword_argument",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "attribute",
+                    "field": "attribute",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parameters",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "lambda_parameters",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "default_parameter",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "typed_default_parameter",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "typed_parameter",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "pattern": "$NAME"
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "RCS001",
+        "anchor": "witness.span",
+        "message": "removed compatibility surface '$NAME' must not be reintroduced"
+      }
+    },
+    {
+      "id": "attributes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "kind": "identifier",
+              "regex": "^(?:AdvisoryLockCoordinator|ApplicationTickProvider|ApplyClaimedTimersConfig|ClaimDueTimersConfig|CypherLeaseCoordinator|FileLockCoordinator|LeaseDocumentCoordinator|RowLockCoordinator|SchedulerTick|SupersedeTimerConfig|TickCoordinator|TimerClaim|TimerScanConfig|_apply_claimed_timers_runtime|_claim_due_timers_runtime|_claimed_queue_prefix_rows_query_spec|_claimed_queue_rows_query_spec|_coalesce_branch_tip_materialization_alias|_reconcile_due_timers_runtime|_recover_abandoned_timer_claims_runtime|_schedule_timer_runtime|_supersede_timer_runtime|apply_claimed_timers|apply_claimed_timers_async|apply_timer_driver_claims|apply_timer_driver_claims_async|claim_due_timer|claim_due_timer_async|claim_due_timers|claim_due_timers_async|claim_local_timer_responsibilities|claim_local_timer_responsibilities_async|dispatch_due_jobs|dispatch_due_jobs_lazy|recover_abandoned_timer_claims|recover_abandoned_timer_claims_async)$",
+              "pattern": "$NAME"
+            }
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "RCS001",
+        "anchor": "witness.span",
+        "message": "removed compatibility surface '$NAME' must not be reintroduced"
+      }
+    }
+  ]
+}

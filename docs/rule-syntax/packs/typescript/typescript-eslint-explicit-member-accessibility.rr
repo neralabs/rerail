@@ -1,0 +1,68 @@
+.policy "typescript-eslint-explicit-member-accessibility" revision 4
+.description "Declare public, private or protected on every TypeScript class member and parameter property; #private members are exempt."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   ts_member_name, ts_ctor, param_property
+
+// typescript-eslint's explicit-member-accessibility: class members say whether they are public.
+//   "explicit" (the default):  m() {}  →  public m() {}      (suggested: public, private or protected)
+//   "no-public":               public m() {}  →  m() {}      (fixed; a parameter property only when readonly)
+//   "off":                     either way
+// `accessibility` sets the level, and overrides/constructors, /accessors, /methods, /properties and
+// /parameterProperties set it per kind; ignoredMethodNames skips methods by name. `#private` members are left alone.
+.violation explicit_member_accessibility(at: loc, msg: symbol) code "@typescript-eslint/explicit-member-accessibility"
+    "{msg}"
+    suppress eslint "@typescript-eslint/explicit-member-accessibility"
+    suppress oxlint "explicit-member-accessibility"
+    suppress biome "lint/style/useConsistentMemberAccessibility"
+    fix safe drop_public "Remove the public modifier"
+    fix add_public "Add 'public' accessibility modifier"
+    fix add_private "Add 'private' accessibility modifier"
+    fix add_protected "Add 'protected' accessibility modifier"
+explicit_member_accessibility(h, cat("Missing accessibility modifier on ", cat(t, cat(" ", cat(x, "."))))) :-
+    missing(m, t, x), member_head(m, h).
+explicit_member_accessibility(a, cat("Public accessibility modifier on ", cat(t, cat(" ", cat(x, "."))))) :-
+    unwanted(m, t, x), child(m, a, _), kind(a, "accessibility_modifier").
+
+// member(m, c, t, x): a class member of kind c (the overrides' names), described as t, named x.
+.decl member(m: node, c: symbol, t: symbol, x: symbol)
+member(m, c, t, x) :- class_member(m), !op(m, "get"), !op(m, "set"), ts_member_name(m, x, y), y != "Private",
+    (ts_ctor(m), c = "constructors" ; !ts_ctor(m), c = "methods"), t = "method definition".
+member(m, "accessors", t, x) :- class_member(m), (op(m, "get"), g = "get" ; op(m, "set"), g = "set"),
+    ts_member_name(m, x, y), y != "Private", t = cat(g, " property accessor").
+member(m, "properties", "class property", x) :- kind(m, "public_field_definition"), ts_member_name(m, x, y),
+    y != "Private".
+member(p, "parameterProperties", "parameter property", x) :- param_property(p), field(p, "pattern", n), text(n, x).
+.decl class_member(m: node)
+class_member(m) :- (kind(m, "method_definition") ; kind(m, "method_signature")), child(b, m, _), kind(b, "class_body").
+class_member(m) :- kind(m, "abstract_method_signature").
+
+// level(c, l): the override for c, else `accessibility`, else explicit.
+.decl level(c: symbol, l: symbol)
+level(c, l) :- member(_, c, _, _), option(cat("overrides/", c), l).
+level(c, l) :- member(_, c, _, _), !option(cat("overrides/", c), _), option("accessibility", l).
+level(c, "explicit") :- member(_, c, _, _), !option(cat("overrides/", c), _), !option("accessibility", _).
+.decl modified(m: node)
+modified(m) :- child(m, a, _), kind(a, "accessibility_modifier").
+.decl public(m: node)
+public(m) :- child(m, a, _), kind(a, "accessibility_modifier"), text(a, "public").
+
+.decl missing(m: node, t: symbol, x: symbol)
+missing(m, t, x) :- member(m, c, t, x), level(c, "explicit"), !modified(m), !ignored(m, c, x).
+.decl unwanted(m: node, t: symbol, x: symbol)
+unwanted(m, t, x) :- member(m, c, t, x), level(c, "no-public"), public(m), !ignored(m, c, x),
+    (c != "parameterProperties" ; op(m, "readonly")).
+// ignoredMethodNames covers methods, constructors and accessors, not properties.
+.decl ignored(m: node, c: symbol, x: symbol)
+ignored(m, c, x) :- member(m, c, _, x), c != "properties", c != "parameterProperties",
+    option_item("ignoredMethodNames", _, x).
+
+// The fixes. `public` is deleted as a node: a regex over the member could find `public` in a decorator's
+// string (`@Dec('public') public x`). The space after it stays.
+drop_public(a, _) :- unwanted(m, _, _), child(m, a, _), kind(a, "accessibility_modifier") => delete(a).
+add_public(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `public $h`).
+add_private(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `private $h`).
+add_protected(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `protected $h`).

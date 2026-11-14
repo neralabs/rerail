@@ -1,0 +1,17 @@
+.policy "ruff-fix003-line-contains-xxx" revision 2
+.description "Resolve the issue an XXX comment marks before shipping, or at least replace it with a more descriptive tag such as TODO."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FIX003 (flake8-fixme): a comment holding the task tag `XXX`, in any case, as the first word after a `#`
+// (python/misc-comments). Reported at the comment; Ruff reports at the tag, on the same line.
+//   # XXX: something           ← FIX003
+//   # a # xxx                  ← FIX003: after another `#`
+//   # XXXS                     not reported: not the whole word
+#include "python/misc-comments.rr"
+
+.violation FIX003(at: node, d: symbol) code "FIX003"
+    "Fix the issue this `{d}` comment flags, then remove the `{d}` note; if the fix belongs in a separate change, replace `{d}` with a more descriptive tag such as `TODO`."
+    suppress ruff "FIX003"
+FIX003(c, d) :- fixme_tag(c, "xxx", d).

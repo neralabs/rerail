@@ -92,7 +92,7 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        Self(dunce::canonicalize(path).unwrap())
     }
 
     fn store(&self) -> PathBuf {
@@ -384,7 +384,7 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
     let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
     let mut indexed = |path: &str, language: &str| {
         repository_package(&mut manifests, &repository, path, language)
-            .map(|manifest| manifest.to_wire())
+            .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
     };
     // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
     let entries = files
@@ -404,7 +404,7 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
         crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
             entries.get(directory)
         })
-        .map(|manifest| manifest.to_wire())
+        .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
     };
     // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
     // one outside it never names a file below it); an unparsable `engines.node` falls through to
@@ -2418,7 +2418,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("partial-pass");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
-    // `a`, a regex clause with one match, polls its allowance once, before `b` runs.
+    // `a` polls before scanning and once for its match, before `b` runs.
     let code_rule = compile(
         "partial-pass",
         json!([
@@ -2435,7 +2435,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let file = json!([{ "path": "partial.py", "language": "python", "source": "print(1)\n" }]);
     // `a` runs and is stored; the ceiling stops `b`, which is not.
     let first = stored_workspace(&store, "/partial-pass", &code_rule);
-    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    TEST_CLAUSE_WORK_CEILING.set(Some(2));
     let capped = apply_json(&first, 1, file.clone());
     TEST_CLAUSE_WORK_CEILING.set(None);
     assert_eq!(
@@ -2585,8 +2585,8 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         })
     };
-    // Every element reads each one before it: quadratic in the list, with no text to rule a
-    // file out.
+    // Enough roots to exhaust the clause allowance even when candidate selection and sibling
+    // checks share their work. No required literal rules the file out before matching.
     let costly = json!({
         "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
         "forbid": { "ast": { "language": "python", "rule": {
@@ -2596,7 +2596,7 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
         "clause-allowance",
         json!([print("before"), costly, print("after")]),
     );
-    let numbers = (0..3_000)
+    let numbers = (0..30_000)
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");
@@ -3813,7 +3813,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor() {
     use super::persisted::grammar_version;
     use super::storage::index_stored_tapes;
-    use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
+    use crate::code_rule_dsl::search_index::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
     let _slot = WORKSPACE_TEST_SLOT.lock();
@@ -3882,7 +3882,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(call)],
+        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
     };
     assert_eq!(
         store
@@ -4407,11 +4407,12 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
+        let project = state.project.as_any().downcast_ref::<super::ingest::ecma::EcmaProject>().expect("ECMAScript's project context");
         (
-            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
-            state.server_graph_directories.clone(),
-            state.module_configs.clone(),
-            state
+            project.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            project.server_graph_directories.clone(),
+            project.module_configs.clone(),
+            project
                 .manifests
                 .iter()
                 .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))

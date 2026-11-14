@@ -1,0 +1,14 @@
+{
+  "beforeMerge": "beaf99ca9f013643556a556946d117877a020bd4",
+  "mergedTip": "b4f0aa04bcd5b958d44ff96d46f3f36bead42b56",
+  "binary": "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-f739fe89e18d726f",
+  "binarySha256": "a56f7596c9358c288119e227e4110f4bf6d9bcb6d535836669a69144ab4538e6",
+  "resolvedSourceSha256": {
+    "native/src/code_rule_dsl/facts/vtab/syntax.rs": "9bcf1ae0be69198be46c9c9f077b5e6e813c9150d182f55502188538b03bec84",
+    "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs": "c6e20450ea7d656e34a7390733589d522ab4cf150b58fc921c131db20c614796",
+    "native/src/code_rule_dsl/facts/vtab/syntax/granules.rs": "cd869796f75d6ef5a6c89b40337c18073c32a944f6daf479f01e19794bb3f242",
+    "native/src/code_rule_dsl/logic/native/setfix/spec.rs": "fb1edd8abf5717f29f9f27b368fd0e34d8fd25a74f67b6a7689060ef05f89535"
+  },
+  "profile": "profiling",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+}

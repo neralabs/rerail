@@ -1,0 +1,17 @@
+# Item moves (move_items.py): source, destination, items. Paths under native/src/code_rule_dsl/.
+# Each source declares its destination and re-exports what moved, so no caller changes.
+
+# The .rr AST, below the parser: rr-syntax mounts logic/front/ast.rs (the facts, profile and lang crates read it)
+logic/front.rs	logic/front/ast.rs	enum Term; impl Term; struct Atom; impl Atom; enum AggOp; enum Literal; impl Literal; fn cmp_binds; impl fmt::Display for Term; impl fmt::Display for Atom; impl fmt::Display for Literal; impl fmt::Display for Rule; fn join; struct Rule; struct LatticeDecl; impl LatticeDecl; enum Value; struct Program; struct Again; const QUALIFIERS; impl Program; const OPTION_GLOB; const GLOBAL; const LIBRARY; fn globals; const SCOPE_NOT; enum SpanIn; enum Native; impl Native; const RESERVED; const AXIS; const DESCENDANTS; const NEAREST; fn is_axis; fn is_transduced; fn axis; const EVERY_KIND
+logic/magic.rs	logic/front/ast.rs	struct Report; struct Gate
+
+# The logic's device interface (logic/device.rs, hand-written): what crosses it is data, moved to the core
+logic/native/setfix/device.rs	logic/device.rs	struct Report
+transducer/packed/metal_lattice.rs	logic/device/lattice.rs	struct System; struct Solved
+transducer/packed/metal_nearest.rs	logic/device/nearest.rs	struct Solved; enum Buffers
+
+# The transducer's device interface (transducer/packed/device.rs, hand-written): the data that crosses it
+transducer/packed/metal_label_passes.rs	transducer/packed/device.rs	struct RootJobs; type RootsFound; struct Outcome
+transducer/packed/metal_grid_executor.rs	transducer/packed/device.rs	type PageConsumer
+# compile/matcher.rs's macOS block, into the device crate; matcher.rs keeps stubs that call the device
+transducer/packed/compile/matcher.rs	=transducer/packed/compile/matcher_metal.rs	impl LoweredMatcher @macos; impl LoweredWave @macos; fn metal; fn mark; fn apart

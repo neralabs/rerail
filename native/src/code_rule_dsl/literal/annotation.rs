@@ -7,8 +7,8 @@
 //! The scope table parses each string it classifies as a type definition (see `scope::python`) and
 //! reads the names inside; `parse` reads the table's trees.
 
-use super::offsets::{self, Decode};
-use super::{Grammar, HostMap, PNode, SubTree, semantic};
+use super::offsets::Decode;
+use super::{HostMap, PNode, SubTree, semantic};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_language::LanguageExt;
@@ -27,7 +27,7 @@ pub(crate) fn python() -> &'static tree_sitter::Language {
 }
 
 /// The kind name of a Python symbol id, `ERROR` included.
-pub(crate) fn kind_name(id: u16) -> &'static str {
+pub fn kind_name(id: u16) -> &'static str {
     if id == ERROR_KIND {
         return "ERROR";
     }
@@ -47,7 +47,7 @@ pub(crate) fn parse<D: ast_grep_core::Doc>(
     offset: usize,
     host: &semantic::Host<'_>,
 ) -> Option<SubTree> {
-    let decoded = match offsets::decode_python(node) {
+    let decoded = match super::python_string::decode_python(node) {
         Decode::Known(decoded) => decoded,
         Decode::Unknown | Decode::NotString => return None,
     };
@@ -76,7 +76,7 @@ pub(crate) fn parse<D: ast_grep_core::Doc>(
         }
         None => error(0, text.len()),
     };
-    Some(SubTree::new(Grammar::Annotation, text, offset, root, map))
+    Some(SubTree::new(GRAMMAR, text, offset, root, map))
 }
 
 fn error(start: usize, end: usize) -> PNode {
@@ -95,7 +95,7 @@ fn error(start: usize, end: usize) -> PNode {
 
 /// The expression `text` holds, as Ruff's expression mode (or, `parenthesized`, its parenthesized
 /// expression mode) reads it; `None` where Ruff reports a syntax error.
-pub(crate) fn expression(text: &str, parenthesized: bool) -> Option<PNode> {
+pub fn expression(text: &str, parenthesized: bool) -> Option<PNode> {
     // Nothing to read, or (outside parentheses) a first line that is indented.
     if text.trim().is_empty() {
         return None;
@@ -272,11 +272,15 @@ fn breaks_line(root: &tree_sitter::Node<'_>, source: &str) -> bool {
     false
 }
 
-/// A tree-sitter subtree as a sub-tree node, its ranges passed through `clamp`.
+/// A tree-sitter subtree as a sub-tree node, its ranges passed through `clamp`. As a tape is
+/// written, no token the grammar implies is kept (RER-131): the gaps between the stored children
+/// say where it was.
 fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<usize>) -> PNode {
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(crate::code_rule_dsl::language::GrammarDialect::Python);
     fn node(
         cursor: &mut tree_sitter::TreeCursor<'_>,
         clamp: &dyn Fn(Range<usize>) -> Range<usize>,
+        grammar: Option<&crate::code_rule_dsl::tape::tokens::TokenGrammar>,
     ) -> PNode {
         let current = cursor.node();
         let range = clamp(current.byte_range());
@@ -291,9 +295,14 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
             value: None,
             children: Vec::new(),
         };
+        let stored = grammar.and_then(|grammar| grammar.stored_children(current));
         if cursor.goto_first_child() {
+            let mut at = 0;
             loop {
-                built.children.push(node(cursor, clamp));
+                if stored.as_ref().is_none_or(|stored| stored.get(at).copied().unwrap_or(true)) {
+                    built.children.push(node(cursor, clamp, grammar));
+                }
+                at += 1;
                 if !cursor.goto_next_sibling() {
                     break;
                 }
@@ -303,203 +312,59 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
         built
     }
     let mut cursor = root.walk();
-    node(&mut cursor, clamp)
+    node(&mut cursor, clamp, grammar.as_deref())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::code_rule_dsl::oracle;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-    fn kinds(text: &str, parenthesized: bool) -> Option<String> {
-        fn describe(node: &PNode, text: &str) -> String {
-            let children: Vec<String> = node
-                .children
-                .iter()
-                .filter(|child| child.named)
-                .map(|child| describe(child, text))
-                .collect();
-            if children.is_empty() {
-                format!("{}:{}", kind_name(node.kind), &text[node.start..node.end])
-            } else {
-                format!("{}({})", kind_name(node.kind), children.join(" "))
-            }
-        }
-        expression(text, parenthesized).map(|root| describe(&root, text))
+/// The `annotation` grammar (`literal::LiteralGrammar`).
+pub(crate) struct AnnotationGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
+
+impl super::LiteralGrammar for AnnotationGrammar {
+    fn name(&self) -> &'static str {
+        "annotation"
     }
-
-    #[test]
-    fn annotations_are_expressions_as_ruff_reads_them() {
-        let statement = |inner: &str| format!("expression_statement({inner})");
-        assert_eq!(
-            kinds("List[int]", false),
-            Some(statement("subscript(identifier:List identifier:int)"))
-        );
-        assert_eq!(kinds("int ", false), Some(statement("identifier:int")));
-        assert_eq!(kinds("int # x", false), Some(statement("identifier:int")));
-        assert_eq!(
-            kinds("a, b", false).as_deref(),
-            Some("expression_statement(identifier:a identifier:b)")
-        );
-        assert_eq!(
-            kinds("\nint |\n  str", true),
-            Some(statement("binary_operator(identifier:int identifier:str)"))
-        );
-        assert_eq!(kinds(" int", true), Some(statement("identifier:int")));
-        assert_eq!(
-            kinds("(int)", true),
-            Some(statement("parenthesized_expression(identifier:int)"))
-        );
-        for refused in [
-            " int",
-            "async",
-            "print x",
-            "a b",
-            "(int",
-            "int\\",
-            "x := 1",
-            "*a",
-            "yield x",
-            "await",
-            "await await x",
-            "f(yield x)",
-            "",
-            " ",
-            "1 +",
-            "a if b",
-            "(a) or (b",
-            "int |\nstr",
-            "a = 1",
-        ] {
-            assert_eq!(kinds(refused, false), None, "{refused:?}");
-        }
-        assert_eq!(
-            kinds("lambda: 1", false),
-            Some(statement("lambda(integer:1)"))
-        );
-        assert_eq!(kinds("match", false), Some(statement("identifier:match")));
-        assert_eq!(
-            kinds("await x", false),
-            Some(statement("await(identifier:x)"))
-        );
-        assert_eq!(
-            kinds("(yield)", false),
-            Some(statement("parenthesized_expression(yield:yield)"))
-        );
+    fn kinds(&self) -> &'static [&'static str] {
+        // Python's own kinds, which the grammar checks when it compiles the rule.
+        &[]
     }
-
-    /// Every case of `fixtures/python/literal/annotation.expected.json`, written in its host and read through the
-    /// scope table: a refused literal where Ruff 0.16.9's parser reports F722 on the whole
-    /// literal, and otherwise an `ERROR` node after the expression for each semantic syntax error
-    /// its checker reports, at the same range with the same message. In a complex (escaped)
-    /// string Ruff relocates every expression to the whole literal but leaves a lambda
-    /// parameter's, a keyword argument's and a comprehension clause's range at its offset in the
-    /// value, which it then reads as a file offset; the tree maps every node to the whole
-    /// literal, so the escaped cases' reports are read there.
-    #[test]
-    fn annotations_report_what_ruff_reports() {
-        use super::super::SubDoc;
-        use crate::code_rule_dsl::scope::{Reading, ScopeTable};
-        use ast_grep_core::AstGrep;
-        use std::sync::Arc;
-        let oracle: serde_json::Value =
-            serde_json::from_str(oracle!("python/literal/annotation.expected.json"))
-                .expect("oracle");
-        let cases = oracle["cases"].as_array().expect("cases");
-        assert!(cases.len() > 2_000);
-        let hosts: std::collections::HashMap<&str, &str> = [
-            ("module", "x: {}\n"),
-            ("function", "def f():\n    x: {}\n"),
-            ("async", "async def f():\n    x: {}\n"),
-            ("class", "class C:\n    x: {}\n"),
-            ("parameter", "async def f(p: {}): pass\n"),
-            ("global", "def f():\n    x: {}\n    global a, b\n"),
-        ]
-        .into_iter()
-        .collect();
-        let mut mismatches = Vec::new();
-        for case in cases {
-            let value = case[0].as_str().expect("value");
-            let style = case[1].as_str().expect("style");
-            let literal = case[2].as_str().expect("literal");
-            let host = case[3].as_str().expect("host");
-            let template = hosts[host];
-            let source = template.replace("{}", literal);
-            let at = template.find("{}").expect("placeholder");
-            let whole = literal.len() as i64;
-            let mut theirs: Vec<String> = case[4]
-                .as_array()
-                .expect("reports")
-                .iter()
-                .map(|report| {
-                    let (mut start, mut end) =
-                        (report[0].as_i64().unwrap(), report[1].as_i64().unwrap());
-                    if style == "escaped" {
-                        (start, end) = (0, whole);
-                    }
-                    format!("{start}..{end} {}", report[2].as_str().unwrap())
-                })
-                .collect();
-            let root = GrammarDialect::Python.ast_grep(&source);
-            let table = ScopeTable::build_with(
-                root.root(),
-                GrammarDialect::Python,
-                usize::MAX,
-                &|| false,
-                Reading::default(),
-            )
-            .expect("table builds");
-            let Some(annotation) = table.annotations.iter().find(|found| found.start == at) else {
-                mismatches.push(format!("{host} {style} {value:?}: no type definition"));
-                continue;
-            };
-            let tree = Arc::clone(&annotation.tree);
-            let mut ours: Vec<String> = if tree.is_error() {
-                vec![format!("0..{whole} syntax")]
-            } else {
-                let document = AstGrep::doc(SubDoc {
-                    tree: Arc::clone(&tree),
-                });
-                document
-                    .root()
-                    .children()
-                    .filter(|child| child.kind() == "ERROR")
-                    .map(|child| {
-                        let range = crate::code_rule_dsl::origin::Origin::of_node(
-                            &*tree,
-                            child.node_id(),
-                            child.range(),
-                        )
-                        .expect("range")
-                        .primary();
-                        let message = match tree.value(child.node_id()) {
-                            Some(Value::Str(message)) => message.clone(),
-                            other => format!("{other:?}"),
-                        };
-                        format!("{}..{} {message}", range.start - at, range.end - at)
-                    })
-                    .collect()
-            };
-            // Ruff's parser reports once, on the whole literal, with its own message.
-            if tree.is_error()
-                && theirs.len() == 1
-                && theirs[0].starts_with(&format!("0..{whole} "))
-            {
-                theirs = vec![format!("0..{whole} syntax")];
-            }
-            ours.sort();
-            theirs.sort();
-            if ours != theirs {
-                mismatches.push(format!(
-                    "{host} {style} {value:?}: Ruff {theirs:?}, Rerail {ours:?}"
-                ));
-            }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn of_host_syntax(&self) -> bool {
+        true
+    }
+    fn reads_only_the_node(&self) -> bool {
+        false
+    }
+    fn own_kind_id(&self, kind: &str) -> Option<u16> {
+        Some(ast_grep_core::language::Language::kind_to_id(&crate::code_rule_dsl::language::GrammarDialect::Python, kind))
+    }
+    fn own_kind_name(&self, id: u16) -> Option<&'static str> {
+        Some(kind_name(id))
+    }
+    fn parse(&self, grammar: super::Grammar, text: &str) -> super::PNode {
+        // The scope table parses annotations (`annotation::parse`).
+        let _ = grammar;
+        super::PNode {
+            kind: ERROR_KIND,
+            start: 0,
+            end: text.len(),
+            named: true,
+            error: true,
+            extra: false,
+            field: 0,
+            value: None,
+            children: Vec::new(),
         }
-        assert_eq!(
-            mismatches,
-            Vec::<String>::new(),
-            "\n{}",
-            mismatches.join("\n")
-        );
     }
 }

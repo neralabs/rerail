@@ -1,0 +1,14 @@
+   Compiling rerail-store v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native/crates/store)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 11.12s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_store-9f329dac6c2013e9)
+
+running 7 tests
+test content_store::frames::tests::frame_metadata_reads_are_batched ... ok
+test content_store::frames::tests::a_frame_is_read_back_with_what_it_was_derived_from ... ok
+test content_store::frames::tests::queued_frames_are_read_without_waiting_for_the_writer ... ok
+test content_store::frames::tests::a_relation_no_run_used_for_four_runs_is_collected ... ok
+test content_store::frames::tests::queued_replacement_and_deletion_override_durable_frames ... ok
+test content_store::frames::tests::admitted_frames_survive_store_close_and_preserve_identity_partition_and_empty_answers ... ok
+test content_store::frames::tests::frame_admission_probes_demanded_keys_instead_of_scanning_the_space ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 157 filtered out; finished in 0.06s

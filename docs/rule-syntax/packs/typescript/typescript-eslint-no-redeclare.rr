@@ -1,0 +1,95 @@
+.policy "typescript-eslint-no-redeclare" revision 3
+.description "Don't declare the same TypeScript variable twice in one scope or redeclare a built-in global; the second declaration silently shadows the first."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b-scope.rr"
+//   variable, scope_type
+#include "tsx/eslint-b-scope.rr"
+//   global_item, es_builtin, global_var
+
+// typescript-eslint's no-redeclare: a name is declared once per scope. Values and types count together:
+// `type A = 1; const A = 2;` is a redeclaration. The declarations of a variable, in this order: being a built-in
+// global (builtinGlobals, default true: only a script's top level is the global scope), each `/* global */` comment
+// item naming it, then each declaring identifier. Every one after the first is reported.
+//   var a; var a;   function f(a) { var a; }   type T = 1; interface T {}        → the second
+//   function f(): void; function f(x?) {}      fine: an overload signature declares nothing
+// Option ignoreDeclarationMerge (default true) allows TypeScript's merges: interfaces with interfaces, namespaces
+// with namespaces, and one class, function or enum with interfaces (classes only) and namespaces. A second class,
+// function or enum among them is still reported (the first of them is not).
+//   interface A {} interface A {}   class B {} namespace B {}   function C() {} namespace C {}      fine
+// Scopes checked, as the rule visits them: the program, functions, blocks, for loops and switch; not classes, catch
+// clauses, static blocks, namespace bodies or enums.
+.violation no_redeclare(at: loc, msg: symbol) code "@typescript-eslint/no-redeclare" "{msg}"
+    suppress eslint "@typescript-eslint/no-redeclare"
+    suppress oxlint "no-redeclare"
+    suppress biome "lint/suspicious/noRedeclare"
+no_redeclare(id, cat("'", cat(x, "' is already defined."))) :- counted(s, x, id), !global_first(s, x),
+    counted(s, x, o), before(o, id).
+no_redeclare(id, cat("'", cat(x, "' is already defined as a built-in global variable."))) :- counted(s, x, id),
+    global_home(s), builtin(s, x).
+no_redeclare(id, cat("'", cat(x, "' is already defined by a variable declaration."))) :- counted(s, x, id),
+    global_home(s), !builtin(s, x), comment_decl(s, x, _, _).
+no_redeclare(at, cat("'", cat(x, "' is already defined as a built-in global variable."))) :- comment_decl(p, x, _, at),
+    builtin(p, x).
+no_redeclare(at, cat("'", cat(x, "' is already defined."))) :- comment_decl(p, x, c, at), !builtin(p, x),
+    comment_decl(p, x, o, _), earlier(o, c).
+
+// ---- declarations by identifier ----
+.decl checked(s: node)  // the scopes the rule visits
+checked(s) :- scope_type(s, t), (t = "global" ; t = "function" ; t = "block" ; t = "for" ; t = "switch").
+// decl(s, x, id, g): identifier id declares x in checked scope s; g groups kinds for merging: "class", "function",
+// "enum", "interface", "namespace", or "other". An overload signature or `declare function` is not counted.
+.decl decl(s: node, x: symbol, id: node, g: symbol)
+decl(s, x, id, g) :- checked(s), variable(s, x, id, k), !signature_name(id), merge_group(k, g).
+.decl signature_name(id: node)
+signature_name(id) :- kind(f, "function_signature"), field(f, "name", id).
+.decl merge_group(k: symbol, g: symbol)
+merge_group(k, k) :- (k = "class" ; k = "function" ; k = "enum" ; k = "interface" ; k = "namespace").
+merge_group(k, "other") :- space(k, _), k != "class", k != "function", k != "enum", k != "interface", k != "namespace".
+.decl n_decls(s: node, x: symbol, n: number)
+n_decls(s, x, n) :- decl(s, x, _, _), n = count : { decl(s, x, _, _) }.
+.decl group_count(s: node, x: symbol, g: symbol, n: number)
+group_count(s, x, g, n) :- decl(s, x, _, g), n = count : { decl(s, x, _, g) }.
+// outside(s, x, set): a declaration of x falls outside the merge set: "ns" (namespaces only), "class" (classes,
+// interfaces, namespaces), "function" (functions, namespaces), "enum" (enums, namespaces).
+.decl outside(s: node, x: symbol, set: symbol)
+outside(s, x, "ns") :- decl(s, x, _, g), g != "namespace".
+outside(s, x, "iface") :- decl(s, x, _, g), g != "interface".
+outside(s, x, "class") :- decl(s, x, _, g), g != "class", g != "interface", g != "namespace".
+outside(s, x, "function") :- decl(s, x, _, g), g != "function", g != "namespace".
+outside(s, x, "enum") :- decl(s, x, _, g), g != "enum", g != "namespace".
+// counted(s, x, id): the identifiers the rule yields for x: all of them, or, when x's declarations merge, none (all
+// namespaces, or all interfaces) or only the lead group of the merge set they fall in, when there are several of
+// it: the classes, functions or enums. Past "ns", the three sets are disjoint, so at most one fits.
+.decl merging()
+merging() :- !option("ignoreDeclarationMerge", "false").
+.decl merged(s: node, x: symbol)  // several declarations, under a merge, not all namespaces or all interfaces
+merged(s, x) :- merging(), n_decls(s, x, n), n > 1, outside(s, x, "ns"), outside(s, x, "iface").
+.decl merge_lead(set: symbol, g: symbol)
+merge_lead("class", "class"). merge_lead("function", "function"). merge_lead("enum", "enum").
+.decl counted(s: node, x: symbol, id: node)
+counted(s, x, id) :- decl(s, x, id, _), (!merging() ; n_decls(s, x, 1) ;
+    merged(s, x), outside(s, x, "class"), outside(s, x, "function"), outside(s, x, "enum")).
+counted(s, x, id) :- decl(s, x, id, g), merged(s, x), merge_lead(set, g), !outside(s, x, set), group_count(s, x, g, m), m > 1.
+.decl before(a: node, b: node)  // identifier a comes first
+before(a, b) :- counted(s, x, a), counted(s, x, b), node(_, a, _, i, _), node(_, b, _, j, _), i < j.
+
+// ---- built-ins and comments: the global scope ----
+// The global scope holds the built-ins and the `/* global */` names. In a script its block is the program, where
+// the top-level declarations live too (global_home); in a module those live in the module scope, apart, and a
+// comment only meets other comments and the built-ins.
+.decl global_home(s: node)
+global_home(p) :- program(d, p), source_type(d, "script").
+.decl global_first(s: node, x: symbol)  // a built-in or a comment comes before x's identifiers
+global_first(s, x) :- counted(s, x, _), global_home(s), (builtin(s, x) ; comment_decl(s, x, _, _)).
+.decl builtin(p: node, x: symbol)  // x is a built-in global of program p's document
+builtin(p, x) :- (counted(p, x, _) ; comment_decl(p, x, _, _)), program(_, p), !option("builtinGlobals", "false"),
+    es_builtin(x).
+// comment_decl(p, x, c, at): `/* global x */` comment c declares x (an `off` item declares nothing); at is c on its
+// first line, else a place at the item's line.
+.decl comment_decl(p: node, x: symbol, c: node, at: loc)
+comment_decl(p, x, c, c) :- global_item(c, x, v, l), v != "off", line(c, l), docof(c, d), program(d, p).
+comment_decl(p, x, c, @place(f, l)) :- global_item(c, x, v, l), v != "off", !line(c, l), docof(c, d), program(d, p),
+    doc(d, f, _).

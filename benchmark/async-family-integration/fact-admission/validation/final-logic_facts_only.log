@@ -1,0 +1,6 @@
+
+running 2 tests
+test code_rule_dsl::logic::facts_only::every_kept_map_is_state_or_listed ... ok
+test code_rule_dsl::logic::facts_only::every_table_is_facts_or_listed ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3125 filtered out; finished in 0.03s

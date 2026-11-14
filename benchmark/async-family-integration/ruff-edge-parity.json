@@ -1,0 +1,107 @@
+{
+  "ruff_version": "0.15.7",
+  "arguments": "check --isolated --no-cache --select ASYNC210,ASYNC221,ASYNC222,ASYNC230 --output-format json",
+  "comparisons": [
+    {
+      "fixture": "1f85485a7075",
+      "ruff_count": 120,
+      "reference_missing_vs_ruff": [],
+      "reference_extra_vs_ruff": [],
+      "rr_missing_vs_ruff": [],
+      "rr_extra_vs_ruff": []
+    },
+    {
+      "fixture": "38094aa6ac7e",
+      "ruff_count": 2,
+      "reference_missing_vs_ruff": [],
+      "reference_extra_vs_ruff": [],
+      "rr_missing_vs_ruff": [],
+      "rr_extra_vs_ruff": []
+    },
+    {
+      "fixture": "483985bd330e",
+      "ruff_count": 24,
+      "reference_missing_vs_ruff": [],
+      "reference_extra_vs_ruff": [],
+      "rr_missing_vs_ruff": [
+        [
+          "ASYNC230",
+          "doc1.py",
+          23
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          25
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          26
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          29
+        ]
+      ],
+      "rr_extra_vs_ruff": []
+    },
+    {
+      "fixture": "c6d2d16e3195",
+      "ruff_count": 32,
+      "reference_missing_vs_ruff": [
+        [
+          "ASYNC210",
+          "doc0.py",
+          11
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          38
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          40
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          44
+        ]
+      ],
+      "reference_extra_vs_ruff": [],
+      "rr_missing_vs_ruff": [
+        [
+          "ASYNC210",
+          "doc0.py",
+          14
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          40
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          46
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          57
+        ]
+      ],
+      "rr_extra_vs_ruff": [
+        [
+          "ASYNC210",
+          "doc0.py",
+          13
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,223 @@
+# `.rr`, step 7: disjunctions and groups, `r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)).`
+#
+# The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
+#   - A body: a conjunction, or a disjunction of them, `;` between. The first conjunction is
+#     made before the `;` is seen: the `;` wraps it.
+#   - A group: a body in parentheses, at a literal's start, negated or not.
+#   - An atom or a call: a word and its arguments at a literal's start are an atom, unless an
+#     operator follows: then the `(`'s wrap is a call after all, and the word its function.
+# The rest is step 6's: arithmetic, regions, negation, patterns, modal heads, clauses,
+# declarations, settings, `#include`.
+#
+# Not in this step yet: a parenthesized term at a literal's start (`(a - b) * 10 > o`), which
+# the engine tells from a group only after its `)` by going back: such a file goes to the
+# engine. Edits (`=>`), aggregates (their words reserved), the other directives, floats,
+# `{ … }` arguments. A `` `` `` with no closing pair and a run of four backticks or more go to
+# the engine.
+
+lexer rr
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class dot       = '.'
+class comma     = ','
+class u         = 'u'
+class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&'
+class colon     = ':'
+class minus     = '-'
+class eq        = '='
+class lt        = '<'
+class gt        = '>'
+class bang      = '!'
+class tick      = '`'
+
+mask last_byte  = ~next(~empty)
+
+# --- Regions -----------------------------------------------------------------------------------
+
+# Each kind of region by its opener `o_*` and its closer, from the raw bytes: the bytes from an
+# opener to before its closer are `f_* = fill(o_*, closer)`. The hidden bytes, where no opener
+# counts, run from the byte after an opener through its closer: `prev` of the fills (a two- or
+# three-byte closer, `prev` by two or three too). A line comment's `\n` is not hidden: it ends
+# the line.
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+mask tt         = tick & next(tick)
+mask ttt        = tt & next(tick, 2)
+mask tick1      = tick & ~next(tick)
+mask tick2      = tt & ~next(tick, 2)
+mask tick3      = ttt & ~next(tick, 3)
+rounds until settled {
+  carry hidden  = empty
+  mask code0    = ~hidden
+  mask o_str    = q & code0
+  mask o_line   = line_open & code0
+  mask o_block  = block_open & code0
+  mask o_t1     = tick1 & code0
+  mask o_t2     = tick2 & code0
+  mask o_t3     = tick3 & code0
+  mask f_str    = fill(o_str, q)
+  mask f_line   = fill(o_line, lf)
+  mask f_block  = fill(o_block, block_end)
+  mask f_t1     = fill(o_t1, tick)
+  mask f_t2     = fill(o_t2, tt)
+  mask f_t3     = fill(o_t3, ttt)
+  next hidden   = prev(f_str | f_block | f_t1 | f_t2 | f_t3) | (prev(f_line) & ~lf) | prev(f_t2 | f_t3, 2) | prev(f_t3, 3)
+}
+
+# Each region's last byte.
+mask closing    = prev(f_str) & ~f_str
+mask line_last  = f_line & ~next(f_line)
+mask block_last = prev(f_block) & ~f_block
+mask t1_last    = prev(f_t1) & ~f_t1
+mask t2_last    = prev(f_t2, 2) & ~prev(f_t2)
+mask t3_last    = prev(f_t3, 3) & ~prev(f_t3, 2)
+mask o_tick     = o_t1 | o_t2 | o_t3
+mask region     = hidden | o_str | o_line | o_block | o_tick
+
+error "a string open at the end of the file" when f_str & last_byte
+error "a block comment open at the end of the file" when f_block & last_byte
+error "a backtick literal open at the end of the file" when (f_t1 | f_t3) & last_byte
+escape "a `` with no closing pair" when f_t2 & last_byte
+escape "a run of four backticks or more" when ttt & next(tick, 3) & ~hidden
+# `\u{…}` and `\uXXXX` are checked by the engine's lexer, which refuses some: the file goes to it.
+escape "a \\u escape in a string" when f_str & ~o_str & escaped & u
+
+# --- Code --------------------------------------------------------------------------------------
+
+mask code       = ~region
+
+# `#` and its word.
+mask directive  = code & hash
+mask hashword   = fill(directive, ~(code & word))
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word & ~hashword
+mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
+mask num        = w & ~ident                    # the digits before it
+# A float, `1.5`: a '.' after a number's digits and before a digit.
+escape "a float" when code & dot & prev(num) & next(digit)
+# The engine reads a number as an i64: one of 19 or more digits (leading zeros aside) is
+# checked by it.
+mask sig        = fill(num & nonzero, ~num)
+mask sig2       = sig & prev(sig)
+mask sig4       = sig2 & prev(sig2, 2)
+mask sig8       = sig4 & prev(sig4, 4)
+mask sig16      = sig8 & prev(sig8, 8)
+escape "a number of 19 digits or more" when sig16 & prev(sig2, 16) & prev(sig, 18)
+
+# --- Punctuation -------------------------------------------------------------------------------
+
+# A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
+mask two        = code & ((colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt)))
+mask two_start  = two & ~escaped(two)
+mask second     = prev(two_start)
+mask p          = code & punct
+mask p_start    = p & ~second
+mask p_last     = (p_start & ~two_start) | second
+
+error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+token string     = start quote & o_str last closing
+token comment    = start slash & (o_line | o_block) last line_last | block_last
+token code_literal = start tick & o_tick last t1_last | t2_last | t3_last
+token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
+keywords hash_word { "#include" } required
+token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
+token number     = start digit & num & ~prev(num) last num & ~next(num)
+token punct      = start punct & p_start last p_last
+# `decl` is a word, a keyword only where a statement's `.` comes before it; `_`, only where a
+# term can be a wildcard; `must` and `may`, only at a head's start. The other directives' words and the aggregates' (which later steps
+# parse): reserved, so a file with one goes to the engine's parser.
+keywords identifier { "edit" -> reserved "functor" -> reserved "type" -> reserved "input" -> reserved "output" -> reserved "lattice" -> reserved "pragma" -> reserved "violation" -> reserved "policy" -> reserved "count" -> reserved "min" -> reserved "max" -> reserved "sum" -> reserved "mean" -> reserved "join" -> reserved } soft { "decl" "_" "must" "may" }
+keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
+
+skip code & ws
+
+# --- Line breaks -------------------------------------------------------------------------------
+
+# Every grammar token's start (the comments' left out): a mark goes before the next one.
+mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & num & ~prev(num)) | p_start
+mask after_comma = fill(code & comma & p_start, starts_g)
+# The file's end ends a line too: a setting ends there.
+mark line        = lf, end
+mark newline     = lf & ~after_comma, end
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree rr {
+  node source_file whole = (include | setting | clause)*
+  node include          = '#include' path: string
+  node setting          = '.' (declaration_tail | line (declaration_tail | name: identifier) | name: identifier (argument: value | punctuation)* newline)
+  # A `.decl`: the node opened as a setting at the `.` is a declaration.
+  choice declaration_tail = retag declaration merge '.decl' 'decl' name: identifier columns: column_list (modifier: value | punctuation)* line
+  node column_list      = '(' [column: column (',' column: column)*] ')'
+  node column           = name: identifier ':' type: type
+  node type             = name: identifier ['<' [argument: identifier] '>']
+  choice value          = identifier | number | string
+  node clause           = head: head (',' head: head)* [':-' body: body] '.'
+  # A head's modal: `must` or `may`, then the relation. Before a `(` it was the relation: the
+  # `(` relabels it, an identifier.
+  node head             = modal: ('must' | 'may') (relation: identifier arguments: argument_list
+                                                  | relabel relation as identifier arguments: argument_list)
+                        | relation: identifier arguments: argument_list
+  node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
+  # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
+  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
+  node conjunction      = literal: literal (',' literal: literal)*
+  node group nested     = '(' body: body ')'
+  # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
+  # variable, unless a `(` after it makes it an atom's relation. `_` is a term here: a
+  # wildcard. A term at a literal's start goes on as one (`more`), then a comparison or a
+  # pattern follows.
+  # An operator after an atom: it was a call, its word the function (`relabel … inner`).
+  choice literal        = (number | string | code_literal | '_' as wildcard | minus | functor_call) more (comparison_tail | pattern_tail)
+                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)]
+                                                 | more (comparison_tail | pattern_tail))
+                        | negation | group
+  # `!` before an atom, a pattern match or a negation: never a comparison.
+  node negation nested  = '!' operand: negated
+  choice negated        = (number | string | code_literal | '_' as wildcard | minus | functor_call) more pattern_tail
+                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail]
+                                                 | more pattern_tail)
+                        | negation | group
+  choice comparison_tail = wrap comparison left operator: comparison_operator right: term
+  choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal
+  # After a primary: the rest of its product, then of its term.
+  choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
+  choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
+  # Terms by precedence, each operator around the left side so far.
+  choice term nested    = product (wrap binary_expression left operator: additive right: product)*
+  choice product        = primary (wrap binary_expression left operator: multiplicative right: primary)*
+  choice additive       = '+' | '-'
+  choice multiplicative = '*' | '/' | '%'
+  # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
+  # argument's name.
+  choice primary        = number | unsigned
+  choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call
+                        | identifier as variable [wrap call function as identifier arguments: argument_list
+                                                 | wrap named_argument name as identifier ':' value: term]
+                        | parenthesized_expression
+  # `-` and a number: one number leaf. Else `-` and its operand, a primary that is no number.
+  choice minus          = '-' (merge number number | wrap unary_expression operator operand: unsigned)
+  node parenthesized_expression = '(' expression: term ')'
+  node functor_call     = '@' function: identifier arguments: argument_list
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  hidden line newline
+  extra comment
+}

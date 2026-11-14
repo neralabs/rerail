@@ -1,0 +1,20 @@
+.policy "ruff-ann001-missing-type-function-argument" revision 2
+.description "Annotate every function parameter with a type so type checkers can verify calls and readers know what the function accepts."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN001 (flake8-annotations): a def parameter with no annotation. Variadic parameters have their own
+// codes (ANN002, ANN003). A method's `self` or `cls` (its first parameter, unless it is a static method) is not
+// checked, nor is the implementation that follows an @overload. Ruff's option suppress-dummy-args is not
+// supported (its default, false, is what this rule does).
+//   def foo(a: int, b): ...            ← ANN001 at b
+//   class C:
+//       def m(self, a: int) -> int: …   not reported: self is the receiver
+//   lambda x: x                         not reported: lambdas are not checked
+#include "python/annotations.rr"
+
+.violation ANN001(at: node, name: symbol) code "ANN001"
+    "Add a type annotation to parameter `{name}`."
+    suppress ruff "ANN001"
+ANN001(nm, x) :- ann_def(f), ann_param(f, nm, x, k, a), k != "vararg", k != "kwarg", unset(a).

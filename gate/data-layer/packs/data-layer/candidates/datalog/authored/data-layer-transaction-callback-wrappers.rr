@@ -1,0 +1,166 @@
+// data-layer-transaction-callback-wrappers: both clauses by hand, exact under the default options. The converter
+// gaps each clause on a regex over a function_definition's text (its full source, strings and comments included:
+// `node_text` here); inline-reentrant also on `compare` (`$CHECK_OWNER` eq `$OWNER` as nodes) and on `nthChild`
+// with `ofRule`.
+//
+// W's semantics kept:
+// - `has` with `stopBy: {kind: function_definition}` from a body: the body's descendants, not entering a nested
+//   function_definition: here, x's nearest function_definition is the owner and x lies in the owner's body.
+// - `inside` a class_definition with `stopBy: {kind: class_definition}`: the nearest enclosing class (`nearest`).
+// - `nthChild` counts a parent's named children (those `ofRule` matches). Comments are not in `child`, so "not
+//   a comment" needs no test.
+// - Relational rules take their first match and do not backtrack (ast-grep's `all`): in inline-reentrant's first
+//   branch, $CALLBACK_NAME is bound by the first qualifying call of the body in pre-order (least start, then the
+//   greatest end: an ancestor before its descendants), and the nested def must carry that name. Within that call,
+//   the `fn=` branch binds the first `fn=` keyword argument (by position) whose value is an identifier.
+// Options: `sourceGate` (default true) gates on the module's text matching `\.read|\.write|Callable|Transaction|
+// versioned_`, or `^` when false. Both clauses already require the function's own text (inside the module's) to
+// contain `Callable` (callback-helper) or `versioned_` (inline-reentrant), so the gate holds whenever the rest
+// does, under either value: it is left out. `oracleAnalyzer` is read by no clause.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared ----------------------------------------------------------------------------------------------------
+.decl tcw_fn(kind: symbol)
+tcw_fn("function_definition").
+.decl tcw_block(kind: symbol)
+tcw_block("block").
+.decl tcw_class(kind: symbol)
+tcw_class("class_definition").
+.decl tcw_type(kind: symbol)
+tcw_type("type").
+.decl tcw_lambda(kind: symbol)
+tcw_lambda("lambda").
+
+// The documents both clauses read: in scope, valid syntax, not the two exempt paths (`file.path.notRegex`).
+.decl tcw_doc(d: number, p: symbol)
+tcw_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
+    !match("(?:.*/)?(?:l2000_connection/connection\\.py|l9900_auto_api/_versioning_helpers\\.py)", p).
+
+.decl tcw_reads(name: symbol)
+tcw_reads("read"). tcw_reads("read_async"). tcw_reads("read_version"). tcw_reads("read_version_async").
+tcw_reads("versioned_read"). tcw_reads("versioned_read_async"). tcw_reads("versioned_write").
+tcw_reads("versioned_write_async"). tcw_reads("write"). tcw_reads("write_async"). tcw_reads("write_version").
+tcw_reads("write_version_async").
+.decl tcw_versioned(name: symbol)
+tcw_versioned("versioned_read"). tcw_versioned("versioned_read_async"). tcw_versioned("versioned_write").
+tcw_versioned("versioned_write_async").
+
+// $OWNER is not a transaction method (a name in tcw_reads) of a Sync*DatabaseConnection class.
+.decl tcw_owner_exempt(f: node)
+tcw_owner_exempt(f) :- node(_, f, "function_definition", _, _), field(f, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, s), tcw_reads(s), nearest(f, c, tcw_class), field(c, "name", cn), node(_, cn, "identifier", _, _),
+    text(cn, cs), (cs = "SyncDatabaseConnection" ; cs = "SyncVersionedDatabaseConnection").
+.decl tcw_owner(d: number, p: symbol, f: node)
+tcw_owner(d, p, f) :- tcw_doc(d, p), node(d, f, "function_definition", _, _), !tcw_owner_exempt(f).
+
+// A call `x.NAME(…)`, NAME in tcw_reads.
+.decl tcw_reads_call(c: node)
+tcw_reads_call(c) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, s), tcw_reads(s).
+// x lies in f's body, not inside a nested function_definition.
+.decl tcw_in_body(f: node, x: node)
+tcw_in_body(f, x) :- nearest(x, f, tcw_fn), field(f, "body", b), inside(x, b, tcw_block).
+
+// ---- callback-helper ---------------------------------------------------------------------------------------------
+// contains-Callable / contains-Transaction under a `type` annotation: an identifier, string or concatenated_string
+// below it whose text contains the word (the `type` node is none of those kinds itself).
+.decl tcw_cb_word_node(x: node, w: symbol)
+tcw_cb_word_node(x, "Callable") :- tcw_cb_word_kind(x), node_text(x, s), contains("Callable", s).
+tcw_cb_word_node(x, "Transaction") :- tcw_cb_word_kind(x), node_text(x, s), contains("Transaction", s).
+.decl tcw_cb_word_kind(x: node)
+tcw_cb_word_kind(x) :- node(_, x, "identifier", _, _).
+tcw_cb_word_kind(x) :- node(_, x, "string", _, _).
+tcw_cb_word_kind(x) :- node(_, x, "concatenated_string", _, _).
+.decl tcw_cb_annotation(t: node)
+tcw_cb_annotation(t) :- node(_, t, "type", _, _), inside(x, t, tcw_type), tcw_cb_word_node(x, "Callable"),
+    inside(y, t, tcw_type), tcw_cb_word_node(y, "Transaction").
+// A typed parameter whose annotation is a callback over a transaction.
+.decl tcw_cb_param(f: node)
+tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_parameter", _, _), field(q, "type", t),
+    tcw_cb_annotation(t).
+tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_default_parameter", _, _), field(q, "type", t),
+    tcw_cb_annotation(t).
+.decl tcw_cb_reads(f: node)
+tcw_cb_reads(f) :- tcw_reads_call(c), tcw_in_body(f, c).
+
+violation("data-layer-transaction-callback-wrappers", "callback-helper", "transaction_callback_wrapper", p, l) :-
+    tcw_owner(_, p, f), node_text(f, s), contains("Callable", s), contains("Transaction", s),
+    tcw_cb_param(f), tcw_cb_reads(f), line(f, l).
+
+// ---- inline-reentrant ------------------------------------------------------------------------------------------
+.decl tcw_ir_owner(d: number, p: symbol, f: node)
+tcw_ir_owner(d, p, f) :- tcw_owner(d, p, f), node_text(f, s), (contains("versioned_read", s) ; contains("versioned_write", s)).
+
+// An argument list's `fn=` keyword argument and its value.
+.decl tcw_ir_kwfn(al: node, v: node)
+tcw_ir_kwfn(al, v) :- child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm),
+    node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v).
+.decl tcw_ir_has_kwfn(al: node)
+tcw_ir_has_kwfn(al) :- tcw_ir_kwfn(al, _).
+// nthChild position 2 of (not comment, not keyword_argument, not dictionary_splat): the second such child.
+.decl tcw_ir_counted(al: node, y: node, i: number)
+tcw_ir_counted(al, y, i) :- child(al, y, i), !tcw_ir_uncounted(y).
+.decl tcw_ir_uncounted(y: node)
+tcw_ir_uncounted(y) :- node(_, y, "keyword_argument", _, _).
+tcw_ir_uncounted(y) :- node(_, y, "dictionary_splat", _, _).
+.decl tcw_ir_before(al: node, y: node, z: node)
+tcw_ir_before(al, y, z) :- tcw_ir_counted(al, y, i), tcw_ir_counted(al, z, j), j < i.
+.decl tcw_ir_second(al: node, y: node)
+tcw_ir_second(al, y) :- tcw_ir_counted(al, y, _), k = count : { tcw_ir_before(al, y, _) }, k = 1.
+// The callback an argument list names: `fn=NAME` (the first such keyword argument whose value is an identifier, as
+// `has` binds it), or (no `fn=` at all) the second positional argument NAME.
+.decl tcw_ir_kwfn_id(al: node, v: node, i: number)
+tcw_ir_kwfn_id(al, v, i) :- child(al, kw, i), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm),
+    node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v), node(_, v, "identifier", _, _).
+.decl tcw_ir_callback(al: node, cb: node)
+tcw_ir_callback(al, v) :- tcw_ir_kwfn_id(al, v, i), i = min j : { tcw_ir_kwfn_id(al, _, j) }.
+tcw_ir_callback(al, y) :- tcw_ir_second(al, y), node(_, y, "identifier", _, _), !tcw_ir_has_kwfn(al).
+
+// A versioned call: `x.versioned_*(…)`, or `getattr(…, "versioned_*")` with the string not the first argument.
+.decl tcw_ir_vcall(x: node)
+tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, s), tcw_versioned(s).
+tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", g), node(_, g, "identifier", _, _), text(g, "getattr"),
+    field(x, "arguments", al), child(al, st, i), node(_, st, "string", _, _), node_text(st, s),
+    match("[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')", s),
+    child(al, _, j), j < i.
+
+// Branch 1: the first qualifying call names a callback, and the body defines it (a direct child def of the body)
+// with a versioned call in the def's own body. ($CHECK_OWNER, the def's block's function, is $OWNER itself.)
+.decl tcw_ir_named(f: node, c: node, cb: node)
+tcw_ir_named(f, c, cb) :- tcw_ir_owner(_, _, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_callback(al, cb).
+.decl tcw_ir_named_at(f: node, s: number)
+tcw_ir_named_at(f, s) :- tcw_ir_named(f, c, _), node(_, c, _, s, _).
+.decl tcw_ir_first_start(f: node, s: number)
+tcw_ir_first_start(f, s) :- tcw_ir_named_at(f, _), s = min x : { tcw_ir_named_at(f, x) }.
+.decl tcw_ir_first_end_at(f: node, e: number)
+tcw_ir_first_end_at(f, e) :- tcw_ir_first_start(f, s), tcw_ir_named(f, c, _), node(_, c, _, s, e).
+.decl tcw_ir_first_end(f: node, e: number)
+tcw_ir_first_end(f, e) :- tcw_ir_first_end_at(f, _), e = max x : { tcw_ir_first_end_at(f, x) }.
+.decl tcw_ir_first_name(f: node, name: symbol)
+tcw_ir_first_name(f, t) :- tcw_ir_first_start(f, s), tcw_ir_first_end(f, e), tcw_ir_named(f, c, cb), node(_, c, _, s, e), text(cb, t).
+.decl tcw_ir_def_versioned(g: node)
+tcw_ir_def_versioned(g) :- tcw_ir_vcall(x), tcw_in_body(g, x).
+
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :-
+    tcw_ir_owner(_, p, f), tcw_ir_first_name(f, t), field(f, "body", b), child(b, g, _), node(_, g, "function_definition", _, _),
+    field(g, "name", gn), node(_, gn, "identifier", _, _), text(gn, t), tcw_ir_def_versioned(g), line(f, l).
+
+// Branch 2: a qualifying call passes a lambda (as `fn=`, or, with no `fn=`, as the second positional argument)
+// whose body is or holds a versioned call.
+.decl tcw_ir_lambda(al: node, la: node)
+tcw_ir_lambda(al, v) :- tcw_ir_kwfn(al, v), node(_, v, "lambda", _, _).
+tcw_ir_lambda(al, y) :- tcw_ir_second(al, y), node(_, y, "lambda", _, _), !tcw_ir_has_kwfn(al).
+.decl tcw_ir_lambda_versioned(la: node)
+tcw_ir_lambda_versioned(la) :- field(la, "body", lb), tcw_ir_vcall(lb).
+tcw_ir_lambda_versioned(la) :- field(la, "body", lb), node(_, lb, _, bs, be), inside(x, la, tcw_lambda), tcw_ir_vcall(x),
+    node(_, x, _, xs, xe), xs >= bs, xe <= be.
+
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :-
+    tcw_ir_owner(_, p, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_lambda(al, la),
+    tcw_ir_lambda_versioned(la), line(f, l).

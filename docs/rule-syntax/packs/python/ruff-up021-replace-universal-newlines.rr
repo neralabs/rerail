@@ -1,0 +1,29 @@
+.policy "ruff-up021-replace-universal-newlines" revision 2
+.description "Use the text keyword instead of universal_newlines in subprocess.run(); text is the current name for the same option."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP021 (pyupgrade): `subprocess.run(…, universal_newlines=…)` on Python 3.7 or later, where the keyword
+// was renamed `text`. The finding is at the keyword. Other subprocess functions are not checked (Ruff's own
+// scope). With `text=` there too, the keyword is a duplicate to remove instead.
+//   subprocess.run(["ls"], universal_newlines=True)                ← UP021: write text=True
+//   subprocess.run(["ls"], universal_newlines=True, text=True)     ← UP021: drop universal_newlines
+//   subprocess.Popen(["ls"], universal_newlines=True)              not reported
+#include "python/upgrade.rr"
+//   targets(m), sym_at(e, q)
+#include "python/upgrade-format.rr"
+//   up_kwarg(c, k, ka)
+
+.decl run_call(c: node)
+run_call(c) :- targets(7), kind(c, "call"), field(c, "function", f), sym_at(f, "subprocess.run").
+
+.violation rename_to_text(at: node) code "UP021"
+    "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name."
+    suppress ruff "UP021"
+rename_to_text(k) :- run_call(c), up_kwarg(c, "universal_newlines", k), !up_kwarg(c, "text", _).
+
+.violation drop_duplicate(at: node) code "UP021"
+    "Remove the `universal_newlines` keyword; `text` is already passed and sets the same option, so keep the value you meant on `text`."
+    suppress ruff "UP021"
+drop_duplicate(k) :- run_call(c), up_kwarg(c, "universal_newlines", k), up_kwarg(c, "text", _).

@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "rr",
+  "status": "supported",
+  "family": "rr",
+  "dialects": [
+    {
+      "label": "rr",
+      "variant": "Rr",
+      "suffixes": [".rr"],
+      "parser": "rr",
+      "grammar": "native:rr",
+      "tapeTag": 13
+    }
+  ],
+  "capabilities": {
+    "scope": "refused",
+    "value": "refused",
+    "arguments": "refused",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": []
+}

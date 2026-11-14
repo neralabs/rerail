@@ -1,0 +1,18 @@
+.policy "ruff-pyi045-iter-method-return-iterable" revision 2
+.description "Annotate __iter__ as returning an Iterator and __aiter__ as returning an AsyncIterator, never the Iterable forms; callers must be able to advance the result."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI045 (flake8-pyi), every file: a method `__iter__` annotated to return `Iterable` (or `__aiter__`,
+// `AsyncIterable`), from typing or collections.abc, subscripted or not. `iter()` needs an iterator back.
+// Reported at the return annotation.
+//   def __iter__(self) -> Iterable[int]: ...     ← PYI045: write `Iterator[int]`
+#include "python/typing.rr"
+
+.violation PYI045(at: node, msg: symbol) code "PYI045" "{msg}"
+    suppress ruff "PYI045"
+PYI045(t, m) :- pyi_method(_, f, x), returns(f, t), says(x, i, m), abc_head(t, i).
+.decl says(x: symbol, iterable: symbol, msg: symbol)
+says("__iter__", "Iterable", "Annotate `__iter__` as returning `Iterator` (from `collections.abc`) instead of `Iterable`; if the body returns a list or similar, return `iter(...)` of it.").
+says("__aiter__", "AsyncIterable", "Annotate `__aiter__` as returning `AsyncIterator` (from `collections.abc`) instead of `AsyncIterable`; the result must support `__anext__`.").

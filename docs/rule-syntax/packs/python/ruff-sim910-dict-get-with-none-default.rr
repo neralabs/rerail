@@ -1,0 +1,27 @@
+.policy "ruff-sim910-dict-get-with-none-default" revision 2
+.description "Drop the redundant None default from dict.get() calls; get() already returns None for a missing key."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM910 (flake8-simplify): `d.get(key, None)`, no keywords, where d is a dict display, a dict
+// comprehension, or a name bound to a dict (typing::is_dict: `d = {}`, `d: dict = …`, `**kwargs`, …).
+// The key may be `*k`, the receiver parenthesised, `(d)`, and extra arguments are dropped, as in Ruff.
+// Ruff's fix is safe when the call holds no comment: then it is offered here.
+//   d = {}; d.get("k", None)          ← SIM910: d.get("k")
+//   d.get("k", None) for an unknown d, os.environ.get("k", None)     not reported
+#include "python/simplify.rr"
+//   dict_ref(n) from python/comprehensions; call_item, pos_item, call_nkwargs from python/ruff
+
+.violation SIM910(at: node, f: node, key: node) code "SIM910" "Use `{f}({key})` instead of `{f}({key}, None)`"
+    suppress ruff "SIM910"
+    fix safe drop_none "Replace with `{f}({key})`"
+SIM910(c, f, k) :- kind(c, "call"), call_nkwargs(c, 0), field(c, "function", f), attr_of(f, o, "get"),
+    positional(c, 0, k), positional(c, 1, n), unparen(n, nn), kind(nn, "none"), dict_receiver(o).
+// positional(c, i, a): a is c's i-th item of Ruff's `args`, `*xs` included (ruff_arg stops at `*xs`).
+.decl positional(c: node, i: number, a: node)
+positional(c, i, a) :- call_item(c, a, j), pos_item(a), i = count : { call_item(c, b, j2), j2 < j, pos_item(b) }.
+.decl dict_receiver(o: node)
+dict_receiver(o) :- unparen(o, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+dict_receiver(o) :- unparen(o, m), kind(m, "identifier"), dict_ref(m).
+drop_none(c, f, k) :- !has(c, _, "comment") => replace(c, `$f($k)`).

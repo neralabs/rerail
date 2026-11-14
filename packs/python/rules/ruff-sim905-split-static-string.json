@@ -313,46 +313,38 @@
                                     }
                                   ]
                                 },
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                },
                                 "follows": {
                                   "stopBy": {
                                     "not": {
                                       "kind": "comment"
                                     }
                                   },
-                                  "regex": "^,$",
-                                  "follows": {
-                                    "stopBy": {
-                                      "not": {
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "regex": "^[\\[\\](){},]$"
+                                      },
+                                      {
+                                        "kind": "keyword_argument"
+                                      },
+                                      {
+                                        "kind": "list_splat"
+                                      },
+                                      {
+                                        "kind": "dictionary_splat"
+                                      },
+                                      {
                                         "kind": "comment"
                                       }
-                                    },
-                                    "not": {
-                                      "any": [
-                                        {
-                                          "regex": "^[\\[\\](){},]$"
-                                        },
-                                        {
-                                          "kind": "keyword_argument"
-                                        },
-                                        {
-                                          "kind": "list_splat"
-                                        },
-                                        {
-                                          "kind": "dictionary_splat"
-                                        },
-                                        {
-                                          "kind": "comment"
-                                        }
-                                      ]
-                                    },
-                                    "follows": {
-                                      "stopBy": {
-                                        "not": {
-                                          "kind": "comment"
-                                        }
-                                      },
-                                      "regex": "^\\($"
-                                    }
+                                    ]
                                   }
                                 },
                                 "all": [
@@ -385,46 +377,38 @@
                                       }
                                     ]
                                   },
+                                  "nthChild": {
+                                    "position": 2,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  },
                                   "follows": {
                                     "stopBy": {
                                       "not": {
                                         "kind": "comment"
                                       }
                                     },
-                                    "regex": "^,$",
-                                    "follows": {
-                                      "stopBy": {
-                                        "not": {
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "regex": "^[\\[\\](){},]$"
+                                        },
+                                        {
+                                          "kind": "keyword_argument"
+                                        },
+                                        {
+                                          "kind": "list_splat"
+                                        },
+                                        {
+                                          "kind": "dictionary_splat"
+                                        },
+                                        {
                                           "kind": "comment"
                                         }
-                                      },
-                                      "not": {
-                                        "any": [
-                                          {
-                                            "regex": "^[\\[\\](){},]$"
-                                          },
-                                          {
-                                            "kind": "keyword_argument"
-                                          },
-                                          {
-                                            "kind": "list_splat"
-                                          },
-                                          {
-                                            "kind": "dictionary_splat"
-                                          },
-                                          {
-                                            "kind": "comment"
-                                          }
-                                        ]
-                                      },
-                                      "follows": {
-                                        "stopBy": {
-                                          "not": {
-                                            "kind": "comment"
-                                          }
-                                        },
-                                        "regex": "^\\($"
-                                      }
+                                      ]
                                     }
                                   }
                                 }

@@ -1,0 +1,17 @@
+# corpus: count: brackets max 2
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+class open = '[' '{'
+class close = ']' '}'
+scan depth = count(open, close) max 2
+mask f = depth.frame(quote | open & ~x)
+mask g = depth.frame(open)

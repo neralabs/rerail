@@ -1,0 +1,25 @@
+.policy "ruff-e711-none-comparison" revision 3
+.description "Use is None or is not None instead of == or != to compare with None; equality can be overridden and gives surprising results."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff E711 (pycodestyle): `== None` or `!= None`. None is a singleton: compare it with `is` / `is not`.
+// Each link of a chain is checked, as Ruff walks it: a link whose other side is a literal (`1 == None`) is
+// skipped, and only the first operand is checked on the left. Reported at the None.
+//   if x == None: ...         ← E711 "Use `is None` …"
+//   if None != x: ...         ← E711 "Use `is not None` …"
+//   if "a" == None: ...       not reported: a literal on the other side
+#include "python/pyflakes.rr"
+//   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
+//   const_non_singleton(e)     a literal or tuple of literals other than None, True, False, `...`
+
+.violation E711(at: node, msg: symbol) code "E711" "{msg}"
+    suppress ruff "E711"
+E711(n, m) :- cmp_pair(_, 0, op, l, r), eq_op(op), unparen(l, n), kind(n, "none"), !const_non_singleton(r), msg(op, m).
+E711(n, m) :- cmp_pair(_, _, op, l, r), eq_op(op), unparen(r, n), kind(n, "none"), !const_non_singleton(l), msg(op, m).
+.decl eq_op(op: symbol)
+eq_op("=="). eq_op("!=").
+.decl msg(op: symbol, m: symbol)
+msg("==", "Use `is None` instead of `== None` for this comparison.").
+msg("!=", "Use `is not None` instead of `!= None` for this comparison.").

@@ -1,0 +1,26 @@
+.policy "ruff-up010-unnecessary-future-import" revision 2
+.description "Remove __future__ imports of features that Python 3 always enables; they have no effect on current Python versions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP010 (pyupgrade): a `from __future__ import` of a feature every Python 3 has: nested_scopes, generators,
+// with_statement, division, absolute_import, print_function, unicode_literals, generator_stop. The statement is
+// reported once when one of those names is imported without `as` and nothing reads it (a load of the name that no
+// other binding in the file catches); `__all__` does not count as a read.
+//   from __future__ import print_function, generators     ← UP010
+//   from __future__ import with_statement                 not reported when `print(with_statement)` follows
+//   from __future__ import annotations                    not reported: still has an effect
+#include "python/ast.rr"
+//   ast_name(n, x), expr_ctx(n, c), look(n, x, s)
+
+.violation UP010(at: node) code "UP010"
+    "Remove the unused obsolete names from this `__future__` import, and the whole statement if none remain; Python 3.7 and later always enable them."
+    suppress ruff "UP010"
+UP010(i) :- kind(i, "future_import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, x),
+    obsolete(x), docof(i, d), !read(d, x).
+.decl read(d: number, x: symbol)  // x is read in d, and no binding in the file is what it reads
+read(d, x) :- ast_name(n, x), obsolete(x), expr_ctx(n, "load"), !look(n, x, _), docof(n, d).
+.decl obsolete(x: symbol)
+obsolete("nested_scopes"). obsolete("generators"). obsolete("with_statement"). obsolete("division").
+obsolete("absolute_import"). obsolete("print_function"). obsolete("unicode_literals"). obsolete("generator_stop").

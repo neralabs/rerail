@@ -13,14 +13,14 @@ use std::borrow::Cow;
 /// CSS's `An+B`: a position `index` (1-based) matches where `index = step * n + offset` for some
 /// `n >= 0`; a zero step matches `offset` alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Position {
-    pub(crate) step: i32,
-    pub(crate) offset: i32,
+pub struct Position {
+    pub step: i32,
+    pub offset: i32,
 }
 
 impl Position {
     /// Upstream's `FunctionalPosition::is_matched`, integer division and remainder included.
-    fn holds(self, index: usize) -> bool {
+    pub fn holds(self, index: usize) -> bool {
         let Some(index) = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_add(1))
@@ -41,10 +41,13 @@ impl Position {
 }
 
 #[derive(Clone)]
-pub(crate) struct NthChild {
-    pub(crate) position: Position,
-    pub(crate) of_rule: Option<AstMatcher>,
-    pub(crate) reverse: bool,
+pub struct NthChild {
+    pub position: Position,
+    pub of_rule: Option<AstMatcher>,
+    /// `of_rule`'s identity: equal keys count the same siblings (`Positions`); `None` where it is
+    /// not shared (it calls a utility).
+    pub(crate) of_rule_key: Option<String>,
+    pub reverse: bool,
     /// Whether `of_rule` reads and binds no capture (`CaptureAnalysis::mentions`), worked out on
     /// first use: its verdict at a sibling is then the same for every candidate.
     pub(crate) capture_free: std::sync::OnceLock<bool>,
@@ -73,7 +76,7 @@ impl NthChild {
         let named = || {
             parent.children().filter(|child| {
                 let named = child.is_named();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 if named {
                     NAMED_SIBLING_VISITS.set(NAMED_SIBLING_VISITS.get() + 1);
                 }
@@ -151,16 +154,261 @@ impl NthChild {
     }
 }
 
+impl NthChild {
+    /// The nodes of `starts` (ascending) at which the predicate holds on `file`'s tape, as
+    /// `match_node` decides them (a fact's rows, decision 0030), in one pass per parent: each parent
+    /// of a start lists its counted children once, and each start's index is a search in that list.
+    /// `ofRule` is read off the tape's kinds where it is only `kind`, `all`, `any` and `not`, else
+    /// tested by W's matcher once per child. A child whose verdict is unknown leaves its parent's
+    /// children without one (no rows), as `index` does.
+    pub(in crate::code_rule_dsl) fn rows(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+    ) -> Vec<u32> {
+        let tape = file.root().get_doc();
+        let mut counted = std::collections::HashMap::<u32, Option<Vec<u32>>>::new();
+        let mut rows = Vec::new();
+        for node in starts {
+            let Some(parent) = tape.transducer_parent(node) else { continue };
+            let list = counted.entry(parent).or_insert_with(|| self.counted(file, tape, parent));
+            let Some(list) = list else { continue };
+            let Ok(position) = list.binary_search(&node) else { continue };
+            let index = if self.reverse { list.len() - 1 - position } else { position };
+            if self.position.holds(index) {
+                rows.push(node);
+            }
+        }
+        rows
+    }
+
+    /// `rows` as bits over the tape's nodes, for starts of `kinds` (any node where `None`), from
+    /// the counted children of each parent (`Positions`): the child at the position where `An+B`
+    /// names one (`B` alone), else each counted child tested. No pass over the tape's nodes.
+    pub(in crate::code_rule_dsl) fn bits(
+        &self,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        positions: &Positions,
+        kinds: Option<&std::collections::BTreeSet<u16>>,
+    ) -> Vec<u64> {
+        let mut bits = vec![0_u64; tape.transducer_len().div_ceil(64)];
+        let mut mark = |node: u32| {
+            if kinds.is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))) {
+                bits[node as usize / 64] |= 1 << (node % 64);
+            }
+        };
+        for &parent in &positions.parents {
+            let counted = positions.counted(parent);
+            let at = |index: usize| if self.reverse { counted[counted.len() - 1 - index] } else { counted[index] };
+            if self.position.step == 0 {
+                // `holds(index)` is `index + 1 == B`.
+                if let Ok(index) = usize::try_from(i64::from(self.position.offset) - 1)
+                    && index < counted.len()
+                {
+                    mark(at(index));
+                }
+            } else {
+                for index in 0..counted.len() {
+                    if self.position.holds(index) {
+                        mark(at(index));
+                    }
+                }
+            }
+        }
+        bits
+    }
+
+    /// W's matcher's verdict of `rule` at `child`; `None` where it is unknown.
+    fn probe(&self, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>, rule: &AstMatcher, child: u32) -> Option<bool> {
+        use super::util::{UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
+        THREE_VALUED.set(true);
+        UTIL_DEPTH.set(0);
+        UTIL_EXCEEDED.set(None);
+        UTIL_STEPS_LEFT.set(usize::MAX);
+        UNKNOWN.set(false);
+        let mut env = Cow::Owned(MetaVarEnv::new());
+        let matched = rule.match_node_with_env(super::node_at(file, child), &mut env).is_some();
+        (!UNKNOWN.replace(false)).then_some(matched)
+    }
+
+    fn counted(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        parent: u32,
+    ) -> Option<Vec<u32>> {
+        let mut list = Vec::new();
+        self.count_into(file, tape, parent, &mut list).then_some(list)
+    }
+
+    /// `parent`'s counted children into `list`; `false` where a child's verdict is unknown.
+    fn count_into(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        parent: u32,
+        list: &mut Vec<u32>,
+    ) -> bool {
+        list.clear();
+        for child in tape.transducer_children(parent) {
+            if !tape.transducer_is_named(child) {
+                continue;
+            }
+            let counts = match &self.of_rule {
+                None => true,
+                Some(rule) => match on_kinds(rule, tape.transducer_kind(child)) {
+                    Some(verdict) => verdict,
+                    None => {
+                        use super::util::{UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
+                        THREE_VALUED.set(true);
+                        UTIL_DEPTH.set(0);
+                        UTIL_EXCEEDED.set(None);
+                        UTIL_STEPS_LEFT.set(usize::MAX);
+                        UNKNOWN.set(false);
+                        let mut env = Cow::Owned(MetaVarEnv::new());
+                        let node = super::node_at(file, child);
+                        let matched = rule.match_node_with_env(node, &mut env).is_some();
+                        if UNKNOWN.replace(false) {
+                            return false;
+                        }
+                        matched
+                    }
+                },
+            };
+            if counts {
+                list.push(child);
+            }
+        }
+        true
+    }
+}
+
+/// `rule`'s verdict at a node of kind `kind`, where the rule tests only kinds.
+/// A tape's counted children by parent: each parent's named children (those its `ofRule`
+/// matches, where it has one), in order. A parent with a child of unknown verdict counts none of
+/// them (no rows, as `rows` has it).
+pub(in crate::code_rule_dsl) struct Positions {
+    /// The parents with a counted child, ascending.
+    parents: Vec<u32>,
+    /// `counted[offsets[parent]..offsets[parent + 1]]` is the parent's.
+    offsets: Vec<u32>,
+    counted: Vec<u32>,
+}
+
+impl Positions {
+    fn counted(&self, parent: u32) -> &[u32] {
+        &self.counted[self.offsets[parent as usize] as usize..self.offsets[parent as usize + 1] as usize]
+    }
+
+    /// One pass over each parent's children, appending the counted ones; a parent with a child of
+    /// unknown verdict takes its run back.
+    fn of(nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Self {
+        let len = tape.transducer_len();
+        // W's matcher reads the file through its own handle and scope slot, made where a probe is.
+        let file = std::cell::OnceCell::new();
+        let file = || {
+            file.get_or_init(|| {
+                let scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                (ast_grep_core::AstGrep::doc(tape.clone()), scopes)
+            })
+        };
+        // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
+        let mut by_kind = Vec::<u8>::new();
+        let mut counts = |node: u32| -> Option<bool> {
+            if !tape.transducer_is_named(node) {
+                return Some(false);
+            }
+            let Some(rule) = &nth.of_rule else { return Some(true) };
+            let kind = usize::from(tape.transducer_kind(node));
+            if by_kind.len() <= kind {
+                by_kind.resize(kind + 1, 0);
+            }
+            if by_kind[kind] == 0 {
+                by_kind[kind] = match on_kinds(rule, kind as u16) {
+                    Some(false) => 1,
+                    Some(true) => 2,
+                    None => 3,
+                };
+            }
+            match by_kind[kind] {
+                1 => Some(false),
+                2 => Some(true),
+                _ => nth.probe(&file().0, rule, node),
+            }
+        };
+        let mut parents = Vec::new();
+        let mut offsets = vec![0_u32; len + 1];
+        let mut counted = Vec::with_capacity(len);
+        for parent in 0..len as u32 {
+            let from = counted.len();
+            for child in tape.transducer_children(parent) {
+                match counts(child) {
+                    Some(true) => counted.push(child),
+                    Some(false) => {}
+                    None => {
+                        counted.truncate(from);
+                        break;
+                    }
+                }
+            }
+            if counted.len() > from {
+                parents.push(parent);
+            }
+            offsets[parent as usize + 1] = counted.len() as u32;
+        }
+        Self { parents, offsets, counted }
+    }
+}
+
+/// A tape's `Positions` by `ofRule` (none, or its key), and the answers of its `nthChild` facts by
+/// question (`Fact::question`): each made on first use and shared by the tape's facts.
+#[derive(Default)]
+pub struct SiblingPositions {
+    positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
+    answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
+}
+
+impl SiblingPositions {
+    pub(in crate::code_rule_dsl) fn of(&self, nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> std::sync::Arc<Positions> {
+        // A rule without a key is its own.
+        if nth.of_rule.is_some() && nth.of_rule_key.is_none() {
+            return std::sync::Arc::new(Positions::of(nth, tape));
+        }
+        let mut positions = self.positions.lock().expect("sibling positions");
+        std::sync::Arc::clone(positions.entry(nth.of_rule_key.clone()).or_insert_with(|| std::sync::Arc::new(Positions::of(nth, tape))))
+    }
+
+    /// The answer to `question`, made by `answer` the first time it is asked.
+    pub(in crate::code_rule_dsl) fn answer(&self, question: &str, answer: impl FnOnce() -> Vec<u64>) -> std::sync::Arc<Vec<u64>> {
+        if let Some(found) = self.answers.lock().expect("nthChild answers").get(question) {
+            return std::sync::Arc::clone(found);
+        }
+        let found = std::sync::Arc::new(answer());
+        self.answers.lock().expect("nthChild answers").insert(question.to_owned(), std::sync::Arc::clone(&found));
+        found
+    }
+}
+
+fn on_kinds(rule: &AstMatcher, kind: u16) -> Option<bool> {
+    match rule {
+        AstMatcher::Kind(matcher) => Some(matcher.potential_kinds()?.contains(usize::from(kind))),
+        AstMatcher::All(items) => items.iter().try_fold(true, |all, item| Some(all && on_kinds(item, kind)?)),
+        AstMatcher::Any(items) => items.iter().try_fold(false, |any, item| Some(any || on_kinds(item, kind)?)),
+        AstMatcher::Not(item) => Some(!on_kinds(item, kind)?),
+        _ => None,
+    }
+}
+
 /// A parent's named children counted by `nthChild` (all, or those its `ofRule` matches), by node
 /// id in order; `unknown` where a probe's verdict was.
-pub(super) struct Siblings {
+pub struct Siblings {
     pub(super) counted: Vec<usize>,
     pub(super) unknown: bool,
 }
 
 /// Upstream's `parse_an_b`: white space is ignored; `n`/`N` with an optional signed step, then an
 /// optional signed offset; or a bare signed number.
-pub(crate) fn parse_position(input: &str) -> Result<Position, String> {
+pub fn parse_position(input: &str) -> Result<Position, String> {
     enum State {
         Initial,
         N,
@@ -227,242 +475,21 @@ pub(crate) fn parse_position(input: &str) -> Result<Position, String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static NAMED_SIBLING_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Named children `nthChild` listed on this thread (`reset_named_sibling_visits` restarts it).
-#[cfg(test)]
-pub(crate) fn named_sibling_visits() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn named_sibling_visits() -> usize {
     NAMED_SIBLING_VISITS.get()
 }
 
-#[cfg(test)]
-pub(crate) fn reset_named_sibling_visits() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_named_sibling_visits() {
     NAMED_SIBLING_VISITS.set(0);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Position, named_sibling_visits, parse_position, reset_named_sibling_visits};
-    use crate::code_rule_dsl::test_support::*;
-    use serde_json::{Value, json};
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-    fn texts(rule: Value, source: &str) -> Vec<String> {
-        let compiled =
-            compile_typescript_rule(rule).unwrap_or_else(|error| panic!("{}", error.reason));
-        let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        assert_eq!(result["failures"], json!([]), "{result}");
-        matched_texts(&result, source)
-    }
-
-    #[test]
-    fn positions_parse_as_upstream_an_plus_b() {
-        let parsed = |text: &str| parse_position(text).map(|p| (p.step, p.offset));
-        assert_eq!(parsed("3"), Ok((0, 3)));
-        assert_eq!(parsed("2n+1"), Ok((2, 1)));
-        assert_eq!(parsed(" -n + 3 "), Ok((-1, 3)));
-        assert_eq!(parsed("n"), Ok((1, 0)));
-        assert_eq!(parsed("+5"), Ok((0, 5)));
-        assert_eq!(parsed("-2n-1"), Ok((-2, -1)));
-        assert_eq!(parsed("2x"), Err("illegal character `x`".to_owned()));
-        for bad in ["", "+", "n+", "2n3", "nn", "++1", "1+"] {
-            assert_eq!(parsed(bad), Err("invalid syntax".to_owned()), "{bad}");
-        }
-        let odd = Position { step: 2, offset: 1 };
-        assert_eq!(
-            (0..6).map(|index| odd.holds(index)).collect::<Vec<_>>(),
-            [true, false, true, false, true, false]
-        );
-        let first_three = Position {
-            step: -1,
-            offset: 3,
-        };
-        assert_eq!(
-            (0..5)
-                .map(|index| first_three.holds(index))
-                .collect::<Vec<_>>(),
-            [true, true, true, false, false]
-        );
-    }
-
-    #[test]
-    fn nth_child_counts_named_siblings_from_one() {
-        let source = "f(a, b, c);\n[x, , y];\n";
-        assert_eq!(
-            texts(json!({ "kind": "identifier", "nthChild": 2 }), source),
-            ["b", "y"]
-        );
-        assert_eq!(
-            texts(
-                json!({ "kind": "identifier", "nthChild": "2n+1", "inside": { "kind": "arguments" } }),
-                source
-            ),
-            ["a", "c"]
-        );
-        assert_eq!(
-            texts(
-                json!({ "kind": "identifier", "nthChild": { "position": 1, "reverse": true } }),
-                source
-            ),
-            ["c", "y"]
-        );
-        // ofRule counts only the siblings it matches, and binds what it binds on the node itself.
-        let source = "f(1, a, 2, b);\n";
-        assert_eq!(
-            texts(
-                json!({ "kind": "identifier", "nthChild": { "position": 2, "ofRule": { "kind": "identifier", "pattern": "$X" } } }),
-                source,
-            ),
-            ["b X=b"]
-        );
-        // A root has no parent, so no position.
-        assert_eq!(
-            texts(json!({ "kind": "program", "nthChild": 1 }), "a;\n"),
-            Vec::<String>::new()
-        );
-    }
-
-    #[test]
-    fn flat_named_siblings_are_visited_once_per_parent() {
-        let source = format!(
-            "f({});",
-            (0..2000)
-                .map(|index| format!("a{index}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        reset_named_sibling_visits();
-        assert_eq!(
-            texts(json!({ "kind": "identifier", "nthChild": "n" }), &source).len(),
-            2001
-        );
-        assert!(
-            named_sibling_visits() <= 4_000,
-            "visited {} named siblings",
-            named_sibling_visits()
-        );
-    }
-
-    #[test]
-    fn of_rule_positions_over_a_flat_list_stay_within_a_linear_budget() {
-        const ARGUMENTS: usize = 500;
-        let source = format!(
-            "f({});\n",
-            (0..ARGUMENTS)
-                .map(|index| if index % 2 == 0 {
-                    format!("a{index}")
-                } else {
-                    index.to_string()
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        // A quadratic probe of every sibling for every candidate (250,000 steps) exceeds this
-        // budget; one pass over each parent's children stays far below it.
-        let capabilities = capabilities_with(|capabilities| {
-            capabilities["limits"]["maxVisitedNodes"] = json!(20_000);
-        });
-        let rule = json!({ "kind": "identifier", "inside": { "kind": "arguments" },
-            "nthChild": { "position": "2n", "ofRule": { "kind": "identifier" } } });
-        let compiled = compile_document_with(
-            clause_document(json!({ "id": "c", "forbid": { "ast": {
-                "language": "typescript", "rule": rule } }, "violation": violation() })),
-            &capabilities,
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
-        assert_eq!(result["failures"], json!([]), "{result}");
-        let expected = (0..ARGUMENTS)
-            .step_by(2)
-            .skip(1)
-            .step_by(2)
-            .map(|index| format!("a{index}"))
-            .collect::<Vec<_>>();
-        assert_eq!(matched_texts(&result, &source), expected);
-    }
-
-    #[test]
-    fn a_sibling_of_unknown_verdict_leaves_the_position_unknown() {
-        let source = "f(a, q, b);\ng(c, d);\n";
-        let of_rule =
-            json!({ "position": 2, "ofRule": { "kind": "identifier", "testUnknown": "^q$" } });
-        assert_eq!(
-            texts(json!({ "kind": "identifier", "nthChild": of_rule }), source),
-            ["d"]
-        );
-        // Unknown is neither true nor false: its negation holds nowhere in `f`'s arguments.
-        assert_eq!(
-            texts(
-                json!({ "kind": "identifier", "inside": { "kind": "arguments" }, "not": { "nthChild": of_rule } }),
-                source,
-            ),
-            ["c"]
-        );
-    }
-
-    #[test]
-    fn nth_child_shapes_are_checked() {
-        for (value, expected) in [
-            (
-                json!("2x"),
-                "/clauses/0/forbid/ast/rule/nthChild: illegal character `x`",
-            ),
-            (
-                json!("n+"),
-                "/clauses/0/forbid/ast/rule/nthChild: invalid syntax",
-            ),
-            (
-                json!(-1),
-                "/clauses/0/forbid/ast/rule/nthChild must be a non-negative integer, an An+B string, or { position, ofRule, reverse }",
-            ),
-            (
-                json!({ "ofRule": { "kind": "identifier" } }),
-                "/clauses/0/forbid/ast/rule/nthChild/position is required",
-            ),
-            (
-                json!({ "position": 1, "of": {} }),
-                "unknown field `of` at /clauses/0/forbid/ast/rule/nthChild",
-            ),
-            (
-                json!({ "position": 1, "reverse": 1 }),
-                "/clauses/0/forbid/ast/rule/nthChild/reverse must be a boolean",
-            ),
-            (
-                json!({ "position": "x" }),
-                "/clauses/0/forbid/ast/rule/nthChild/position: illegal character `x`",
-            ),
-            (
-                json!({ "position": 1, "ofRule": { "kinds": "identifier" } }),
-                "unknown field `kinds` at /clauses/0/forbid/ast/rule/nthChild/ofRule",
-            ),
-        ] {
-            let rule = json!({ "kind": "identifier", "nthChild": value });
-            assert_eq!(
-                rejection(compile_typescript_rule(rule.clone())),
-                expected,
-                "{rule}"
-            );
-        }
-    }
-
-    #[test]
-    fn extreme_offsets_evaluate_without_overflowing() {
-        let source = "a;\nb;\n";
-        assert_eq!(
-            texts(
-                json!({ "kind": "expression_statement", "nthChild": "n-2147483647" }),
-                source
-            ),
-            ["a;", "b;"]
-        );
-        assert_eq!(
-            texts(
-                json!({ "kind": "expression_statement", "nthChild": "-n-2147483647" }),
-                source
-            ),
-            Vec::<String>::new()
-        );
-    }
-}

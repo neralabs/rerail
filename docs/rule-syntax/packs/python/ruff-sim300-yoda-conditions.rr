@@ -1,0 +1,55 @@
+.policy "ruff-sim300-yoda-conditions" revision 3
+.description "Put the variable first and the constant or literal second in comparisons, avoiding Yoda conditions; it reads the way you would say it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM300 (flake8-simplify): a single comparison by `==`, `!=`, `<`, `<=`, `>` or `>=` whose left side is
+// likelier a constant than its right. Ruff ranks a side: 2 for a literal (str, bytes, number, bool, None,
+// `...`), 1 for a name or attribute in UPPER_CASE, else 0; a tuple, list or dict display, an operator `a + b`
+// and a sign `-a` take the lowest of their parts (an empty display 2). Ruff's fix, which swaps the sides
+// and flips `<` and `>`, is safe: it is offered here when the comparison holds no comment.
+//   if 42 == age: …     if "x" < y: …      if CONST == x: …      ← SIM300: age == 42, y > "x", x == CONST
+//   if 42 == CONST: …   if x == 42: …      if f() == x: …        not reported
+#include "python/simplify.rr"
+#include "python/bugbear.rr"
+//   cmp(c, op, l, r) from python/names; unparen(e, m) from python/ruff; ruff_literal(e) from python/bugbear
+
+.violation SIM300(at: node, l: node, op: symbol, r: node, p: symbol) code "SIM300"
+    "Put the variable first: write `{r} {p} {l}`; reverse `<`/`>` and `<=`/`>=` when swapping operands, and keep equality operators unchanged."
+    suppress ruff "SIM300"
+    fix safe swap "Swap the operands"
+SIM300(c, l, o, r, p) :- cmp(c, o, l, r), flipped(o, p), rank(l, a), rank(r, b), a > b.
+swap(c, l, _, r, p) :- !has(c, _, "comment") => replace(c, `$r $p $l`).
+.decl flipped(op: symbol, p: symbol)
+flipped("==", "=="). flipped("!=", "!="). flipped("<", ">"). flipped(">", "<"). flipped("<=", ">="). flipped(">=", "<=").
+
+// rank(e, k): Ruff's ConstantLikelihood of e, parentheses off: the least k that at_most gives.
+.decl rank(e: node, k: number)
+rank(e, k) :- at_most(e, k), (k = 0 ; !at_most(e, k - 1)).
+// at_most(e, k): e's likelihood is k or less. A display, an operator and a sign take the lowest of their parts.
+.decl at_most(e: node, k: number)
+at_most(e, k) :- unparen(e, m), level(m, k).
+at_most(e, k + 1) :- at_most(e, k), k < 2.
+at_most(e, k) :- unparen(e, m), part(m, p), at_most(p, k).
+.decl level(m: node, k: number)  // what m is by its own form, before its parts
+level(m, 2) :- ruff_literal(m).
+level(m, 2) :- (kind(m, "tuple") ; kind(m, "list") ; kind(m, "dictionary")), !part(m, _).
+level(m, k) :- kind(m, "identifier"), text(m, x), (upper_name(x), k = 1 ; !upper_name(x), k = 0).
+level(m, k) :- attr_of(m, _, x), (upper_name(x), k = 1 ; !upper_name(x), k = 0).
+level(m, 0) :- kind(m, _), !ruff_literal(m), !kind(m, "identifier"), !kind(m, "attribute"), !kind(m, "tuple"),
+    !kind(m, "list"), !kind(m, "dictionary"), !kind(m, "binary_operator"), !signed(m),
+    !kind(m, "parenthesized_expression").
+.decl signed(m: node)
+signed(m) :- kind(m, "unary_operator"), (op(m, "-") ; op(m, "+") ; op(m, "~")).
+// part(m, p): an element of a display, a dict's keys and values, `**x`'s x.
+.decl part(m: node, p: node)
+part(m, p) :- (kind(m, "tuple") ; kind(m, "list")), child(m, p, _), !kind(p, "comment").
+part(m, p) :- kind(m, "dictionary"), child(m, i, _), kind(i, "pair"), (field(i, "key", p) ; field(i, "value", p)).
+part(m, p) :- kind(m, "dictionary"), child(m, i, _), kind(i, "dictionary_splat"), child(i, p, 0).
+part(m, p) :- kind(m, "binary_operator"), (field(m, "left", p) ; field(m, "right", p)).
+part(m, p) :- signed(m), field(m, "argument", p).
+// upper_name(x): Ruff's is_cased_uppercase: a cased letter, and no lowercase one.
+.decl upper_name(x: symbol)
+upper_name(x) :- (kind(n, "identifier") ; kind(n, "attribute")), (text(n, x) ; attr_of(n, _, x)),
+    match(".*[A-Z].*", x), !match(".*[a-z].*", x).

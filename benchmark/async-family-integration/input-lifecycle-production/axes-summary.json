@@ -1,0 +1,30 @@
+{
+  "axes-baseline-baseline": {
+    "files": 100,
+    "nodes": 3791229,
+    "hits": 145408,
+    "phaseCpu": 0.95,
+    "localCpu": 0.14
+  },
+  "axes-baseline-production": {
+    "files": 100,
+    "nodes": 3791229,
+    "hits": 145408,
+    "phaseCpu": 0.75,
+    "localCpu": 0.14
+  },
+  "axes-tape-baseline": {
+    "files": 100,
+    "nodes": 3791229,
+    "hits": 140230,
+    "phaseCpu": 1.02,
+    "localCpu": 0.22
+  },
+  "axes-tape-production": {
+    "files": 100,
+    "nodes": 3791229,
+    "hits": 140230,
+    "phaseCpu": 0.86,
+    "localCpu": 0.23
+  }
+}

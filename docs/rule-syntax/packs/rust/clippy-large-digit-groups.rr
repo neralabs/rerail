@@ -1,0 +1,17 @@
+.policy "clippy-large-digit-groups" revision 3
+.description "Keep underscore-separated digit groups in Rust decimal literals to four digits or fewer; longer groups defeat the separators."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
+
+// Clippy's large_digit_groups (pedantic): the `_` groups of a decimal literal are even but longer than four.
+//   1_23456_f32   123_456789_f32   123456_789   reported
+//   1_234_567     1_2345_6789                   not reported
+// Uneven groups are inconsistent_digit_grouping instead, and hex, octal and binary groups are never large.
+.violation large_digit_groups(at: node) code "large_digit_groups"
+    "Split this literal into digit groups of four or fewer, e.g. 1_000_000 instead of 1_000000."
+    suppress clippy "clippy::large_digit_groups", "clippy::pedantic", "warnings"
+large_digit_groups(n) :- grouping_lint(n, "large_digit_groups", "true").

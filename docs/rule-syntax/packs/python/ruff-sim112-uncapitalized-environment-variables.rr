@@ -1,0 +1,28 @@
+.policy "ruff-sim112-uncapitalized-environment-variables" revision 3
+.description "Use uppercase names when reading environment variables through os.environ or os.getenv; the lowercase proxy variables are exempt."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM112 (flake8-simplify), in a file that imports os: an environment variable named by a str literal
+// with a lowercase ASCII letter in it, in `os.environ["x"]` (written so: the name os, any context) or as the
+// first argument of `os.environ.get(…)` or `os.getenv(…)` (resolved through imports). `http_proxy`,
+// `https_proxy` and `no_proxy` are exempt. The finding is at the string. Ruff's fix is unsafe; none here.
+//   os.environ["foo"]    os.getenv("Foo")      ← SIM112: "FOO"
+//   os.environ["FOO"]    os.getenv("no_proxy") not reported
+#include "python/simplify.rr"
+#include "python/misc-seen.rr"
+//   seen_module(d, "os"); plain_str(e, v) from python/pyflakes, call_q(c, q), ruff_arg(c, i, a) from python/ruff
+
+.violation SIM112(at: node, v: symbol) code "SIM112"
+    "Uppercase `{v}` only if the deployment uses that name; preserve intentional lowercase keys because lookups are case-sensitive on POSIX."
+    suppress ruff "SIM112"
+SIM112(s, v) :- env_name(s, v), docof(s, d), seen_module(d, "os"), match(".*[a-z].*", v), !proxy(v).
+seen_ask("os").
+.decl env_name(s: node, v: symbol)
+env_name(s, v) :- kind(e, "subscript"), field(e, "value", o), attr_of(o, n, "environ"), kind(n, "identifier"),
+    text(n, "os"), field(e, "subscript", s), count : { field(e, "subscript", _) } = 1, plain_str(s, v), !fstring(s).
+env_name(s, v) :- (call_q(c, "os.environ.get") ; call_q(c, "os.getenv")), ruff_arg(c, 0, s), plain_str(s, v),
+    !fstring(s).
+.decl proxy(v: symbol)
+proxy("http_proxy"). proxy("https_proxy"). proxy("no_proxy").

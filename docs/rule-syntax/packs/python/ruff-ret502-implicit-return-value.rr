@@ -1,0 +1,18 @@
+.policy "ruff-ret502-implicit-return-value" revision 2
+.description "Use return None instead of a bare return in Python functions that also return a value; make the None result explicit."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET502 (flake8-return): a bare `return` in a function that returns a value elsewhere. The bare one
+// returns None too, but silently; write `return None`. Generators and defs that are a lone return are skipped.
+//   def f(x):
+//       if x:
+//           return             ← RET502
+//       return 1
+#include "python/flow-return.rr"
+
+.violation RET502(at: node) code "RET502"
+    "Write `return None` instead of a bare `return`, since this function returns a value elsewhere."
+    suppress ruff "RET502"
+RET502(r) :- ret_function(f), returns_value(f), fn_return(f, r), bare_return(r).

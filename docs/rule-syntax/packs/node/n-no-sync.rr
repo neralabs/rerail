@@ -1,0 +1,30 @@
+.policy "n-no-sync" revision 4
+.description "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-sync: synchronous methods, by name. Its two selectors are read literally:
+//   CallExpression > MemberExpression.callee Identifier[name=/Sync$/]   any identifier inside a called member:
+//       fs.readFileSync(p)     reported at fs.readFileSync;  fooSync.bar()  too, at fooSync.bar
+//   CallExpression > Identifier[name=/Sync$/]   an identifier that is the callee or an argument:
+//       readFileSync(p)   f(existsSync)     reported at the call
+// The finding is at the identifier's parent. Options: allowAtRootLevel (only inside functions), ignores (a list
+// of names; the plugin's typed ignores, { from: "file" | "lib" | "package" }, need TypeScript types and are not
+// read).
+
+#include "tsx/node.rr"   // called, call_arg, function_node; values.rr's tagged
+
+// id(n): an ESTree Identifier named …Sync. A non-computed property is an Identifier there; #x is not.
+.decl id(n: node, x: symbol)
+id(n, x) :- kind(n, k), (k = "identifier" ; k = "property_identifier" ; k = "shorthand_property_identifier"),
+    text(n, x), suffix("Sync", x), !option_item("ignores", _, x).
+// hit(n, p): identifier n matches a selector, and p is its ESTree parent.
+.decl hit(n: node, p: node)
+hit(n, p) :- id(n, _), called(_, m), (kind(m, "member_expression") ; kind(m, "subscript_expression")), within(n, m), estree_parent(n, q),
+    (kind(q, "arguments"), child(p, q, _) ; !kind(q, "arguments"), p = q).
+hit(n, c) :- id(n, _), (called(c, n) ; call_arg(c, n, _), kind(c, "call_expression"), !tagged(c)).
+
+.violation no_sync(at: node, x: symbol) code "n/no-sync"
+    "Replace {x} with its async or promise-based version, such as fs.promises.readFile() for readFileSync()."
+    suppress eslint "n/no-sync"
+no_sync(p, x) :- hit(n, p), id(n, x), (!option("allowAtRootLevel", "true") ; inside(n, _, function_node)).

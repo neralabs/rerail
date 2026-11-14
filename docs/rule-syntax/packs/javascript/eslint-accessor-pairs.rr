@@ -1,0 +1,65 @@
+.policy "eslint-accessor-pairs" revision 7
+.description "Add a getter for every setter in objects, classes and property descriptors; a write-only property can be set but never read back."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   accessor (getters and setters by list and key), accessor_name, accessor_at, method_call, call_arg
+#include "tsx/names.rr"
+//   ref_site: whether `Object` names a local variable
+
+// ESLint's accessor-pairs: a setter with no getter of the same name beside it (and, with getWithoutSet, a
+// getter with no setter). Object literals, class bodies (static and instance members apart) and property
+// descriptors are checked; TypeScript object types and interfaces with enforceForTSTypes.
+//   ({ set a(v) {} })                                  → Getter is not present for setter 'a'.
+//   class A { static get a() {} set a(v) {} }          → Getter is not present for class setter 'a'.
+//   Object.defineProperty(o, "a", { set(v) {} })       → Getter is not present in property descriptor.
+// Options: setWithoutGet (default true), getWithoutSet (false), enforceForClassMembers (true),
+// enforceForTSTypes (false).
+.violation accessor_pairs(at: loc, msg: symbol) code "accessor-pairs" "{msg}"
+    suppress eslint "accessor-pairs"
+    suppress oxlint "accessor-pairs"
+accessor_pairs(at, cat(cat(y, " is not present for "), cat(where, cat(s, ".")))) :-
+    lonely(l, m, w), missing(w, y), in_words(l, where), accessor_name(m, s), accessor_at(m, at).
+accessor_pairs(o, cat(y, " is not present in property descriptor.")) :- descriptor(o), lacks(o, w), missing(w, y).
+
+// lonely(l, m, w): accessor m of kind w has no partner in its list, and the options ask about w.
+.decl lonely(l: node, m: node, w: symbol)
+lonely(l, m, w) :- accessor(l, s, m, k, w), checked(l), checks(w, v), count : { accessor(l, s, n, k, v) } = 0.
+// checked(l): the options ask about list l. Objects always; classes unless enforceForClassMembers is false;
+// TypeScript types with enforceForTSTypes.
+.decl checked(l: node)
+checked(l) :- kind(l, "object").
+checked(l) :- kind(l, "class_body"), !option("enforceForClassMembers", "false").
+checked(l) :- (kind(l, "object_type") ; kind(l, "interface_body")), option("enforceForTSTypes", "true").
+.decl checks(w: symbol, missing: symbol)  // an accessor w the options check, and the kind it misses
+checks("set", "get") :- !option("setWithoutGet", "false").
+checks("get", "set") :- option("getWithoutSet", "true").
+.decl missing(w: symbol, y: symbol)  // the kind a lonely w misses, as the message names it
+missing("set", "Getter"). missing("get", "Setter").
+.decl in_words(l: node, s: symbol)
+in_words(l, "") :- kind(l, "object").
+in_words(l, "class ") :- kind(l, "class_body").
+in_words(l, "type ") :- (kind(l, "object_type") ; kind(l, "interface_body")).
+// descriptor(o): object o describes a property: the third argument of Object.defineProperty or
+// Reflect.defineProperty, or a property value in the second argument of Object.create or Object.defineProperties.
+.decl descriptor(o: node)
+// The call must reach the global: `function f(Object) { Object.defineProperty(…) }` is not checked.
+descriptor(o) :- kind(o, "object"), call_arg(c, a, 2), deparen(a, o), global_call(c),
+    (method_call(c, "Object", "defineProperty") ; method_call(c, "Reflect", "defineProperty")).
+descriptor(o) :- kind(o, "object"), field(p, "value", v), deparen(v, o), kind(p, "pair"), child(g, p, _),
+    call_arg(c, a, 1), deparen(a, g), global_call(c),
+    (method_call(c, "Object", "create") ; method_call(c, "Object", "defineProperties")).
+.decl global_call(c: node)  // the callee's object is a name no declaration in the file binds
+global_call(c) :- kind(c, "call_expression"), field(c, "function", m), deparen(m, e), field(e, "object", b),
+    !ref_site(b, _).
+// lacks(o, w): descriptor o has `set` without `get` (w = "set"), or the reverse. Names count only as plain
+// identifiers: `set: f`, `set`, `set() {}`; not "set": f or [set]: f, nor an accessor `get set() {}`.
+.decl lacks(o: node, w: symbol)
+lacks(o, w) :- descriptor(o), checks(w, v), plain_prop(o, w), !plain_prop(o, v).
+.decl plain_prop(o: node, x: symbol)
+plain_prop(o, x) :- child(o, p, _), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"), text(k, x).
+plain_prop(o, x) :- child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
+plain_prop(o, x) :- child(o, p, _), kind(p, "method_definition"), !op(p, "get"), !op(p, "set"),
+    field(p, "name", k), kind(k, "property_identifier"), text(k, x).

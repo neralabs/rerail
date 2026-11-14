@@ -1,0 +1,16 @@
+.policy "ruff-pth122-os-path-splitext" revision 2
+.description "Use the suffix, stem and parent properties of a Path object instead of os.path.splitext; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH122 (flake8-use-pathlib): every call of `os.path.splitext`, however it is imported. Reported at
+// the callee.
+//   root, ext = os.path.splitext(p)      ← PTH122: `p.parent / p.stem` and `p.suffix`
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+
+.violation PTH122(at: node) code "PTH122"
+    "Use `Path(...)` with `.suffix`, `.stem` and `.parent` instead of `os.path.splitext(...)`: the root is `p.parent / p.stem`, the extension `p.suffix`. Leave it for bytes paths, which `Path` rejects."
+    suppress ruff "PTH122"
+PTH122(f) :- pth_call(_, "os.path.splitext", f).

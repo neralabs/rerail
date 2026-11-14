@@ -1,0 +1,26 @@
+.policy "ruff-pt022-pytest-useless-yield-fixture" revision 2
+.description "Use return instead of yield in a pytest fixture that has no teardown code after its only yield; a plain return is simpler."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT022 (flake8-pytest-style): a fixture whose last statement is its only `yield`: nothing runs after it,
+// so `return` says the same. Abstract methods are left alone; `yield from` is not a yield here.
+//   @pytest.fixture
+//   def value():
+//       v = make()
+//       yield v              ← PT022
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), pytest_seen(f, n), pytest_deco(o, d, e, q)
+
+.violation PT022(at: node, x: symbol) code "PT022"
+    "Nothing runs after this `yield` in fixture `{x}`: use `return`, and annotate the value type instead of `Generator[T, ...]` or `Iterator[T]`. Keep `yield` if a local object (temp dir, open file) must stay alive."
+    suppress ruff "PT022"
+PT022(s, x) :- pytest_fixture(f, _, _), !abstract(f), def_name(f, x), field(f, "body", b), child(b, s, i),
+    kind(s, "expression_statement"), child(s, y, 0), plain_yield(y), count : { child(b, t, j), j > i, !kind(t, "comment") } = 0,
+    count : { pytest_seen(f, n), plain_yield(n) } = 1.
+.decl plain_yield(y: node)
+plain_yield(y) :- kind(y, "yield"), !op(y, "from").
+.decl abstract(f: node)
+abstract(f) :- pytest_deco(f, _, e, q), !kind(e, "call"), (q = "abc.abstractmethod" ; q = "abc.abstractclassmethod" ;
+    q = "abc.abstractstaticmethod" ; q = "abc.abstractproperty").

@@ -1,0 +1,43 @@
+.policy "ruff-async221-run-process-in-async-function" revision 2
+.description "Don't run processes with subprocess.run, os.system or other blocking process calls inside async functions; they block the event loop until the process exits."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC221 (flake8-async): a call that runs a process to completion inside an async def: os.system,
+// os.posix_spawn[p], subprocess.run / call / check_call / check_output / getoutput / getstatusoutput, and an
+// `os.spawn*` call in P_WAIT mode. The mode is the `mode` argument (or the first): absent, `os.P_WAIT`, or a
+// name bound to it. Other spawn modes only start the process (ASYNC220).
+//   async def f(): subprocess.run(cmd)                ← ASYNC221
+//   async def f(): os.spawnl(os.P_WAIT, "x")          ← ASYNC221
+//   async def f(): os.spawnl(os.P_NOWAIT, "x")        not reported: ASYNC220
+#include "python/async-demand.rr"
+
+.violation ASYNC221(at: node) code "ASYNC221"
+    "Async functions should not run processes with blocking methods"
+    suppress ruff "ASYNC221"
+ASYNC221(f) :- async_blocking(_, f, q), async_runs(q).
+ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), !async_mode_arg(c, _).
+ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), async_mode_arg(c, a), async_p_wait(a).
+// Argument extraction starts only after the API qualifies as a spawn call.
+async_api_target(q) :- async_runs(q).
+async_api_target(q) :- async_spawn(q).
+.decl async_argument_demand(c: node)
+async_argument_demand(c) :- async_blocking(c,_,q), async_spawn(q).
+.decl async_argument(c: node,i: number,k: symbol,spread: symbol,v: node)
+async_argument(c,i,k,s,v) :- python_arguments(c,i,k,s,v,async_argument_demand).
+.decl async_mode_arg(c: node,a: node)
+async_mode_arg(c,a) :- async_argument(c,_,"mode","none",a).
+async_mode_arg(c,a) :- async_argument(c,0,"","none",a), !async_argument(c,_,"mode",_,_).
+.decl async_mode_demand(n: node)
+async_mode_demand(n) :- async_mode_arg(_,n).
+.decl async_mode_value(n: node,v: node)
+async_mode_value(n,v) :- python_assigned(n,v,async_mode_demand).
+.decl async_mode_value_demand(v: node)
+async_mode_value_demand(v) :- async_mode_value(_,v).
+.decl async_mode_target(q: symbol)
+async_mode_target("os.P_WAIT").
+.decl async_mode_qualified(n: node,q: symbol)
+async_mode_qualified(n,q) :- python_qualified(n,q,async_mode_value_demand,async_mode_target).
+.decl async_p_wait(a: node)
+async_p_wait(a) :- async_mode_value(a,v), async_mode_qualified(v,"os.P_WAIT").

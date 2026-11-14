@@ -1,0 +1,35 @@
+.policy "ruff-sim117-multiple-with-statements" revision 2
+.description "Merge directly nested with statements into one with holding several context managers, except around asyncio, anyio or trio timeout scopes."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM117 (flake8-simplify): a `with` whose body is one `with` statement, both `async` or neither, and
+// neither of them a single timeout scope: `asyncio.timeout`, `asyncio.timeout_at`, `anyio.CancelScope`,
+// `anyio.fail_after`, `anyio.move_on_after`, `trio.fail_after`, `trio.fail_at`, `trio.move_on_after`,
+// `trio.move_on_at`. A chain of three is one finding, at the outermost. Ruff's fix is safe, but it rewrites
+// the header through libcst within the line length; it is not offered here (see NOTES).
+//   with a:                ← SIM117: with a, b:
+//       with b: …
+//   async with asyncio.timeout(1):     with b: …      not reported
+#include "python/ast.rr"
+//   body_stmt(b, s, i), body_len(b, k); ruff_qual from python/ruff
+#include "python/ruff.rr"
+
+.violation SIM117(at: node) code "SIM117"
+    "Use a single `with` statement with multiple contexts instead of nested `with` statements"
+    suppress ruff "SIM117"
+SIM117(w) :- mergeable(w, _), !mergeable(_, w).    // the outermost of a chain
+// mergeable(w, i): the body of with w is the one with i, and they can be merged.
+.decl mergeable(w: node, i: node)
+mergeable(w, i) :- kind(w, "with_statement"), field(w, "body", b), body_len(b, 1), body_stmt(b, i, 0),
+    kind(i, "with_statement"), (op(w, "async"), op(i, "async") ; !op(w, "async"), !op(i, "async")),
+    !timeout_scope(w), !timeout_scope(i).
+.decl timeout_scope(w: node)  // w has one item, a call of a timeout scope
+timeout_scope(w) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"),
+    count : { child(wc, o, _), kind(o, "with_item") } = 1, child(wc, it, _), kind(it, "with_item"),
+    field(it, "value", v), unparen(v, c), call_q(c, q), timeout(q).
+.decl timeout(q: symbol)
+timeout("asyncio.timeout"). timeout("asyncio.timeout_at"). timeout("anyio.CancelScope"). timeout("anyio.fail_after").
+timeout("anyio.move_on_after"). timeout("trio.fail_after"). timeout("trio.fail_at"). timeout("trio.move_on_after").
+timeout("trio.move_on_at").

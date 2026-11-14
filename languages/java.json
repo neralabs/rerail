@@ -10,7 +10,7 @@
       "suffixes": [".java"],
       "parser": "tree-sitter",
       "grammar": "ast-grep:Java",
-      "tapeTag": 13
+      "tapeTag": 15
     }
   ],
   "capabilities": {

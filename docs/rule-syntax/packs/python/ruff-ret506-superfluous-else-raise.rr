@@ -1,0 +1,20 @@
+.policy "ruff-ret506-superfluous-else-raise" revision 2
+.description "Remove the else or elif after an if branch that raises, and dedent its code; the branch already leaves the function."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET506 (flake8-return): an `elif` or `else` right after an `if` body whose first jump is a `raise`. That
+// branch leaves the function, so the rest can be dedented. Only an if's first elif/else clause is
+// paired with its body, and only the body's own statements are looked at, in order: the first return, raise,
+// break or continue decides which rule fires. Checked in each def RET reads (python/flow-return); reported
+// at the keyword.
+//   if x:
+//       raise ValueError
+//   else:                      ← RET506 "Unnecessary `else` after `raise` statement"
+//       y()
+#include "python/flow-return.rr"
+
+.violation RET506(at: span, w: symbol) code "RET506" "Unnecessary `{w}` after `raise` statement"
+    suppress ruff "RET506"
+RET506(kw, w) :- else_after_jump(kw, w, "raise").

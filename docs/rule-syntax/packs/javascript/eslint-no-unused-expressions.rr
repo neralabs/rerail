@@ -1,0 +1,58 @@
+.policy "eslint-no-unused-expressions" revision 3
+.description "Remove JavaScript expression statements that have no effect, such as a bare comparison or property read; they usually mean a missing call or assignment."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/modules.rr"
+//   directive
+#include "tsx/eslint-b-control.rr"
+//   deparen
+
+// ESLint's no-unused-expressions: an expression statement whose value is thrown away and that does nothing
+// else: a name, a literal, a member read, an operator other than `void` and `delete`, a function or class
+// expression, `a ? b : c`, `a && b`. Calls, `new`, assignments, `++`, `await`, `yield` and directives
+// ("use strict") are fine.
+//   a;   a.b;   a == b;   !a;   `x`;   a?.b;                  → reported
+//   f();   a = 1;   delete a.b;   void 0;   await p;            fine
+// Options (all false by default):
+//   allowShortCircuit      `a && f()`: judge the right side only          allowTernary  `a ? f() : g()`: each branch
+//   allowTaggedTemplates   tag`x` is fine                                  enforceForJSX `<A />;` is reported
+//   ignoreDirectives       with ecmaVersion 3, where there are no directives, still allow "use strict";
+.violation no_unused_expressions(at: node, msg: symbol) code "no-unused-expressions" "{msg}"
+    suppress eslint "no-unused-expressions"
+    suppress oxlint "no-unused-expressions"
+    suppress biome "lint/suspicious/noUnusedExpressions"
+no_unused_expressions(s, m) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e, x), idle(x),
+    !kept_directive(s), (jsx(x), m = "Return or render this JSX, or remove it; on its own it has no effect." ;
+    !jsx(x), m = "Expected an assignment or function call and instead saw an expression.").
+
+// idle(x): ESLint's Checker.isDisallowed. Parentheses are not part of ESTree, so each step removes them.
+.decl idle(x: node)
+idle(x) :- kind(x, k), idle_kind(k).
+idle(x) :- kind(x, "unary_expression"), !op(x, "void"), !op(x, "delete").
+idle(x) :- kind(x, "binary_expression"), !logical(x).
+idle(x) :- logical(x), !option("allowShortCircuit", "true").
+idle(x) :- logical(x), option("allowShortCircuit", "true"), field(x, "right", r), deparen(r, y), idle(y).
+idle(x) :- kind(x, "ternary_expression"), !option("allowTernary", "true").
+idle(x) :- kind(x, "ternary_expression"), option("allowTernary", "true"),
+    (field(x, "consequence", b) ; field(x, "alternative", b)), deparen(b, y), idle(y).
+idle(x) :- kind(x, "call_expression"), field(x, "arguments", t), kind(t, "template_string"),
+    !option("allowTaggedTemplates", "true").
+idle(x) :- jsx(x), option("enforceForJSX", "true").
+.decl idle_kind(k: symbol)
+idle_kind("array"). idle_kind("arrow_function"). idle_kind("class"). idle_kind("function_expression").
+idle_kind("generator_function"). idle_kind("identifier"). idle_kind("undefined"). idle_kind("string").
+idle_kind("number"). idle_kind("regex"). idle_kind("true"). idle_kind("false"). idle_kind("null").
+idle_kind("member_expression"). idle_kind("subscript_expression"). idle_kind("meta_property"). idle_kind("object").
+idle_kind("sequence_expression"). idle_kind("template_string"). idle_kind("this").
+.decl logical(x: node)  // ESTree's LogicalExpression: tree-sitter writes it as a binary_expression
+logical(x) :- kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??")).
+.decl jsx(x: node)  // an element or fragment: <A />, <a></a>, <></>
+jsx(x) :- kind(x, "jsx_element") ; kind(x, "jsx_self_closing_element").
+
+// kept_directive(s): a directive of the prologue ("use strict"; "use client"), unless the parser is ES3, which
+// has none; there ignoreDirectives keeps the strings at the head of a body anyway.
+.decl kept_directive(s: node)
+kept_directive(s) :- directive(_, s, _), !option("ecmaVersion", "3").
+kept_directive(s) :- directive(_, s, _), option("ecmaVersion", "3"), option("ignoreDirectives", "true").

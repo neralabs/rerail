@@ -1,0 +1,214 @@
+{
+  "cases": [
+    {
+      "id": "sas-report-api",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-impl",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-internal",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "_internal/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-facade",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-layer",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "l1234_example/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-unicode-layer",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "l\u0661\u0662\u0663\u0664_example/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-outside",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "misc/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-tests",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/tests/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-test",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-test-filename",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/test_a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-tmp",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/tmp/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-hidden",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/.git/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-extension",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.txt",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-invalid",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def broken(:\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-bom",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "\ufeffdef load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-matching",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: WriteTransaction): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-last-untyped",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\ndef load(txn): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-nfkc",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(\uff54\uff58\uff4e: \uff37\uff52\uff49\uff54\uff45\uff34\uff52\uff41\uff4e\uff53\uff41\uff43\uff54\uff49\uff4f\uff4e): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-string-head",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(txn: \"WriteTransaction\"): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-keyword-only",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def load(*, txn: WriteTransaction): ...\nasync def load_async(conn: Connection): ...\n"
+        }
+      ]
+    },
+    {
+      "id": "sas-report-class",
+      "check": "sync_async_signatures",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "class C:\n    def load(self, txn: WriteTransaction): ...\n    async def load_async(self, conn: Connection): ...\n"
+        }
+      ]
+    }
+  ]
+}

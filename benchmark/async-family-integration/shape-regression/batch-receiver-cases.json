@@ -1,0 +1,14 @@
+[
+  {
+    "name": "fixed_order"
+  },
+  {
+    "name": "batch_receiver_membership",
+    "replacements": [
+      [
+        "SELECT DISTINCT t1.c1 AS c0, t2.object AS c1 FROM async_site t1 CROSS JOIN main.py_attribute t2 CROSS JOIN main.text t3 WHERE (t2.node = t1.c1)",
+        "SELECT DISTINCT t2.node AS c0, t2.object AS c1 FROM main.py_attribute t2 CROSS JOIN main.text t3 WHERE (t2.node IN (SELECT c1 FROM async_site))"
+      ]
+    ]
+  }
+]

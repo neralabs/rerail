@@ -1,0 +1,18 @@
+.policy "ruff-d209-new-line-after-last-paragraph" revision 2
+.description "Put the closing quotes of a multi-line docstring on their own line."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D209 (pydocstyle): a triple-quoted docstring with two or more lines of text whose closing quotes are not
+// on a line of their own.
+//   """Summary.
+//
+//   More text."""            ← D209
+#include "python/docstrings.rr"
+
+.violation D209(at: node) code "D209"
+    "Move this docstring's closing quotes onto a new line after its last line of text."
+    suppress ruff "D209"
+// A non-blank line, a later line break, and text on the last line (the one ending at the closing quotes).
+D209(s) :- doc_checked(s), doc_triple(s), doc_body(s, b), match("\\s*\\S[\\s\\S]*\\n[^\\n]*\\S[^\\n]*", b).

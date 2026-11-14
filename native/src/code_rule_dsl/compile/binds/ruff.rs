@@ -3,7 +3,7 @@
 //! Where the engine is conservative by design (a read `eval` may make) the port reports less, and
 //! the test lists each such range.
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 

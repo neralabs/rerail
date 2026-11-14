@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "failures": [],
+  "executions": 80,
+  "relational_executions": 73,
+  "chunks": 72,
+  "vm_steps": 3389156,
+  "evaluation_vm_steps": 3314664,
+  "sql_bytes": [
+    1558,
+    21916
+  ],
+  "publication": [],
+  "wave": []
+}

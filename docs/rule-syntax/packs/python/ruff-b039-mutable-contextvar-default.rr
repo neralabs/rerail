@@ -1,0 +1,21 @@
+.policy "ruff-b039-mutable-contextvar-default" revision 2
+.description "Don't give a ContextVar a mutable default such as a list, dict or set; the one default object is shared across every context."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B039 (flake8-bugbear): `ContextVar(…, default=…)` with a mutable default. The one default object is
+// shared by every context, so changing it in one leaks into all. Mutable: a list, dict or set display or
+// comprehension, a call of a mutable builtin or collections class, and any other call Ruff does not know to
+// return an immutable value (a local function, `time.time()`). Reported at the default.
+//   ContextVar("cv", default=[])                 ← B039
+//   ContextVar[set[str]]("cv", default=set[str]())  ← B039
+//   ContextVar("cv", default=bar())              ← B039: bar's result is not known to be immutable
+//   ContextVar("cv", default=frozenset())        not reported
+#include "python/bugbear.rr"
+
+.violation B039(at: node) code "B039"
+    "Default this ContextVar to None and set the mutable value with .set(); a mutable default is shared by every context."
+    suppress ruff "B039"
+B039(d) :- bb_callee(c, "contextvars.ContextVar"), call_kw(c, "default", d), bb_mutable(d).
+B039(d) :- bb_callee(c, "contextvars.ContextVar"), call_kw(c, "default", d), kind(d, "call"), !bb_immutable_call(d).

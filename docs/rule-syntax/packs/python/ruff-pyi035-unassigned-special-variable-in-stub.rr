@@ -1,0 +1,20 @@
+.policy "ruff-pyi035-unassigned-special-variable-in-stub" revision 2
+.description "Assign a value to the module-level exports list and the class slot and match-argument lists in stub files; they mean the same there as at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI035 (flake8-pyi), stubs only: `__all__` at module level, or `__match_args__` / `__slots__` in a
+// class body, annotated without a value. These names have their runtime meaning in a stub too.
+//   __all__: list[str]                 ← PYI035
+//   __all__: list[str] = ["f", "g"]    fine
+#include "python/typing.rr"
+
+.violation PYI035(at: node, msg: symbol) code "PYI035" "{msg}"
+    suppress ruff "PYI035"
+PYI035(a, m) :- kind(a, "assignment"), in_stub(a), field(a, "type", _), !field(a, "right", _), field(a, "left", t),
+    special_name(t), plain_target(t, x), says(x, m).
+.decl says(x: symbol, msg: symbol)
+says("__all__", "Give `__all__` a value in this stub, such as `__all__: list[str] = [\"name\", ...]` listing the public names; it has the same meaning as at runtime.").
+says(x, cat("Give `", x, "` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime.")) :-
+    (x = "__match_args__" ; x = "__slots__").

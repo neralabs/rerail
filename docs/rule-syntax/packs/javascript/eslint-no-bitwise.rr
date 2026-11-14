@@ -1,0 +1,26 @@
+.policy "eslint-no-bitwise" revision 5
+.description "Avoid bitwise operators; they are rare in application code and usually a typo for a logical operator."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-bitwise: every use of a bitwise operator, in a binary, assignment or unary expression.
+//   a & b    a |= b    ~a    a >>> 2       → reported
+// Options: `allow`, a list of operators that are fine (["~"] allows `~a`); `int32Hint` ("false" by default)
+// allows `x | 0`, the idiom that truncates x to a 32-bit integer.
+.decl bitwise(o: symbol)
+bitwise("^"). bitwise("|"). bitwise("&"). bitwise("<<"). bitwise(">>"). bitwise(">>>").
+bitwise("^="). bitwise("|="). bitwise("&="). bitwise("<<="). bitwise(">>="). bitwise(">>>="). bitwise("~").
+
+.violation no_bitwise(at: node, op: symbol) code "no-bitwise"
+    "Replace '{op}' with the logical or arithmetic operator you meant."
+    suppress eslint "no-bitwise"
+    suppress oxlint "no-bitwise"
+    suppress biome "lint/suspicious/noBitwiseOperators"
+no_bitwise(n, o) :- (kind(n, "binary_expression") ; kind(n, "augmented_assignment_expression") ;
+    kind(n, "unary_expression")), op(n, o), bitwise(o), !option_item("allow", _, o), !int32_hint(n).
+
+// int32Hint: `x | 0`, with the literal 0 on the right (ESLint: node.right is a Literal whose value is 0).
+.decl int32_hint(n: node)
+int32_hint(n) :- option("int32Hint", "true"), binop(n, "|", _, r), zero(r).

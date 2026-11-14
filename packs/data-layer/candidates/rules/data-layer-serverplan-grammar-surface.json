@@ -1,0 +1,262 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-serverplan-grammar-surface",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer serverplan_grammar_surface at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "helper-definitions",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "function_definition",
+            "has": {
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^(?:grammar_execute|grammar_execute_async|grammar_execute_lazy|grammar_exists|grammar_exists_async|grammar_exists_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchall_lazy|grammar_fetchone|grammar_fetchone_async|grammar_fetchone_lazy|grammar_scalar|grammar_scalar_async|grammar_scalar_lazy|grammar_validate|grammar_validate_async|grammar_validate_lazy)$",
+              "pattern": "$NAME"
+            }
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-helper_definition",
+        "anchor": "witness.span",
+        "message": "forbidden helper definition $NAME"
+      }
+    },
+    {
+      "id": "direct-helper-definitions",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "function_definition",
+            "has": {
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^(?:execute_grammar_direct|execute_grammar_direct_async|execute_grammar_direct_lazy|execute_grammar_fetchall_direct|execute_grammar_fetchall_direct_async|execute_grammar_fetchall_direct_lazy|execute_grammar_fetchall_with_params_direct|execute_grammar_fetchall_with_params_direct_async|execute_grammar_fetchall_with_params_direct_lazy|execute_grammar_fetchone_direct|execute_grammar_fetchone_direct_async|execute_grammar_fetchone_direct_lazy|execute_grammar_fetchone_with_params_direct|execute_grammar_fetchone_with_params_direct_async|execute_grammar_fetchone_with_params_direct_lazy|execute_grammar_with_params_direct|execute_grammar_with_params_direct_async|execute_grammar_with_params_direct_lazy)$",
+              "pattern": "$NAME"
+            }
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-direct_helper_definition",
+        "anchor": "witness.span",
+        "message": "forbidden direct grammar helper definition $NAME"
+      }
+    },
+    {
+      "id": "helper-attributes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "kind": "identifier",
+              "regex": "^(?:grammar_execute|grammar_execute_async|grammar_execute_lazy|grammar_exists|grammar_exists_async|grammar_exists_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchall_lazy|grammar_fetchone|grammar_fetchone_async|grammar_fetchone_lazy|grammar_scalar|grammar_scalar_async|grammar_scalar_lazy|grammar_validate|grammar_validate_async|grammar_validate_lazy)$",
+              "pattern": "$NAME"
+            }
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-helper_attribute",
+        "anchor": "witness.span",
+        "message": "forbidden helper attribute .$NAME"
+      }
+    },
+    {
+      "id": "direct-helper-attributes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "kind": "identifier",
+              "regex": "^(?:execute_grammar_direct|execute_grammar_direct_async|execute_grammar_direct_lazy|execute_grammar_fetchall_direct|execute_grammar_fetchall_direct_async|execute_grammar_fetchall_direct_lazy|execute_grammar_fetchall_with_params_direct|execute_grammar_fetchall_with_params_direct_async|execute_grammar_fetchall_with_params_direct_lazy|execute_grammar_fetchone_direct|execute_grammar_fetchone_direct_async|execute_grammar_fetchone_direct_lazy|execute_grammar_fetchone_with_params_direct|execute_grammar_fetchone_with_params_direct_async|execute_grammar_fetchone_with_params_direct_lazy|execute_grammar_with_params_direct|execute_grammar_with_params_direct_async|execute_grammar_with_params_direct_lazy)$",
+              "pattern": "$NAME"
+            }
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-direct_helper_attribute",
+        "anchor": "witness.span",
+        "message": "forbidden direct grammar helper attribute .$NAME"
+      }
+    },
+    {
+      "id": "ddl-escapes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?:SqlPreRenderedDdlFragment|SqlPrerenderedDdl)$",
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "import_statement"
+                      },
+                      {
+                        "kind": "import_from_statement"
+                      },
+                      {
+                        "kind": "global_statement"
+                      },
+                      {
+                        "kind": "nonlocal_statement"
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "function_definition",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "class_definition",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "keyword_argument",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "attribute",
+                    "field": "attribute",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parameters",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "lambda_parameters",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "default_parameter",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "typed_default_parameter",
+                    "field": "name",
+                    "stopBy": "neighbor"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "typed_parameter",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            },
+            "pattern": "$NAME"
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-ddl_escape",
+        "anchor": "witness.span",
+        "message": "forbidden DDL escape hatch $NAME"
+      }
+    },
+    {
+      "id": "ddl-imports",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "dotted_name",
+            "regex": "^(?:SqlPreRenderedDdlFragment|SqlPrerenderedDdl)$",
+            "inside": {
+              "kind": "import_from_statement",
+              "stopBy": "end"
+            },
+            "not": {
+              "inside": {
+                "kind": "import_from_statement",
+                "field": "module_name",
+                "stopBy": "end"
+              }
+            },
+            "pattern": "$NAME"
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "SPG-ddl_import",
+        "anchor": "witness.span",
+        "message": "forbidden DDL escape import $NAME"
+      }
+    },
+    {
+      "id": "syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "code": "SPG-SYNTAX",
+        "anchor": "file.start",
+        "message": "syntax error while scanning"
+      }
+    }
+  ]
+}

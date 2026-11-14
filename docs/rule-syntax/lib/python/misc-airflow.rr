@@ -1,0 +1,93 @@
+// python/misc-airflow: references to Airflow members, as Ruff's Airflow 3 migration rules (AIR301, AIR302,
+// AIR311, AIR312) find them: by qualified name, wherever a name or attribute is read, in a file that imports
+// `airflow`.
+//
+// Interface
+//   air_ref(e, at, q)        e reads q: a Name in load context, or an Attribute, that resolves to q through
+//                            imports; at is where Ruff reports: the name, or the attribute's last part
+//                              from airflow.hooks.S3_hook import S3Hook
+//                              S3Hook()                      air_ref(<S3Hook>, <S3Hook>, "airflow.hooks.S3_hook.S3Hook")
+//                              airflow.hooks.S3_hook.S3Hook  air_ref(<the attribute>, <S3Hook>, …)
+//   air_kw(c, x, n)          n is the name of call c's first keyword argument `x=…`, in a file that imports airflow
+//   air_call(c, q)           call c's callee resolves to q, an `airflow.…` name, in such a file
+//   air_dag(q)               q is `airflow.….DAG` or `airflow.….dag` (Ruff's `["airflow", .., "DAG" | "dag"]`)
+//   air_kind(q, m, s)        Ruff's is_airflow_builtin_or_provider(q, m, s): `airflow.m.….*s`, or
+//                            `airflow.providers.….m.….*s`, for the (m, s) pairs air_kind_ask lists:
+//                              air_kind("airflow.providers.amazon.aws.operators.s3.S3Operator", "operators", "Operator")
+//   air_value(o, r)          name o's binding current at o is `o = r` (the latest binding before it in its scope)
+//   air_instance(o, q)       o's current binding is `o = q(…)` (Ruff's typing::resolve_assignment)
+//   air_task(f)              f is decorated `@task`, `@task(…)`, `@task.branch` or `@task.branch(…)`
+//                            (airflow.decorators or airflow.sdk); air_in_task(n): n's innermost def is one
+//   air_guarded(e, m, x)     the reference e sits in a compatibility fallback for `x` in module m (Ruff's
+//                            is_guarded_by_try_except):
+//                              try: from airflow.providers.http.operators.http import HttpOperator
+//                              except ModuleNotFoundError:
+//                                  from airflow.operators.http_operator import SimpleHttpOperator as HttpOperator
+//                              HttpOperator()                a name whose import sits in an `except ImportError`
+//                                                            (or ModuleNotFoundError) handler whose try body
+//                                                            does `from m import x`
+//                            or an attribute in an `except AttributeError` handler whose try body reads `m.x`
+//
+// Ruff background
+//   Imported names are not expressions, so `from airflow.x import Y` itself is not reported; each read of `Y`
+//   after it is. `airflow.a.b` is one reference per attribute: its `airflow.a` part resolves too, to a name no
+//   table lists. Ruff's seen_module is in visit order; here any import of airflow in the file counts.
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+seen_ask("airflow").
+.decl air_ref(e: node, at: node, q: symbol)
+air_ref(e, e, q) :- ast_name(e, _), expr_ctx(e, "load"), ruff_qual(e, q), prefix("airflow", q), docof(e, d),
+    seen_module(d, "airflow").
+air_ref(e, a, q) :- kind(e, "attribute"), field(e, "attribute", a), ruff_qual(e, q), prefix("airflow", q),
+    docof(e, d), seen_module(d, "airflow").
+.decl air_kw(c: node, x: symbol, n: node)
+air_kw(c, x, n) :- air_kw_at(c, x, n, j), j = min i : { air_kw_at(c, x, _, i) }.
+.decl air_kw_at(c: node, x: symbol, n: node, j: number)
+air_kw_at(c, x, n, j) :- call_item(c, k, j), kind(k, "keyword_argument"), field(k, "name", n), text(n, x), docof(c, d),
+    seen_module(d, "airflow").
+.decl air_call(c: node, q: symbol)
+air_call(c, q) :- call_q(c, q), prefix("airflow.", q), docof(c, d), seen_module(d, "airflow").
+.decl air_dag(q: symbol)
+air_dag(q) :- air_call(_, q), split_dot(q, m, x), m != "", (x = "DAG" ; x = "dag").
+
+.decl air_kind_ask(m: symbol, s: symbol)
+.decl air_kind(q: symbol, m: symbol, s: symbol)
+air_kind(q, m, s) :- air_kind_ask(m, s), (air_call(_, q) ; air_instance(_, q)),
+    match(cat("airflow\\.(providers\\.([^.]+\\.)*)?", cat(m, cat("\\.([^.]+\\.)*[^.]*", s))), q).
+
+.decl air_value(o: node, r: node)
+air_value(o, r) :- unparen(o, n), ast_name(n, x), expr_ctx(n, "load"), look(n, x, s), binding(s, x, a, "assign"),
+    a < n, asg(s, x, r, a), count : { binding(s, x, b, _), a < b, b < n } = 0.
+.decl air_instance(o: node, q: symbol)
+air_instance(o, q) :- air_value(o, r), unparen(r, m), call_q(m, q), docof(o, d), seen_module(d, "airflow").
+
+.decl air_task(f: node)
+air_task(f) :- decorator(f, e), unparen(e, m0), (kind(m0, "call"), field(m0, "function", g), unparen(g, m) ;
+    !kind(m0, "call"), m = m0), (air_task_q(m) ; field(m, "object", o), air_task_q(o)).
+.decl air_task_q(e: node)
+air_task_q(e) :- ruff_qual(e, q), (q = "airflow.decorators.task" ; q = "airflow.sdk.task").
+.decl air_in_task(n: node)
+air_in_task(n) :- nearest(n, f, "function_definition"), air_task(f).
+
+.decl air_guarded(e: node, m: symbol, x: symbol)
+air_guarded(e, m, x) :- air_needs_guard(e, m, x), kind(e, "attribute"), air_in_handler(e, t),
+    air_catches(t, "AttributeError"), field(t, "body", b), within(a, b), kind(a, "attribute"),
+    ruff_qual(a, @dot(m, x)).
+air_guarded(e, m, x) :- air_needs_guard(e, m, x), ast_name(e, y), look(e, y, s), binding(s, y, site, "import"),
+    import_alias(i, site, _, _, _), air_in_handler(i, t),
+    (air_catches(t, "ImportError") ; air_catches(t, "ModuleNotFoundError")),
+    field(t, "body", b), within(i2, b), kind(i2, "import_from_statement"), import_alias(i2, _, m, x, _).
+// air_needs_guard(e, m, x): a rule asks whether e is guarded for `m.x` (the rule's own table fills it).
+.decl air_needs_guard(e: node, m: symbol, x: symbol)
+// air_in_handler(n, t): t is the innermost try statement around n, and n is in one of its except clauses.
+.decl air_in_handler(n: node, t: node)
+air_in_handler(n, t) :- nearest(n, t, "try_statement"), child(t, h, _), kind(h, "except_clause"), within(n, h).
+// air_catches(t, x): some handler of try t names the builtin exception x, alone or in a tuple.
+.decl air_catches(t: node, x: symbol)
+air_catches(t, x) :- child(t, h, _), kind(h, "except_clause"), field(h, "value", v), air_caught(v, e),
+    ruff_qual(e, q), split_dot(q, "builtins", x).
+.decl air_caught(v: node, e: node)
+air_caught(v, e) :- unparen(v, m), !kind(m, "tuple"), !kind(m, "as_pattern"), e = m.
+air_caught(v, e) :- unparen(v, m), kind(m, "tuple"), child(m, c, _), air_caught(c, e).
+air_caught(v, e) :- unparen(v, m), kind(m, "as_pattern"), child(m, c, 0), air_caught(c, e).

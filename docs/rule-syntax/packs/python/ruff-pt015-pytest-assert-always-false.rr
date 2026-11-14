@@ -1,0 +1,19 @@
+.policy "ruff-pt015-pytest-assert-always-false" revision 2
+.description "Use pytest.fail instead of an assert on a value that is always false; it states the intent to fail the test more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT015 (flake8-pytest-style): an `assert` whose test is always false (Ruff's Truthiness): False, None,
+// 0, 0.0, 0j, "", b"", f"" (or f"{''}"), an empty list, tuple, set or dict display, or `list()`, `tuple()`, `set()`,
+// `dict()`, `frozenset()` of the builtin called with nothing or with one falsy argument. `pytest.fail` says it.
+//   assert False, "unreachable"      ← PT015
+//   assert list([])                  ← PT015
+//   assert not True                  not reported: Ruff does not evaluate `not`
+#include "python/ruff.rr"
+//   truth_of(m, t): Ruff's Truthiness
+
+.violation PT015(at: node) code "PT015"
+    "Replace this always-failing `assert` with `pytest.fail(...)`, passing any assertion message to it; leave it alone outside pytest tests."
+    suppress ruff "PT015"
+PT015(a) :- kind(a, "assert_statement"), child(a, t0, 0), unparen(t0, t), truth_of(t, f), (f = "false" ; f = "none").

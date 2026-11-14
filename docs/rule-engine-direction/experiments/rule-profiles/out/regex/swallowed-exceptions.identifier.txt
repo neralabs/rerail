@@ -1,0 +1,3 @@
+^(?:KeyError)$
+^(?:KeyError|StopAsyncIteration|StopIteration)$
+^(?:suppress)$

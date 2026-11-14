@@ -174,7 +174,7 @@ impl ScopeRules for Java {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }
@@ -539,7 +539,12 @@ mod tests {
     #[test]
     fn every_suppression_kind_is_refused() {
         use crate::code_rule_dsl::suppress::Suppression;
-        for kind in Suppression::ALL.iter().map(|kind| kind.key()) {
+        let kinds = Suppression::all();
+        assert!(
+            !kinds.is_empty(),
+            "the engine registers its suppression kinds as it loads"
+        );
+        for kind in kinds.iter().map(|kind| kind.key()) {
             let spec = match kind {
                 "eslint" => json!({ "rules": ["strict"] }),
                 "noqa" => json!({ "codes": ["F401"] }),

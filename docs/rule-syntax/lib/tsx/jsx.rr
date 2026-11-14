@@ -1,0 +1,148 @@
+// tsx/jsx: JSX structure: tags, components, and what renders under what. Within one file this is tree
+// arithmetic (nearest over derived sets); across files it joins on symbols from tsx/names.
+//
+// What a rule gets from this library:
+//   tag(e, t)              the tag-name node of element e:  <Link to="/">  -> t is the `Link` identifier
+//   host_tag(t)            t is a built-in element (div, span), not a component
+//   fragment(e)            e groups children without rendering anything: <>…</>, <Fragment>
+//   component(q, f)        function node f is the body of component q ("src/app#App")
+//   render_up(c, p)        element p is the nearest element c renders inside, within one file
+//   render_attr(c, e, a)   c is rendered as the value of attribute a of element e (<Route element={<Home/>}>)
+//   render_root(f, e)      e is a top-level element returned by component f
+//   children_slot(f, s)    s is where component f places the children it was given
+//
+// Why this exists: "is X rendered inside Y" questions (nested routers, providers, forms in forms) need to see
+// through components. Within a file, render_up climbs the tree; across files, a tag's symbol (sym_of) is
+// joined with component(q, f) to continue inside the component's own file.
+//
+// Builds on tsx/names for sym_of and ref_site, tsx/modules for function_kind, and on core for the tape and
+// nearest/within.
+#include "tsx/modules.rr"
+
+// The tag name of an element. Fragments (<>…</>) have none.
+// <A x={1}>…</A> is a jsx_element whose open_tag holds the name; <A/> is a jsx_self_closing_element with the name
+// directly. Member tags (<RR.Routes>) give the whole member chain as t, which sym_of resolves.
+.decl tag(e: node, t: node)
+tag(e, t) :- kind(e, "jsx_element"), field(e, "open_tag", o), field(o, "name", t).
+tag(e, t) :- kind(e, "jsx_self_closing_element"), field(e, "name", t).
+// jsx_el(e): e is an element in either form. Most rules below do not care which.
+.decl jsx_el(e: node)
+jsx_el(e) :- kind(e, k), (k = "jsx_element" ; k = "jsx_self_closing_element").
+// React's rule: a lowercase tag is an intrinsic (a DOM element, passed to the renderer as a string); a capitalised
+// or dotted tag is a component (a variable in scope). So <div> never resolves to a symbol, and <Div> must.
+.decl host_tag(t: node)  // a lowercase intrinsic: div, span, svg
+host_tag(t) :- kind(t, "identifier"), glob("[a-z]**", t).
+// Fragments render only their children, so for render position they are transparent (see render_stop).
+.decl fragment(e: node)  // <>…</>, <Fragment>, <React.Fragment>
+// The short form <>…</> has an open tag with no name.
+fragment(e) :- kind(e, "jsx_element"), !tag(e, _).
+// The named form, however it was imported: `import { Fragment } from "react"` or `React.Fragment`.
+fragment(e) :- tag(e, t), sym_of(t, q), q = "react#Fragment".
+
+// component(q, f): function f defines component q (a capitalised function, or a const holding an arrow,
+// function expression, memo(...) or forwardRef(...) of one).
+// q is the same symbol sym_of gives a tag that uses the component, so `<App/>` in another file reaches f by
+// joining sym_of(tag, q) with component(q, f). The capital letter is React's convention, used here as the test.
+.decl component(q: symbol, f: node)
+// function App() { return <div/>; }
+component(@qname(m, x), f) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x), glob("[A-Z]**", x),
+    docof(f, d), doc(d, _, m).
+// const App = () => <div/>;   const App = memo(function () { … });   const Input = forwardRef((p, ref) => …);
+// f is the inner function, which is where the returned JSX lives.
+component(@qname(m, x), f) :- kind(v, "variable_declarator"), field(v, "name", n), text(n, x), glob("[A-Z]**", x),
+    field(v, "value", e), component_fn(e, f), docof(v, d), doc(d, _, m).
+// component_fn(e, f): expression e evaluates to a component whose body is function f. Unwraps memo and
+// forwardRef (React's wrappers, recognised by symbol), recursively: memo(forwardRef(() => …)) works.
+.decl component_fn(e: node, f: node)
+component_fn(e, e) :- kind(e, k), (k = "arrow_function" ; k = "function_expression").
+component_fn(e, f) :- kind(e, "call_expression"), field(e, "function", c), sym_of(c, q),
+    (q = "react#memo" ; q = "react#forwardRef"), field(e, "arguments", args), child(args, a, 0), component_fn(a, f).
+
+// ---- render position ---------------------------------------------------------------------------------------------
+// Forms a rendered child passes through on its way up: {…}, && and ?:, parentheses, fragments, and callbacks in child
+// position (xs.map(x => <X/>)). Attributes, other functions and statements end the climb.
+// The method: mark the nodes that end the climb (render_stop), then "the element c renders under" is one native
+// nearest(c, p, render_stop) call, provided p is a real element. Anything not in render_stop is transparent:
+// in <Nav>{open && (<>{items.map(i => <Item/>)}</>)}</Nav>, Item climbs through the arrow, the call, the
+// fragment, the parentheses, && and {…}, and stops at Nav.
+//
+// child_callback(f): arrow f is an argument of a call that sits in a JSX child expression, as in
+// <ul>{xs.map(x => <li/>)}</ul>. Its result is rendered where the call is, so it does not end the climb.
+// A callback inside an attribute (onClick={() => <X/>}, render props) is not rendered in child position.
+.decl child_callback(f: node)
+child_callback(f) :- kind(f, "arrow_function"), nearest(f, c, "call_expression"), field(c, "arguments", args),
+    child(args, f, _), nearest(c, j, "jsx_expression"), !nearest(c, _, "jsx_attribute").
+// render_stop(n): nodes that end the upward climb.
+.decl render_stop(n: node)
+// A real element: what is below it renders under it. Fragments are skipped, so their children belong to the
+// element above the fragment.
+render_stop(e) :- jsx_el(e), !fragment(e).
+// Not rendering contexts: an attribute value (where it renders depends on the component), a function body (it
+// runs when called, not here), a class body, a block of statements.
+render_stop(n) :- kind(n, k), render_stop_kind(k).
+.decl render_stop_kind(kind: symbol)
+render_stop_kind("jsx_attribute"). render_stop_kind("function_declaration").
+render_stop_kind("function_expression"). render_stop_kind("method_definition").
+render_stop_kind("class_body"). render_stop_kind("statement_block").
+// Arrows end the climb unless they are child callbacks (above).
+render_stop(f) :- kind(f, "arrow_function"), !child_callback(f).
+// render_up(c, p): c renders directly under element p (one step, within one file). If the nearest stop is an
+// attribute or a function, there is no row: c's position is decided elsewhere (render_attr, render_root).
+.decl render_up(c: node, p: node)
+render_up(c, p) :- jsx_el(c), nearest(c, p, render_stop), jsx_el(p).
+// The same for a {…} child expression, so {children} slots (children_slot) have a parent element too.
+render_up(c, p) :- kind(c, "jsx_expression"), nearest(c, p, render_stop), jsx_el(p).
+// render_attr: elements passed as props, named by the tag's symbol and the prop, so rules can say which props
+// render their value in place. <Route element={<Home/>}/> gives (Home, Route, "react-router#Route.element").
+.decl render_attr(c: node, e: node, a: symbol)  // c is the value of attribute a ("module#Tag.prop") of element e
+render_attr(c, e, @dot(q, x)) :- jsx_el(c), nearest(c, at, "jsx_attribute"), child(at, pn, 0), text(pn, x),
+    nearest(at, e, render_stop), tag(e, t), sym_of(t, q).
+
+// render_root(f, e): e is a top element of what component f returns.
+// These are the entry points: a rule that follows rendering into a component starts at its roots and climbs
+// down with render_up.
+// returned(f, x): x is an expression function f returns. `return <A/>` or `return (cond ? <A/> : <B/>)`.
+.decl returned(f: node, x: node)
+// The returned expression of a return statement, attributed to the function the statement is in: the nearest
+// function of any kind, so a `return` in a method or generator nested in f is not f's.
+returned(f, x) :- kind(r, "return_statement"), nearest(r, f, function_kind), child(r, x, _), !kind(x, "comment").
+// An expression-bodied arrow returns its body: `() => <A/>`.
+returned(f, x) :- kind(f, "arrow_function"), field(f, "body", x), !kind(x, "statement_block").
+.decl render_root(f: node, e: node)
+// The returned expression is itself an element.
+render_root(f, x) :- returned(f, x), jsx_el(x).
+// Otherwise the outermost elements inside it: `return cond ? <A/> : (<><B/><C/></>)` has roots A, B and C
+// (the fragment is transparent). An element is outermost when it renders under no element inside x.
+render_root(f, e) :- returned(f, x), jsx_el(e), within(e, x), count : { render_up(e, p), within(p, x) } = 0,
+    count : { render_up(e, x) } = 0.
+
+// children_slot(f, s): s renders the component's children: {children} or {props.children}.
+// A component that renders its children passes context through: in <Layout><Page/></Layout>, Page ends up
+// wherever Layout puts {children}. Rules use this to treat wrapper components as transparent.
+// The `children` read must resolve (ref_site) to f's own parameters, so a local variable named children
+// does not count, and s must lie inside something f returns.
+.decl children_slot(f: node, s: node)
+// function Layout({ children }) { return <main>{children}</main>; }
+children_slot(f, s) :- kind(s, "jsx_expression"), child(s, i, 0), text(i, "children"), ref_site(i, site),
+    within(site, ps), field(f, "parameters", ps), render_root(f, r), within(s, r).
+// function Layout(props) { return <main>{props.children}</main>; }
+children_slot(f, s) :- kind(s, "jsx_expression"), child(s, m, 0), kind(m, "member_expression"),
+    field(m, "property", p), text(p, "children"), field(m, "object", o), ref_site(o, site),
+    field(f, "parameters", ps), within(site, ps), render_root(f, r), within(s, r).
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// An `.edit` is an edit defined in Datalog that expands to core's native edits (see lib/python/flow.rr).
+
+// content(e, c): c is real content of element e: a child element or expression, or non-blank text.
+.decl content(e: node, c: node)
+content(e, c) :- kind(e, "jsx_element"), child(e, c, _), !field(e, "open_tag", c), !field(e, "close_tag", c),
+    count : { kind(c, "jsx_text"), match("\\s*", c) } = 0.
+
+// unwrap(e): replace element e by what it contains. `<A><B/></A>` becomes `<B/>`. With several children the tags
+// become a fragment, `<A><B/><C/></A>` → `<><B/><C/></>`, because a single expression is still needed where e was.
+// Only elements with children unwrap: a self-closing element has nothing to put in its place.
+.edit unwrap(e: node)
+unwrap(e) :- field(e, "open_tag", o), field(e, "close_tag", c), k = count : { content(e, _) }, k <= 1
+    => delete(o), delete(c).
+unwrap(e) :- field(e, "open_tag", o), field(e, "close_tag", c), k = count : { content(e, _) }, k > 1
+    => replace(o, `<>`), replace(c, `</>`).

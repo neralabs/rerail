@@ -18,6 +18,7 @@
           "language": "typescript",
           "rule": {
             "regex": "^,$",
+            "stored": "a comma after `[` or a comma: a hole, stored",
             "inside": {
               "kind": "array"
             },

@@ -1,0 +1,1 @@
+An installed rule pack published for an earlier Rerail still loads when this Rerail no longer runs a few of its rules, those that test a token parsed files now leave out: each such rule is skipped and reported with the reason, and the pack's next version runs it again.

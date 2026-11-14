@@ -1,0 +1,62 @@
+.policy "n-prefer-import-assert-strict" revision 4
+.description "Import node:assert/strict instead of node:assert, so assertions use strict equality."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-import/assert-strict: load "node:assert/strict" rather than "node:assert", unless
+// only its `strict` member is used:
+//   require("node:assert")    import assert from "node:assert"    export * from "node:assert"    import("node:assert")
+//                                                                    reported, at the string
+//   require("node:assert").strict    const { strict } = require("node:assert")    import { strict as a } from "node:assert"
+//   export { strict } from "node:assert"    require("assert")                     not
+// Only the spelling "node:assert" is read. require is the identifier by name.
+
+#include "tsx/node.rr"   // called, call_arg, deparen, estree_parent
+
+.decl assert_source(s: node)
+assert_source(s) :- called(c, f), kind(f, "identifier"), text(f, "require"), call_arg(c, s, 0), !only_strict(c).
+assert_source(s) :- kind(i, "import_statement"), field(i, "source", s), !names_only_strict(i).
+assert_source(s) :- kind(i, "export_statement"), field(i, "source", s), !names_only_strict(i).
+assert_source(s) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), call_arg(c, s, 0).
+
+// only_strict(c): requiresOnlyStrict: the call's value is read only for `.strict` (or ["strict"]), directly or
+// through a destructuring pattern every key of which is strict.
+.decl only_strict(c: node)
+only_strict(c) :- estree_parent(c, m), node_obj_of(c, m), strict_access(m).
+only_strict(c) :- estree_parent(c, v), kind(v, "variable_declarator"), field(v, "value", w), deparen(w, c),
+    field(v, "name", p), strict_access(p).
+only_strict(c) :- estree_parent(c, a), node_assign(a), field(a, "right", w), deparen(w, c), field(a, "left", l),
+    strict_access(l).
+.decl strict_access(n: node)
+strict_access(m) :- kind(m, "member_expression"), field(m, "property", p), kind(p, "property_identifier"),
+    text(p, "strict").
+strict_access(m) :- kind(m, "subscript_expression"), field(m, "index", i), kind(i, "string"), value(i, "strict").
+strict_access(p) :- kind(p, "object_pattern"), child(p, _, _), count : { child(p, e, _), !kind(e, "comment"),
+    !strict_key(e) } = 0.
+.decl strict_key(e: node)  // a non-computed `strict` identifier key, or a computed ["strict"]
+strict_key(e) :- kind(e, "shorthand_property_identifier_pattern"), text(e, "strict").
+strict_key(e) :- kind(e, "object_assignment_pattern"), field(e, "left", l), text(l, "strict").
+strict_key(e) :- kind(e, "pair_pattern"), field(e, "key", k), kind(k, "property_identifier"), text(k, "strict").
+strict_key(e) :- kind(e, "pair_pattern"), field(e, "key", k), kind(k, "computed_property_name"), child(k, s, 0),
+    kind(s, "string"), value(s, "strict").
+// names_only_strict(i): an import of named specifiers only, each importing `strict`; an export … from naming only
+// `strict`.
+.decl names_only_strict(i: node)
+names_only_strict(i) :- spec_of(i, _), count : { import_part(i, x), !strict_spec(x) } = 0.
+.decl spec_of(i: node, x: node)  // x is a specifier of import or export statement i
+spec_of(i, x) :- import_part(i, x), (kind(x, "import_specifier") ; kind(x, "export_specifier")).
+.decl import_part(i: node, x: node)  // what i binds or exports: a default, a namespace, each specifier
+import_part(i, x) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_clause"), child(c, x, _),
+    (kind(x, "identifier") ; kind(x, "namespace_import")).
+import_part(i, x) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_clause"), child(c, ni, _),
+    kind(ni, "named_imports"), child(ni, x, _), kind(x, "import_specifier").
+import_part(i, x) :- kind(i, "export_statement"), child(i, c, _), kind(c, "export_clause"), child(c, x, _),
+    kind(x, "export_specifier").
+.decl strict_spec(x: node)
+strict_spec(x) :- (kind(x, "import_specifier") ; kind(x, "export_specifier")), field(x, "name", n),
+    (kind(n, "identifier"), text(n, "strict") ; kind(n, "string"), value(n, "strict")).
+
+.violation assert_strict(at: node) code "n/prefer-import/assert-strict"
+    "Import node:assert/strict instead of node:assert, so assertions compare strictly."
+    suppress eslint "n/prefer-import/assert-strict"
+assert_strict(s) :- assert_source(s), kind(s, "string"), value(s, "node:assert").

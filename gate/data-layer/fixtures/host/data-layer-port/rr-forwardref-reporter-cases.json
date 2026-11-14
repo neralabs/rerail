@@ -1,0 +1,202 @@
+{
+  "cases": [
+    {
+      "id": "forwardref-reporter-api-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-impl-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "impl/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-public-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "public/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-data_layer-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "data_layer/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-_internal-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "_internal/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-l1234_example-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "l1234_example/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-scripts-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "scripts/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-tests-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/tests/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-impl-test-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "impl/test/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-public-.venv-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "public/.venv/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-venv-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/venv/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-__pycache__-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/__pycache__/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-tmp-a.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/tmp/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-test_file.py",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/test_file.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-api-a.txt",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/a.txt",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-clean",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    isinstance(annotation, ForwardRef); callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-invalid",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "api/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\nbad ("
+        }
+      ]
+    },
+    {
+      "id": "forwardref-reporter-order",
+      "check": "forwardref",
+      "files": [
+        {
+          "path": "public/z.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        },
+        {
+          "path": "api/a.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        },
+        {
+          "path": "impl/m.py",
+          "source": "def f():\n    annotation = item.annotation\n    callable(annotation); issubclass(annotation, int); isinstance(annotation, type)\n"
+        }
+      ]
+    }
+  ]
+}

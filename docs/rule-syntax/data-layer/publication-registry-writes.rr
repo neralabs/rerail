@@ -1,0 +1,38 @@
+.policy "data-layer:publication-registry-writes" revision 1
+.description "Writes into the CTE publication registry (….cte_refs) stay in the module that owns it."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+// Python linter: scripts/lint_publication_registry_writes.py. CompilationContext.cte_refs maps a relation to what
+// its producer published; a plain dict write can replace a richer entry with a poorer one. Outside a file whose
+// path ends in l2070_batching/compilation.py, each of these is a REGISTRY_DIRECT_WRITE at its statement's line:
+//   ctx.cte_refs["step_6"] = ref          (also `x: T = …`, `+=`, and one target of `a = b = …`)
+//   del ctx.cte_refs["step_6"]            (any of the del's targets)
+//   ctx.cte_refs.update(…)                (clear, pop, popitem, setdefault, update)
+// The registry is any attribute named cte_refs, through any path (self.ctx.cte_refs); a bare name cte_refs is not.
+// Reads, `in` tests and iteration are not writes.
+
+#include "python/ast.rr"     // assign_target, unparen; attr_of comes from python/names
+
+.decl prw_mutator(m: symbol)
+prw_mutator("clear"). prw_mutator("pop"). prw_mutator("popitem"). prw_mutator("setdefault").
+prw_mutator("update").
+
+// prw_entry(t): t is `….cte_refs[k]`, parentheses around the registry allowed.
+.decl prw_entry(t: node)
+prw_entry(t) :- kind(t, "subscript"), field(t, "value", v), unparen(v, r), attr_of(r, _, "cte_refs").
+
+// prw_write(s, what): statement or call s writes the registry.
+.decl prw_write(s: node, what: symbol)
+prw_write(a, "assignment") :- assign_target(a, t), prw_entry(t).
+prw_write(a, "assignment") :- kind(a, "augmented_assignment"), field(a, "left", t), prw_entry(t).
+prw_write(s, "deletion") :- kind(s, "delete_statement"), del_node(t), child(s, t, _), prw_entry(t).
+prw_write(s, "deletion") :- kind(s, "delete_statement"), child(s, l, _), kind(l, "expression_list"), child(l, t, _),
+    prw_entry(t).
+prw_write(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), prw_mutator(m),
+    unparen(o, r), attr_of(r, _, "cte_refs").
+
+.violation REGISTRY_DIRECT_WRITE(at: node, what: symbol)
+    "{what} writes cte_refs directly; publish through the registry so a binding that knows less cannot displace one that knows more"
+REGISTRY_DIRECT_WRITE(s, w) :- prw_write(s, w), docof(s, d), doc(d, p, _), !suffix("l2070_batching/compilation.py", p).

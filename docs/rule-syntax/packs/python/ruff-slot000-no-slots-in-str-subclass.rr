@@ -1,0 +1,19 @@
+.policy "ruff-slot000-no-slots-in-str-subclass" revision 2
+.description "Define __slots__ in subclasses of str (enums excepted); without it every instance carries its own attribute dict and uses more memory."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SLOT000 (flake8-slots): a class with the builtin `str` among its bases and no `__slots__` in its body.
+// Enums (`class E(str, Enum)`) and stub files are exempt.
+//   class Foo(str):              ← SLOT000
+//       pass
+//   class Bar(str):              not reported
+//       __slots__ = ("foo",)
+//   class Color(str, Enum): ...  not reported
+#include "python/misc2-slots.rr"
+
+.violation SLOT000(at: node) code "SLOT000"
+    "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead."
+    suppress ruff "SLOT000"
+SLOT000(nm) :- slots_missing(c, nm), slots_base(c, b), sym_of(b, "builtins.str"), !slots_enum(c).

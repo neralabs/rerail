@@ -1,0 +1,17 @@
+.policy "next-no-title-in-document-head" revision 3
+.description "Set page titles with Head from next/head on each page, not with a title inside the custom Document's Head from next/document."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-title-in-document-head. When a name Head is imported from next/document, a <title>
+// directly inside a <Head> element; the finding is at the first such title:
+//   import { Head } from "next/document"; <Head><title>My page</title></Head>     reported
+
+#include "tsx/next.rr"
+
+.violation title(at: node) code "@next/next/no-title-in-document-head"
+    "Do not use `<title>` element with `<Head />` component from `next/document`. Titles should defined at the page-level using `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-title-in-document-head"
+    suppress eslint "@next/next/no-title-in-document-head"
+    suppress oxlint "no-title-in-document-head"
+title(t) :- opening(e, o), tag_of(o, "Head"), docof(e, d), imported(d, "next/document", "Head", _),
+    child_el(e, t, "title"), count : { child_el(e, s, "title"), earlier(s, t) } = 0.

@@ -1,0 +1,5 @@
+{
+  "title": "pytest.raises(ValueError) with no match",
+  "rule": "ruff-pt011-pytest-raises-too-broad",
+  "note": "PT011 flags pytest.raises on a broad exception (ValueError, OSError, Exception\u2026) without match=: the test passes on the wrong error too."
+}

@@ -1,0 +1,20 @@
+.policy "ruff-pth203-os-path-getatime" revision 2
+.description "Use Path.stat().st_atime instead of os.path.getatime(); path objects read better than string-based os.path calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH203 (flake8-use-pathlib): a call of `os.path.getatime`, however it is imported, with exactly one argument:
+// the `filename` parameter, by position or by keyword. pathlib's form is `Path(p).stat().st_atime`.
+// Reported at the callee.
+//   os.path.getatime(p)             ← PTH203
+//   from os.path import getatime
+//   getatime(filename=p)            ← PTH203
+//   os.path.getatime(*ps)           not reported: Ruff does not look past `*`
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH203(at: node, s: node) code "PTH203"
+    "Use `Path({s}).stat().st_atime` instead of `os.path.getatime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+    suppress ruff "PTH203"
+PTH203(f, a) :- single_arg(_, "os.path.getatime", "filename", f, a).

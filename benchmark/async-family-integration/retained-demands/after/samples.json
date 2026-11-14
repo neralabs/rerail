@@ -1,0 +1,36 @@
+{
+  "commit": "67160cee5d375e872ad70ee2896601aa1f29a1b4",
+  "binary_sha256": "4f3e2012092e6b668f861961a82097dc6bfe7aefec45bd149deb411af832c284",
+  "samples": [
+    {
+      "cpu": 8.715276,
+      "wall": 7.54408925,
+      "sql": 3849,
+      "chunks": 72,
+      "prepared": "store",
+      "rss": 653.164544
+    },
+    {
+      "cpu": 8.57486,
+      "wall": 7.4505605,
+      "sql": 3849,
+      "chunks": 72,
+      "prepared": "store",
+      "rss": 651.870208
+    },
+    {
+      "cpu": 8.445524,
+      "wall": 7.314168542,
+      "sql": 3849,
+      "chunks": 72,
+      "prepared": "store",
+      "rss": 652.787712
+    }
+  ],
+  "median": {
+    "cpu": 8.57486,
+    "wall": 7.4505605,
+    "sql": 3849,
+    "rss": 652.787712
+  }
+}

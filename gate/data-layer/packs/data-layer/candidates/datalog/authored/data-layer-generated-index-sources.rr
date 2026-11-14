@@ -1,0 +1,170 @@
+// data-layer-generated-index-sources, clause generated-index-source (relational, partitionBy file), options at
+// their defaults (entryPoint and parameters are read by no stage). requireNonemptyInput gate: a file whose module
+// text does not match `Index\(|IndexSource|_generated_index` gives no rows; the regex is an alternation of
+// literals, so it is `contains` over the module's full text (node_text). Every row's issue (the code) is
+// missing_source.
+//
+// The stages read CPython's ast (pythonAst over the cst); here over tree-sitter's tree, parentheses dropped where
+// ast has none (a Call's func, an Attribute's value, a keyword's value, a default):
+//   calls: a Call, its func (callee kind Name: an identifier; Attribute: its attr) and an Attribute's value.
+//   fn (ast_function, value/python_ast/metadata.py at 40e7b6cac): the innermost FunctionDef/AsyncFunctionDef whose
+//     ast subtree holds the node, lambdas transparent; a def's decorators, defaults and annotations are its
+//     children in ast, so they are its; a class's decorators are the class's, so their fn is the class's fn.
+//   functions: function_definition; kind FunctionDef is one without `async` (op).
+//   index_aliases: `from l1000_schema.schema_def import Index as X` (X non-empty; ImportFrom's `module` drops a
+//     relative import's dots, so `from .l1000_schema.schema_def import` is one too); schema_aliases:
+//     `import l1000_schema.schema_def` (name schema_def) or `... as Y` (Y). The module is compared as ast names
+//     it, its identifiers joined by `.` (a dotted_name's text keeps any spaces or continuations between them).
+//   index_calls: `Index(...)` or `X(...)` with an index alias X earlier; `schema_def.Index(...)` or `Y.Index(...)`
+//     with a schema alias Y earlier. "Earlier" is ast preorder (s.id < n.id): visit_index, compared at the import
+//     statement (it holds no call, so its alias and it order alike against every call).
+//   parameters: a def's `arg`s, by ast field: args (positional, after any `/`), posonlyargs (before `/`), vararg
+//     (`*a`), kwonlyargs (after `*` or `*a`), kwarg (`**k`). In tree-sitter, a parameter is kwonly when a
+//     keyword_separator or list splat precedes it in `parameters`, posonly when a positional_separator follows it.
+//   source_parameters: the FIRST arg/kwonly arg named `source` of a def (min ast preorder id among the def's
+//     args/kwonlyargs named source: args precede kwonlyargs in both ast and the source text, so it is the least
+//     child index in tree-sitter's `parameters`), with the annotation's `annotation` column, ast.unparse of it:
+//     'IndexSource' exactly when the annotation is the Name IndexSource (parentheses dropped).
+//   the kw_defaults row at a kwonly arg's position is that arg's default (ast keeps a None slot per kwonly arg).
+// The query's five parts: an index call outside a def named _generated_index; one inside it whose first
+// `source=` keyword is not the Name `source`; a FunctionDef _generated_index with no source parameter; one whose
+// first source parameter is not annotated IndexSource; one whose LAST kwonly `source` (max kwonlyargs position,
+// i.e. the greatest child index among kwonly params named source) defaults to MODEL_DECLARED or
+// IndexSource.MODEL_DECLARED. Lines: a Call's and a FunctionDef's lineno are where tree-sitter's node starts.
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl generated_fn_marks(kind: symbol)
+generated_fn_marks("function_definition"). generated_fn_marks("decorator").
+
+// ---- the gated documents ----
+.decl generated_doc(d: number)
+generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
+    (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
+
+// mirrors python/ast.rr unparen
+.decl generated_unparen(e: node, m: node)
+generated_unparen(e, e) :- node(d, e, k, _, _), generated_doc(d), k != "parenthesized_expression".
+generated_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), generated_doc(d), child(e, i, 0), generated_unparen(i, m).
+
+// ---- aliases ----
+// m names l1000_schema.schema_def: a dotted_name of those two identifiers, or a relative import of one.
+.decl generated_schema_module(m: node)
+generated_schema_module(m) :- node(d, m, "dotted_name", _, _), generated_doc(d), child(m, a, 0), text(a, "l1000_schema"),
+    child(m, b, 1), text(b, "schema_def"), !child(m, _, 2).
+.decl generated_from_module(m: node)
+generated_from_module(m) :- generated_schema_module(m).
+generated_from_module(r) :- node(_, r, "relative_import", _, _), child(r, m, _), generated_schema_module(m).
+.decl generated_index_alias(d: number, x: symbol, at: number)
+generated_index_alias(d, x, k) :- node(d, i, "import_from_statement", _, _), generated_doc(d), field(i, "module_name", m),
+    generated_from_module(m), field(i, "name", a), node(_, a, "aliased_import", _, _),
+    field(a, "name", n), text(n, "Index"), field(a, "alias", y), text(y, x), visit_index(i, k).
+.decl generated_schema_alias(d: number, x: symbol, at: number)
+generated_schema_alias(d, "schema_def", k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", n),
+    generated_schema_module(n), visit_index(i, k).
+generated_schema_alias(d, x, k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", a),
+    node(_, a, "aliased_import", _, _), field(a, "name", n), generated_schema_module(n), field(a, "alias", y), text(y, x),
+    visit_index(i, k).
+
+// ---- index_calls ----
+.decl generated_index_call(c: node)
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f),
+    node(_, f, "identifier", _, _), text(f, "Index").
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f),
+    node(_, f, "identifier", _, _), text(f, x), generated_index_alias(d, x, s), visit_index(c, k), s < k.
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o),
+    node(_, o, "identifier", _, _), text(o, "schema_def").
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o),
+    node(_, o, "identifier", _, _), text(o, x), generated_schema_alias(d, x, s), visit_index(c, k), s < k.
+
+// ---- functions and fn ----
+.decl generated_function(f: node, x: symbol)
+generated_function(f, x) :- node(d, f, "function_definition", _, _), generated_doc(d), field(f, "name", n), text(n, x).
+// python/ast.rr's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
+// fn (def_frame gives them none). generated_fn(x, f) for x in generated_fn_at: a call, or the decorated_definition
+// of a class whose decorator holds one, up the tree through such classes.
+.decl generated_fn_at(x: node)
+generated_fn_at(n) :- generated_index_call(n).
+generated_fn_at(dd) :- generated_fn_at(x), nearest(x, dc, generated_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
+.decl generated_fn(n: node, f: node)
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, f, generated_fn_marks), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), generated_fn(dd, f).
+.decl generated_in_factory(n: node)
+generated_in_factory(n) :- generated_fn(n, f), generated_function(f, "_generated_index").
+// FunctionDef (not async) _generated_index.
+.decl generated_factory(f: node)
+generated_factory(f) :- generated_function(f, "_generated_index"), !op(f, "async").
+
+// ---- parameters: generated_param(f, p, name, field) ----
+.decl generated_param_name(p: node, x: symbol)
+generated_param_name(p, x) :- node(_, p, "identifier", _, _), text(p, x).
+generated_param_name(p, x) :- node(_, p, "typed_parameter", _, _), child(p, n, 0), node(_, n, "identifier", _, _), text(n, x).
+generated_param_name(p, x) :- node(_, p, "default_parameter", _, _), field(p, "name", n), text(n, x).
+generated_param_name(p, x) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n), text(n, x).
+// a `*` or `*a` (bare or annotated) in a parameter list: what follows is keyword-only.
+.decl generated_star(p: node)
+generated_star(p) :- node(_, p, "keyword_separator", _, _).
+generated_star(p) :- node(_, p, "list_splat_pattern", _, _).
+generated_star(p) :- node(_, p, "typed_parameter", _, _), child(p, n, 0), node(_, n, "list_splat_pattern", _, _).
+.decl generated_param(f: node, p: node, x: symbol, kind: symbol)
+generated_param(f, p, x, "kwonlyargs") :- generated_factory(f), field(f, "parameters", ps), child(ps, p, i),
+    generated_param_name(p, x), child(ps, s, j), j < i, generated_star(s).
+generated_param(f, p, x, "args") :- generated_factory(f), field(f, "parameters", ps), child(ps, p, i),
+    generated_param_name(p, x), !generated_after_star(ps, i), !generated_before_slash(ps, i).
+.decl generated_after_star(ps: node, i: number)
+generated_after_star(ps, i) :- generated_factory(f), field(f, "parameters", ps), child(ps, _, i), child(ps, s, j), j < i, generated_star(s).
+.decl generated_before_slash(ps: node, i: number)
+generated_before_slash(ps, i) :- generated_factory(f), field(f, "parameters", ps), child(ps, _, i), child(ps, s, j), j > i,
+    node(_, s, "positional_separator", _, _).
+.decl generated_source_param(f: node, p: node)
+generated_source_param(f, p) :- generated_param(f, p, "source", _).
+.decl generated_has_source(f: node)
+generated_has_source(f) :- generated_source_param(f, _).
+// source_parameters: the first source parameter (least child index in `parameters`).
+.decl generated_source_at(f: node, p: node, i: number)
+generated_source_at(f, p, i) :- generated_source_param(f, p), field(f, "parameters", ps), child(ps, p, i).
+.decl generated_first_source(f: node, p: node)
+generated_first_source(f, p) :- generated_source_at(f, p, i), i = min j : { generated_source_at(f, _, j) }.
+// the last kwonly source parameter (greatest child index among kwonly params named source).
+.decl generated_kwonly_source_at(f: node, p: node, i: number)
+generated_kwonly_source_at(f, p, i) :- generated_param(f, p, "source", "kwonlyargs"), field(f, "parameters", ps),
+    child(ps, p, i).
+.decl generated_last_kwonly_source(f: node, p: node)
+generated_last_kwonly_source(f, p) :- generated_kwonly_source_at(f, p, i), i = max j : { generated_kwonly_source_at(f, _, j) }.
+.decl generated_annotated(p: node)
+generated_annotated(p) :- field(p, "type", t), child(t, e0, 0), generated_unparen(e0, e), node(_, e, "identifier", _, _),
+    text(e, "IndexSource").
+
+// ---- the first `source=` keyword of an index call, and whether it forwards the Name source ----
+.decl generated_source_kw(c: node, k: node, at: number)
+generated_source_kw(c, k, s) :- generated_index_call(c), field(c, "arguments", a), child(a, k, _),
+    node(_, k, "keyword_argument", s, _), field(k, "name", n), text(n, "source").
+.decl generated_first_kw(c: node, at: number)
+generated_first_kw(c, s) :- generated_source_kw(c, _, _), s = min t : { generated_source_kw(c, _, t) }.
+.decl generated_forwards(c: node)
+generated_forwards(c) :- generated_first_kw(c, s), generated_source_kw(c, k, s), field(k, "value", v0), generated_unparen(v0, v),
+    node(_, v, "identifier", _, _), text(v, "source").
+
+// ---- the five parts ----
+.decl generated_issue(n: node)
+generated_issue(n) :- generated_index_call(n), !generated_in_factory(n).
+generated_issue(n) :- generated_index_call(n), generated_in_factory(n), !generated_forwards(n).
+generated_issue(f) :- generated_factory(f), !generated_has_source(f).
+generated_issue(f) :- generated_first_source(f, p), !generated_annotated(p).
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v),
+    node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
+generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v),
+    node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0),
+    generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
+
+violation("data-layer-generated-index-sources", "generated-index-source", "missing_source", p, l) :- generated_issue(n),
+    node(d, n, _, _, _), doc(d, p, _), line(n, l).

@@ -1,0 +1,60 @@
+.policy "react-jsx-key" revision 2
+.description "Give elements in arrays and iterators a key prop."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-key, at its defaults: an element without a `key` prop where React needs one to tell siblings apart.
+//   [<li />, <li />]                               each element, "in array"
+//   xs.map(x => <li>{x}</li>)                      "in iterator": the callback of .map, or of Array.from's second
+//   xs.map(x => cond ? <a /> : <b />)              argument, when it is an element, a side of ?: or the right of
+//   xs.map(function (x) { if (x) return <a />; })  &&/||; or a `return` at the top of its body or in its if/else
+// Code inside React.Children.toArray(…) is skipped: toArray adds keys. In an array the prop must be `key`
+// exactly; in an iterator any case counts (KEY=). A spread never does. Fragments are not checked (checkFragmentShorthand is off), nor key order or duplicates.
+#include "tsx/react.rr"
+#include "tsx/eslint-a-common.rr"
+
+.violation missing_key(at: node, msg: symbol)
+    code "react/jsx-key"
+    "{msg}"
+    suppress eslint "react/jsx-key"
+    suppress oxlint "jsx-key"
+    suppress biome "lint/correctness/useJsxKeyInIterable"
+missing_key(e, "Missing \"key\" prop for element in array") :- kind(a, "array"), child(a, x, _), deparen(x, e),
+    keyless(e, "exact"), !to_array_arg(a).
+missing_key(e, "Missing \"key\" prop for element in iterator") :- iterator_fn(c, f), iterated(f, e), keyless(e, "any"),
+    !to_array_arg(c).
+
+// keyless(e, how): an element (not a <>…</> fragment) in a React file with no prop named key: exactly `key`
+// (how = "exact"), or key in any case (how = "any").
+.decl keyless(e: node, how: symbol)
+keyless(e, "exact") :- react_open(e, o), field(o, "name", _), !jsx_prop(o, "key", _).
+keyless(e, "any") :- react_open(e, o), field(o, "name", _), count : { jsx_prop(o, x, _), @lower(x) = "key" } = 0.
+// iterator_fn(c, f): f is the callback of xs.map(f), xs?.map(f), or Array.from(xs, f): an arrow or function.
+.decl iterator_fn(c: node, f: node)
+iterator_fn(c, f) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), (text(p, "map"), call_arg(c, a, 0) ; text(p, "from"), call_arg(c, a, 1)),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")).
+// iterated(f, e): what the rule checks of f's results. An arrow's body: x => <a/>, x => c ? <a/> : <b/>, x => c && <a/>.
+.decl iterated(f: node, e: node)
+iterated(f, e) :- iterator_fn(_, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, e).
+iterated(f, e) :- iterator_fn(_, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, t),
+    kind(t, "ternary_expression"), (field(t, "consequence", x) ; field(t, "alternative", x)), deparen(x, e).
+iterated(f, e) :- iterator_fn(_, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, t),
+    kind(t, "binary_expression"), (op(t, "&&") ; op(t, "||") ; op(t, "??")), field(t, "right", x), deparen(x, e).
+// A block body: the values of the returns at its top, and in its ifs (else-ifs and their blocks too).
+iterated(f, e) :- iterator_fn(_, f), field(f, "body", b), kind(b, "statement_block"), top_return(b, r),
+    child(r, x, _), !kind(x, "comment"), deparen(x, e).
+.decl top_return(s: node, r: node)  // getReturnStatements: s's own returns, through if/else only
+top_return(s, s) :- kind(s, "return_statement").
+top_return(s, r) :- kind(s, "statement_block"), child(s, x, _), (kind(x, "return_statement") ; kind(x, "if_statement")),
+    top_return(x, r).
+top_return(s, r) :- kind(s, "if_statement"), (field(s, "consequence", x) ; field(s, "alternative", l), child(l, x, _), !kind(x, "comment")),
+    top_return(x, r).
+// to_array_arg(n): n is inside React.Children.toArray(…) or Children.toArray(…).
+.decl to_array_arg(n: node)
+to_array_arg(n) :- (kind(n, "array") ; kind(n, "call_expression")), inside(n, c, "call_expression"), to_array(c).
+.decl to_array(c: node)
+to_array(c) :- kind(c, "call_expression"), field(c, "function", m), field(m, "property", p), text(p, "toArray"),
+    field(m, "object", o), (text(o, "Children") ; field(o, "property", q), text(q, "Children"), field(o, "object", r),
+    docof(c, d), pragma(d, x), text(r, x)).

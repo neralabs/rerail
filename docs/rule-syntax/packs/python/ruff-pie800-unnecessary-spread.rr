@@ -1,0 +1,16 @@
+.policy "ruff-pie800-unnecessary-spread" revision 2
+.description "Write the entries directly instead of spreading a dict literal into another Python dict literal."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE800 (flake8-pie): `**{…}` inside a dict display. Spreading a dict literal into another adds nothing:
+// write its entries directly. Reported at the spread dict, parentheses (and comments in them) off.
+//   {"foo": 1, **{"bar": 1}}   ← PIE800 at `{"bar": 1}`
+//   {**foo, "bar": True}       not reported
+#include "python/bugbear.rr"
+
+.violation PIE800(at: node) code "PIE800" "Unnecessary spread `**`"
+    suppress ruff "PIE800"
+PIE800(m) :- kind(d, "dictionary"), child(d, s, _), kind(s, "dictionary_splat"), child(s, v, _), !kind(v, "comment"),
+    unparen(v, m), kind(m, "dictionary").

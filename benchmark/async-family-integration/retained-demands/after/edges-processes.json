@@ -1,0 +1,86 @@
+[
+  {
+    "name": "edge-1f85485a7075",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.6757807731628418,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/1f85485a7075",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-1f85485a7075.json",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-1f85485a7075"
+    }
+  },
+  {
+    "name": "edge-38094aa6ac7e",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.4772520065307617,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/38094aa6ac7e",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-38094aa6ac7e.json",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-38094aa6ac7e"
+    }
+  },
+  {
+    "name": "edge-483985bd330e",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.48069095611572266,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/483985bd330e",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-483985bd330e.json",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-483985bd330e"
+    }
+  },
+  {
+    "name": "edge-c6d2d16e3195",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.498715877532959,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/c6d2d16e3195",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-c6d2d16e3195.json",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-c6d2d16e3195"
+    }
+  }
+]

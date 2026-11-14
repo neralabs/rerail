@@ -22,10 +22,11 @@ use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, LazyLock, Weak};
 
-/// Each pattern compiled and its regex, while a handle on the regex lives.
-static TABLE: LazyLock<RwLock<Table>> = LazyLock::new(Default::default);
+/// Each pattern compiled and its regex, while a handle on the regex lives. Public, as the handle's field is, for
+/// the tests the engine hosts (the crate split).
+pub static TABLE: LazyLock<RwLock<Table>> = LazyLock::new(Default::default);
 
-type Table = HashMap<Box<str>, Arc<regex::Regex>>;
+pub type Table = HashMap<Box<str>, Arc<regex::Regex>>;
 
 thread_local! {
     /// While this thread compiles a document, the regexes it let go of the last handle on, which
@@ -36,12 +37,12 @@ thread_local! {
 /// A compiled regex, the one every holder of its pattern holds. It reads, and prints, as the
 /// `regex` crate's `Regex`, which it dereferences to.
 #[derive(Clone)]
-pub(crate) struct Regex(ManuallyDrop<Arc<regex::Regex>>);
+pub struct Regex(pub ManuallyDrop<Arc<regex::Regex>>);
 
 impl Regex {
     /// `pattern`'s regex, shared with every other holder of the pattern; the `regex` crate's error
     /// where it does not compile.
-    pub(crate) fn new(pattern: &str) -> Result<Self, regex::Error> {
+    pub fn new(pattern: &str) -> Result<Self, regex::Error> {
         if let Some(regex) = TABLE.read().get(pattern) {
             return Ok(Self::holding(regex));
         }
@@ -89,10 +90,10 @@ impl std::fmt::Debug for Regex {
 
 /// This thread's compilation of a document, until it drops: the table keeps the regexes the
 /// thread lets go of meanwhile, then drops the ones no handle took again.
-pub(crate) struct Compiling(());
+pub struct Compiling(());
 
 /// Starts this thread's compilation of a document (`Compiling`).
-pub(crate) fn compiling() -> Compiling {
+pub fn compiling() -> Compiling {
     LET_GO.with_borrow_mut(|let_go| {
         let_go.get_or_insert_default();
     });
@@ -147,5 +148,4 @@ fn unheld(table: &mut Table, regex: &Weak<regex::Regex>) -> Option<Arc<regex::Re
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

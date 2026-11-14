@@ -1,56 +1,57 @@
 //! Per-node values: what a literal, or an expression folded from literals, evaluates to. A value
 //! is `Unknown` whenever the engine cannot be sure, so every predicate over values is three-valued.
 
-pub(crate) mod ecma;
-pub(crate) mod key;
-pub(crate) mod names;
-pub(crate) mod php;
-pub(crate) mod php_compare;
-pub(crate) mod php_structure;
-pub(crate) mod python;
-pub(crate) mod rust;
-pub(crate) mod sql;
-pub(crate) mod structure;
-pub(crate) mod text_regex;
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `key` is rerail-lang-ecma's (it mounts it)
+pub mod names;
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: `php_compare` is rerail-lang-php's (it mounts it)
+// cratify: `php_structure` is rerail-lang-php's (it mounts it)
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: `python_ast` is rerail-lang-python's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+// cratify: `sql` is rerail-lang-sql's (it mounts it)
+pub mod structure;
+pub mod types;
+// cratify: `python_structure` is rerail-lang-python's (it mounts it)
+pub use rerail_lang::code_rule_dsl::value::text_regex;
 
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{Doc, Node};
-pub(crate) use num_bigint::BigInt;
+pub use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Nesting a decode follows before it gives up (`Unknown`).
-pub(crate) const MAX_DEPTH: usize = 256;
-/// Bytes a decoded string or bytes value may hold: UTF-8 for Python `str`, two per UTF-16 code
-/// unit for JavaScript strings. An operation that would build a longer one is `Unknown` before it
-/// allocates.
-pub(crate) const MAX_STRING_BYTES: usize = 64 * 1024;
+pub const MAX_DEPTH: usize = 256;
+// The longest string a value holds (`text_regex`, below the values: the tape crate reads it).
+pub use text_regex::MAX_STRING_BYTES;
 /// Elements a tuple or array built by an operation (`(1,) * n`, a spread) may hold.
-pub(crate) const MAX_ELEMENTS: usize = 4096;
+pub const MAX_ELEMENTS: usize = 4096;
 /// Bits a Python `int` may hold, sign aside (`2 ** 4095` does, `2 ** 4096` does not). A literal or
 /// an operation past it is `Unknown`; an operation checks before it computes (`2 ** 10**9`).
-pub(crate) const MAX_INT_BITS: u64 = 4096;
+pub const MAX_INT_BITS: u64 = 4096;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Children `NodeRef::find` read one by one, on this thread.
-    pub(crate) static LINEAR_CHILDREN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static LINEAR_CHILDREN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A node of a file, by its byte range and kind: a binding's site, value or annotation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NodeRef {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-    pub(crate) kind: u16,
+pub struct NodeRef {
+    pub start: u32,
+    pub end: u32,
+    pub kind: u16,
 }
 
 impl NodeRef {
-    pub(crate) fn of<D: Doc>(node: &Node<'_, D>) -> Self {
+    pub fn of<D: Doc>(node: &Node<'_, D>) -> Self {
         let range = node.range();
         Self {
             start: range.start as u32,
@@ -59,8 +60,8 @@ impl NodeRef {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn range(&self) -> Range<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn range(&self) -> Range<usize> {
         self.start as usize..self.end as usize
     }
 
@@ -69,7 +70,7 @@ impl NodeRef {
     /// range (zero-width siblings may share a position). Siblings are read only up to the one the
     /// descent takes, and past it only when it fails: a lookup in a class of a thousand methods
     /// reads the methods before the one holding the node, not all of them.
-    pub(crate) fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
+    pub fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
         let covers = |child: &Node<'r, D>| {
             let range = child.range();
@@ -81,7 +82,7 @@ impl NodeRef {
                 .enumerate()
                 .skip(from)
                 .inspect(|_| {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     LINEAR_CHILDREN.set(LINEAR_CHILDREN.get() + 1);
                 })
                 .find(|(_, child)| covers(child))
@@ -117,7 +118,7 @@ impl NodeRef {
     /// root, so the descent starts at the topmost node of `near`'s nearest covering ancestor's
     /// range instead of reading every sibling before that path from the root down: a read in a
     /// class of a thousand methods reads its own method's statements.
-    pub(crate) fn find_near<'r, D: Doc>(
+    pub fn find_near<'r, D: Doc>(
         &self,
         root: Node<'r, D>,
         near: &Node<'r, D>,
@@ -222,30 +223,30 @@ pub(crate) type TableLookup<'a> =
 /// whether the value is an element of the site's value (a destructured or unpacked name) rather
 /// than all of it.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Followed {
-    pub(crate) value: NodeRef,
-    pub(crate) mutated: bool,
-    pub(crate) destructured: bool,
+pub struct Followed {
+    pub value: NodeRef,
+    pub mutated: bool,
+    pub destructured: bool,
 }
 
 /// One decode's limits: its nesting and the caller's step budget. Each node decoded spends a step;
 /// a spent budget stops the decode (the caller decides what that costs the rule). Builtin names
 /// (`undefined`, `list`) are values only where `global` says they are not shadowed; other names
 /// are values only through `binding`, at most `MAX_HOPS` times per decode.
-pub(crate) struct Context<'a> {
+pub struct Context<'a> {
     depth: usize,
     spend: &'a mut dyn FnMut() -> bool,
     global: Option<&'a mut GlobalLookup<'a>>,
     binding: Option<&'a mut BindingLookup<'a>>,
     constant: Option<&'a mut ConstantLookup<'a>>,
     table: Option<&'a mut TableLookup<'a>>,
-    hops: usize,
+    pub hops: usize,
     exhausted: bool,
 }
 
 impl<'a> Context<'a> {
     /// A context where no name is known to be a builtin (structures read no names' values).
-    pub(crate) fn new(spend: &'a mut dyn FnMut() -> bool) -> Self {
+    pub fn new(spend: &'a mut dyn FnMut() -> bool) -> Self {
         Self {
             depth: 0,
             spend,
@@ -258,7 +259,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    pub(crate) fn with_globals(
+    pub fn with_globals(
         spend: &'a mut dyn FnMut() -> bool,
         global: &'a mut GlobalLookup<'a>,
     ) -> Self {
@@ -275,7 +276,7 @@ impl<'a> Context<'a> {
     }
 
     /// Follows names through their bindings' values (`value.follow`).
-    pub(crate) fn following(mut self, binding: &'a mut BindingLookup<'a>) -> Self {
+    pub fn following(mut self, binding: &'a mut BindingLookup<'a>) -> Self {
         self.binding = Some(binding);
         self
     }
@@ -293,21 +294,21 @@ impl<'a> Context<'a> {
     }
 
     /// The file's scope table, where the decode follows names through it.
-    pub(crate) fn table(
+    pub fn table(
         &mut self,
     ) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
         self.table.as_mut()?()
     }
 
     /// Whether `name` at `range` is the unshadowed builtin or global.
-    fn is_global(&mut self, range: Range<usize>, name: &str) -> bool {
+    pub fn is_global(&mut self, range: Range<usize>, name: &str) -> bool {
         self.global
             .as_mut()
             .is_some_and(|global| global(range, name) == Some(true))
     }
 
     /// The value node the name at `range` is bound to, spending one of the decode's hops.
-    fn follow(&mut self, range: Range<usize>, name: &str) -> Option<Followed> {
+    pub fn follow(&mut self, range: Range<usize>, name: &str) -> Option<Followed> {
         let binding = self.binding.as_mut()?;
         if self.hops >= MAX_HOPS {
             return None;
@@ -317,7 +318,7 @@ impl<'a> Context<'a> {
     }
 
     /// The value node of the constant `node` fetches, spending one of the decode's hops.
-    fn constant(&mut self, node: NodeRef) -> Option<NodeRef> {
+    pub fn constant(&mut self, node: NodeRef) -> Option<NodeRef> {
         let constant = self.constant.as_mut()?;
         if self.hops >= MAX_HOPS {
             return None;
@@ -327,11 +328,11 @@ impl<'a> Context<'a> {
     }
 
     /// Whether the budget ran out during this decode.
-    pub(crate) fn exhausted(&self) -> bool {
+    pub fn exhausted(&self) -> bool {
         self.exhausted
     }
 
-    fn enter(&mut self) -> bool {
+    pub fn enter(&mut self) -> bool {
         if self.exhausted || self.depth >= MAX_DEPTH {
             return false;
         }
@@ -343,7 +344,7 @@ impl<'a> Context<'a> {
         true
     }
 
-    fn leave(&mut self) {
+    pub fn leave(&mut self) {
         self.depth -= 1;
     }
 }
@@ -351,25 +352,25 @@ impl<'a> Context<'a> {
 /// The names of the types `Value::type_name_as` names differently per family: Python's
 /// `type(v).__name__` (`NoneType`, `bool`, `float`), JavaScript's `typeof` (`null`, `boolean`,
 /// `number`).
-pub(crate) struct TypeNames {
-    pub(crate) none: &'static str,
-    pub(crate) bool: &'static str,
-    pub(crate) float: &'static str,
+pub struct TypeNames {
+    pub none: &'static str,
+    pub bool: &'static str,
+    pub float: &'static str,
 }
 
 /// How a family orders values (`Value::ordered`) where families differ.
 #[derive(Clone, Copy)]
-pub(crate) struct Ordered {
+pub struct Ordered {
     /// Its booleans are integers (Python's `True == 1`).
-    pub(crate) bools_are_ints: bool,
+    pub bools_are_ints: bool,
     /// Its tuples order element by element, then by length (Python's).
-    pub(crate) tuples: bool,
+    pub tuples: bool,
 }
 
 /// A container whose elements are not all known: its kind, its length when known, and whether it
 /// is empty when that is known even though its length is not (`{**a, 1: 2}` is not).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ContainerKind {
+pub enum ContainerKind {
     /// Python `tuple` with an element that is not known.
     Tuple,
     List,
@@ -384,7 +385,7 @@ pub(crate) enum ContainerKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Value {
+pub enum Value {
     Unknown,
     /// Python `None`, JavaScript `null`.
     None,
@@ -418,7 +419,7 @@ pub(crate) enum Value {
     /// A PHP string: bytes.
     PhpStr(Vec<u8>),
     /// A PHP array whose keys and values are all known: an ordered map, in insertion order.
-    PhpArray(Vec<(php::Key, Value)>),
+    PhpArray(Vec<(types::Key, Value)>),
     Container {
         kind: ContainerKind,
         len: Option<usize>,
@@ -428,12 +429,12 @@ pub(crate) enum Value {
     /// A Rust integer, with its type where a suffix or a declaration gives it.
     RustInt {
         value: BigInt,
-        ty: Option<rust::IntTy>,
+        ty: Option<types::IntTy>,
     },
     /// A Rust float, with its type where a suffix or a declaration gives it.
     RustFloat {
         value: f64,
-        ty: Option<rust::FloatTy>,
+        ty: Option<types::FloatTy>,
     },
     /// A Rust `char`.
     Char(char),
@@ -443,7 +444,7 @@ pub(crate) enum Value {
 
 impl Value {
     /// A Python `int`, or `Unknown` past `MAX_INT_BITS`.
-    pub(crate) fn int(value: impl Into<BigInt>) -> Self {
+    pub fn int(value: impl Into<BigInt>) -> Self {
         let value = value.into();
         if value.bits() > MAX_INT_BITS {
             Self::Unknown
@@ -452,25 +453,25 @@ impl Value {
         }
     }
 
-    pub(crate) fn is_known(&self) -> bool {
+    pub fn is_known(&self) -> bool {
         !matches!(self, Self::Unknown)
     }
 
     /// Whether the whole value is known: not `Unknown`, and not a container with unknown elements.
-    pub(crate) fn is_constant(&self) -> bool {
+    pub fn is_constant(&self) -> bool {
         !matches!(self, Self::Unknown | Self::Container { .. })
     }
 
     /// Truthiness in the value family `lang`'s sense (its `ValueRules::truthy`): Python's
     /// `bool(v)`, JavaScript's ToBoolean, PHP's `(bool)`. `None` when it is not known.
-    pub(crate) fn truthy(&self, lang: Family) -> Option<bool> {
-        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::truthy(self))
+    pub fn truthy(&self, lang: Family) -> Option<bool> {
+        { let pack = language_pack::pack(lang); pack.value_truthy(self) }
     }
 
     /// Truthiness as Python's `bool(v)` and JavaScript's ToBoolean agree (objects and arrays are
     /// truthy even when empty), NaN being truthy where `nan` (Python's) and falsy elsewhere
     /// (JavaScript's). `None` when it is not known.
-    pub(crate) fn truthy_where(&self, nan: bool) -> Option<bool> {
+    pub fn truthy_where(&self, nan: bool) -> Option<bool> {
         Some(match self {
             Self::Unknown => return None,
             Self::None | Self::Undefined => false,
@@ -503,12 +504,12 @@ impl Value {
     /// The type's name in the value family `lang`'s sense (its `ValueRules::type_name`):
     /// Python's `type(v).__name__`, for JavaScript `typeof` refined with `null`, `array` and
     /// `regexp`, PHP's `get_debug_type`.
-    pub(crate) fn type_name(&self, lang: Family) -> Option<&'static str> {
-        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::type_name(self))
+    pub fn type_name(&self, lang: Family) -> Option<&'static str> {
+        { let pack = language_pack::pack(lang); pack.value_type_name(self) }
     }
 
     /// The type's name, Python's and JavaScript's alike but for the names in `names`.
-    pub(crate) fn type_name_as(&self, names: &TypeNames) -> Option<&'static str> {
+    pub fn type_name_as(&self, names: &TypeNames) -> Option<&'static str> {
         Some(match self {
             Self::Unknown => return None,
             Self::None => names.none,
@@ -551,21 +552,21 @@ impl Value {
 
     /// Equality in the value family `lang`'s sense (its `ValueRules::equals`): Python `==`,
     /// JavaScript `Object.is`, PHP `===`. `None` when it depends on elements that are not known.
-    pub(crate) fn equals(&self, other: &Self, lang: Family) -> Option<bool> {
-        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::equals(self, other))
+    pub fn equals(&self, other: &Self, lang: Family) -> Option<bool> {
+        { let pack = language_pack::pack(lang); pack.value_equals(self, other) }
     }
 
     /// Order in the value family `lang`'s sense (its `ValueRules::order`). `Some(None)` when the
     /// two do not order (different types, NaN, PHP arrays neither of which PHP finds smaller);
     /// `None` when it is not known.
-    pub(crate) fn order(&self, other: &Self, lang: Family) -> Option<Option<Ordering>> {
-        with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::order(self, other))
+    pub fn order(&self, other: &Self, lang: Family) -> Option<Option<Ordering>> {
+        { let pack = language_pack::pack(lang); pack.value_order(self, other) }
     }
 
     /// Order as Python and JavaScript agree, under `rules`: numbers numerically, Python strings
     /// by code point and JavaScript strings by UTF-16 code unit, bytes lexicographically, tuples
     /// where `rules.tuples`. `Some(None)` when the two do not order; `None` when it is not known.
-    pub(crate) fn ordered(&self, other: &Self, rules: Ordered) -> Option<Option<Ordering>> {
+    pub fn ordered(&self, other: &Self, rules: Ordered) -> Option<Option<Ordering>> {
         if !self.is_known() || !other.is_known() {
             return None;
         }
@@ -645,7 +646,7 @@ impl Number {
 }
 
 /// `int` against `float` without rounding either.
-pub(crate) fn int_float_order(int: &BigInt, float: f64) -> Option<Ordering> {
+pub fn int_float_order(int: &BigInt, float: f64) -> Option<Ordering> {
     if float.is_nan() {
         return None;
     }
@@ -673,7 +674,7 @@ pub(crate) fn int_float_order(int: &BigInt, float: f64) -> Option<Ordering> {
 
 /// An `int` as the nearest `float` (ties to even), as CPython's `float(int)`; `None` where that
 /// overflows (`OverflowError`).
-pub(crate) fn int_to_float(int: &BigInt) -> Option<f64> {
+pub fn int_to_float(int: &BigInt) -> Option<f64> {
     let magnitude = int.abs().to_f64().filter(|value| value.is_finite())?;
     Some(if int.is_negative() {
         -magnitude
@@ -683,7 +684,7 @@ pub(crate) fn int_to_float(int: &BigInt) -> Option<f64> {
 }
 
 /// Python's `==`.
-pub(crate) fn python_equals(left: &Value, right: &Value) -> Option<bool> {
+pub fn python_equals(left: &Value, right: &Value) -> Option<bool> {
     if let (Some(left), Some(right)) = (Number::of(left, true), Number::of(right, true)) {
         return Some(left.equals(&right));
     }
@@ -756,7 +757,7 @@ pub(crate) fn python_equals(left: &Value, right: &Value) -> Option<bool> {
 
 /// `Object.is`: numbers by value except that NaN is NaN and `0` is not `-0`; strings by code
 /// units; two literals of an object or array are two objects.
-pub(crate) fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
+pub fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
     Some(match (left, right) {
         (Value::Unknown, _) | (_, Value::Unknown) => return None,
         (Value::None, Value::None) | (Value::Undefined, Value::Undefined) => true,
@@ -770,9 +771,6 @@ pub(crate) fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
     })
 }
 
-#[cfg(test)]
-mod eslint_rules;
-#[cfg(test)]
-mod rules;
-#[cfg(test)]
-pub(crate) mod tests;
+// cratify: `eslint_rules` is rerail-lang-ecma's (it mounts it)
+// rules: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// cratify: `tests` is rerail-engine's (it mounts it)

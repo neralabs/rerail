@@ -16,14 +16,14 @@ use std::sync::Weak;
 
 /// The document a rule reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Side {
+pub enum Side {
     Host,
     Guest,
 }
 
 /// The documents of the files an embedding language's query reads, each with the utility table
 /// its rules compile with: the host's dialect, and each dialect the guest may be in.
-pub(crate) struct DocumentScopes {
+pub struct DocumentScopes {
     pub(crate) via: Via,
     pub(crate) host: (GrammarDialect, Weak<UtilTable>),
     pub(crate) guests: Vec<(GrammarDialect, Weak<UtilTable>)>,

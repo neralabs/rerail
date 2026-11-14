@@ -184,7 +184,7 @@ impl View {
             None => (VIRTUAL_BASE.to_owned(), None),
         };
         Self {
-            canonical_root: root.as_ref().and_then(|root| root.canonicalize().ok()),
+            canonical_root: root.as_ref().and_then(|root| dunce::canonicalize(root).ok()),
             held,
             root,
             base,
@@ -239,7 +239,7 @@ impl View {
         let path = root.join(relative);
         let metadata = std::fs::symlink_metadata(&path).ok()?;
         if metadata.file_type().is_symlink() {
-            let canonical = path.canonicalize().ok()?;
+            let canonical = dunce::canonicalize(&path).ok()?;
             if !canonical.starts_with(canonical_root) {
                 return None;
             }
@@ -261,8 +261,7 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .is_some_and(|(root, canonical_root)| {
-                root.join(relative)
-                    .canonicalize()
+                dunce::canonicalize(root.join(relative))
                     .is_ok_and(|canonical| canonical.starts_with(canonical_root))
             });
         let mut cache = self.inside.lock();
@@ -394,7 +393,7 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .and_then(|(root, canonical_root)| {
-                let canonical = root.join(relative).canonicalize().ok()?;
+                let canonical = dunce::canonicalize(root.join(relative)).ok()?;
                 // Its names joined by `/`, as every path here is: Windows separates the ones
                 // disk gives by `\`.
                 let inside = canonical

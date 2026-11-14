@@ -1,0 +1,81 @@
+// python/conditions: the branches of `if sys.version_info ...` and `if sys.platform ...` a run's Python does not take
+// (t21 §2.4), so a stub's bindings for another version or platform are not read.
+//
+// A test is decided from the run's settings (python/env.rr): a version test always (py_version has a default), a
+// platform test when `python.platform` is set. An undecided test keeps both branches.
+//
+// It reads only relations both shapes have (`kind`, `field`, `child`, `op_at`, `name`, `value`, `str`).
+#include "python/env.rr"
+
+// The tests: `sys.version_info >= (3, 10)` (and `>`, `<`, `<=`), `sys.platform == "win32"` (and `!=`),
+// `sys.platform.startswith("linux")`; `not` of one.
+.decl py_cond(c: node)
+py_cond(c) :- kind(i, "if_statement"), field(i, "condition", c).
+py_cond(c) :- kind(i, "elif_clause"), field(i, "condition", c).
+// `not t`, `not (t)`: t is tested, and decides the negation.
+.decl py_not(c: node, a: node)
+py_not(c, a) :- py_cond(c), kind(c, "not_operator"), field(c, "argument", a), !kind(a, "parenthesized_expression").
+py_not(c, a) :- py_cond(c), kind(c, "not_operator"), field(c, "argument", p), kind(p, "parenthesized_expression"), child(p, a, 0).
+py_cond(a) :- py_not(_, a).
+.decl py_vtest(c: node, op: symbol, a: number, b: number)
+py_vtest(c, o, a, b) :- py_cond(c), kind(c, "comparison_operator"), op_at(c, 0, o), !op_at(c, 1, _), child(c, l, 0), name(l, "sys.version_info"),
+    child(c, t, 1), kind(t, "tuple"), child(t, x, 0), value(x, u), child(t, y, 1), value(y, w), a = to_number(u), b = to_number(w).
+.decl py_ptest(c: node, op: symbol, p: symbol)
+py_ptest(c, o, p) :- py_cond(c), kind(c, "comparison_operator"), op_at(c, 0, o), !op_at(c, 1, _), child(c, l, 0), name(l, "sys.platform"), child(c, s, 1),
+    str(s, p).
+py_ptest(c, "startswith", p) :- py_cond(c), kind(c, "call"), field(c, "function", g), name(g, "sys.platform.startswith"),
+    field(c, "arguments", as), child(as, s, 0), str(s, p).
+
+// py_true(c), py_false(c): the run's Python takes, or does not take, the branch c guards. A test first (py_t), then
+// its negation.
+.decl py_t(c: node)
+py_t(c) :- py_vtest(c, ">=", a, b), py_version(x, y), (x > a ; x = a, y >= b).
+py_t(c) :- py_vtest(c, ">", a, b), py_version(x, y), (x > a ; x = a, y > b).
+py_t(c) :- py_vtest(c, "<", a, b), py_version(x, y), (x < a ; x = a, y < b).
+py_t(c) :- py_vtest(c, "<=", a, b), py_version(x, y), (x < a ; x = a, y <= b).
+py_t(c) :- py_ptest(c, "==", p), py_platform(p).
+py_t(c) :- py_ptest(c, "!=", p), py_platform(q), q != p.
+py_t(c) :- py_ptest(c, "startswith", p), py_platform(q), prefix(p, q).
+.decl py_f(c: node)
+py_f(c) :- py_vtest(c, _, _, _), !py_t(c).
+py_f(c) :- py_ptest(c, _, _), py_platform(_), !py_t(c).
+.decl py_true(c: node)
+py_true(c) :- py_t(c).
+py_true(c) :- py_not(c, a), py_f(a).
+.decl py_false(c: node)
+py_false(c) :- py_f(c).
+py_false(c) :- py_not(c, a), py_t(a).
+
+// py_dead(b): a branch not taken: a false test's consequence; what follows a true test (its elif and else clauses).
+.decl py_dead(b: node)
+py_dead(b) :- kind(i, "if_statement"), field(i, "condition", c), py_false(c), field(i, "consequence", b).
+py_dead(a) :- kind(i, "if_statement"), field(i, "condition", c), py_true(c), field(i, "alternative", a).
+py_dead(b) :- kind(e, "elif_clause"), field(e, "condition", c), py_false(c), field(e, "consequence", b).
+py_dead(a) :- kind(i, "if_statement"), field(i, "alternative", e), kind(e, "elif_clause"), field(e, "condition", c), py_true(c),
+    child(i, e, k), field(i, "alternative", a), child(i, a, j), j > k.
+
+// py_dead_at(n): a statement in a branch not taken, at any depth of statements (a definition, an assignment, an
+// import): what python/modules.rr and a binding rule leave out.
+.decl py_stmt_part(k: symbol)
+py_stmt_part("block"). py_stmt_part("if_statement"). py_stmt_part("elif_clause"). py_stmt_part("else_clause").
+py_stmt_part("decorated_definition"). py_stmt_part("expression_statement"). py_stmt_part("try_statement").
+py_stmt_part("except_clause"). py_stmt_part("finally_clause"). py_stmt_part("with_statement").
+// The descent is syntax, made per file and only below a guarded branch (one py_dead may pick); which guarded branch is
+// dead reads the run's settings. Made from py_dead itself, the descent ran where py_dead does, over every child edge
+// of every file (4.3 M rows at 2,063 files) for the few branches a run leaves out.
+.decl py_guard(c: node)
+py_guard(c) :- py_vtest(c, _, _, _).
+py_guard(c) :- py_ptest(c, _, _).
+py_guard(c) :- py_not(c, a), py_guard(a).
+.decl py_guarded(b: node)
+py_guarded(b) :- kind(i, "if_statement"), field(i, "condition", c), py_guard(c), field(i, "consequence", b).
+py_guarded(a) :- kind(i, "if_statement"), field(i, "condition", c), py_guard(c), field(i, "alternative", a).
+py_guarded(b) :- kind(e, "elif_clause"), field(e, "condition", c), py_guard(c), field(e, "consequence", b).
+py_guarded(a) :- kind(i, "if_statement"), field(i, "alternative", e), kind(e, "elif_clause"), field(e, "condition", c),
+    py_guard(c), field(i, "alternative", a).
+// py_under(b, n): n is a statement of guarded branch b, at any depth of statements.
+.decl py_under(b: node, n: node)
+py_under(b, n) :- py_guarded(b), child(b, n, _).
+py_under(b, n) :- py_under(b, p), kind(p, k), py_stmt_part(k), child(p, n, _).
+.decl py_dead_at(n: node)
+py_dead_at(n) :- py_dead(b), py_under(b, n).

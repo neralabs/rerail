@@ -1,0 +1,5 @@
+{
+  "title": "print calls",
+  "rule": "ruff-t201-print",
+  "note": "T201 flags calls of the builtin print, which in library code should be logging. A method that happens to be called print is not the builtin, and logging calls are fine."
+}

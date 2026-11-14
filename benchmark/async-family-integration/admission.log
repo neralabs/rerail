@@ -1,0 +1,54 @@
+
+running 1 test
+test code_rule_dsl::findings::async_reference::compiler_admission::catalog_async_compiler_admission_is_accounted_for ... {
+  "admitted": 2,
+  "clauses": [
+    {
+      "admitted": true,
+      "clause": "blocking-http-call",
+      "code": "ASYNC210",
+      "documentGates": 0,
+      "labelPasses": 8,
+      "policy": "ruff-async210-blocking-http-call-in-async-function",
+      "stage": "packed_matcher_lower"
+    },
+    {
+      "admitted": false,
+      "clause": "run-process",
+      "code": "ASYNC221",
+      "policy": "ruff-async221-run-process-in-async-function",
+      "reason": "arguments binds",
+      "stage": "gated_match_tree"
+    },
+    {
+      "admitted": true,
+      "clause": "wait-for-process",
+      "code": "ASYNC222",
+      "documentGates": 0,
+      "labelPasses": 8,
+      "policy": "ruff-async222-wait-for-process-in-async-function",
+      "stage": "packed_matcher_lower"
+    },
+    {
+      "admitted": false,
+      "clause": "blocking-open",
+      "code": "ASYNC230",
+      "policy": "ruff-async230-blocking-open-call-in-async-function",
+      "reason": "resolves.binding",
+      "stage": "gated_match_tree"
+    }
+  ],
+  "completeFamilyAdmitted": false,
+  "executionMeasured": false,
+  "integrated": {
+    "clauses": 2,
+    "status": "lowered"
+  },
+  "offered": 4,
+  "refused": 2,
+  "schema": "rerail-async-generic-compiler-admission-v1",
+  "semanticProducerPolicy": "Accepted semantic leaves use native fact producers; no whole-rule executor is substituted."
+}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3140 filtered out; finished in 0.07s

@@ -1,0 +1,7458 @@
+[
+ {
+  "rule": "data-layer-admin-async-purity",
+  "clause": "pattern-0",
+  "source": "file.content",
+  "pattern": "\\basyncio\\.to_thread\\b",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "hidden",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "hidden",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "skip": true
+     }
+    ]
+   }
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l8000_admin/tools/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/*test_*"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-admin-async-purity",
+  "clause": "pattern-1",
+  "source": "file.content",
+  "pattern": "\\brun_in_executor\\b",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "hidden",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "hidden",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "skip": true
+     }
+    ]
+   }
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l8000_admin/tools/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/*test_*"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-admin-async-purity",
+  "clause": "pattern-2",
+  "source": "file.content",
+  "pattern": "\\bdisable_sync_in_async_check\\b",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "hidden",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "hidden",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "count": {
+       "parity": "odd"
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"|\\x27\\x27\\x27",
+      "skip": true
+     }
+    ]
+   }
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l8000_admin/tools/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/*test_*"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-async-executor",
+  "clause": "executor",
+  "source": "file.content",
+  "pattern": "run_in_executor\\s*\\(",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "#\\s*noqa:\\s*async-executor"
+   ],
+   "terminators": "lf"
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/sqlite/**/*.py",
+   "impl/postgres/**/*.py",
+   "impl/mariadb/**/*.py",
+   "impl/doltdb/**/*.py",
+   "impl/mongodb/**/*.py",
+   "impl/neo4j/**/*.py",
+   "impl/l1595_llm_cache/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "impl/common/**",
+   "impl/read_through/**",
+   "impl/sqlite/native_async_wrapper.py",
+   "impl/sqlite/connection.py"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-0-BT002",
+  "source": "file.content",
+  "pattern": "dialect\\.name\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-1-BT001",
+  "source": "file.content",
+  "pattern": "dialect\\.name\\s+in\\s+\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [
+   " in "
+  ],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-1-BT002",
+  "source": "file.content",
+  "pattern": "dialect\\.name\\s+in\\s+\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [
+   " in "
+  ],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-2-BT003",
+  "source": "file.content",
+  "pattern": "backend_type\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-3-BT003",
+  "source": "file.content",
+  "pattern": "\\bbackend\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [
+   "backend ==|backend in"
+  ],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-3-BT000",
+  "source": "file.content",
+  "pattern": "\\bbackend\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [
+   "backend ==|backend in"
+  ],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-4-BT003",
+  "source": "file.content",
+  "pattern": "\\bbackend\\s+in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [
+   "backend ==|backend in"
+  ],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-4-BT000",
+  "source": "file.content",
+  "pattern": "\\bbackend\\s+in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [
+   "backend ==|backend in"
+  ],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-5-BT004",
+  "source": "file.content",
+  "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+\\w*class_name",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [
+   " in "
+  ],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-5-BT000",
+  "source": "file.content",
+  "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+\\w*class_name",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [
+   " in "
+  ],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-6-BT004",
+  "source": "file.content",
+  "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+type\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [
+   " in "
+  ],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-6-BT000",
+  "source": "file.content",
+  "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+type\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [
+   " in "
+  ],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-backend-type-strings",
+  "clause": "comparison-7-BT005",
+  "source": "file.content",
+  "pattern": "__class__\\.__name__\\.lower\\(\\)",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": false
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*conform/*",
+   "**/*conform/*/**",
+   "**/*/tests/*",
+   "**/*/tests/*/**",
+   "**/*_test.py*",
+   "**/*_test.py*/**",
+   "**/*test_*",
+   "**/*test_*/**",
+   "**/*conftest.py*",
+   "**/*conftest.py*/**",
+   "**/*l1400_types/__init__.py*",
+   "**/*l1400_types/__init__.py*/**",
+   "**/*impl/common/l2050_sql_types/backend_type.py*",
+   "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+   "**/*.yaml*",
+   "**/*.yaml*/**",
+   "**/*.yml*",
+   "**/*.yml*/**",
+   "**/*.md*",
+   "**/*.md*/**",
+   "**/*.rst*",
+   "**/*.rst*/**",
+   "**/*security-*",
+   "**/*security-*/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*staging_bypass.py",
+   "**/*sql_table_hnsw.py",
+   "**/*stmt_versioned.py",
+   "**/*intent_transaction.py",
+   "**/*intent_branch_ops.py",
+   "**/*versioning_intent_steps.py",
+   "**/*branch_ops_steps.py",
+   "**/*commit_branch_steps.py",
+   "**/*sql_versioned_write_transaction.py",
+   "**/*stmt_squash_validation.py",
+   "**/*squash_steps.py",
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-0",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_expected_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*staging_bypass.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-1",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_max_layer_cache|_entry_point_cache"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_table_hnsw.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-2",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_versioned.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-3",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-4",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_branch_ops.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-5",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*versioning_intent_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-6",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*branch_ops_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-7",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*commit_branch_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-8",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_cached_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_versioned_write_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-9",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision_input"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_squash_validation.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-0-file-10",
+  "source": "file.content",
+  "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*squash_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*staging_bypass.py",
+   "**/*sql_table_hnsw.py",
+   "**/*stmt_versioned.py",
+   "**/*intent_transaction.py",
+   "**/*intent_branch_ops.py",
+   "**/*versioning_intent_steps.py",
+   "**/*branch_ops_steps.py",
+   "**/*commit_branch_steps.py",
+   "**/*sql_versioned_write_transaction.py",
+   "**/*stmt_squash_validation.py",
+   "**/*squash_steps.py",
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-0",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_expected_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*staging_bypass.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-1",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_max_layer_cache|_entry_point_cache"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_table_hnsw.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-2",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_versioned.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-3",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-4",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_branch_ops.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-5",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*versioning_intent_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-6",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*branch_ops_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-7",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*commit_branch_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-8",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_cached_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_versioned_write_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-9",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision_input"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_squash_validation.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-1-file-10",
+  "source": "file.content",
+  "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*squash_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*staging_bypass.py",
+   "**/*sql_table_hnsw.py",
+   "**/*stmt_versioned.py",
+   "**/*intent_transaction.py",
+   "**/*intent_branch_ops.py",
+   "**/*versioning_intent_steps.py",
+   "**/*branch_ops_steps.py",
+   "**/*commit_branch_steps.py",
+   "**/*sql_versioned_write_transaction.py",
+   "**/*stmt_squash_validation.py",
+   "**/*squash_steps.py",
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-0",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_expected_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*staging_bypass.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-1",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_max_layer_cache|_entry_point_cache"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_table_hnsw.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-2",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_versioned.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-3",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-4",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_branch_ops.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-5",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*versioning_intent_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-6",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*branch_ops_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-7",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*commit_branch_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-8",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_cached_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_versioned_write_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-9",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision_input"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_squash_validation.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-2-file-10",
+  "source": "file.content",
+  "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*squash_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "**/*staging_bypass.py",
+   "**/*sql_table_hnsw.py",
+   "**/*stmt_versioned.py",
+   "**/*intent_transaction.py",
+   "**/*intent_branch_ops.py",
+   "**/*versioning_intent_steps.py",
+   "**/*branch_ops_steps.py",
+   "**/*commit_branch_steps.py",
+   "**/*sql_versioned_write_transaction.py",
+   "**/*stmt_squash_validation.py",
+   "**/*squash_steps.py",
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-0",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_expected_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*staging_bypass.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-1",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_max_layer_cache|_entry_point_cache"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_table_hnsw.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-2",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_versioned.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-3",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-4",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*intent_branch_ops.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-5",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*versioning_intent_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-6",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*branch_ops_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-7",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*commit_branch_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-8",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_cached_tip_revision_id"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*sql_versioned_write_transaction.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-9",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_tip_revision_input"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*stmt_squash_validation.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-connection-caches",
+  "clause": "pattern-3-file-10",
+  "source": "file.content",
+  "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+   ]
+  },
+  "content": {
+   "include": [
+    "BranchId|RevisionId|branch_tip|cache|tip_revision"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ],
+  "paths_include": [
+   "**/*squash_steps.py"
+  ],
+  "paths_exclude": [
+   "**/.pytest_cache/**",
+   "**/__pycache__/**",
+   "**/tests/**"
+  ]
+ },
+ {
+  "rule": "data-layer-dynamic-module-loading",
+  "clause": "pattern-0",
+  "source": "file.content",
+  "pattern": "^def\\s+__getattr__\\s*\\(",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "\"\"\"",
+    "'''"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "double",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "'''",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "single",
+      "pattern": "'''",
+      "skip": true
+     },
+     {
+      "from": "double",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "single",
+      "to": "code",
+      "pattern": "'''",
+      "skip": true
+     }
+    ]
+   },
+   "indentation": {
+    "excludeUnder": "TYPE_CHECKING",
+    "reset": "^\\S",
+    "ignore": [
+     "^\\s*#",
+     "^\\s*$"
+    ]
+   }
+  },
+  "content": {
+   "include": [
+    "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-dynamic-module-loading",
+  "clause": "pattern-1",
+  "source": "file.content",
+  "pattern": "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "\"\"\"",
+    "'''"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "double",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "'''",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "single",
+      "pattern": "'''",
+      "skip": true
+     },
+     {
+      "from": "double",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "single",
+      "to": "code",
+      "pattern": "'''",
+      "skip": true
+     }
+    ]
+   },
+   "indentation": {
+    "excludeUnder": "TYPE_CHECKING",
+    "reset": "^\\S",
+    "ignore": [
+     "^\\s*#",
+     "^\\s*$"
+    ]
+   }
+  },
+  "content": {
+   "include": [
+    "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-dynamic-module-loading",
+  "clause": "pattern-2",
+  "source": "file.content",
+  "pattern": "\\b__import__\\s*\\(",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "\"\"\"",
+    "'''"
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "double",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "'''",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "single",
+      "pattern": "'''",
+      "skip": true
+     },
+     {
+      "from": "double",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "single",
+      "to": "code",
+      "pattern": "'''",
+      "skip": true
+     }
+    ]
+   },
+   "indentation": {
+    "excludeUnder": "TYPE_CHECKING",
+    "reset": "^\\S",
+    "ignore": [
+     "^\\s*#",
+     "^\\s*$"
+    ]
+   }
+  },
+  "content": {
+   "include": [
+    "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-dynamic-module-loading",
+  "clause": "pattern-3",
+  "source": "file.content",
+  "pattern": "importlib\\.import_module\\s*\\(",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "\"\"\"",
+    "'''",
+    "^def\\s+__getattr__\\s*\\(",
+    "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
+    "\\b__import__\\s*\\("
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "double",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "'''",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "single",
+      "pattern": "'''",
+      "skip": true
+     },
+     {
+      "from": "double",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "single",
+      "to": "code",
+      "pattern": "'''",
+      "skip": true
+     }
+    ]
+   },
+   "indentation": {
+    "excludeUnder": "TYPE_CHECKING",
+    "reset": "^\\S",
+    "ignore": [
+     "^\\s*#",
+     "^\\s*$"
+    ]
+   }
+  },
+  "content": {
+   "include": [
+    "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-dynamic-module-loading",
+  "clause": "pattern-4",
+  "source": "file.content",
+  "pattern": "\\bimport_module\\s*\\(",
+  "lines": {
+   "first": true,
+   "exclude": [
+    "^\\s*#",
+    "\"\"\"",
+    "'''",
+    "^def\\s+__getattr__\\s*\\(",
+    "\\bglobals\\s*\\(\\s*\\)\\s*\\[.*\\]\\s*=",
+    "\\b__import__\\s*\\("
+   ],
+   "state": {
+    "initial": "code",
+    "emit": [
+     "code"
+    ],
+    "transitions": [
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "double",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "code",
+      "pattern": "'''",
+      "count": {
+       "min": 2
+      },
+      "skip": true
+     },
+     {
+      "from": "code",
+      "to": "single",
+      "pattern": "'''",
+      "skip": true
+     },
+     {
+      "from": "double",
+      "to": "code",
+      "pattern": "\"\"\"",
+      "skip": true
+     },
+     {
+      "from": "single",
+      "to": "code",
+      "pattern": "'''",
+      "skip": true
+     }
+    ]
+   },
+   "indentation": {
+    "excludeUnder": "TYPE_CHECKING",
+    "reset": "^\\S",
+    "ignore": [
+     "^\\s*#",
+     "^\\s*$"
+    ]
+   }
+  },
+  "content": {
+   "include": [
+    "__getattr__\\(|globals\\(\\)\\[|__import__\\(|import_module\\("
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-hasattr-async",
+  "clause": "hasattr",
+  "source": "file.content",
+  "pattern": "hasattr\\s*\\([^,]+,\\s*['\\\"](\\w+_async)['\\\"]",
+  "lines": {
+   "exclude": [
+    "^\\s*#",
+    "_has_sql_template_support_async",
+    "_has_sql_template_support\\b",
+    "hasattr\\(txn._conn, ['\\\"]_execute_template_with_params",
+    "hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn",
+    "_select_one_direct_async",
+    "insert_many_raw_async",
+    "upsert_many_raw_async",
+    "upsert_many_async",
+    "update_async",
+    "delete_async",
+    "delete_all_async",
+    "delete_many_async",
+    "getattr\\(scheme, ['\\\"]resolve_context_async",
+    "getattr\\(graph_scheme, ['\\\"]resolve_context_async",
+    "keyset_paginate_async",
+    "_execute_aggregate_async",
+    "_execute_windowed_async",
+    "_execute_grammar_async",
+    "fetchall_raw_async",
+    "_update_fts_polyfill_index_async"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "data_layer/**/*.py",
+   "impl/common/**/*.py",
+   "impl/sqlite/**/*.py",
+   "impl/postgres/**/*.py",
+   "impl/mariadb/**/*.py",
+   "impl/mongodb/**/*.py",
+   "impl/neo4j/**/*.py",
+   "impl/doltdb/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-hasattr-async",
+  "clause": "getattr",
+  "source": "file.content",
+  "pattern": "getattr\\s*\\([^,]+,\\s*['\\\"](\\w+_async)['\\\"],\\s*None\\s*\\)",
+  "lines": {
+   "exclude": [
+    "^\\s*#",
+    "_has_sql_template_support_async",
+    "_has_sql_template_support\\b",
+    "hasattr\\(txn._conn, ['\\\"]_execute_template_with_params",
+    "hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn",
+    "_select_one_direct_async",
+    "insert_many_raw_async",
+    "upsert_many_raw_async",
+    "upsert_many_async",
+    "update_async",
+    "delete_async",
+    "delete_all_async",
+    "delete_many_async",
+    "getattr\\(scheme, ['\\\"]resolve_context_async",
+    "getattr\\(graph_scheme, ['\\\"]resolve_context_async",
+    "keyset_paginate_async",
+    "_execute_aggregate_async",
+    "_execute_windowed_async",
+    "_execute_grammar_async",
+    "fetchall_raw_async",
+    "_update_fts_polyfill_index_async"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "data_layer/**/*.py",
+   "impl/common/**/*.py",
+   "impl/sqlite/**/*.py",
+   "impl/postgres/**/*.py",
+   "impl/mariadb/**/*.py",
+   "impl/mongodb/**/*.py",
+   "impl/neo4j/**/*.py",
+   "impl/doltdb/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "post-fetch-filter_query_results",
+  "source": "file.content",
+  "pattern": "filter_query_results",
+  "lines": {
+   "first": true,
+   "terminators": "python"
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "docs/**",
+   "api/docs/**",
+   "impl/common/l2070_server_plan/**",
+   "api/impl/common/l2070_server_plan/**",
+   "impl/common/l5200_sql_query/**",
+   "api/impl/common/l5200_sql_query/**",
+   "l4000_permissions/**",
+   "api/l4000_permissions/**",
+   "reqs/**",
+   "api/reqs/**"
+  ],
+  "paths_exclude": [
+   "docs/data_history/**"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "post-fetch-filter_query_results_async",
+  "source": "file.content",
+  "pattern": "filter_query_results_async",
+  "lines": {
+   "first": true,
+   "terminators": "python"
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "docs/**",
+   "api/docs/**",
+   "impl/common/l2070_server_plan/**",
+   "api/impl/common/l2070_server_plan/**",
+   "impl/common/l5200_sql_query/**",
+   "api/impl/common/l5200_sql_query/**",
+   "l4000_permissions/**",
+   "api/l4000_permissions/**",
+   "reqs/**",
+   "api/reqs/**"
+  ],
+  "paths_exclude": [
+   "docs/data_history/**"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "graph-fallback-text",
+  "source": "file.content",
+  "pattern": "grammar_rows_lazy|grammar_row_lazy|fetchone_via_plan|fetchall_via_plan",
+  "lines": {
+   "first": true,
+   "terminators": "python"
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "impl/common/l9700_sql_graph_query/**",
+   "api/impl/common/l9700_sql_graph_query/**"
+  ],
+  "paths_exclude": [
+   "impl/common/l9700_sql_graph_query/sql_graph_query.py",
+   "api/impl/common/l9700_sql_graph_query/sql_graph_query.py"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "inventory-export_cursor.py",
+  "source": "file.path",
+  "pattern": "(?:^|/)export_cursor\\.py$",
+  "lines": null,
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "**/*"
+  ],
+  "paths_exclude": [
+   "impl/doltdb/export_cursor.py",
+   "impl/mariadb/export_cursor.py",
+   "impl/mongodb/export_cursor.py",
+   "impl/neo4j/export_cursor.py",
+   "impl/postgres/export_cursor.py",
+   "impl/sqlite/export_cursor.py",
+   "l3500_bulk_ops/export_cursor.py"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "inventory-fts_searcher.py",
+  "source": "file.path",
+  "pattern": "(?:^|/)fts_searcher\\.py$",
+  "lines": null,
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "**/*"
+  ],
+  "paths_exclude": [
+   "impl/mariadb/fts/fts_searcher.py",
+   "impl/mongodb/fts/fts_searcher.py",
+   "impl/postgres/fts/fts_searcher.py",
+   "impl/read_through/fts_searcher.py",
+   "impl/sqlite/fts/fts_searcher.py"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "inventory-legacy_wrappers.py",
+  "source": "file.path",
+  "pattern": "(?:^|/)legacy_wrappers\\.py$",
+  "lines": null,
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": [
+   "**/*"
+  ],
+  "paths_exclude": [
+   "l2050_transaction/legacy_wrappers.py"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "removed-read-leaves",
+  "source": "file.path",
+  "pattern": "^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$",
+  "lines": null,
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "docs/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l5200_sql_query/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "impl/mariadb/fts/**/*.py",
+   "impl/postgres/fts/**/*.py",
+   "impl/sqlite/fts/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l8000_admin/tools/**/*.py",
+   "l9900_auto_api/**/*.py",
+   "reqs/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.mypy_cache/**",
+   "**/.pytest_cache/**",
+   "**/.ruff_cache/**",
+   "**/.venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**",
+   "**/conform/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-no-blanket-grammar-bypass",
+  "clause": "constant",
+  "source": "file.content",
+  "pattern": "_ALLOW_DIRECT_EXECUTION",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "scripts/lint_impl_direct_execution.py",
+   "scripts/lint_no_blanket_grammar_bypass.py",
+   "scripts/tests/test_lint_no_blanket_grammar_bypass.py"
+  ]
+ },
+ {
+  "rule": "data-layer-no-blanket-grammar-bypass",
+  "clause": "keyword",
+  "source": "file.content",
+  "pattern": "^[^#]*?(?<LOWER>allow_direct_execution)",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "scripts/lint_impl_direct_execution.py",
+   "scripts/lint_no_blanket_grammar_bypass.py",
+   "scripts/tests/test_lint_no_blanket_grammar_bypass.py"
+  ]
+ },
+ {
+  "rule": "data-layer-no-source-inspection",
+  "clause": "inspection-0",
+  "source": "file.content",
+  "pattern": "\\binspect\\.getsource\\s*\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "tests/**/*.py",
+   "conform/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/.pytest_cache/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-no-source-inspection",
+  "clause": "inspection-1",
+  "source": "file.content",
+  "pattern": "\\binspect\\.getsourcelines\\s*\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "tests/**/*.py",
+   "conform/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/.pytest_cache/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-no-source-inspection",
+  "clause": "inspection-2",
+  "source": "file.content",
+  "pattern": "\\binspect\\.getsourcefile\\s*\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "tests/**/*.py",
+   "conform/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/.pytest_cache/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-no-source-inspection",
+  "clause": "inspection-3",
+  "source": "file.content",
+  "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsource\\b",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "tests/**/*.py",
+   "conform/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/.pytest_cache/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-no-source-inspection",
+  "clause": "inspection-4",
+  "source": "file.content",
+  "pattern": "from\\s+inspect\\s+import\\s+.*\\bgetsourcelines\\b",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "tests/**/*.py",
+   "conform/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/.pytest_cache/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-0",
+  "source": "file.content",
+  "pattern": "\\bpyo3\\b",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-1",
+  "source": "file.content",
+  "pattern": "\\bpythonize\\b",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-2",
+  "source": "file.content",
+  "pattern": "\\bPython\\s*<\\s*'_?\\s*>",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-3",
+  "source": "file.content",
+  "pattern": "\\bPyResult\\b",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-4",
+  "source": "file.content",
+  "pattern": "\\bPy[A-Z][A-Za-z0-9_]*\\b",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-5",
+  "source": "file.content",
+  "pattern": "generated_value_is_truthy\\(&runtime::string_value\\(",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-6",
+  "source": "file.content",
+  "pattern": "runtime::string_value\\(\\\"self\\.",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-rust-sql-grammar-boundary",
+  "clause": "pattern-7",
+  "source": "file.content",
+  "pattern": "\\bast\\.dump\\b",
+  "lines": {
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "rust/nera_compiler_sql/src/**/*.rs"
+  ],
+  "scope_exclude": [],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-serverplan-name-inference",
+  "clause": "column-shape",
+  "source": "file.content",
+  "pattern": "(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)).*(?:==|!=)|(?:==|!=).*?(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\))",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true,
+   "include": [
+    "['\\\"](?:count|deleted_count|ok|message|__exists|__result)['\\\"]"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-serverplan-name-inference",
+  "clause": "reference-parse",
+  "source": "file.content",
+  "pattern": "ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\([^\\n]*?['\\\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\\\"]",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-serverplan-name-inference",
+  "clause": "reference-synthesis",
+  "source": "file.content",
+  "pattern": "(?:ref|refs)[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\(\\s*f['\\\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-serverplan-name-inference",
+  "clause": "column-type",
+  "source": "file.content",
+  "pattern": "column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\(",
+  "lines": {
+   "exclude": [
+    "^\\s*#"
+   ],
+   "first": true
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/sql_column_type_hints.py"
+  ],
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "strategy-file-size",
+  "source": "file.content",
+  "pattern": "\\A(?:[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]*(?:\\r\\n|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])){1500}(?<OVERFLOW>[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]+|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])",
+  "lines": null,
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/tmp/**",
+   "**/__pycache__/**"
+  ],
+  "paths_include": [
+   "impl/common/l2070_server_plan/strategies/**/*.py"
+  ],
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-0",
+  "source": "file.content",
+  "pattern": "SqlAdminQuery\\(|import SqlAdminQuery|, SqlAdminQuery",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-1",
+  "source": "file.content",
+  "pattern": "SqlBuiltQuery\\(|import SqlBuiltQuery|, SqlBuiltQuery",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-2",
+  "source": "file.content",
+  "pattern": "SqlDdlStatement\\(|import SqlDdlStatement|, SqlDdlStatement",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-3",
+  "source": "file.content",
+  "pattern": "SqlLegacy\\(|import SqlLegacy|, SqlLegacy",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-4",
+  "source": "file.content",
+  "pattern": "SqlRawSql\\(|import SqlRawSql|, SqlRawSql",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-5",
+  "source": "file.content",
+  "pattern": "SqlRawSqlWithParams\\(|import SqlRawSqlWithParams|, SqlRawSqlWithParams",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-6",
+  "source": "file.content",
+  "pattern": "SqlUnsafe\\(|import SqlUnsafe|, SqlUnsafe",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-7",
+  "source": "file.content",
+  "pattern": "_SqlPrebuiltCondition\\(|import _SqlPrebuiltCondition|, _SqlPrebuiltCondition",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-sql-grammar-escape-hatches",
+  "clause": "usage-8",
+  "source": "file.content",
+  "pattern": "_SqlPrebuiltQuery\\(|import _SqlPrebuiltQuery|, _SqlPrebuiltQuery",
+  "lines": {
+   "first": true,
+   "terminators": "lf",
+   "exclude": [
+    "^\\s*#"
+   ]
+  },
+  "content": {},
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "api/**/*.py",
+   "impl/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/tests/**",
+   "**/test/**"
+  ],
+  "paths_include": null,
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-type-safety-patterns",
+  "clause": "text-str_union_expression",
+  "source": "file.content",
+  "pattern": "\\bstr\\s*\\|\\s*Expression|\\bExpression\\s*\\|\\s*str",
+  "lines": {
+   "first": true
+  },
+  "content": {
+   "include": [
+    "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "impl/common/l2060_query_spec/query_spec.py",
+   "impl/common/l2070_server_plan/base_server_plan.py",
+   "impl/common/l5200_sql_query/_base.py",
+   "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py",
+   "impl/common/l7300_cross_branch/sql_cross_branch_query.py",
+   "l2055_lazy_result/lazy_reads.py",
+   "l2055_lazy_result/query_spec.py",
+   "l9700_graph_query/graph_pattern.py"
+  ]
+ },
+ {
+  "rule": "data-layer-type-safety-patterns",
+  "clause": "text-str_union_field",
+  "source": "file.content",
+  "pattern": "\\bstr\\s*\\|\\s*Field|\\bField\\s*\\|\\s*str",
+  "lines": {
+   "first": true
+  },
+  "content": {
+   "include": [
+    "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "impl/common/l2060_query_spec/query_spec.py",
+   "impl/common/l5200_sql_query/_base.py",
+   "impl/common/l7300_cross_branch/sql_cross_branch_query.py",
+   "impl/mongodb/query.py",
+   "l2060_query_builder/plan_query_builder.py"
+  ]
+ },
+ {
+  "rule": "data-layer-type-safety-patterns",
+  "clause": "text-expression_any_any",
+  "source": "file.content",
+  "pattern": "\\bExpression\\s*\\[\\s*Any\\s*,\\s*Any\\s*\\]",
+  "lines": {
+   "first": true
+  },
+  "content": {
+   "include": [
+    "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": [
+   "impl/common/l2070_server_plan/steps/intent_cross_branch.py",
+   "impl/common/l2070_server_plan/steps/intent_history.py",
+   "impl/common/l2070_server_plan/steps/intent_versioning.py",
+   "impl/common/l2100_sql_grammar/versioned_aggregate.py",
+   "impl/common/l4000_policy_expression/translator.py",
+   "impl/common/l7300_cross_branch/permission_expression_compiler.py",
+   "impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py",
+   "impl/neo4j/backend_operations.py",
+   "l1000_schema/typed_field.py",
+   "l2000_connection/versioned_protocols.py",
+   "l2050_transaction/transaction.py",
+   "l2055_lazy_result/execution_context.py",
+   "l2055_lazy_result/lazy_reads.py",
+   "l2055_lazy_result/query_spec.py",
+   "l2060_query_builder/plan_query_builder.py",
+   "l2060_query_builder/query_builder.py",
+   "l2060_query_builder/tuple_query.py",
+   "l2080_lazy_orm/lazy_column.py",
+   "l2080_lazy_orm/lazy_table.py",
+   "l4000_permissions/permission_enforcement.py",
+   "l4000_permissions/policy_expressions.py",
+   "l4100_queue/hooks.py",
+   "l7200_versioned_transactions/revision_history_query.py",
+   "l7200_versioned_transactions/versioned_transactions.py"
+  ]
+ },
+ {
+  "rule": "data-layer-type-safety-patterns",
+  "clause": "text-deprecated_comparison_op",
+  "source": "file.content",
+  "pattern": "\\b(_lt|_gt|_le|_ge|_eq|_ne)\\s*[=:]",
+  "lines": {
+   "first": true
+  },
+  "content": {
+   "include": [
+    "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": []
+ },
+ {
+  "rule": "data-layer-type-safety-patterns",
+  "clause": "text-deprecated_filter_method",
+  "source": "file.content",
+  "pattern": "\\.filter_(gt|gte|lt|lte|ne|in|eq)\\s*\\(",
+  "lines": {
+   "first": true
+  },
+  "content": {
+   "include": [
+    "str|Expression|Field|Any|_lt|_gt|_le|_ge|filter_"
+   ]
+  },
+  "match_include": [],
+  "match_exclude": [],
+  "scope_include": [
+   "impl/**/*.py",
+   "data_layer/**/*.py",
+   "_internal/**/*.py",
+   "l1000_cache/**/*.py",
+   "l1000_schema/**/*.py",
+   "l1050_model_registry/**/*.py",
+   "l1050_polymorphism/**/*.py",
+   "l1100_exceptions/**/*.py",
+   "l1200_capabilities/**/*.py",
+   "l1200_content_hash/**/*.py",
+   "l1200_json/**/*.py",
+   "l1200_versioned_ids/**/*.py",
+   "l1250_security/**/*.py",
+   "l1300_session/**/*.py",
+   "l1350_foundational_types/**/*.py",
+   "l1400_config/**/*.py",
+   "l1400_types/**/*.py",
+   "l1450_index_policy_contracts/**/*.py",
+   "l1450_keys/**/*.py",
+   "l1470_matching_contracts/**/*.py",
+   "l1500_llm/**/*.py",
+   "l1900_retry/**/*.py",
+   "l2000_connection/**/*.py",
+   "l2050_transaction/**/*.py",
+   "l2055_lazy_result/**/*.py",
+   "l2060_query_builder/**/*.py",
+   "l2070_batching/**/*.py",
+   "l2080_lazy_orm/**/*.py",
+   "l2090_byte_tracking/**/*.py",
+   "l2090_response/**/*.py",
+   "l2091_rtt_tracking/**/*.py",
+   "l2092_timing_tracking/**/*.py",
+   "l2100_include/**/*.py",
+   "l2110_limits/**/*.py",
+   "l2150_prepared_cache/**/*.py",
+   "l2200_notification/**/*.py",
+   "l2500_binary_diff/**/*.py",
+   "l3000_schema_builder/**/*.py",
+   "l3100_schema_introspector/**/*.py",
+   "l3150_schema_diff/**/*.py",
+   "l3200_metadata/**/*.py",
+   "l3250_migrations/**/*.py",
+   "l3260_startup/**/*.py",
+   "l3500_bulk_ops/**/*.py",
+   "l4000_permissions/**/*.py",
+   "l4050_background_reaper/**/*.py",
+   "l4100_queue/**/*.py",
+   "l4150_scheduler/**/*.py",
+   "l4170_inbound_bridge/**/*.py",
+   "l4200_event_pipeline/**/*.py",
+   "l4250_timers/**/*.py",
+   "l4300_ipc/**/*.py",
+   "l4300_timers/**/*.py",
+   "l4350_timer_driver/**/*.py",
+   "l4400_scheduler/**/*.py",
+   "l4500_trust/**/*.py",
+   "l5000_search_index_policy/**/*.py",
+   "l5000_subscriptions/**/*.py",
+   "l5100_fts/**/*.py",
+   "l5100_llm_router/**/*.py",
+   "l5175_chunking/**/*.py",
+   "l5195_embedding_compute_tables/**/*.py",
+   "l5200_vector_index/**/*.py",
+   "l5250_matching/**/*.py",
+   "l5300_config_compatibility/**/*.py",
+   "l6000_log_table/**/*.py",
+   "l6300_config/**/*.py",
+   "l6500_evidence/**/*.py",
+   "l6510_credentials/**/*.py",
+   "l6520_auth/**/*.py",
+   "l6530_managed_secrets/**/*.py",
+   "l6600_cleanup/**/*.py",
+   "l7000_versioned_schema/**/*.py",
+   "l7100_versioned_operations/**/*.py",
+   "l7200_versioned_transactions/**/*.py",
+   "l7250_versioned_operations/**/*.py",
+   "l7350_versioned_timer_driver/**/*.py",
+   "l7390_versioned_diff_entrypoint/**/*.py",
+   "l7400_versioned_diff/**/*.py",
+   "l7450_versioned_revert/**/*.py",
+   "l7500_commit_triggers/**/*.py",
+   "l7800_versioned_merge/**/*.py",
+   "l7900_versioned_rebase/**/*.py",
+   "l8000_admin/**/*.py",
+   "l8100_ops_analytics/**/*.py",
+   "l9600_graphs/**/*.py",
+   "l9700_graph_query/**/*.py",
+   "l9710_graph_algorithms/**/*.py",
+   "l9720_sparql/**/*.py",
+   "l9750_graphql/**/*.py",
+   "l9800_rippling/**/*.py",
+   "l9850_workflow/**/*.py",
+   "l9875_mcp/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "scope_exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/__pycache__/**",
+   "**/tmp/**",
+   "**/test/**",
+   "**/tests/**"
+  ],
+  "paths_include": [
+   "**/*.py"
+  ],
+  "paths_exclude": []
+ }
+]

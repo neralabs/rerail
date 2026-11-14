@@ -135,7 +135,7 @@ A pack must pass:
 1. **Package:** `package.json` is a pack's, named for its `pack.json` `id` and installed under that name.
 2. **`pack.json`:** valid, and every listed document exists.
 3. **Core range:** includes the active Rerail's version.
-4. **Compilation:** every code rule compiles.
+4. **Compilation:** every code rule compiles, or is refused only for reading a token a tape may leave out.
 5. **No clash:** no other loading pack has its pack id or one of its rules.
 
 <details>
@@ -146,7 +146,7 @@ The catalog reads only packs the packs folder's `package.json` lists as its own 
 1. **Package.** `package.json` matches `rulePackPackageSchema`, named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`. So `@neralabs/rerail-pack-foo` in a `rerail-pack-foo` folder is left out (`it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo`): no package borrows Rerail's publisher.
 2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id.
 3. **Core range.** Prereleases included.
-4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language; any other refusal leaves the pack out.
+4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone is skipped where a repository runs it and reported, with the engine's reason, as any rule that fails to compile when it loads. A newer version of the pack runs it again. Any other refusal leaves the pack out.
 5. **No clash.** Rerail's own wins (`pack id sql is taken by @neralabs/rerail-pack-sql`); between third parties, the first by package name. Install location never decides. While Rerail's own pack for an id is installed but left out (by its core range, say), the other is left out too (`pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out`). Repositories adding the id run nothing until Rerail's loads.
 
 Reasons are written for the person reading set-up, `rerail packs list` or `rerail update`:

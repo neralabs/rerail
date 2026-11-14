@@ -1,0 +1,202 @@
+// vue/component: a component's script, read as eslint-plugin-vue reads it: the component object (Options API),
+// its options and the names they declare, computed getters, setup(), and <script setup>'s macros.
+// The script is a guest tree of the .vue document (vue/code.rr): its program is the script block's.
+//
+// Interface:
+//   vscript(p, setup)       p is the program of a <script> block; setup is "true" for <script setup>
+//   vsetup_doc(d)           document d has a <script setup>;  vin_setup(n): n is its code;  vin_script(n): any script's
+//   vcomp(o)                object o is a component (utils.getVueObjectType): `export default {…}` outside
+//                           <script setup>, defineComponent({…}), createApp({…}), component("x", {…}),
+//                           Vue.component / mixin / extend, app.component / mixin, defineNuxtComponent, new Vue({…}),
+//                           or an object right after a `// @vue/component` comment
+//   vopt(o, x, h, v)        o's option x: property h (a pair, or a method `data() {}`) with value v (h for a method)
+//   vname(o, g, x, n)       o's option g declares the name x at node n (utils.iterateProperties): props, computed,
+//                           methods (array strings or object keys), data, asyncData, setup (keys of the object the
+//                           function returns)
+//   vcomputed(o, x, f)      f is the getter of o's computed property x: `x() {}`, `x: () => …`, `x: { get() {} }`
+//   vsetup(o, f)            f is o's setup function: `setup(props) {}` or `setup: (props) => {}`
+//   vvue_call(c, x)         c calls Vue's API x (computed, watch, ref, …): imported from vue, @vue/composition-api,
+//                           @nuxtjs/composition-api or #imports, or a free global x (auto-imports)
+//   vvue_import_call(c, x)  the same, imported only (ReferenceTracker's ESM map): `import { watch } from "vue"`
+//   vcomputed_fn(c, f)      f is the getter of composition computed(c), imported: computed(() => …), computed({ get() {} })
+//   vmacro(c, x)            c is <script setup>'s compiler macro x: defineProps, withDefaults, defineEmits, defineModel,
+//                           as a top-level declarator's value or expression statement (defineProps also inside
+//                           withDefaults there)
+//   vprops_call(c)          c is defineProps(…) (also inside withDefaults(defineProps(…), …))
+//   vprop_name(c, x, n)     the props c declares: defineProps(['a']), defineProps({ a: … }), defineProps<{ a: T }>()
+//
+//   export default { props: ['a'], computed: { b() { return 1 } }, data() { return { c: 1 } } }
+//     vcomp(o); vname(o, "props", "a", …), vname(o, "computed", "b", …), vname(o, "data", "c", …); vcomputed(o, "b", f)
+#include "vue/code.rr"
+#include "tsx/eslint-a-common.rr"
+//   deparen(e, x), key_static(k, x), static_prop(n, o, x), call_arg(c, a, i), function_node(f)
+
+// ---- script blocks ---------------------------------------------------------------------------------------------------
+.decl vscript(p: node, setup: symbol)
+vscript(p, s) :- kind(se, "script_element"), child(se, raw, _), kind(raw, "raw_text"), parsed(raw, g, p),
+    (g = "javascript" ; g = "typescript" ; g = "tsx"), child(se, t, 0), (vscript_setup(t), s = "true" ;
+    !vscript_setup(t), s = "false").
+.decl vscript_setup(t: node)  // a start tag with a `setup` attribute: <script setup lang="ts">
+vscript_setup(t) :- kind(t, "start_tag"), child(t, a, _), kind(a, "attribute"), child(a, n, 0),
+    kind(n, "attribute_name"), text(n, "setup").
+.decl vsetup_doc(d: number)  // document d has a <script setup>
+vsetup_doc(d) :- vscript(p, "true"), docof(p, d).
+.decl vin_setup(n: node)  // n is code of <script setup>
+vin_setup(n) :- vscript(p, "true"), within(n, p).
+
+// ---- the component object ------------------------------------------------------------------------------------------
+.decl vcomp(o: node)
+vcomp(o) :- kind(e, "export_statement"), field(e, "value", w), deparen(w, o), kind(o, "object"),
+    vscript(p, "false"), child(p, e, _).  // `export default {} as X` is none (isVueComponentFile)
+vcomp(o) :- kind(c, "call_expression"), vdefiner(c), vlast_arg(c, o).
+vcomp(o) :- kind(c, "new_expression"), field(c, "constructor", f), text(f, "Vue"), call_arg(c, a, 0), vskip_as(a, o),
+    kind(o, "object").
+vcomp(o) :- kind(o, "object"), vin_script(o), line(o, l), comment(k, s), contains("@vue/component", s),
+    end_line(k, l - 1), docof(k, d), docof(o, d).
+.decl vin_script(n: node)
+vin_script(n) :- vscript(p, _), within(n, p).
+// vunwrap(e, x): e without parentheses and TypeScript's `as` / `satisfies`: export default {} as Component.
+.decl vunwrap(e: node, x: node)
+vunwrap(e, x) :- deparen(e, y), !vcast(y), x = y.
+vunwrap(e, x) :- deparen(e, y), vcast(y), child(y, z, 0), vunwrap(z, x).
+.decl vcast(y: node)
+vcast(y) :- kind(y, "as_expression") ; kind(y, "satisfies_expression") ; kind(y, "non_null_expression").
+.decl vlast_arg(c: node, o: node)  // o is c's last argument, an object
+vlast_arg(c, o) :- call_arg_count(c, k), call_arg(c, a, k - 1), vskip_as(a, o), kind(o, "object").
+// vdefiner(c): the calls whose last object argument is a component.
+.decl vdefiner(c: node)
+vdefiner(c) :- field(c, "function", f), static_prop(f, w, x), vskip_as(w, o), kind(o, "identifier"), text(o, "Vue"),
+    (x = "component" ; x = "mixin" ; x = "extend").
+vdefiner(c) :- field(c, "function", f), static_prop(f, w, x), vskip_as(w, o), kind(o, "identifier"), !text(o, "Vue"),
+    (x = "component" ; x = "mixin").
+// vskip_as(e, x): skipTSAsExpression, `as` only: (Vue as VueConstructor).extend({…}).
+.decl vskip_as(e: node, x: node)
+vskip_as(e, x) :- deparen(e, x), !kind(x, "as_expression").
+vskip_as(e, x) :- deparen(e, y), kind(y, "as_expression"), child(y, z, 0), vskip_as(z, x).
+vdefiner(c) :- field(c, "function", f), kind(f, "identifier"), text(f, "defineNuxtComponent").
+vdefiner(c) :- field(c, "function", f), kind(f, "identifier"), text(f, x),
+    (x = "component" ; x = "createApp" ; x = "defineComponent"), vdefiner_callee(f).
+// vdefiner_callee(f): isGlobalOrImportedFromVue. Any name counts unless it is bound elsewhere for sure: a named
+// import from another package, a function, class or catch binding, or `const { f } = require("other")`.
+//   import defineComponent from "x"; let createApp = make(); const defineComponent = (o) => o     all count
+.decl vdefiner_callee(f: node)
+vdefiner_callee(f) :- kind(f, "identifier"), !vforeign(f).
+.decl vforeign(f: node)
+vforeign(f) :- kind(f, "identifier"), ref_site(f, s), kind(s, "import_specifier"), import_binding(s, _, m, _),
+    !vue_package(m).
+vforeign(f) :- kind(f, "identifier"), ref_site(f, s), site_form(s, k), (k = "function" ; k = "class" ; k = "catch").
+vforeign(f) :- kind(f, "identifier"), ref_site(f, s), pattern_name(s, _, d), field(d, "name", l),
+    kind(l, "object_pattern"), field(d, "value", w), deparen(w, c), kind(c, "call_expression"), field(c, "function", g),
+    text(g, "require"), !vrequire_vue(c).
+.decl vrequire_vue(c: node)
+vrequire_vue(c) :- kind(c, "call_expression"), call_arg(c, a, 0), str(a, m), vue_package(m).
+// vfrom_vue(r): identifier r is free (a global or an auto-import) or imported from a Vue package.
+.decl vfrom_vue(r: node)
+vfrom_vue(r) :- kind(r, "identifier"), !ref_site(r, _).
+vfrom_vue(r) :- ref_site(r, s), import_binding(s, _, m, _), vue_package(m).
+.decl vue_package(m: symbol)
+vue_package("vue"). vue_package("@vue/composition-api"). vue_package("@nuxtjs/composition-api"). vue_package("#imports").
+
+// ---- options and the names they declare ---------------------------------------------------------------------------
+.decl vopt(o: node, x: symbol, h: node, v: node)
+vopt(o, x, h, v) :- vcomp(o), child(o, h, _), kind(h, "pair"), field(h, "key", k), key_static(k, x),
+    field(h, "value", w), vunwrap(w, v).
+vopt(o, x, h, h) :- vcomp(o), child(o, h, _), kind(h, "method_definition"), field(h, "name", k), key_static(k, x).
+// vprop_key(o, p, x, k): property p of object o has the static key x at node k (pairs, methods, shorthands).
+.decl vprop_key(o: node, p: node, x: symbol, k: node)
+vprop_key(o, p, x, k) :- kind(o, "object"), child(o, p, _), (kind(p, "pair") ; kind(p, "method_definition")),
+    (field(p, "key", k) ; field(p, "name", k)), key_static(k, x).
+vprop_key(o, p, x, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
+// vname: utils.iterateProperties. The option's value is read the same way for every group: an array gives its
+// string items, an object its static keys (`['a']` is one, `[a]` is not; a setter beside its getter counts once), a
+// function the keys of the objects its body's own top-level `return {…}` statements give, an arrow with an object
+// body that object.
+//   props: ['a'], computed: { b() {} }, data() { return { c: 1 } }, setup: () => ({ d })     a, b, c, d
+.decl vname(o: node, g: symbol, x: symbol, n: node)
+vname(o, g, x, s) :- vgroup_value(o, g, c), kind(c, "array"), child(c, s, _), (kind(s, "string") ;
+    kind(s, "template_string")), value(s, x).
+vname(o, g, x, k) :- vgroup_value(o, g, c), kind(c, "object"), vprop_key(c, p, x, k), !vshadowed_setter(c, p, x).
+.decl vgroup_value(o: node, g: symbol, c: node)
+vgroup_value(o, g, v) :- vopt(o, g, h, v), h != v, (kind(v, "array") ; kind(v, "object")).
+vgroup_value(o, g, r) :- vopt(o, g, h, v), vopt_fn(h, v, f), field(f, "body", b), kind(b, "statement_block"),
+    child(b, ret, _), kind(ret, "return_statement"), child(ret, x, 0), kind(x, "object"), r = x.
+vgroup_value(o, g, r) :- vopt(o, g, h, v), vopt_fn(h, v, f), kind(f, "arrow_function"), field(f, "body", b),
+    vunwrap(b, r), kind(r, "object").
+// vshadowed_setter: `set x() {}` beside `get x() {}`. Each getter pairs with one setter, the first.
+.decl vshadowed_setter(c: node, p: node, x: symbol)
+vshadowed_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, _, x, "get"), !vlater_setter(c, p, x).
+.decl vlater_setter(c: node, p: node, x: symbol)
+vlater_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, q, x, "set"), earlier(q, p).
+.decl vaccessor(c: node, p: node, x: symbol, w: symbol)
+vaccessor(c, p, x, w) :- vprop_key(c, p, x, _), kind(p, "method_definition"), op(p, w), (w = "get" ; w = "set").
+.decl vopt_fn(h: node, v: node, f: node)
+vopt_fn(h, h, h) :- kind(h, "method_definition").
+vopt_fn(h, v, v) :- kind(h, "pair"), function_node(v).
+// vfn_returns(f, x): x is what function f returns, from its own code: `return x`, or an arrow's expression body.
+.decl vfn_returns(f: node, x: node)
+vfn_returns(f, x) :- function_node(f), field(f, "body", b), !kind(b, "statement_block"), x = b.
+vfn_returns(f, x) :- function_node(f), field(f, "body", b), kind(b, "statement_block"), has(b, r, "return_statement"),
+    nearest(r, f, vfn_kind), child(r, x, 0).
+.decl vfn_kind(k: symbol)
+vfn_kind(k) :- function_kind(k).
+
+// ---- computed properties ---------------------------------------------------------------------------------------------
+.decl vcomputed(o: node, x: symbol, f: node)
+vcomputed(o, x, f) :- vopt(o, "computed", _, v), vprop_key(v, p, x, _), vgetter(p, f).
+// vgetter(p, f): property p's getter: a method, a function value, or the `get` of an object value.
+.decl vgetter(p: node, f: node)
+vgetter(p, p) :- kind(p, "method_definition"), !op(p, "get"), !op(p, "set").
+vgetter(p, f) :- kind(p, "pair"), field(p, "value", w), vunwrap(w, f), function_node(f).
+vgetter(p, f) :- kind(p, "pair"), field(p, "value", w), vunwrap(w, v), kind(v, "object"), vprop_key(v, q, "get", _),
+    vgetter(q, f).
+.decl vsetup(o: node, f: node)
+vsetup(o, f) :- vopt(o, "setup", h, v), vopt_fn(h, v, f).
+
+// ---- the Composition API ---------------------------------------------------------------------------------------------
+.decl vvue_call(c: node, x: symbol)
+vvue_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
+    text(f, x), vfrom_vue(f).
+vvue_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), static_prop(f, o, x),
+    kind(o, "identifier"), ref_site(o, s), import_binding(s, _, m, "*"), vue_package(m).
+.decl vvue_import_call(c: node, x: symbol)
+vvue_import_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
+    text(f, x), ref_site(f, s), import_binding(s, _, m, _), vue_package(m).
+vvue_import_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), static_prop(f, o, x),
+    kind(o, "identifier"), ref_site(o, s), import_binding(s, _, m, "*"), vue_package(m).
+.decl vcomputed_fn(c: node, f: node)
+vcomputed_fn(c, f) :- vvue_import_call(c, "computed"), call_arg(c, a, 0), vunwrap(a, f), function_node(f).
+vcomputed_fn(c, f) :- vvue_import_call(c, "computed"), call_arg(c, a, 0), vunwrap(a, v), kind(v, "object"),
+    vprop_key(v, q, "get", _), vgetter(q, f).
+
+// ---- <script setup> macros -------------------------------------------------------------------------------------------
+.decl vmacro(c: node, x: symbol)
+vmacro(c, x) :- kind(c, "call_expression"), vin_setup(c), field(c, "function", f), kind(f, "identifier"), text(f, x),
+    vmacro_name(x), !ref_site(f, _), (vmacro_site(c) ; x = "defineProps", vmacro_site(w), kind(w, "call_expression"),
+    field(w, "function", g), text(g, "withDefaults"), call_arg(w, a, 0), deparen(a, c)).
+// vmacro_site(c): where a macro is looked for: the value of a top-level declarator, or a top-level expression
+// statement, of <script setup>. `let p; p = defineProps()` is none.
+.decl vmacro_site(c: node)
+vmacro_site(c) :- vscript(p, "true"), child(p, st, _), (kind(st, "lexical_declaration") ;
+    kind(st, "variable_declaration")), child(st, d, _), kind(d, "variable_declarator"), field(d, "value", w),
+    deparen(w, c).
+vmacro_site(c) :- vscript(p, "true"), child(p, st, _), kind(st, "expression_statement"), child(st, w, 0), deparen(w, c).
+.decl vmacro_name(x: symbol)
+vmacro_name("defineProps"). vmacro_name("withDefaults"). vmacro_name("defineEmits"). vmacro_name("defineModel").
+vmacro_name("defineExpose"). vmacro_name("defineSlots"). vmacro_name("defineOptions").
+.decl vprops_call(c: node)
+vprops_call(c) :- vmacro(c, "defineProps").
+.decl vprop_name(c: node, x: symbol, n: node)
+vprop_name(c, x, s) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, v), kind(v, "array"), child(v, s, _),
+    kind(s, "string"), str(s, x).
+vprop_name(c, x, k) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, v), kind(v, "object"), vprop_key(v, _, x, k).
+// defineProps<{ a: string; b?: number }>(): the type literal's property names.
+vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0), kind(t, "object_type"),
+    child(t, m, _), kind(m, "property_signature"), field(m, "name", k), key_static(k, x).
+// defineProps<Props>() with `interface Props { … }` or `type Props = { … }` in the same file.
+vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0), kind(t, "type_identifier"),
+    text(t, y), vprops_type(y, body), child(body, m, _), kind(m, "property_signature"), field(m, "name", k),
+    key_static(k, x).
+.decl vprops_type(y: symbol, body: node)
+vprops_type(y, b) :- kind(i, "interface_declaration"), vin_script(i), field(i, "name", n), text(n, y), field(i, "body", b).
+vprops_type(y, b) :- kind(i, "type_alias_declaration"), vin_script(i), field(i, "name", n), text(n, y),
+    field(i, "value", b), kind(b, "object_type").

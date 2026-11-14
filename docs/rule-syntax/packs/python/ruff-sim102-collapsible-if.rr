@@ -1,0 +1,52 @@
+.policy "ruff-sim102-collapsible-if" revision 2
+.description "Collapse an if whose only statement is another if without else into one if joined with and; version, platform and TYPE_CHECKING checks are exempt."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM102 (flake8-simplify): an `if` whose body is just another `if`, with no `elif` or `else` on the
+// inner one. Ruff looks at the last branch of the outer statement: the `if` itself when it has no `elif` or
+// `else`, else its last `elif` (reported there); an `else` at the end rules it out. As in Ruff, the outer
+// `if`'s own body must also be one statement. Skipped: a test of `True`/`False` or `__name__ == "__main__"`,
+// and an outer `if` testing `sys.version_info`, `sys.platform` or `TYPE_CHECKING`. Three nested ifs give two
+// findings, as in Ruff. Ruff's fix is safe only in preview; none here.
+//   if a:                  ← SIM102: if a and b:
+//       if b: …
+//   if a: …
+//   elif b:                ← SIM102 (collapsible-elif)
+//       if c: …
+//   if a:                  not reported: the inner `if` has an `else`
+//       if b: …
+//       else: …
+#include "python/simplify.rr"
+//   sim_exempt_if(i); py_orelse, body_stmt, body_len from python/ast
+
+.violation SIM102(at: node) code "SIM102" "Use a single `if` statement instead of nested `if` statements"
+    suppress ruff "SIM102"
+.violation SIM102_elif(at: node) code "SIM102"
+    "Merge this `elif` and the `if` nested inside it into one `elif` whose conditions are joined with `and`."
+    suppress ruff "SIM102"
+SIM102(s) :- collapsible(s, s).
+SIM102_elif(c) :- collapsible(s, c), c != s.
+
+// branch(s, c, b): if statement s, its one statement in the body, ends in the branch c (s itself, or its
+// last elif) with body b, whose test Ruff would merge.
+.decl branch(s: node, c: node, b: node)
+branch(s, s, b) :- short_if(s), !py_orelse(s, _), field(s, "consequence", b), mergeable_test(s).
+branch(s, c, b) :- short_if(s), child(s, c, _), kind(c, "elif_clause"), !py_orelse(c, _),
+    field(c, "consequence", b), mergeable_test(c).
+.decl short_if(s: node)
+short_if(s) :- kind(s, "if_statement"), field(s, "consequence", b), body_len(b, k), k <= 1.
+.decl mergeable_test(c: node)
+mergeable_test(c) :- (kind(c, "if_statement") ; kind(c, "elif_clause")), field(c, "condition", t), unparen(t, m),
+    !kind(m, "true"), !kind(m, "false"), !main_check(m).
+// main_check(m): `__name__ == "__main__"`, the name first, with any one comparison operator.
+.decl main_check(m: node)
+main_check(m) :- kind(m, "comparison_operator"), child(m, n, 0), text(n, "__name__"), kind(n, "identifier"),
+    child(m, s, 1), kind(s, "string"), text(s, t), match("[uUrR]?[\"']+__main__[\"']+", t), !child(m, _, 2).
+// plain_if(b, i): body b is the one statement i, an if with no elif or else.
+.decl plain_if(b: node, i: node)
+plain_if(b, i) :- body_len(b, 1), body_stmt(b, i, 0), kind(i, "if_statement"), !py_orelse(i, _).
+
+.decl collapsible(s: node, c: node)
+collapsible(s, c) :- branch(s, c, b), plain_if(b, _), !sim_exempt_if(s).

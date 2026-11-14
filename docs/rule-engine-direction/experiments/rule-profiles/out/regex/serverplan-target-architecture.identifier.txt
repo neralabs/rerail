@@ -1,0 +1,7 @@
+^(?:BatchedStep|BatchingStrategy|CompoundSequenceStrategy|DependentReadCteStrategy|HomogeneousCteStrategy|JsonAggregationStrategy|SqliteReadSiblingBatchStrategy)$
+^(?:dataclass)$
+^(?:driver_round_trips|query_rtts|round_trips)$
+^(?:execution_receipt|receipt)$
+^(?:getattr)$
+^(?:isinstance)$
+^(?:step_tags)$

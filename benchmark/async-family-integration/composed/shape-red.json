@@ -1,0 +1,657 @@
+{
+  "passed": false,
+  "failures": [
+    "Whole-job executions exceed 100: 3849.",
+    "Expected one composed evaluation per bounded batch, plus final composition: 0.",
+    "The job still publishes intermediate rule relations to SQL tables."
+  ],
+  "executions": 3849,
+  "relational_executions": 0,
+  "chunks": 72,
+  "vm_steps": 336517,
+  "evaluation_vm_steps": 0,
+  "sql_bytes": [],
+  "publication": [
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 4000000,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 1680
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs",
+      "nanoseconds": 2000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p1_ASYNC221(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target/engine materialize",
+      "nanoseconds": 2000000,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_api_target SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 16680
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 2000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE async_path_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs",
+      "nanoseconds": 1000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p0_ASYNC210(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs/engine materialize",
+      "nanoseconds": 1000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p0_ASYNC210 SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 1008
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 887,
+      "group": "local/run/setup",
+      "nanoseconds": 1000000,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.async_path_target",
+      "vmSteps": 4365
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 674,
+      "group": "local/run/setup",
+      "nanoseconds": 1000000,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_http_verb",
+      "vmSteps": 3726
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q2_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 1000000,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q2_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 1680
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 13,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.async_path_target",
+      "vmSteps": 63
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 4,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p0_ASYNC210",
+      "vmSteps": 36
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 3,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p1_ASYNC221",
+      "vmSteps": 33
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 12,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p1_async_mode_target",
+      "vmSteps": 60
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 2,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p2_ASYNC222",
+      "vmSteps": 30
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 1,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p3_ASYNC230",
+      "vmSteps": 27
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 7,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_api_target",
+      "vmSteps": 45
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 11,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_http",
+      "vmSteps": 57
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 10,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_http_verb",
+      "vmSteps": 54
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 6,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q1_async_api_target",
+      "vmSteps": 42
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 9,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q1_async_runs",
+      "vmSteps": 51
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 5,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q2_async_api_target",
+      "vmSteps": 39
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 8,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q3_async_api_target",
+      "vmSteps": 48
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE async_path_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p1_async_mode_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http_verb(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q1_async_runs(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q3_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO async_path_target VALUES (?)",
+      "vmSteps": 13
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p1_async_mode_target VALUES (?)",
+      "vmSteps": 13
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http VALUES (?), (?)",
+      "vmSteps": 30
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http_verb VALUES (?), (?), (?), (?), (?), (?), (?), (?), (?), (?)",
+      "vmSteps": 118
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q1_async_runs VALUES (?), (?), (?)",
+      "vmSteps": 41
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q3_async_api_target VALUES (?), (?), (?)",
+      "vmSteps": 41
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p2_ASYNC222(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p3_ASYNC230(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs/engine materialize",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p1_ASYNC221 SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 1008
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs/engine materialize",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p2_ASYNC222 SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 1008
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/outputs/engine materialize",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p3_ASYNC230 SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 1008
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 284,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p0_ASYNC210",
+      "vmSteps": 2556
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 213,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p1_ASYNC221",
+      "vmSteps": 2343
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 816,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p1_async_mode_target",
+      "vmSteps": 4152
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 142,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p2_ASYNC222",
+      "vmSteps": 2130
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 71,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.p3_ASYNC230",
+      "vmSteps": 1917
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 413,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 59,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_api_target",
+      "vmSteps": 2655
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 745,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q0_async_http",
+      "vmSteps": 3939
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 354,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 59,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q1_async_api_target",
+      "vmSteps": 2478
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 603,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q1_async_runs",
+      "vmSteps": 3513
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 295,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 59,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q2_async_api_target",
+      "vmSteps": 2301
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 532,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.q3_async_api_target",
+      "vmSteps": 3300
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q1_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 0,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q1_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 1680
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q1_rr_python_qualified_async_reference_async_api_target/engine materialize",
+      "nanoseconds": 0,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q1_async_api_target SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 13080
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q2_rr_python_qualified_async_reference_async_api_target/engine materialize",
+      "nanoseconds": 0,
+      "runs": 60,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q2_async_api_target SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 4440
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p1_async_mode_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http_verb(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q1_async_runs(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q3_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO async_path_target VALUES (?)",
+      "vmSteps": 936
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p1_async_mode_target VALUES (?)",
+      "vmSteps": 936
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http VALUES (?), (?)",
+      "vmSteps": 2160
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http_verb VALUES (?), (?), (?), (?), (?), (?), (?), (?), (?), (?)",
+      "vmSteps": 8496
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q1_async_runs VALUES (?), (?), (?)",
+      "vmSteps": 2952
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/views and tables",
+      "nanoseconds": 0,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q3_async_api_target VALUES (?), (?), (?)",
+      "vmSteps": 2952
+    }
+  ],
+  "wave": []
+}

@@ -1,0 +1,116 @@
+.policy "react-no-deprecated" revision 2
+.description "Replace deprecated React APIs, such as ReactDOM.render, React.createClass, React.PropTypes and unprefixed componentWillMount, with their current equivalents."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-deprecated: a use of an API React deprecated (every entry applies at the latest React, which the
+// recording assumes). Four forms, each named "Module.member" as the plugin names it:
+//   React.createClass(…)   ReactDOM.render(…)   this.transferPropsTo()      a member expression, by its text
+//   import { render } from "react-dom";                                     an import specifier
+//   const { PropTypes } = React;   const { render } = require("react-dom"); a destructured property
+//   class A extends React.Component { componentWillMount() {} }             a lifecycle member of a component
+// React's name is the pragma (`/** @jsx Foo */` makes it Foo.createClass); the other modules' names are fixed.
+#include "tsx/react-class.rr"
+
+.violation api(at: node, old: symbol, new: symbol)
+    code "react/no-deprecated"
+    "Replace {old} with {new}; React has removed it."
+    suppress eslint "react/no-deprecated"
+.violation api_gone(at: node, old: symbol)
+    code "react/no-deprecated"
+    "Remove {old}; React has removed it, with no replacement."
+    suppress eslint "react/no-deprecated"
+.violation lifecycle(at: node, name: symbol, new: symbol)
+    code "react/no-deprecated"
+    "Move the logic of {name} to {new}, or rename it UNSAFE_{name} if it must stay; the unprefixed name is deprecated."
+    suppress eslint "react/no-deprecated"
+api(at, old, new) :- use(at, old), replaced(old, new).
+api_gone(at, old) :- use(at, old), !replaced(old, _).
+// The member's key name (react-class's member_named): `#componentWillMount() {}`, `[componentWillMount]() {}` and
+// a spec's shorthand `{ componentWillMount }` count; a string key `"componentWillMount"() {}` does not.
+lifecycle(at, x, new) :- react_component(k), member_named(k, x, m), lifecycle_name(x), replaced(x, new),
+    member_key(m, at), docof(k, d), react_doc(d).
+
+// use(at, old): at uses the deprecated API old.
+.decl use(at: node, old: symbol)
+// A member expression whose text is a deprecated name. JSX tag names and TypeScript type queries are not
+// ESTree MemberExpressions: <React.DOM.div/> and `typeof React.PropTypes` are not reported.
+use(n, old) :- kind(n, "member_expression"), text(n, t), docof(n, d), react_doc(d), deprecated(d, t, old),
+    !in_name(n).
+// import { render } from "react-dom": "ReactDOM.render".
+use(sp, old) :- kind(i, "import_statement"), field(i, "source", s), str(s, src), module_alias(src, m),
+    has(i, sp, "import_specifier"), field(sp, "name", nm), text(nm, x), docof(i, d), react_doc(d),
+    deprecated(d, cat(m, ".", x), old).
+// const { render } = ReactDOM;   const { render } = require("react-dom");   other modules: the pragma's name.
+use(p, old) :- kind(v, "variable_declarator"), field(v, "name", o), kind(o, "object_pattern"), field(v, "value", e),
+    destructured_module(e, m), child(o, p, _), prop_key(p, x), docof(v, d), react_doc(d),
+    deprecated(d, cat(m, ".", x), old).
+.decl destructured_module(e: node, m: symbol)
+destructured_module(e, m) :- kind(e, "call_expression"), call_arg(e, a, 0), str(a, src), module_alias(src, m).
+destructured_module(e, m) :- kind(e, "identifier"), text(e, m), module_alias(_, m).
+.decl prop_key(p: node, x: symbol)  // { x }, { x = 1 }, { x: y }, { [x]: y }; not ...rest
+prop_key(p, x) :- kind(p, "shorthand_property_identifier_pattern"), text(p, x).
+prop_key(p, x) :- kind(p, "object_assignment_pattern"), field(p, "left", l), text(l, x).
+prop_key(p, x) :- kind(p, "pair_pattern"), field(p, "key", k), estree_name(k, x).
+.decl in_name(n: node)  // n is (inside) a JSX tag name or a type query
+in_name(n) :- estree_parent(n, p), (kind(p, "jsx_opening_element") ; kind(p, "jsx_closing_element") ;
+    kind(p, "jsx_self_closing_element") ; kind(p, "type_query")).
+in_name(n) :- estree_parent(n, p), kind(p, "member_expression"), in_name(p).
+.decl member_key(m: node, k: node)  // getPropertyNameNode: the member's key
+member_key(m, k) :- (field(m, "name", k) ; field(m, "property", k) ; field(m, "key", k)).
+member_key(m, m) :- kind(m, "shorthand_property_identifier").
+
+// The modules whose imports and destructurings are checked, and the name the plugin gives each (MODULES).
+.decl module_alias(src: symbol, m: symbol)
+module_alias("react", "React"). module_alias("react-addons-perf", "ReactPerf"). module_alias("react-dom", "ReactDOM").
+module_alias("react-dom/server", "ReactDOMServer").
+destructured_module(e, "ReactPerf") :- kind(e, "identifier"), text(e, "Perf").
+
+// deprecated(d, t, old): in document d, the name t is deprecated, reported as old. "React.x" entries follow the
+// pragma: with `@jsx Foo`, Foo.render is deprecated and React.render is not.
+.decl deprecated(d: number, t: symbol, old: symbol)
+deprecated(d, cat(p, ".", x), cat(p, ".", x)) :- pragma(d, p), pragma_api(x).
+deprecated(d, t, t) :- doc(d, _, _), fixed_api(t).
+.decl lifecycle_name(x: symbol)
+lifecycle_name("componentWillMount"). lifecycle_name("componentWillReceiveProps").
+lifecycle_name("componentWillUpdate").
+// The plugin's table (getDeprecated), with the replacement each message names.
+.decl pragma_api(x: symbol)
+pragma_api("renderComponent"). pragma_api("renderComponentToString"). pragma_api("renderComponentToStaticMarkup").
+pragma_api("isValidComponent"). pragma_api("PropTypes.component"). pragma_api("PropTypes.renderable").
+pragma_api("isValidClass"). pragma_api("addons.classSet"). pragma_api("addons.cloneWithProps"). pragma_api("render").
+pragma_api("unmountComponentAtNode"). pragma_api("findDOMNode"). pragma_api("renderToString").
+pragma_api("renderToStaticMarkup"). pragma_api("addons.LinkedStateMixin"). pragma_api("createClass").
+pragma_api("addons.TestUtils"). pragma_api("PropTypes"). pragma_api("DOM").
+.decl fixed_api(t: symbol)
+fixed_api("this.transferPropsTo"). fixed_api("ReactPerf.printDOM"). fixed_api("Perf.printDOM").
+fixed_api("ReactPerf.getMeasurementsSummaryMap"). fixed_api("Perf.getMeasurementsSummaryMap").
+fixed_api("ReactDOM.render"). fixed_api("ReactDOM.hydrate"). fixed_api("ReactDOM.unmountComponentAtNode").
+fixed_api("ReactDOMServer.renderToNodeStream").
+.decl replaced(old: symbol, new: symbol)
+replaced(old, new) :- deprecated(d, _, old), pragma(d, p), pragma_api(x), old = cat(p, ".", x), pragma_new(x, n),
+    new = @replace_all(n, "^React\\.", cat(p, ".")).
+replaced(old, new) :- fixed_new(old, new).
+.decl pragma_new(x: symbol, new: symbol)
+pragma_new("renderComponent", "React.render"). pragma_new("renderComponentToString", "React.renderToString").
+pragma_new("renderComponentToStaticMarkup", "React.renderToStaticMarkup").
+pragma_new("isValidComponent", "React.isValidElement"). pragma_new("PropTypes.component", "React.PropTypes.element").
+pragma_new("PropTypes.renderable", "React.PropTypes.node"). pragma_new("addons.classSet", "the npm module classnames").
+pragma_new("addons.cloneWithProps", "React.cloneElement"). pragma_new("render", "ReactDOM.render").
+pragma_new("unmountComponentAtNode", "ReactDOM.unmountComponentAtNode").
+pragma_new("findDOMNode", "ReactDOM.findDOMNode"). pragma_new("renderToString", "ReactDOMServer.renderToString").
+pragma_new("renderToStaticMarkup", "ReactDOMServer.renderToStaticMarkup").
+pragma_new("createClass", "the npm module create-react-class"). pragma_new("addons.TestUtils", "ReactDOM.TestUtils").
+pragma_new("PropTypes", "the npm module prop-types"). pragma_new("DOM", "the npm module react-dom-factories").
+.decl fixed_new(old: symbol, new: symbol)
+fixed_new("this.transferPropsTo", "spread operator ({...})").
+fixed_new("ReactPerf.printDOM", "ReactPerf.printOperations").
+fixed_new("Perf.printDOM", "Perf.printOperations").
+fixed_new("ReactPerf.getMeasurementsSummaryMap", "ReactPerf.getWasted").
+fixed_new("Perf.getMeasurementsSummaryMap", "Perf.getWasted"). fixed_new("ReactDOM.render", "createRoot").
+fixed_new("ReactDOM.hydrate", "hydrateRoot"). fixed_new("ReactDOM.unmountComponentAtNode", "root.unmount").
+fixed_new("ReactDOMServer.renderToNodeStream", "renderToPipeableStream").
+fixed_new("componentWillMount", "UNSAFE_componentWillMount").
+fixed_new("componentWillReceiveProps", "UNSAFE_componentWillReceiveProps").
+fixed_new("componentWillUpdate", "UNSAFE_componentWillUpdate").

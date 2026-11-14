@@ -1,0 +1,32 @@
+.policy "bandit-b502-ssl-with-bad-version" revision 2
+.description "Don't select SSLv2, SSLv3, TLS 1.0 or TLS 1.1 when configuring ssl or pyOpenSSL connections; these protocol versions are broken."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B502 (ssl_with_bad_version): a call with a `method=` or `ssl_version=` keyword naming a broken
+// protocol. Bandit reads the keyword's last name only (`ssl.PROTOCOL_SSLv2` is "PROTOCOL_SSLv2"), on any call:
+// ssl.wrap_socket is judged by ssl_version alone, pyOpenSSL.SSL.Context by method alone, every other call by
+// either. The finding is on the line of the keyword's value (of method, where the call has one).
+//   ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)   B502
+//   SSL.Context(method=SSL.SSLv23_METHOD)                   B502
+//   anything(method=PROTOCOL_SSLv3)                         B502
+//   ssl.SSLContext(ssl.PROTOCOL_TLSv1)                      not reported: positional
+//   ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLS_CLIENT)   not reported
+
+#include "python/security.rr"   // qual_call, kwarg, kw_literal, report_at
+
+.violation B502(at: node) code "B502"
+    "Select TLS 1.2 or newer here (e.g. ssl.PROTOCOL_TLS_CLIENT) instead of this SSLv2, SSLv3, TLS 1.0 or TLS 1.1 protocol."
+    suppress nosec "B502"
+B502(at) :- qual_call(c, "ssl.wrap_socket"), bad_kw(c, "ssl_version"), kwarg(c, "ssl_version", v), report_at(c, v, at).
+B502(at) :- qual_call(c, "pyOpenSSL.SSL.Context"), bad_kw(c, "method"), kwarg(c, "method", v), report_at(c, v, at).
+B502(at) :- qual_call(c, q), q != "ssl.wrap_socket", q != "pyOpenSSL.SSL.Context", bad_kw(c, _),
+    (kwarg(c, "method", v) ; !kwarg(c, "method", _), kwarg(c, "ssl_version", v)), report_at(c, v, at).
+
+// bad_kw(c, k): keyword k of call c names a broken version (Bandit's bad_protocol_versions, its default).
+.decl bad_kw(c: node, k: symbol)
+bad_kw(c, k) :- (k = "method" ; k = "ssl_version"), kw_literal(c, k, "str", x), bad_version(x).
+.decl bad_version(x: symbol)
+bad_version("PROTOCOL_SSLv2"). bad_version("SSLv2_METHOD"). bad_version("SSLv23_METHOD").
+bad_version("PROTOCOL_SSLv3"). bad_version("PROTOCOL_TLSv1"). bad_version("SSLv3_METHOD").
+bad_version("TLSv1_METHOD"). bad_version("PROTOCOL_TLSv1_1"). bad_version("TLSv1_1_METHOD").

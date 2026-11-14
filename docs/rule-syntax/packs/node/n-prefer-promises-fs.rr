@@ -1,0 +1,28 @@
+.policy "n-prefer-promises-fs" revision 8
+.description "Use the promise-based fs API instead of callback-style fs functions such as readFile and writeFile, for cleaner async code."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-promises/fs: call the promise versions in fs.promises (or fs/promises) instead of
+// fs's callback functions:
+//   fs.readFile(p, cb)    require("fs").stat(p, cb)    import { writeFile } from "node:fs"; writeFile(p, d, cb)
+//   fs.promises.readFile(p)    fs.readFileSync(p)                                   not reported
+// The functions are the plugin's list; the module is traced through require(), process.getBuiltinModule() and
+// imports (node-trace.rr). Reported at each call.
+
+#include "tsx/node-trace.rr"   // module_use
+trace_module("fs").
+trace_member("fs", x) :- callback_fn(x).
+.decl callback_fn(x: symbol)
+callback_fn("access"). callback_fn("copyFile"). callback_fn("open"). callback_fn("rename"). callback_fn("truncate").
+callback_fn("rmdir"). callback_fn("mkdir"). callback_fn("readdir"). callback_fn("readlink"). callback_fn("symlink").
+callback_fn("lstat"). callback_fn("stat"). callback_fn("link"). callback_fn("unlink"). callback_fn("chmod").
+callback_fn("lchmod"). callback_fn("lchown"). callback_fn("chown"). callback_fn("utimes"). callback_fn("realpath").
+callback_fn("mkdtemp"). callback_fn("writeFile"). callback_fn("appendFile"). callback_fn("readFile"). callback_fn("cp").
+callback_fn("glob"). callback_fn("lutimes"). callback_fn("opendir"). callback_fn("rm"). callback_fn("statfs").
+callback_fn("watch").
+
+.violation prefer_promises(at: node) code "n/prefer-promises/fs"
+    "Use the fs.promises version of this function and await it instead of passing a callback."
+    suppress eslint "n/prefer-promises/fs"
+prefer_promises(c) :- module_use(c, "fs", _, "call").

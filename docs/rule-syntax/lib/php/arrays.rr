@@ -1,0 +1,86 @@
+// php/arrays: the key each element of a PHP array literal gets, as PHP assigns them (php.net, "Arrays").
+//
+// A key is an int or a string. PHP casts the rest, and a string that is a canonical decimal integer becomes one:
+//   [1 => a, '1' => b, true => c, 1.7 => d]    all four have key int 1;  null has key ''
+//   '01', '1.0', ' 1'                           stay strings
+// An element without a key gets the largest int key so far plus one, or 0 when there is none (PHP 8.3 counts from
+// a negative key too: ['-42' => 1, 2] gives 2 the key -41). A spread `...[x, 'k' => y]` adds the elements of the
+// array it unpacks in place: string keys kept, int keys renumbered as if written without a key. A spread of
+// anything but a literal, or a key with no known value (or one not cast here: 1e3), leaves the keys after it
+// that PHP would number unknown.
+//
+//   ['a', 'b', 5 => 'c', 'd']          keys 0, 1, 5, 6
+//   [$k => 1, 'x']                      'x' has no known key
+//
+// What a rule gets from this library:
+//   php_item(a, e)       e is an element of array literal a, the elements of literal spreads included (not the
+//                        spread itself)
+//   php_key(a, e, k)     element e of a has key k: "i:<n>" for int n, "s:<text>" for a string
+//
+// Builds on php/values.rr (php_value). Int keys beyond nine digits are compared as text but not counted from, so
+// [9223372036854775806 => 1, 2] leaves 2's key unknown.
+
+#include "php/values.rr"
+
+.decl php_item(a: node, e: node)
+php_item(a, e) :- kind(a, "array_creation_expression"), child(a, e, _), kind(e, "array_element_initializer"),
+    !php_spread_item(e, _).
+php_item(a, e) :- kind(a, "array_creation_expression"), child(a, s, _), php_spread_item(s, l),
+    kind(l, "array_creation_expression"), php_item(l, e).
+.decl php_spread_item(e: node, l: node)  // e is `...l`
+php_spread_item(e, l) :- kind(e, "array_element_initializer"), child(e, u, 0), kind(u, "variadic_unpacking"),
+    child(u, l, 0).
+
+// php_written_key(e, k): e has `key => value` with key value k; php_numbered(a, e): e takes the next int key
+// (no key, or an int key inside a literal spread).
+.decl php_written_key(e: node, k: symbol)
+php_written_key(e, k) :- php_keyed(e), child(e, x, 0), php_value(x, t, v), php_key_of(t, v, k).
+// php_keyed(e): e is `key => value`. Its `=>` is the grammar's own, not a token on the tape: the element has two
+// named children, key and value (`&$v` is one by_ref node, `...$xs` one variadic_unpacking).
+.decl php_keyed(e: node)
+php_keyed(e) :- kind(e, "array_element_initializer"), child(e, _, 1).
+.decl php_key_of(t: symbol, v: symbol, k: symbol)
+php_key_of("int", v, cat("i:", v)) :- php_value(_, "int", v).
+php_key_of("string", v, cat("i:", v)) :- php_value(_, "string", v), match("0|-?[1-9][0-9]*", v).
+php_key_of("string", v, cat("s:", v)) :- php_value(_, "string", v), !match("0|-?[1-9][0-9]*", v).
+php_key_of("bool", "true", "i:1"). php_key_of("bool", "false", "i:0"). php_key_of("null", "null", "s:").
+php_key_of("float", v, cat("i:", w)) :- php_value(_, "float", v), match("(?<w>-?[1-9][0-9]*)(\\.[0-9]*)?", v).
+php_key_of("float", v, "i:0") :- php_value(_, "float", v), match("-?0*(\\.[0-9]*)?", v).  // -0.5 is key 0
+
+.decl php_numbered(a: node, e: node)
+php_numbered(a, e) :- php_item(a, e), !php_keyed(e).
+php_numbered(a, e) :- php_item(a, e), child(a, s, _), php_spread_item(s, _), within(e, s), php_written_key(e, k),
+    prefix("i:", k).
+.decl php_fixed(a: node, e: node, k: symbol)  // e keeps its written key in a
+php_fixed(a, e, k) :- php_item(a, e), php_written_key(e, k), !php_numbered(a, e).
+// php_blocks(a, e): e is a spread of a non-literal, or an element with a key of unknown value: PHP numbers on
+// from a value we do not know.
+.decl php_blocks(a: node, e: node)
+php_blocks(a, s) :- kind(a, "array_creation_expression"), child(a, s, _), php_spread_item(s, l),
+    !kind(l, "array_creation_expression").
+php_blocks(a, b) :- php_blocks(l, b), child(a, sp, _), php_spread_item(sp, l).
+php_blocks(a, e) :- php_item(a, e), php_keyed(e), !php_written_key(e, _).  // $k, 1e3: a key we cannot cast
+php_blocks(a, e) :- php_fixed(a, e, k), match("i:-?[0-9]{10,}", k).
+
+.decl php_at(e: node, o: number)  // source offset, for "before"
+php_at(e, o) :- php_item(_, e), node(_, e, _, o, _).
+php_at(e, o) :- php_blocks(_, e), node(_, e, _, o, _).
+
+// An element PHP numbers gets 1 + the largest int key before it: the largest over every fixed int key before it,
+// plus the numbered elements between, and, when no fixed int key comes before the first numbered element, the
+// count of numbered elements before it (they start at 0).
+.decl php_key(a: node, e: node, k: symbol)
+php_key(a, e, k) :- php_fixed(a, e, k).
+php_key(a, e, cat("i:", to_string(n))) :- php_numbered(a, e), php_at(e, o), !php_blocked_before(a, o),
+    n = max m : { php_chain(a, e, m) }.
+.decl php_blocked_before(a: node, o: number)
+php_blocked_before(a, o) :- php_numbered(a, e), php_at(e, o), php_blocks(a, b), php_at(b, ob), ob < o.
+.decl php_chain(a: node, e: node, m: number)
+php_chain(a, e, m) :- php_numbered(a, e), php_at(e, o), php_fixed(a, f, k), match("i:(?<v>-?[0-9]{1,9})", k),
+    php_at(f, of), of < o, m = to_number(v) + 1 + count : { php_numbered(a, x), php_at(x, ox), ox > of, ox < o }.
+php_chain(a, e, m) :- php_numbered(a, e), php_at(e, o), php_first_numbered(a, o0), !php_fixed_int_before(a, o0),
+    m = count : { php_numbered(a, x), php_at(x, ox), ox < o }.
+.decl php_first_numbered(a: node, o: number)
+php_first_numbered(a, o) :- php_numbered(a, _), o = min ox : { php_numbered(a, x), php_at(x, ox) }.
+.decl php_fixed_int_before(a: node, o: number)
+php_fixed_int_before(a, o) :- php_first_numbered(a, o), php_fixed(a, f, k), prefix("i:", k), php_at(f, of), of < o.

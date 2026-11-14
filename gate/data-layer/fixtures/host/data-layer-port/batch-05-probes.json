@@ -1,0 +1,2243 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "async_sync_delegation",
+    "data_layer_compat_aliases",
+    "data_layer_facade_purity",
+    "imperative_private_functions",
+    "internal_dead_code",
+    "layer_violations",
+    "missing_async_pairs",
+    "public_api_triples",
+    "sync_async_signatures"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "cases": [
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-0",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "from api.l3000_high import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-1",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "import api.l3000_high, api.l4000_more\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-2",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "import api.l1000_low\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-3",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "from impl.common import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-4",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "if TYPE_CHECKING:\n from impl.l3000_high import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-5",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "if typing.TYPE_CHECKING:\n from impl.l3000_high import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2100_sql_grammar/a.py",
+      "files": [
+        {
+          "path": "api/l2100_sql_grammar/a.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2050_transaction/tests/a.py",
+      "files": [
+        {
+          "path": "api/l2050_transaction/tests/a.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2000_connection/connection_factory.py",
+      "files": [
+        {
+          "path": "api/l2000_connection/connection_factory.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:conform/test_generic.py",
+      "files": [
+        {
+          "path": "conform/test_generic.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:conform/test_bulk_loader.py",
+      "files": [
+        {
+          "path": "conform/test_bulk_loader.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:rename",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, x): pass\n async def select_one_async(conn, y): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:reorder",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, x, y): pass\n async def select_one_async(conn, y, x): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:annotations",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn: Connection, x: int = 1): pass\n async def select_one_async(conn: Transaction, x: str = 2): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:pos-only",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(self, ignored, /, conn): pass\n async def select_one_async(self, omitted, /, conn): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:kw-only",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, *, x): pass\n async def select_one_async(conn, *, y): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:no-args",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(self): pass\n async def select_one_async(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:non-execution-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def add(self, x): return x + 1\n"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:nested-io",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def add(self):\n  def nested(): return db.execute()\n  return nested()\n"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:union",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: None | Transaction): pass\nasync def query_async(conn: Connection | None): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:attribute",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: types.Transaction): pass\nasync def query_async(conn: types.Connection): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:quoted",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: \"Transaction\"): pass\nasync def query_async(conn: \"Connection\"): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:generic-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: Optional[Transaction]): pass\nasync def query_async(conn: Optional[Connection]): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:union-priority-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: Connection | Transaction): pass\nasync def query_async(conn: Connection): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-24",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "value = build()\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-25",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "x = [1, {\"a\": True}]\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-26",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-27",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "import impl.x, impl.y\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-28",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "if True:\n import impl.x\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-29",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "first = second = original\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-30",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "import api.thing as thing\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-31",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from api.x import same as same\n"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-32",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "if True:\n renamed = original\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:direct",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(conn):\n return conn.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:signature",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query(x):\n return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:propagate",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query(x): return x\ndef run(x): return _query(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:lazy-clean",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query_lazy(x): return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:private-class",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class _Query:\n def run(self, x): return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:path-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _x(x): return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:nested",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def outer():\n def inner(conn): return conn.execute()\n return inner\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:unexported-clean",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:exported-missing",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:lazy-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@lazy\ndef select_one_lazy(txn: ReadTransaction): return txn.query_lazy()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:missing-decorators",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\nasync def select_one_async(txn: ReadTransaction): return await txn.execute_async()\ndef select_one_lazy(txn: ReadTransaction): return txn.query_lazy()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one, select_one_async, select_one_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:class-export",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def select_one(self, txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:inherited-export",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base:\n def select_one(self, txn: ReadTransaction): return txn.execute()\nclass Store(Base): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:unused-function",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:exported-function",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import helper\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:reachable-call",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\ndef run(x): return helper(x)\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:callback-reference",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\ndef run(x): return map(helper, x)\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:unused-classes",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class UnusedIntent: pass\nclass SqlUnused: pass\nclass Other: pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:annotation-class",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Result: pass\ndef run(x) -> Result: return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:implicit-methods",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def __init__(self): pass\n @field_validator\n def validate(self, x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "async_sync_delegation",
+      "test": "batch-05:docstring-only-async",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "async def close_async():\n \"\"\"No resources to close.\"\"\"\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:self-annotation",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "class BaseServerPlan:\n def _init(self: BaseServerPlan): return 1\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:overload-final-lazy",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "@overload\ndef _query(x: int): ...\n@pure_lazy\ndef _query(x): return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:varargs-lazy-ignored",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "def _query(*args: LazyResult): return 1\n"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-0",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "from api.l3000_high import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 1,
+          "column": null,
+          "code": "layer_dependency",
+          "message": "Layer 2050 importing from higher layer 3000"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-1",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "import api.l3000_high, api.l4000_more\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 1,
+          "column": null,
+          "code": "layer_dependency",
+          "message": "Layer 2050 importing from higher layer 3000"
+        },
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 1,
+          "column": null,
+          "code": "layer_dependency",
+          "message": "Layer 2050 importing from higher layer 4000"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-2",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "import api.l1000_low\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-3",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "from impl.common import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 1,
+          "column": null,
+          "code": "api_impl",
+          "message": "api/ modules cannot import from impl/ (except api/__init__.py)"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-4",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "if TYPE_CHECKING:\n from impl.l3000_high import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:layer-5",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "if typing.TYPE_CHECKING:\n from impl.l3000_high import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "layer_dependency",
+          "message": "Layer 2050 importing from higher layer 3000"
+        },
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "api_impl",
+          "message": "api/ modules cannot import from impl/ (except api/__init__.py)"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2100_sql_grammar/a.py",
+      "files": [
+        {
+          "path": "api/l2100_sql_grammar/a.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2100_sql_grammar/a.py",
+          "line": 1,
+          "column": null,
+          "code": "api_impl",
+          "message": "api/ modules cannot import from impl/ (except api/__init__.py)"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2050_transaction/tests/a.py",
+      "files": [
+        {
+          "path": "api/l2050_transaction/tests/a.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:api/l2000_connection/connection_factory.py",
+      "files": [
+        {
+          "path": "api/l2000_connection/connection_factory.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2000_connection/connection_factory.py",
+          "line": 1,
+          "column": null,
+          "code": "layer_dependency",
+          "message": "Layer 2000 importing from higher layer 2200"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:conform/test_generic.py",
+      "files": [
+        {
+          "path": "conform/test_generic.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "conform/test_generic.py",
+          "line": 1,
+          "column": null,
+          "code": "conform_impl",
+          "message": "conform/ tests must be backend-agnostic, cannot import from impl/"
+        }
+      ]
+    },
+    {
+      "check": "layer_violations",
+      "test": "batch-05:conform/test_bulk_loader.py",
+      "files": [
+        {
+          "path": "conform/test_bulk_loader.py",
+          "source": "from impl.l2200_dialect import X\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:rename",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, x): pass\n async def select_one_async(conn, y): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "signature_mismatch",
+          "message": "Argument mismatch"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:reorder",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, x, y): pass\n async def select_one_async(conn, y, x): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "signature_mismatch",
+          "message": "Argument mismatch"
+        }
+      ]
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:annotations",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn: Connection, x: int = 1): pass\n async def select_one_async(conn: Transaction, x: str = 2): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:pos-only",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(self, ignored, /, conn): pass\n async def select_one_async(self, omitted, /, conn): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:kw-only",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(conn, *, x): pass\n async def select_one_async(conn, *, y): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:no-args",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def select_one(self): pass\n async def select_one_async(self): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:non-execution-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def add(self, x): return x + 1\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "missing_async_pairs",
+      "test": "batch-05:nested-io",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "class Store:\n def add(self):\n  def nested(): return db.execute()\n  return nested()\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_pair",
+          "message": "add_async"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:union",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: None | Transaction): pass\nasync def query_async(conn: Connection | None): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "sync_async_signature_mismatch",
+          "message": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/rerail-dl-batch-five-kdqtpb29/api/l2050_transaction/query.py:\n  SYNC  line 1: query(txn: Transaction)\n  ASYNC line 2: query_async(conn: Connection)\n  -> Async version should take Transaction, not Connection"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:attribute",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: types.Transaction): pass\nasync def query_async(conn: types.Connection): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "sync_async_signature_mismatch",
+          "message": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/rerail-dl-batch-five-us76saa5/api/l2050_transaction/query.py:\n  SYNC  line 1: query(txn: Transaction)\n  ASYNC line 2: query_async(conn: Connection)\n  -> Async version should take Transaction, not Connection"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:quoted",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: \"Transaction\"): pass\nasync def query_async(conn: \"Connection\"): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "line": 2,
+          "column": null,
+          "code": "sync_async_signature_mismatch",
+          "message": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/rerail-dl-batch-five-nkg8s24c/api/l2050_transaction/query.py:\n  SYNC  line 1: query(txn: Transaction)\n  ASYNC line 2: query_async(conn: Connection)\n  -> Async version should take Transaction, not Connection"
+        }
+      ]
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:generic-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: Optional[Transaction]): pass\nasync def query_async(conn: Optional[Connection]): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "sync_async_signatures",
+      "test": "batch-05:union-priority-clean",
+      "files": [
+        {
+          "path": "api/l2050_transaction/query.py",
+          "source": "def query(txn: Connection | Transaction): pass\nasync def query_async(conn: Connection): pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-24",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "value = build()\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "FAC004",
+          "message": "Facade modules must use simple aliases/literals only for top-level assignments"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-25",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "x = [1, {\"a\": True}]\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-26",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "pass\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-27",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "import impl.x, impl.y\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "FAC003",
+          "message": "Facade modules must not import directly from impl.*"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "FAC003",
+          "message": "Facade modules must not import directly from impl.*"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "test": "batch-05:facade-28",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "if True:\n import impl.x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "FAC002",
+          "message": "Facade modules must not execute top-level behavior beyond imports and simple aliases"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-29",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "first = second = original\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "DLA002",
+          "message": "Public assignment alias detected in data_layer facade module"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "line": 1,
+          "column": null,
+          "code": "DLA002",
+          "message": "Public assignment alias detected in data_layer facade module"
+        }
+      ]
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-30",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "import api.thing as thing\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-31",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from api.x import same as same\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "test": "batch-05:alias-32",
+      "files": [
+        {
+          "path": "data_layer/__init__.py",
+          "source": "if True:\n renamed = original\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "data_layer/__init__.py",
+          "line": 2,
+          "column": null,
+          "code": "DLA002",
+          "message": "Public assignment alias detected in data_layer facade module"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:direct",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(conn):\n return conn.execute()\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "direct_execution",
+          "message": "execute"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:signature",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query(x):\n return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:propagate",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query(x): return x\ndef run(x): return _query(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls _query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:lazy-clean",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _query_lazy(x): return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:private-class",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class _Query:\n def run(self, x): return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:path-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def _x(x): return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:nested",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def outer():\n def inner(conn): return conn.execute()\n return inner\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "direct_execution",
+          "message": "execute"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:unexported-clean",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:exported-missing",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_async",
+          "message": "data_layer.select_one is missing the async member of the triple"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_lazy",
+          "message": "data_layer.select_one is missing the lazy member of the triple"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:lazy-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@lazy\ndef select_one_lazy(txn: ReadTransaction): return txn.query_lazy()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one_lazy\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:missing-decorators",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def select_one(txn: ReadTransaction): return txn.execute()\nasync def select_one_async(txn: ReadTransaction): return await txn.execute_async()\ndef select_one_lazy(txn: ReadTransaction): return txn.query_lazy()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import select_one, select_one_async, select_one_lazy\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_legacy_sync",
+          "message": "select_one is public but not decorated with @legacy_sync"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_legacy_async",
+          "message": "select_one_async is public but not decorated with @legacy_async"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 3,
+          "column": null,
+          "code": "missing_lazy_decorator",
+          "message": "select_one_lazy is public but not decorated with @lazy (or mixin apply_lazy_to_public_lazy_methods)"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:class-export",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def select_one(self, txn: ReadTransaction): return txn.execute()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_async",
+          "message": "Store.select_one is missing the async member of the triple"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_lazy",
+          "message": "Store.select_one is missing the lazy member of the triple"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05:inherited-export",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base:\n def select_one(self, txn: ReadTransaction): return txn.execute()\nclass Store(Base): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_async",
+          "message": "Store.select_one is missing the async member of the triple"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_lazy",
+          "message": "Store.select_one is missing the lazy member of the triple"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:unused-function",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "high_confidence_functions",
+          "message": "helper"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:exported-function",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import helper\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:reachable-call",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\ndef run(x): return helper(x)\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:callback-reference",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\ndef run(x): return map(helper, x)\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:unused-classes",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class UnusedIntent: pass\nclass SqlUnused: pass\nclass Other: pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "high_confidence_intents",
+          "message": "UnusedIntent"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 2,
+          "column": null,
+          "code": "high_confidence_grammar_classes",
+          "message": "SqlUnused"
+        },
+        {
+          "path": "impl/common/query.py",
+          "line": 3,
+          "column": null,
+          "code": "high_confidence_other_classes",
+          "message": "Other"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:annotation-class",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Result: pass\ndef run(x) -> Result: return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:implicit-methods",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def __init__(self): pass\n @field_validator\n def validate(self, x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/common/query.py",
+          "line": 1,
+          "column": null,
+          "code": "high_confidence_other_classes",
+          "message": "Store"
+        }
+      ]
+    },
+    {
+      "check": "async_sync_delegation",
+      "test": "batch-05:docstring-only-async",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "async def close_async():\n \"\"\"No resources to close.\"\"\"\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:self-annotation",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "class BaseServerPlan:\n def _init(self: BaseServerPlan): return 1\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/service.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:overload-final-lazy",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "@overload\ndef _query(x: int): ...\n@pure_lazy\ndef _query(x): return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05:varargs-lazy-ignored",
+      "files": [
+        {
+          "path": "impl/service.py",
+          "source": "def _query(*args: LazyResult): return 1\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/service.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    }
+  ],
+  "loaded_source_files_checked": 129
+}

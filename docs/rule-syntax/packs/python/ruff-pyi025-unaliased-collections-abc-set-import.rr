@@ -1,0 +1,19 @@
+.policy "ruff-pyi025-unaliased-collections-abc-set-import" revision 2
+.description "Import Set from collections.abc under the alias AbstractSet; the bare name is easily mistaken for the builtin set."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI025 (flake8-pyi), every file: `from collections.abc import Set` bound to any name but `AbstractSet`.
+// `Set` reads like the builtin `set`. Reported at the name it binds: `Set`, or the alias.
+//   from collections.abc import Set              ← PYI025
+//   from collections.abc import Set as AbstractSet    fine
+#include "python/typing.rr"
+
+.violation PYI025(at: node) code "PYI025" "Import `Set` as `AbstractSet` and rename its uses, so it isn't mistaken for the builtin `set`; keep the name if other modules import `Set` from this file."
+    suppress ruff "PYI025"
+PYI025(a) :- set_import(a), kind(a, "dotted_name").
+PYI025(al) :- set_import(a), field(a, "alias", al), !text(al, "AbstractSet").
+.decl set_import(a: node)  // `Set` or `Set as x` from collections.abc
+set_import(a) :- kind(i, "import_from_statement"), from_module_raw(i, "collections.abc"), field(i, "name", a),
+    (kind(a, "dotted_name"), text(a, "Set") ; kind(a, "aliased_import"), field(a, "name", n), text(n, "Set")).

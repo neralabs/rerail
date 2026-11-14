@@ -1,0 +1,14 @@
+
+running 10 tests
+test code_rule_dsl::typing::file_local::tests::a_cross_file_rules_local_join_is_pushed_into_the_chunks ... ok
+test code_rule_dsl::typing::file_local::tests::an_equality_between_two_pieces_joins_them_in_the_chunks ... ok
+test code_rule_dsl::typing::file_local::tests::cross_file_filters_keep_independent_node_positions_out_of_local_products ... ok
+test code_rule_dsl::typing::file_local::tests::equalities_and_constant_relations_keep_rules_file_local ... ok
+test code_rule_dsl::typing::file_local::tests::nearest_costs_by_solver ... ignored
+test code_rule_dsl::typing::file_local::tests::nearest_is_each_nodes_closest_ancestor_in_the_set ... ok
+test code_rule_dsl::typing::file_local::tests::source_relations_keep_their_document_location ... ok
+test code_rule_dsl::typing::file_local::tests::t_programs_split_into_file_local_and_cross_file ... ok
+test code_rule_dsl::typing::file_local::tests::the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node ... ok
+test code_rule_dsl::typing::file_local::tests::the_device_finds_the_cpus_nearest ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 3251 filtered out; finished in 1.04s

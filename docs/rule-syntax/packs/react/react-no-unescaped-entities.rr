@@ -1,0 +1,25 @@
+.policy "react-no-unescaped-entities" revision 2
+.description "Escape quotes in JSX text."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-unescaped-entities: each `"` or `'` in JSX text is reported, on its own line: a quote that should be
+// an entity, or text that was meant to be an attribute. Text in attributes and in {…} is not checked.
+//   <div>Don't</div>          reported            <div>{"Don't"}</div>    not reported
+//   <div title="'">           not: an attribute
+// The rule's default list also has `>` and `}`, but in JSX text those are syntax errors to ESLint's parsers, so
+// only the quotes can be reported (NOTES).
+#include "tsx/react.rr"
+
+// The finding sits on the quote itself (a match_all capture is a span with a line), as ESLint reports each quote.
+.violation unescaped(at: span, msg: symbol)
+    code "react/no-unescaped-entities"
+    "{msg}"
+    suppress eslint "react/no-unescaped-entities"
+    suppress oxlint "no-unescaped-entities"
+unescaped(Q, m) :- kind(t, "jsx_text"), docof(t, d), react_doc(d), match_all("(?<Q>['\"])", t), text(Q, q),
+    entity_says(q, m).
+.decl entity_says(c: symbol, msg: symbol)
+entity_says("\"", "Write this \" in JSX text as &quot; or wrap it in a {'\"'} string expression.").
+entity_says("'", "Write this ' in JSX text as &apos; or wrap it in a {\"'\"} string expression.").

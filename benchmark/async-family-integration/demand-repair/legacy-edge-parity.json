@@ -1,0 +1,88 @@
+[
+  {
+    "fixture": "1f85485a7075",
+    "expected": 120,
+    "actual": 120,
+    "missing": [],
+    "unexpected": []
+  },
+  {
+    "fixture": "38094aa6ac7e",
+    "expected": 2,
+    "actual": 2,
+    "missing": [],
+    "unexpected": []
+  },
+  {
+    "fixture": "483985bd330e",
+    "expected": 24,
+    "actual": 20,
+    "missing": [
+      [
+        "ASYNC230",
+        "doc1.py",
+        23
+      ],
+      [
+        "ASYNC230",
+        "doc1.py",
+        25
+      ],
+      [
+        "ASYNC230",
+        "doc1.py",
+        26
+      ],
+      [
+        "ASYNC230",
+        "doc1.py",
+        29
+      ]
+    ],
+    "unexpected": []
+  },
+  {
+    "fixture": "c6d2d16e3195",
+    "expected": 28,
+    "actual": 29,
+    "missing": [
+      [
+        "ASYNC210",
+        "doc0.py",
+        14
+      ],
+      [
+        "ASYNC230",
+        "doc0.py",
+        46
+      ],
+      [
+        "ASYNC230",
+        "doc0.py",
+        57
+      ]
+    ],
+    "unexpected": [
+      [
+        "ASYNC210",
+        "doc0.py",
+        11
+      ],
+      [
+        "ASYNC210",
+        "doc0.py",
+        13
+      ],
+      [
+        "ASYNC230",
+        "doc0.py",
+        38
+      ],
+      [
+        "ASYNC230",
+        "doc0.py",
+        44
+      ]
+    ]
+  }
+]

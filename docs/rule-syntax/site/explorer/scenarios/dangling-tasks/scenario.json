@@ -1,0 +1,5 @@
+{
+  "title": "Tasks nobody keeps",
+  "rule": "ruff-ruf006-asyncio-dangling-task",
+  "note": "RUF006 flags asyncio.create_task whose result is dropped: the event loop holds only a weak reference, so the task can vanish mid-run. Keeping it in a variable or a set is enough."
+}

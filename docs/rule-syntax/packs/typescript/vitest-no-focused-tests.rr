@@ -1,0 +1,23 @@
+.policy "vitest-no-focused-tests" revision 3
+.description "A focused test (`.only`), which makes Vitest skip every other test in the file."
+.language typescript
+.mode steer
+.scope include "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+
+#include "tsx/ts-b-vitest.rr"
+//   vitest_call, vitest_member, mode_option, context_head
+
+// @vitest/eslint-plugin's no-focused-tests: `.only` on a Vitest describe, it or test, or `only: true` in its
+// options, reported at `only`.
+//   it.only("t", fn)   describe.only.each([])("t", fn)   test("t", { only: true }, fn)        → at only
+//   import { it } from "node:test"; it.only("t", fn)     fine: not Vitest's it
+// For a test context's own `it` (`test("t", ({ it }) => { it.only(…) })`) the first property counts, whatever
+// follows it. The fix option (default "suggest") only decides how the plugin offers removing `.only`; not
+// offered here.
+.violation no_focused_tests(at: node) code "vitest/no-focused-tests" "Remove .only: a focused test makes Vitest skip every other test."
+    suppress eslint "vitest/no-focused-tests"
+    suppress oxlint "no-focused-tests"
+no_focused_tests(m) :- vitest_call(c, g, _), (g = "describe" ; g = "test"), vitest_member(c, m, "only", i),
+    (!context_head(c) ; i = 0).
+no_focused_tests(k) :- mode_option(c, "only", k), !context_head(c).

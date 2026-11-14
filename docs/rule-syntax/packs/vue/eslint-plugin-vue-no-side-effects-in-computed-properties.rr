@@ -1,0 +1,49 @@
+.policy "eslint-plugin-vue-no-side-effects-in-computed-properties" revision 2
+.description "Keep Vue computed properties free of side effects such as assigning to or mutating component state; a computed should only derive a value."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+#include "vue/mutation.rr"
+//   vcomputed(o, x, f), vcomputed_fn(c, f), vsetup(o, f), vscript(p, setup), vmutation(s, at, how)
+
+// eslint-plugin-vue's no-side-effects-in-computed-properties. No options.
+// Options API, in a getter's own code (not a nested function's): a mutation of `this` state, or this.$set / Vue.set.
+//   computed: { a() { this.n++; return this.list.sort() } }             both reported
+// computed() getters: a mutation of a variable declared in <script setup> or in setup(), outside the getter, read
+// as `x.…` (a bare `x = 1` is not looked at). Imports and globals are not state.
+//   const n = ref(0); const c = computed(() => n.value++)                reported
+//   const c = computed(() => { const a = []; a.push(1); return a })     not reported: a is the getter's own
+// When the file has <script setup>, only <script setup> is checked, as the plugin does.
+.violation side_effect(at: node, msg: symbol) code "vue/no-side-effects-in-computed-properties" "{msg}"
+    suppress eslint "vue/no-side-effects-in-computed-properties"
+side_effect(p, cat("Remove this assignment from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
+    options_getter(x, f), member_of(n, m), own(n, f), vue_set(n, m), field(m, "property", p).
+side_effect(at, cat("Remove this mutation from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
+    options_getter(x, f), member_of(n, m), kind(n, "this"), own(n, f), !vue_set(n, m), vmutation(m, at, _).
+side_effect(at, "Remove this mutation from the computed getter and make the change in a function or watcher instead.") :-
+    composition_getter(g), member_of(n, _), kind(n, "identifier"), own(n, g), ref_site(n, d), state(d, g),
+    vmutation(n, at, _).
+
+.decl options_getter(x: symbol, f: node)
+options_getter(x, f) :- vcomputed(_, x, f), docof(f, d), !vsetup_doc(d).
+.decl composition_getter(g: node)
+composition_getter(g) :- vcomputed_fn(_, g), vin_setup(g).
+composition_getter(g) :- vcomputed_fn(_, g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
+// member_of(n, m): `this` or a name n is the object of member access m: the selector `MemberExpression > Identifier`.
+.decl member_of(n: node, m: node)
+member_of(n, m) :- vmut_object(m, n), (kind(n, "this") ; kind(n, "identifier")).
+vmut_ask(m) :- member_of(n, m), kind(n, "this").
+vmut_ask(n) :- member_of(n, _), kind(n, "identifier").
+.decl own(n: node, f: node)
+own(n, f) :- nearest(n, f, vfn_kind).
+// this.$set(…) and Vue.set(…): a call of the member.
+.decl vue_set(n: node, m: node)
+vue_set(n, m) :- member_of(n, m), estree_parent(m, c), kind(c, "call_expression"), field(c, "function", w),
+    deparen(w, m), (kind(n, "this"), static_prop(m, n, "$set") ; text(n, "Vue"), static_prop(m, n, "set")).
+// state(d, g): declaration site d is in <script setup> or a setup() body, not inside getter g, and no import.
+.decl state(d: node, g: node)
+state(d, g) :- composition_getter(g), site_form(d, f), f != "import", in_setup(d), !within(d, g).
+.decl in_setup(d: node)
+in_setup(d) :- vin_setup(d).
+in_setup(d) :- vsetup(_, f), field(f, "body", b), within(d, b).

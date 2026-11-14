@@ -1,0 +1,24 @@
+.policy "ruff-b028-no-explicit-stacklevel" revision 2
+.description "Pass an explicit stacklevel to warnings.warn(); without it the warning points at the warn call instead of the caller who triggered it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B028 (flake8-bugbear): `warnings.warn(…)` without a stacklevel. The warning then points at the warn call
+// itself, not at the caller that caused it. Passing stacklevel by keyword or third positional, or a non-empty
+// `skip_file_prefixes` (which raises the level itself), is enough; any `*args` or `**kwargs` may pass it.
+// Reported at the callee.
+//   warnings.warn("test", DeprecationWarning)              ← B028
+//   warnings.warn("test", skip_file_prefixes=())           ← B028: the default, empty
+//   warnings.warn("test", DeprecationWarning, 1)           not reported
+//   warnings.warn(*args)                                   not reported
+#include "python/bugbear.rr"
+
+.violation B028(at: node) code "B028"
+    "Pass stacklevel= to this warnings.warn() call, usually 2, so the warning points at the caller."
+    suppress ruff "B028"
+B028(f) :- bb_sym_call(c, "warnings.warn"), field(c, "function", f), !bb_pos(c, 2, _), !call_kw(c, "stacklevel", _),
+    !sets_prefixes(c), !call_star(c), !call_kwsplat(c).
+.decl sets_prefixes(c: node)
+sets_prefixes(c) :- call_kw(c, "skip_file_prefixes", v), !kind(v, "tuple").
+sets_prefixes(c) :- call_kw(c, "skip_file_prefixes", v), kind(v, "tuple"), child(v, e, _), !kind(e, "comment").

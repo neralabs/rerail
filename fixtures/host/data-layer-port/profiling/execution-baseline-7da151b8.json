@@ -1,0 +1,1612 @@
+{
+  "format": "rerail.execution-baseline/v1",
+  "id": "execution-7da151b8-20261021",
+  "recordedAtUtc": "2026-10-21T13:19:09.817538+00:00",
+  "implementationCommit": "7da151b8e55dccbce883f100a9f941a09583b927",
+  "nativeTree": "2f4825636a650cce76c8c5c3c10f65de6653dd3f",
+  "dataLayerCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "method": {
+    "repetitions": 5,
+    "freshProcessPerRun": true,
+    "workloadOverlap": false,
+    "roundOrder": [
+      [
+        "quality",
+        "state",
+        "dispatch"
+      ],
+      [
+        "dispatch",
+        "state",
+        "quality"
+      ],
+      [
+        "quality",
+        "state",
+        "dispatch"
+      ],
+      [
+        "dispatch",
+        "state",
+        "quality"
+      ],
+      [
+        "quality",
+        "state",
+        "dispatch"
+      ]
+    ],
+    "metric": "Process user + system CPU in milliseconds, per driver phase; compilation separate.",
+    "coldMeaning": "First workspace evaluation in a fresh process; OS and filesystem caches are not flushed.",
+    "trace": "off",
+    "sqlProfile": false,
+    "external": "none",
+    "deadlineSeconds": 115,
+    "summary": "Median, minimum and maximum; no discarded timing runs.",
+    "commandTemplate": [
+      "python3",
+      "scripts/profiling/run.py",
+      "--trace",
+      "off",
+      "--deadline",
+      "115",
+      "--source",
+      "/tmp/rerail-dl-main",
+      "--selection",
+      "fixtures/host/data-layer-port/profiling/{selection}.json",
+      "--policies",
+      "packs/data-layer/candidates/rules",
+      "--allocator",
+      "system-malloc-shim",
+      "--output",
+      ".rerail/profiles/rebaseline-7da151b8-20261021/{workload}/round-{round}"
+    ]
+  },
+  "build": {
+    "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+    "artifact": "/tmp/rerail-sql-decisions-20261021.node",
+    "reusedFrom": "fixtures/host/data-layer-port/profiling/sql-shape-decisions.json",
+    "sourceVerification": "Binary and recorded source hashes match the promotion evidence and committed source.",
+    "profile": "release",
+    "features": [
+      "code-rule-profile"
+    ],
+    "engineOptimization": 1,
+    "dependencyOptimization": 3,
+    "lto": "thin",
+    "codegenUnits": 256,
+    "allocator": "system-malloc-shim",
+    "nativeWorkers": 4,
+    "compiler": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "compilerEvidence": "/tmp/rerail-data-layer-target/.rustc_info.json",
+    "node": "v26.8.1",
+    "cpu": "Apple M5 Max",
+    "cargoLockSha256": "1249210aec8de32e694543ebb844d65370943a94c9b4a9431395df885d20c22c",
+    "rustToolchainSha256": "30ba5cec99c15497543099ee2decf6322fdaa5fe7bda4994b65a781a8281cee1",
+    "allocatorLibrary": {
+      "path": "/tmp/librerail_jemalloc_check_shim.dylib",
+      "sha256": "73c2e8b400bb7540b03f9e68712cdd45f2756ef31893d890ce2ea6696dc931a9"
+    }
+  },
+  "workloads": {
+    "quality": {
+      "selection": "fixtures/host/data-layer-port/profiling/quality-five.json",
+      "selectionSha256": "7e112558e5e820d761abd1e989c86240e7d802c21cd08372df87f9fecee85758",
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "files": 5,
+      "bytes": 1026452,
+      "editedPath": "impl/common/l2070_server_plan/sql_backend_executor.py",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:41b2239e511448db516b5069d3abeacc92897e383360e0ce938502e38c5852b5"
+      },
+      "cpuMs": {
+        "compile": {
+          "median": 88.18100000000001,
+          "min": 69.509,
+          "max": 91.88300000000001
+        },
+        "cold": {
+          "median": 1940.056,
+          "min": 1893.592,
+          "max": 2010.952
+        },
+        "unchanged": {
+          "median": 1.958,
+          "min": 1.669,
+          "max": 2.295
+        },
+        "edit": {
+          "median": 710.058,
+          "min": 650.384,
+          "max": 727.486
+        }
+      },
+      "peakRssMiB": {
+        "median": 444.484375,
+        "min": 390.921875,
+        "max": 452.5
+      },
+      "runs": [
+        {
+          "round": 1,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/round-1/profile.json",
+          "profileSha256": "88abe89ece1b2482b577725acd0931162c1c90d773e718276a364f715cfb56d6",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 78.106,
+              "systemMs": 10.118
+            },
+            "cold": {
+              "userMs": 1962.264,
+              "systemMs": 48.688
+            },
+            "unchanged": {
+              "userMs": 1.233,
+              "systemMs": 0.564
+            },
+            "edit": {
+              "userMs": 703.115,
+              "systemMs": 24.371
+            }
+          },
+          "phaseWallMs": {
+            "compile": 216.27637499999992,
+            "cold": 4436.419459,
+            "unchanged": 9.584834000000228,
+            "edit": 1702.108416
+          },
+          "peakRssBytes": 470384640,
+          "controllerSeconds": 7.846629708015826,
+          "loadAverageStart": [
+            35.9501953125,
+            30.65966796875,
+            33.18505859375
+          ],
+          "loadAverageEnd": [
+            39.96142578125,
+            31.69140625,
+            33.52099609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 2,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/round-2/profile.json",
+          "profileSha256": "a4196821108857c15141d47fe6a1f21ad68af25daa2176d53ec52d4f571af7d7",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 85.608,
+              "systemMs": 6.275
+            },
+            "cold": {
+              "userMs": 1840.462,
+              "systemMs": 53.13
+            },
+            "unchanged": {
+              "userMs": 1.229,
+              "systemMs": 0.845
+            },
+            "edit": {
+              "userMs": 692.751,
+              "systemMs": 23.574
+            }
+          },
+          "phaseWallMs": {
+            "compile": 88.23904199999993,
+            "cold": 1942.764792,
+            "unchanged": 2.133874999999989,
+            "edit": 775.08725
+          },
+          "peakRssBytes": 455163904,
+          "controllerSeconds": 3.462224792019697,
+          "loadAverageStart": [
+            35.18896484375,
+            33.29931640625,
+            33.9912109375
+          ],
+          "loadAverageEnd": [
+            33.65234375,
+            33.01171875,
+            33.8857421875
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 3,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/round-3/profile.json",
+          "profileSha256": "276a185d6df17c535c4db84aa31ec8dc9a099792b63c8a072df2410917476892",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 83.674,
+              "systemMs": 4.507
+            },
+            "cold": {
+              "userMs": 1835.305,
+              "systemMs": 63.534
+            },
+            "unchanged": {
+              "userMs": 1.126,
+              "systemMs": 0.543
+            },
+            "edit": {
+              "userMs": 637.343,
+              "systemMs": 13.041
+            }
+          },
+          "phaseWallMs": {
+            "compile": 72.10249999999996,
+            "cold": 1856.8935000000001,
+            "unchanged": 1.5905830000001515,
+            "edit": 682.1578749999999
+          },
+          "peakRssBytes": 409911296,
+          "controllerSeconds": 3.2607042090094183,
+          "loadAverageStart": [
+            26.4697265625,
+            31.34765625,
+            33.25244140625
+          ],
+          "loadAverageEnd": [
+            25.791015625,
+            31.1259765625,
+            33.16259765625
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 4,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/round-4/profile.json",
+          "profileSha256": "2ee0430ad8b84aa0044d16afabac232461be882ba7d3e8b513822c71fcb8f52d",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 66.303,
+              "systemMs": 3.206
+            },
+            "cold": {
+              "userMs": 1886.502,
+              "systemMs": 53.554
+            },
+            "unchanged": {
+              "userMs": 1.411,
+              "systemMs": 0.884
+            },
+            "edit": {
+              "userMs": 666.965,
+              "systemMs": 20.016
+            }
+          },
+          "phaseWallMs": {
+            "compile": 68.98962499999993,
+            "cold": 2462.3531249999996,
+            "unchanged": 6.445624999999836,
+            "edit": 983.7516250000003
+          },
+          "peakRssBytes": 466075648,
+          "controllerSeconds": 4.346154625003692,
+          "loadAverageStart": [
+            29.02490234375,
+            31.14306640625,
+            33.07421875
+          ],
+          "loadAverageEnd": [
+            29.9033203125,
+            31.2900390625,
+            33.11474609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 5,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/round-5/profile.json",
+          "profileSha256": "193aeeaac76990dcd5f341d359b8e137e110d4b622e83715e4c0eaf47d40124e",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 78.27,
+              "systemMs": 4.64
+            },
+            "cold": {
+              "userMs": 1922.916,
+              "systemMs": 45.768
+            },
+            "unchanged": {
+              "userMs": 1.311,
+              "systemMs": 0.647
+            },
+            "edit": {
+              "userMs": 697.205,
+              "systemMs": 12.853
+            }
+          },
+          "phaseWallMs": {
+            "compile": 104.92191700000001,
+            "cold": 2200.702083,
+            "unchanged": 2.187249999999949,
+            "edit": 980.9254580000002
+          },
+          "peakRssBytes": 474480640,
+          "controllerSeconds": 4.075693624996347,
+          "loadAverageStart": [
+            29.9033203125,
+            31.2900390625,
+            33.11474609375
+          ],
+          "loadAverageEnd": [
+            31.35205078125,
+            31.5673828125,
+            33.20166015625
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        }
+      ],
+      "diagnostic": {
+        "includedInTimingMedians": false,
+        "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/diagnostic/profile.json",
+        "sqlReport": ".rerail/profiles/rebaseline-7da151b8-20261021/quality/diagnostic/sql/profile.html",
+        "controllerSeconds": 5.2357724999892525,
+        "coldProcessCpuMs": 3380.9970000000003,
+        "leafSpanCpuMs": {
+          "sql-materialize": 1095.965036,
+          "sql-index": 251.16921700000003,
+          "producer-publish": 19.627541,
+          "syntax-prepare": 13.784916,
+          "syntax-owners": 6.330667999999999,
+          "producer-stage": 5.406709,
+          "sql-input": 2.4064560000000004,
+          "sql-analyze": 41.030291,
+          "sql-result": 0.555791
+        },
+        "incompleteExecutions": 0,
+        "topSqlByAggregateCpu": [
+          {
+            "id": 254,
+            "sql": "CREATE TEMP TABLE \"scoped_nodes\" AS SELECT \"__path\",\"fn\",\"node\" FROM (WITH RECURSIVE walk(__path,fn,node) AS (SELECT __path,id,id FROM functions UNION ALL SELECT w.__path,w.fn,n.id FROM walk w JOIN edges e ON e.__path=w.__path AND e.src=w.node JOIN nodes n ON n.__path=e.__path AND n.id=e.dst WHERE n.kind NOT IN ('function_definition','class_definition','lambda')) SELECT * FROM walk)",
+            "sqlSha256": "f831571f8e2c78e7dace51ae23d89c423064f0ee2399fd0d3fb965985fafef71",
+            "cpuMs": 131.411377,
+            "runs": 5,
+            "vmSteps": 6422644,
+            "fullscanSteps": 1504,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 210458,
+            "frameNext": 208998,
+            "frameColumns": 940246,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/sql_backend_executor.py\",\"scoped_nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/_conditional_compile.py\",\"scoped_nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/commit_branch_steps.py\",\"scoped_nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/sql_conditional.py\",\"scoped_nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"l2070_batching/conditional_step.py\",\"scoped_nodes\"]"
+            ]
+          },
+          {
+            "id": 308,
+            "sql": "CREATE TEMP TABLE \"scope_owners\" AS SELECT \"__path\",\"id\",\"scope\" FROM (SELECT n.__path,n.id,coalesce(CASE WHEN cls.__start>=fn.__start AND cls.__end<=fn.__end OR fn.id IS NULL THEN cls.id ELSE fn.id END,(SELECT id FROM nodes root WHERE root.__path=n.__path AND root.kind='module' LIMIT 1)) AS scope FROM nodes n JOIN ownership own ON own.__path=n.__path AND own.id=n.id LEFT JOIN nodes fn ON fn.__path=own.__path AND fn.id=own.fn LEFT JOIN nodes cls ON cls.__path=own.__path AND cls.id=own.cls)",
+            "sqlSha256": "3d9619a8a0161b6a8f121e13b153c269062e93220dc61b63af4501c6f5b9b518",
+            "cpuMs": 124.260043,
+            "runs": 5,
+            "vmSteps": 6339803,
+            "fullscanSteps": 0,
+            "sorts": 0,
+            "frameScans": 5,
+            "frameLookups": 345927,
+            "frameNext": 416181,
+            "frameColumns": 2199100,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/sql_backend_executor.py\",\"scope_owners\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/_conditional_compile.py\",\"scope_owners\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/commit_branch_steps.py\",\"scope_owners\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/sql_conditional.py\",\"scope_owners\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"l2070_batching/conditional_step.py\",\"scope_owners\"]"
+            ]
+          },
+          {
+            "id": 162,
+            "sql": "SELECT DISTINCT __path,id FROM (SELECT __path,id FROM nodes WHERE kind IN ('function_definition','class_definition','for_statement','for_in_clause','assignment','delete_statement','block','if_statement','elif_clause','match_statement') UNION SELECT __path,parent FROM nodes WHERE kind='for_in_clause' AND parent IS NOT NULL UNION SELECT child.__path,child.id FROM nodes child JOIN nodes cmp ON cmp.__path=child.__path AND cmp.id=child.parent WHERE cmp.kind='comparison_operator' UNION SELECT __path,name_id FROM nodes WHERE name_start IS NOT NULL UNION SELECT __path,left_id FROM nodes WHERE left_start IS NOT NULL UNION SELECT __path,right_id FROM nodes WHERE right_start IS NOT NULL UNION SELECT __path,value_id FROM nodes WHERE value_start IS NOT NULL UNION SELECT __path,type_id FROM nodes WHERE type_start IS NOT NULL UNION SELECT __path,function_id FROM nodes WHERE function_start IS NOT NULL UNION SELECT __path,arguments_id FROM nodes WHERE arguments_start IS NOT NULL UNION SELECT __path,object_id FROM nodes WHERE object_start IS NOT NULL UNION SELECT __path,body_id FROM nodes WHERE body_start IS NOT NULL UNION SELECT __path,parameters_id FROM nodes WHERE parameters_start IS NOT NULL UNION SELECT __path,condition_id FROM nodes WHERE condition_start IS NOT NULL UNION SELECT __path,consequence_id FROM nodes WHERE consequence_start IS NOT NULL UNION SELECT __path,id FROM arguments) WHERE __path IS NOT NULL AND id IS NOT NULL",
+            "sqlSha256": "9f3cb988ebeb68676299ffceb2ffd6f52cc466d46441417a66a6ec965c21a457",
+            "cpuMs": 113.421085,
+            "runs": 5,
+            "vmSteps": 9631374,
+            "fullscanSteps": 0,
+            "sorts": 80,
+            "frameScans": 60,
+            "frameLookups": 1102,
+            "frameNext": 1380786,
+            "frameColumns": 1638867,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/sql_backend_executor.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/_conditional_compile.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/commit_branch_steps.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/sql_conditional.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"l2070_batching/conditional_step.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 272,
+            "sql": "CREATE TEMP TABLE \"call_paths\" AS SELECT \"__path\",\"id\",\"path\" FROM (WITH RECURSIVE names(__path,id,path) AS (SELECT __path,id,text FROM py_names UNION SELECT n.__path,e.dst,n.path||e.suffix FROM names n JOIN path_edges e ON e.__path=n.__path AND e.src=n.id) SELECT * FROM names)",
+            "sqlSha256": "54cf6ec71dd1bb7a05b11d0a845c35e279bb0e6fd175f4eccd58597eff78f3cd",
+            "cpuMs": 57.61654,
+            "runs": 5,
+            "vmSteps": 1703354,
+            "fullscanSteps": 31379,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/sql_backend_executor.py\",\"call_paths\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/_conditional_compile.py\",\"call_paths\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/commit_branch_steps.py\",\"call_paths\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/sql_conditional.py\",\"call_paths\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"l2070_batching/conditional_step.py\",\"call_paths\"]"
+            ]
+          },
+          {
+            "id": 135,
+            "sql": "CREATE TEMP TABLE \"__stage_methods\" AS SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_start\",\"name_end\",\"name_kind\",\"name_source\",\"left_id\",\"left_start\",\"left_end\",\"left_kind\",\"right_id\",\"right_start\",\"right_end\",\"right_kind\",\"value_id\",\"value_start\",\"value_end\",\"value_kind\",\"value_source\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"arguments_id\",\"arguments_start\",\"arguments_end\",\"arguments_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_start\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"condition_id\",\"condition_start\",\"condition_end\",\"condition_kind\",\"consequence_id\",\"consequence_start\",\"consequence_end\",\"consequence_kind\",\"name\",\"cls\",\"class_name\" FROM (SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",NULL AS \"text\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_start\",\"name_end\",\"name_kind\",\"name_source\",\"left_id\",\"left_start\",\"left_end\",\"left_kind\",\"right_id\",\"right_start\",\"right_end\",\"right_kind\",\"value_id\",\"value_start\",\"value_end\",\"value_kind\",\"value_source\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"arguments_id\",\"arguments_start\",\"arguments_end\",\"arguments_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_start\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"condition_id\",\"condition_start\",\"condition_end\",\"condition_kind\",\"consequence_id\",\"consequence_start\",\"consequence_end\",\"consequence_kind\",\"name\",\"cls\",\"class_name\" FROM (SELECT f.*,c.id AS cls,c.name AS class_name FROM functions f JOIN classes c ON c.__path=f.__path\n WHERE f.parent=c.body_id OR EXISTS(SELECT 1 FROM nodes d WHERE d.__path=f.__path AND d.id=f.parent AND d.kind='decorated_definition' AND d.parent=c.body_id)))",
+            "sqlSha256": "a2060f4e5a1733e7694b3ebfe273210c344de90de902c615accfb713bee9ab3d",
+            "cpuMs": 55.943876,
+            "runs": 5,
+            "vmSteps": 4090240,
+            "fullscanSteps": 152929,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 151788,
+            "frameNext": 151668,
+            "frameColumns": 466678,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/sql_backend_executor.py\",\"methods\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/_conditional_compile.py\",\"methods\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/commit_branch_steps.py\",\"methods\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"impl/common/l2070_server_plan/steps/sql_conditional.py\",\"methods\"]",
+              "[\"cold\",\"data-layer-serverplan-quality\",\"quality-contracts-1\",\"l2070_batching/conditional_step.py\",\"methods\"]"
+            ]
+          }
+        ],
+        "accounting": "Native leaf spans are filtered to cold. SQL entries have cold contexts and aggregate per-query counters; their full contexts are retained."
+      }
+    },
+    "state": {
+      "selection": "fixtures/host/data-layer-port/profiling/state-seven.json",
+      "selectionSha256": "348c7d7b73291087ca111485a01693b7499b4fe8d02deb3951bd9c6a4bc1419b",
+      "workloadSha256": "fda15e7d1c66f93371f983a287ebac563a2256f2068b21f0c0101ad83c6e53bb",
+      "files": 7,
+      "bytes": 1123712,
+      "editedPath": "impl/common/l2070_server_plan/steps/sql_projection.py",
+      "policyDigests": {
+        "data-layer-serverplan-state-tripwires": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2"
+      },
+      "cpuMs": {
+        "compile": {
+          "median": 298.261,
+          "min": 270.334,
+          "max": 305.247
+        },
+        "cold": {
+          "median": 12512.278,
+          "min": 12277.829,
+          "max": 12719.279
+        },
+        "unchanged": {
+          "median": 1.609,
+          "min": 1.577,
+          "max": 1.698
+        },
+        "edit": {
+          "median": 1137.839,
+          "min": 1122.257,
+          "max": 1158.654
+        }
+      },
+      "peakRssMiB": {
+        "median": 1222.734375,
+        "min": 1197.140625,
+        "max": 1355.359375
+      },
+      "runs": [
+        {
+          "round": 1,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/round-1/profile.json",
+          "profileSha256": "12738b946eaf73465432c64fb089765fc5649a9df6d7dafee056d36211c12846",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 286.953,
+              "systemMs": 12.723
+            },
+            "cold": {
+              "userMs": 12359.66,
+              "systemMs": 359.619
+            },
+            "unchanged": {
+              "userMs": 0.966,
+              "systemMs": 0.732
+            },
+            "edit": {
+              "userMs": 1110.76,
+              "systemMs": 27.079
+            }
+          },
+          "phaseWallMs": {
+            "compile": 308.22187500000007,
+            "cold": 13790.556834,
+            "unchanged": 8.639917000000423,
+            "edit": 1361.1231669999997
+          },
+          "peakRssBytes": 1421197312,
+          "controllerSeconds": 16.14132566700573,
+          "loadAverageStart": [
+            41.28076171875,
+            33.7138671875,
+            34.15966796875
+          ],
+          "loadAverageEnd": [
+            39.13623046875,
+            33.6123046875,
+            34.11572265625
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 2,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/round-2/profile.json",
+          "profileSha256": "250bd39f2f31f8fc4f9ff48cb44499197ef1dea8e85482329de7860e6b8e67e2",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 283.091,
+              "systemMs": 15.17
+            },
+            "cold": {
+              "userMs": 12180.689,
+              "systemMs": 331.589
+            },
+            "unchanged": {
+              "userMs": 0.958,
+              "systemMs": 0.625
+            },
+            "edit": {
+              "userMs": 1120.808,
+              "systemMs": 20.287
+            }
+          },
+          "phaseWallMs": {
+            "compile": 306.578625,
+            "cold": 11577.028584,
+            "unchanged": 1.6311669999995502,
+            "edit": 1183.0112090000002
+          },
+          "peakRssBytes": 1282129920,
+          "controllerSeconds": 13.706103083008202,
+          "loadAverageStart": [
+            37.71826171875,
+            33.703125,
+            34.1396484375
+          ],
+          "loadAverageEnd": [
+            35.18896484375,
+            33.29931640625,
+            33.9912109375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 3,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/round-3/profile.json",
+          "profileSha256": "60865c915ab79ae9be5c26f6a53c7ce3e972d49aae95a5b1af5183e37a3e33d5",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 290.975,
+              "systemMs": 14.272
+            },
+            "cold": {
+              "userMs": 12325.404,
+              "systemMs": 340.648
+            },
+            "unchanged": {
+              "userMs": 0.894,
+              "systemMs": 0.683
+            },
+            "edit": {
+              "userMs": 1127.038,
+              "systemMs": 31.616
+            }
+          },
+          "phaseWallMs": {
+            "compile": 311.0300830000001,
+            "cold": 11788.17225,
+            "unchanged": 1.732625000000553,
+            "edit": 1298.8878750000003
+          },
+          "peakRssBytes": 1255800832,
+          "controllerSeconds": 14.05498833299498,
+          "loadAverageStart": [
+            25.791015625,
+            31.1259765625,
+            33.16259765625
+          ],
+          "loadAverageEnd": [
+            24.86328125,
+            30.66162109375,
+            32.9609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 4,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/round-4/profile.json",
+          "profileSha256": "01744cff9d2912a6d56741c987a93e7ba027523d77e9355428e117487de240a8",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 281.901,
+              "systemMs": 11.548
+            },
+            "cold": {
+              "userMs": 11978.232,
+              "systemMs": 299.597
+            },
+            "unchanged": {
+              "userMs": 0.912,
+              "systemMs": 0.755
+            },
+            "edit": {
+              "userMs": 1104.434,
+              "systemMs": 24.001
+            }
+          },
+          "phaseWallMs": {
+            "compile": 299.70070899999996,
+            "cold": 12246.808417,
+            "unchanged": 1.5534579999984999,
+            "edit": 1914.2471670000014
+          },
+          "peakRssBytes": 1325400064,
+          "controllerSeconds": 15.055607791990042,
+          "loadAverageStart": [
+            24.4736328125,
+            30.484375,
+            32.884765625
+          ],
+          "loadAverageEnd": [
+            29.02490234375,
+            31.14306640625,
+            33.07421875
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 5,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/round-5/profile.json",
+          "profileSha256": "ff783d36f66129d6d1bc51c69c7a879ac9f465b3ecfe73d14edc9b208573283a",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 258.128,
+              "systemMs": 12.206
+            },
+            "cold": {
+              "userMs": 12141.72,
+              "systemMs": 359.878
+            },
+            "unchanged": {
+              "userMs": 0.881,
+              "systemMs": 0.728
+            },
+            "edit": {
+              "userMs": 1098.269,
+              "systemMs": 23.988
+            }
+          },
+          "phaseWallMs": {
+            "compile": 344.79825000000005,
+            "cold": 12947.269584,
+            "unchanged": 1.5113340000007156,
+            "edit": 1149.0538749999996
+          },
+          "peakRssBytes": 1255292928,
+          "controllerSeconds": 15.516228041989962,
+          "loadAverageStart": [
+            31.35205078125,
+            31.5673828125,
+            33.20166015625
+          ],
+          "loadAverageEnd": [
+            31.76171875,
+            31.6650390625,
+            33.20849609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        }
+      ],
+      "diagnostic": {
+        "includedInTimingMedians": false,
+        "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/diagnostic/profile.json",
+        "sqlReport": ".rerail/profiles/rebaseline-7da151b8-20261021/state/diagnostic/sql/profile.html",
+        "controllerSeconds": 29.229928292013938,
+        "coldProcessCpuMs": 15737.117,
+        "leafSpanCpuMs": {
+          "sql-materialize": 5494.8424589999995,
+          "sql-index": 2409.7767099999996,
+          "sql-input": 344.04354399999994,
+          "sql-analyze": 57.85250000000002,
+          "sql-result": 19.817209
+        },
+        "incompleteExecutions": 0,
+        "topSqlByAggregateCpu": [
+          {
+            "id": 370,
+            "sql": "CREATE TEMP TABLE \"descendants\" AS WITH RECURSIVE walk(__path,root,node,expand) AS (SELECT __path,id,id,kind NOT IN ('module','block','expression_statement','argument_list','decorated_definition','type') FROM nodes UNION SELECT w.__path,w.root,e.dst,w.expand FROM walk w JOIN edges e ON e.__path=w.__path AND e.src=w.node WHERE w.expand) SELECT __path,root,node FROM walk",
+            "sqlSha256": "26aed394b4dbfcbd5156a4868232f8aa19b36ae90841e0629ae7770e0ef6f909",
+            "cpuMs": 1995.260498,
+            "runs": 9,
+            "vmSteps": 37338923,
+            "fullscanSteps": 154994,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/sql_projection.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/native_result_support.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l8000_admin/approval_db_runtime.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/read_through/transaction.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-project-1\",null,\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-projection-recovery-2\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 225,
+            "sql": "CREATE TEMP TABLE \"descendants\" AS WITH RECURSIVE walk(__path,root,node) AS (SELECT __path,id,id FROM nodes UNION SELECT w.__path,w.root,e.dst FROM walk w JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk",
+            "sqlSha256": "fefcb5e2559f09a62f325067ccf24a538405d81b80a76cf9460bdb38ac0d0fca",
+            "cpuMs": 1065.879125,
+            "runs": 2,
+            "vmSteps": 17633780,
+            "fullscanSteps": 47576,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 227,
+            "sql": "CREATE INDEX \"__descendants_1\" ON \"descendants\" (\"__path\",\"node\",\"root\")",
+            "sqlSha256": "b9267d33f7a687a1609d77313eb9f74bca79562906de9eabacd48e747419d6be",
+            "cpuMs": 820.759791,
+            "runs": 11,
+            "vmSteps": 14505975,
+            "fullscanSteps": 0,
+            "sorts": 11,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/sql_projection.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/native_result_support.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l8000_admin/approval_db_runtime.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/read_through/transaction.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-project-1\",null,\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-projection-recovery-2\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 226,
+            "sql": "CREATE INDEX \"__descendants_0\" ON \"descendants\" (\"__path\",\"root\",\"node\")",
+            "sqlSha256": "70fca8d0b4cd995c41f9b6e3d777194938e1de24ba1593b2acdfa533d91d42ea",
+            "cpuMs": 698.717166,
+            "runs": 11,
+            "vmSteps": 14505975,
+            "fullscanSteps": 0,
+            "sorts": 11,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/sql_projection.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/native_result_support.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l8000_admin/approval_db_runtime.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/read_through/transaction.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-project-1\",null,\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-projection-recovery-2\",\"l2080_lazy_orm/lazy_table.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"descendants\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l5250_matching/exact_dense.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 183,
+            "sql": "CREATE TEMP TABLE \"nodes\" AS SELECT *,kind||':'||__start||':'||__end AS id,\n parent_kind||':'||parent_start||':'||parent_end AS parent,\n ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,\n row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1)",
+            "sqlSha256": "3d10da2741da728cebbf6b1e2214b08814e3e44da4ad60b1b547519c6995bed0",
+            "cpuMs": 607.301667,
+            "runs": 11,
+            "vmSteps": 50665059,
+            "fullscanSteps": 202560,
+            "sorts": 22,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/sql_projection.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/exact_dense.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l5250_matching/native_result_support.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/common/l8000_admin/approval_db_runtime.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"impl/read_through/transaction.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-1\",\"l2080_lazy_orm/lazy_table.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-flow-project-1\",null,\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-projection-recovery-2\",\"l2080_lazy_orm/lazy_table.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l2070_server_plan/steps/versioned_hybrid_search.py\",\"nodes\"]",
+              "[\"cold\",\"data-layer-serverplan-state-tripwires\",\"state-signatures-1\",\"impl/common/l5250_matching/exact_dense.py\",\"nodes\"]"
+            ]
+          }
+        ],
+        "accounting": "Native leaf spans are filtered to cold. SQL entries have cold contexts and aggregate per-query counters; their full contexts are retained."
+      }
+    },
+    "dispatch": {
+      "selection": "fixtures/host/data-layer-port/profiling/dispatch-one.json",
+      "selectionSha256": "726ac43dd3ecf8fc0c990693e905812162b07ce56eb85ee53646b9a6ce1c1a15",
+      "workloadSha256": "eba0f2cc78ded12f2819802d891530a4550807d55e329b0238b57c4cd75cb09c",
+      "files": 1,
+      "bytes": 136810,
+      "editedPath": "impl/common/l2070_server_plan/base_server_plan.py",
+      "policyDigests": {
+        "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8"
+      },
+      "cpuMs": {
+        "compile": {
+          "median": 46.806999999999995,
+          "min": 37.369,
+          "max": 51.055
+        },
+        "cold": {
+          "median": 982.688,
+          "min": 954.865,
+          "max": 1005.092
+        },
+        "unchanged": {
+          "median": 1.428,
+          "min": 1.295,
+          "max": 1.561
+        },
+        "edit": {
+          "median": 972.533,
+          "min": 964.927,
+          "max": 974.347
+        }
+      },
+      "peakRssMiB": {
+        "median": 389.953125,
+        "min": 349.984375,
+        "max": 390.765625
+      },
+      "runs": [
+        {
+          "round": 1,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/round-1/profile.json",
+          "profileSha256": "515f60edd8c9a80fcf287fa29de733f5c06ae08073518dd9c3827208a5be02ee",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 36.221,
+              "systemMs": 2.053
+            },
+            "cold": {
+              "userMs": 957.267,
+              "systemMs": 35.804
+            },
+            "unchanged": {
+              "userMs": 0.778,
+              "systemMs": 0.577
+            },
+            "edit": {
+              "userMs": 939.147,
+              "systemMs": 25.78
+            }
+          },
+          "phaseWallMs": {
+            "compile": 40.51933399999996,
+            "cold": 1064.5005,
+            "unchanged": 9.584749999999985,
+            "edit": 1230.9666670000001
+          },
+          "peakRssBytes": 409747456,
+          "controllerSeconds": 3.195603167027002,
+          "loadAverageStart": [
+            39.13623046875,
+            33.6123046875,
+            34.11572265625
+          ],
+          "loadAverageEnd": [
+            40.56640625,
+            34.00048828125,
+            34.24951171875
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 2,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/round-2/profile.json",
+          "profileSha256": "e771e932e61711e43f454691dc0ddc4fbfd1db9b55cf7321d7945b4c8f0b4a07",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 35.256,
+              "systemMs": 2.113
+            },
+            "cold": {
+              "userMs": 941.73,
+              "systemMs": 40.958
+            },
+            "unchanged": {
+              "userMs": 0.69,
+              "systemMs": 0.605
+            },
+            "edit": {
+              "userMs": 941.215,
+              "systemMs": 27.204
+            }
+          },
+          "phaseWallMs": {
+            "compile": 37.40599999999995,
+            "cold": 1186.4033749999999,
+            "unchanged": 1.7923749999999927,
+            "edit": 996.677042
+          },
+          "peakRssBytes": 368836608,
+          "controllerSeconds": 3.0075271250098012,
+          "loadAverageStart": [
+            39.43505859375,
+            33.96826171875,
+            34.23486328125
+          ],
+          "loadAverageEnd": [
+            37.71826171875,
+            33.703125,
+            34.1396484375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 3,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/round-3/profile.json",
+          "profileSha256": "d9a9474f38b492f995bb346a7b90e2190daa6e04878e496f5c7545d70bcaf646",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 42.187,
+              "systemMs": 4.62
+            },
+            "cold": {
+              "userMs": 940.864,
+              "systemMs": 39.39
+            },
+            "unchanged": {
+              "userMs": 0.71,
+              "systemMs": 0.851
+            },
+            "edit": {
+              "userMs": 943.456,
+              "systemMs": 29.077
+            }
+          },
+          "phaseWallMs": {
+            "compile": 39.53691700000002,
+            "cold": 1017.0014590000001,
+            "unchanged": 1.4405409999999392,
+            "edit": 998.3372079999999
+          },
+          "peakRssBytes": 408944640,
+          "controllerSeconds": 2.727578624995658,
+          "loadAverageStart": [
+            24.86328125,
+            30.66162109375,
+            32.9609375
+          ],
+          "loadAverageEnd": [
+            24.86328125,
+            30.66162109375,
+            32.9609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 4,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/round-4/profile.json",
+          "profileSha256": "2b8afe84e090fd85692cc21aaf6617448c6ea662afb71d1838853711bfbac27c",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 48.104,
+              "systemMs": 2.951
+            },
+            "cold": {
+              "userMs": 956.697,
+              "systemMs": 48.395
+            },
+            "unchanged": {
+              "userMs": 0.746,
+              "systemMs": 0.682
+            },
+            "edit": {
+              "userMs": 945.566,
+              "systemMs": 27.191
+            }
+          },
+          "phaseWallMs": {
+            "compile": 37.60174999999998,
+            "cold": 1040.638,
+            "unchanged": 1.2956659999999829,
+            "edit": 993.7808329999998
+          },
+          "peakRssBytes": 366985216,
+          "controllerSeconds": 2.6261862500105053,
+          "loadAverageStart": [
+            24.86328125,
+            30.66162109375,
+            32.9609375
+          ],
+          "loadAverageEnd": [
+            24.4736328125,
+            30.484375,
+            32.884765625
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        },
+        {
+          "round": 5,
+          "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/round-5/profile.json",
+          "profileSha256": "cefef55b276b97eb01a64196739d0d7ea7bf7bf8322ba5edf6d8f2b087c3f6a9",
+          "phaseCpuMs": {
+            "compile": {
+              "userMs": 42.639,
+              "systemMs": 4.997
+            },
+            "cold": {
+              "userMs": 916.744,
+              "systemMs": 38.121
+            },
+            "unchanged": {
+              "userMs": 0.745,
+              "systemMs": 0.731
+            },
+            "edit": {
+              "userMs": 941.936,
+              "systemMs": 32.411
+            }
+          },
+          "phaseWallMs": {
+            "compile": 38.48274999999995,
+            "cold": 985.1804589999999,
+            "unchanged": 1.350541000000021,
+            "edit": 1048.5314580000002
+          },
+          "peakRssBytes": 408895488,
+          "controllerSeconds": 2.6766710829979274,
+          "loadAverageStart": [
+            31.76171875,
+            31.6650390625,
+            33.20849609375
+          ],
+          "loadAverageEnd": [
+            31.76171875,
+            31.6650390625,
+            33.20849609375
+          ],
+          "parity": {
+            "expected": 0,
+            "actual": 0,
+            "differences": 0
+          }
+        }
+      ],
+      "diagnostic": {
+        "includedInTimingMedians": false,
+        "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/diagnostic/profile.json",
+        "sqlReport": ".rerail/profiles/rebaseline-7da151b8-20261021/dispatch/diagnostic/sql/profile.html",
+        "controllerSeconds": 4.908491792011773,
+        "coldProcessCpuMs": 1255.001,
+        "leafSpanCpuMs": {
+          "sql-materialize": 675.3558320000001,
+          "sql-index": 158.32786800000005,
+          "sql-input": 30.29225299999999,
+          "sql-result": 3.0675,
+          "sql-analyze": 5.024417
+        },
+        "incompleteExecutions": 0,
+        "topSqlByAggregateCpu": [
+          {
+            "id": 174,
+            "sql": "CREATE TEMP TABLE \"descendants\" AS WITH RECURSIVE walk(__path,root,node) AS (SELECT __path,id,id FROM nodes UNION SELECT w.__path,w.root,e.dst FROM walk w JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk",
+            "sqlSha256": "fefcb5e2559f09a62f325067ccf24a538405d81b80a76cf9460bdb38ac0d0fca",
+            "cpuMs": 332.728625,
+            "runs": 1,
+            "vmSteps": 5610663,
+            "fullscanSteps": 15502,
+            "sorts": 0,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-dispatch-architecture\",\"executor-provenance\",\"impl/common/l2070_server_plan/base_server_plan.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 201,
+            "sql": "CREATE TEMP TABLE \"name_sites\" AS SELECT n.__path,n.id,n.text,n.__start,o.fn,f.__start AS fn_start,f.__end AS fn_end,\n EXISTS(SELECT 1 FROM bindings store WHERE store.__path=n.__path AND store.target=n.id) AS is_store,\n (SELECT count(*) FROM bindings b JOIN nodes t ON t.__path=b.__path AND t.id=b.target WHERE b.__path=n.__path AND b.fn=o.fn AND t.text=n.text) AS binding_count,\n (SELECT b.target FROM bindings b JOIN nodes t ON t.__path=b.__path AND t.id=b.target WHERE b.__path=n.__path AND b.fn=o.fn AND t.text=n.text AND b.__start<n.__start ORDER BY b.__start DESC LIMIT 1) AS latest_target\n FROM nodes n JOIN ownership o ON o.__path=n.__path AND o.id=n.id JOIN functions f ON f.__path=o.__path AND f.id=o.fn WHERE n.kind='identifier'",
+            "sqlSha256": "a6d58cd66367921210b8d57573e9a39372cad122efed04ada9e531b9b9aeabc4",
+            "cpuMs": 85.233125,
+            "runs": 1,
+            "vmSteps": 2382040,
+            "fullscanSteps": 0,
+            "sorts": 5867,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-dispatch-architecture\",\"executor-provenance\",\"impl/common/l2070_server_plan/base_server_plan.py\",\"name_sites\"]"
+            ]
+          },
+          {
+            "id": 206,
+            "sql": "CREATE TEMP TABLE \"propagation\" AS SELECT __path,object AS src,id AS dst FROM attributes\n UNION SELECT n.__path,c.id,n.id FROM nodes n JOIN nodes c ON c.__path=n.__path AND c.parent=n.id\n WHERE n.kind IN ('parenthesized_expression','type','await','unary_operator','list','tuple','set','list_splat','expression_list','pattern_list')\n UNION SELECT n.__path,c.id,n.id FROM nodes n JOIN nodes c ON c.__path=n.__path AND c.parent=n.id\n WHERE n.kind IN ('boolean_operator','conditional_expression') AND (n.kind!='conditional_expression' OR c.ordinal IN (0,2))\n UNION SELECT n.__path,c.id,n.id FROM nodes n JOIN fields f ON f.__path=n.__path AND f.owner=n.id AND f.role='value' JOIN nodes c ON c.__path=n.__path AND c.id=f.child WHERE n.kind IN ('pair','named_expression')\n UNION SELECT n.__path,c.id,n.id FROM nodes n JOIN nodes c ON c.__path=n.__path AND c.parent=n.id WHERE n.kind='dictionary'\n UNION SELECT c.__path,c.receiver,c.id FROM calls c WHERE c.receiver IS NOT NULL AND c.callee NOT IN ('async_pipeline_execution_scope','get_lowering_context','native_pipeline_execution_receipt','pipeline_execution_scope')\n UNION SELECT c.__path,a.id,c.id FROM calls c JOIN arguments a ON a.__path=c.__path AND a.call=c.id AND a.position=0 WHERE c.callee='getattr'\n UNION SELECT b.__path,b.value,b.target FROM bindings b JOIN nodes l ON l.__path=b.__path AND l.id=b.target WHERE l.kind NOT IN ('pattern_list','tuple_pattern','list_pattern')\n UNION SELECT b.__path,rv.id,lt.id FROM bindings b JOIN nodes l ON l.__path=b.__path AND l.id=b.target JOIN nodes r ON r.__path=b.__path AND r.id=b.value\n JOIN nodes lt ON lt.__path=l.__path AND lt.parent=l.id JOIN nodes rv ON rv.__path=r.__path AND rv.parent=r.id AND rv.ordinal=lt.ordinal\n WHERE l.kind IN ('pattern_list','tuple_pattern','list_pattern') AND r.kind IN ('expression_list','tuple','list')\n UNION SELECT b.__path,b.value,lt.id FROM bindings b JOIN nodes l ON l.__path=b.__path AND l.id=b.target JOIN nodes r ON r.__path=b.__path AND r.id=b.value JOIN nodes lt ON lt.__path=l.__path AND lt.parent=l.id\n WHERE l.kind IN ('pattern_list','tuple_pattern','list_pattern') AND r.kind NOT IN ('expression_list','tuple','list')\n UNION SELECT p.__path,p.id,n.id FROM name_sites p JOIN name_sites n ON n.__path=p.__path AND n.text=p.text\n WHERE NOT n.is_store AND p.fn_start<=n.fn_start AND p.fn_end>=n.fn_end AND (p.fn=n.fn OR n.binding_count=0)\n AND (n.binding_count<=1 OR p.id=n.latest_target)\n UNION SELECT m.__path,m.subject_kind||':'||m.subject_start||':'||m.subject_end,n.id FROM nodes m\n JOIN descendants d ON d.__path=m.__path AND d.root=m.id JOIN nodes n ON n.__path=d.__path AND n.id=d.node JOIN nodes p ON p.__path=n.__path AND p.id=n.parent\n WHERE m.kind='match_statement' AND n.kind='identifier' AND (p.kind IN ('as_pattern','splat_pattern') OR (p.kind='dotted_name' AND EXISTS(SELECT 1 FROM nodes cp WHERE cp.__path=p.__path AND cp.id=p.parent AND cp.kind='case_pattern' AND rx_matches(cp.text,'^[A-Za-z_]\\w*$'))))\n UNION SELECT p.__path,p.id,n.id FROM attributes p JOIN attributes n ON n.__path=p.__path AND n.attr=p.attr WHERE p.object_text IN ('self','cls') AND n.object_text IN ('self','cls')\n ",
+            "sqlSha256": "4e3c05fd307359bd690dd3d79ded2826ac0d77cdeae24f9eabbd572a80dfbcff",
+            "cpuMs": 72.891708,
+            "runs": 1,
+            "vmSteps": 6374772,
+            "fullscanSteps": 27174,
+            "sorts": 369,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-dispatch-architecture\",\"executor-provenance\",\"impl/common/l2070_server_plan/base_server_plan.py\",\"propagation\"]"
+            ]
+          },
+          {
+            "id": 175,
+            "sql": "CREATE INDEX \"__descendants_0\" ON \"descendants\" (\"__path\",\"root\",\"node\")",
+            "sqlSha256": "70fca8d0b4cd995c41f9b6e3d777194938e1de24ba1593b2acdfa533d91d42ea",
+            "cpuMs": 72.14375,
+            "runs": 1,
+            "vmSteps": 1633130,
+            "fullscanSteps": 0,
+            "sorts": 1,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-dispatch-architecture\",\"executor-provenance\",\"impl/common/l2070_server_plan/base_server_plan.py\",\"descendants\"]"
+            ]
+          },
+          {
+            "id": 127,
+            "sql": "CREATE TEMP TABLE \"nodes\" AS SELECT *,kind||':'||__start||':'||__end AS id,\n parent_kind||':'||parent_start||':'||parent_end AS parent,\n ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,\n row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1)",
+            "sqlSha256": "3d10da2741da728cebbf6b1e2214b08814e3e44da4ad60b1b547519c6995bed0",
+            "cpuMs": 52.439125,
+            "runs": 1,
+            "vmSteps": 4207936,
+            "fullscanSteps": 15501,
+            "sorts": 2,
+            "frameScans": 0,
+            "frameLookups": 0,
+            "frameNext": 0,
+            "frameColumns": 0,
+            "contexts": [
+              "[\"cold\",\"data-layer-serverplan-dispatch-architecture\",\"executor-provenance\",\"impl/common/l2070_server_plan/base_server_plan.py\",\"nodes\"]"
+            ]
+          }
+        ],
+        "accounting": "Native leaf spans are filtered to cold. SQL entries have cold contexts and aggregate per-query counters; their full contexts are retained."
+      }
+    }
+  },
+  "host": {
+    "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+    "cpu": "arm",
+    "python": "3.14.7",
+    "logicalCpus": 18
+  },
+  "stateExternalSample": {
+    "tool": "macOS sample",
+    "includedInTimingMedians": false,
+    "profile": ".rerail/profiles/rebaseline-7da151b8-20261021/state/external/profile.json",
+    "controllerSeconds": 23.06889887500438,
+    "samples": [
+      {
+        "file": "sample-1.txt",
+        "startUnixUs": 1792588580114048,
+        "captureSeconds": 1,
+        "exitCode": 0,
+        "activeNativeSamples": 2107,
+        "parkedThreadSamples": 7523,
+        "subsystems": [
+          {
+            "symbol": "matching-and-parsing",
+            "samples": 2106,
+            "percent": 99.95
+          },
+          {
+            "symbol": "other-native",
+            "samples": 1,
+            "percent": 0.05
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "compile",
+            "overlapMs": 13.952
+          },
+          {
+            "phase": "cold",
+            "overlapMs": 986.048
+          }
+        ],
+        "topSelf": [
+          {
+            "symbol": "_tlv_get_addr (libdyld.dylib)",
+            "samples": 216,
+            "percent": 10.25
+          },
+          {
+            "symbol": "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+            "samples": 122,
+            "percent": 5.79
+          },
+          {
+            "symbol": "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE13push_childrenBb_ (rerail-sql-decisions-20261021.node)",
+            "samples": 111,
+            "percent": 5.27
+          },
+          {
+            "symbol": "_RINvXs0_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCskxxAxOSiHJM_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (rerail-sql-decisions-20261021.node)",
+            "samples": 102,
+            "percent": 4.84
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budget14STEP_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1s_6option6OptionQIB27_INtNtB1s_4cell4CellmEEEEE9call_onceBc_ (rerail-sql-decisions-20261021.node)",
+            "samples": 92,
+            "percent": 4.37
+          },
+          {
+            "symbol": "_RINvMs_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher8relationNtB5_6StopBy7reachesNtNtB9_4tape7TapeDocINtNtNtNtCsaTNopw4qKPP_4core4iter8adapters3map3MapINtNtNtB1V_7sources7from_fn6FromFnNCNvXs6_B1w_NtB1w_8TapeNodeNtNtCskxxAxOSiHJM_13ast_grep_core6source6SgNode9ancestors0ENCNvMs2_NtB3F_4nodeINtB4G_4NodeB1u_E9ancestors0ENCINvXs0_B7_NtB7_10AstMatcherNtNtB3F_7matcher7Matcher19match_node_with_envB1u_E0NCB5m_s_0EBb_ (rerail-sql-decisions-20261021.node)",
+            "samples": 88,
+            "percent": 4.18
+          }
+        ],
+        "bottomUpStacks": [
+          {
+            "frames": [
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE13push_childrenBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 102
+          },
+          {
+            "frames": [
+              "_RINvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB6_15FileAnchorIndexNtNtBa_4tape7TapeDocE6filterNCNvB2_18relation_selection0EBc_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 80
+          },
+          {
+            "frames": [
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher7anchorsINtB5_15FileAnchorIndexNtNtB9_4tape7TapeDocE15select_completeBb_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 69
+          }
+        ]
+      },
+      {
+        "file": "sample-2.txt",
+        "startUnixUs": 1792588584396501,
+        "captureSeconds": 1,
+        "exitCode": 0,
+        "activeNativeSamples": 806,
+        "parkedThreadSamples": 11284,
+        "subsystems": [
+          {
+            "symbol": "matching-and-parsing",
+            "samples": 804,
+            "percent": 99.75
+          },
+          {
+            "symbol": "relational-host",
+            "samples": 2,
+            "percent": 0.25
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "topSelf": [
+          {
+            "symbol": "_xzm_xzone_malloc_freelist_outlined (libsystem_malloc.dylib)",
+            "samples": 59,
+            "percent": 7.32
+          },
+          {
+            "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+            "samples": 57,
+            "percent": 7.07
+          },
+          {
+            "symbol": "_xzm_free (libsystem_malloc.dylib)",
+            "samples": 48,
+            "percent": 5.96
+          },
+          {
+            "symbol": "_RNvYNCNKNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budget16BUDGET_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1u_6option6OptionQIB29_INtNtB1u_4cell4CellmEEEEE9call_onceBc_ (rerail-sql-decisions-20261021.node)",
+            "samples": 38,
+            "percent": 4.71
+          },
+          {
+            "symbol": "_RINvMNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher8relationNtB3_6Search4testNtNtB7_4tape7TapeDocEB9_ (rerail-sql-decisions-20261021.node)",
+            "samples": 38,
+            "percent": 4.71
+          },
+          {
+            "symbol": "xzm_malloc_zone_size (libsystem_malloc.dylib)",
+            "samples": 33,
+            "percent": 4.09
+          }
+        ],
+        "bottomUpStacks": [
+          {
+            "frames": [
+              "_xzm_xzone_malloc_freelist_outlined (libsystem_malloc.dylib)",
+              "_rjem_malloc (librerail_jemalloc_check_shim.dylib)",
+              "_RINvMNtNtNtCs3XW7gbOxCtj_5alloc11collections5btree6appendINtNtB5_4node7NodeRefNtNtBW_6marker5OwnedNtNtB9_6string6StringNtNtCs7VXmlSwJRaE_10serde_json5value5ValueNtB1g_14LeafOrInternalE9bulk_pushINtNtB5_17dedup_sorted_iter15DedupSortedIterB1y_B1T_INtNtNtB9_3vec9into_iter8IntoIterTB1y_B1T_EEENtNtB9_5alloc6GlobalECsgb6Nrezespg_13rerail_engine (rerail-sql-decisions-20261021.node)",
+              "_RINvMsi_NtNtNtCs3XW7gbOxCtj_5alloc11collections5btree3mapINtB6_8BTreeMapNtNtBc_6string6StringNtNtCs7VXmlSwJRaE_10serde_json5value5ValueE27bulk_build_from_sorted_iterINtNtBc_3vec3VecTB18_B1t_EEECsgb6Nrezespg_13rerail_engine (rerail-sql-decisions-20261021.node)",
+              "_RINvXs1o_NtNtNtCs3XW7gbOxCtj_5alloc11collections5btree3mapINtB7_8BTreeMapNtNtBd_6string6StringNtNtCs7VXmlSwJRaE_10serde_json5value5ValueEINtNtNtNtCsaTNopw4qKPP_4core4iter6traits7collect12FromIteratorTB19_B1u_EE9from_iterINtNtNtB2i_8adapters3map3MapINtNtNtB2k_5slice4iter4IterNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl5model10ProjectionENCINvNtNtB4t_4eval8evidence7projectNtNtB4t_4tape7TapeDocEs_0EEB4v_ (rerail-sql-decisions-20261021.node)",
+              "_RINvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4eval8evidence7projectNtNtB6_4tape7TapeDocEB8_ (rerail-sql-decisions-20261021.node)",
+              "_RINvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4eval5query18witness_from_matchNtNtB6_4tape7TapeDocNCNCNCNCNvB2_20evaluate_file_clauses_000s_0EB8_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 43
+          },
+          {
+            "frames": [
+              "_RNvMNtCskxxAxOSiHJM_13ast_grep_core8meta_varINtB2_10MetaVarEnvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4tape7TapeDocE6insertB14_ (rerail-sql-decisions-20261021.node)",
+              "_RINvNtCskxxAxOSiHJM_13ast_grep_core10match_tree19match_leaf_meta_varNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4tape7TapeDocEB1a_ (rerail-sql-decisions-20261021.node)",
+              "_RINvXs4_NtNtCskxxAxOSiHJM_13ast_grep_core7matcher7patternNtB6_7PatternNtB8_7Matcher19match_node_with_envNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4tape7TapeDocEB1K_ (rerail-sql-decisions-20261021.node)",
+              "_RINvXs0_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCskxxAxOSiHJM_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (rerail-sql-decisions-20261021.node)",
+              "_RINvMNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher8relationNtB3_6Search4testNtNtB7_4tape7TapeDocEB9_ (rerail-sql-decisions-20261021.node)",
+              "_RINvMs_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher8relationNtB5_6StopBy7reachesNtNtB9_4tape7TapeDocINtNtNtNtCsaTNopw4qKPP_4core4iter8adapters3map3MapINtNtNtB1V_7sources7from_fn6FromFnNCNvXs6_B1w_NtB1w_8TapeNodeNtNtCskxxAxOSiHJM_13ast_grep_core6source6SgNode9ancestors0ENCNvMs2_NtB3F_4nodeINtB4G_4NodeB1u_E9ancestors0ENCINvXs0_B7_NtB7_10AstMatcherNtNtB3F_7matcher7Matcher19match_node_with_envB1u_E0NCB5m_s_0EBb_ (rerail-sql-decisions-20261021.node)",
+              "_RINvXs0_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCskxxAxOSiHJM_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 28
+          },
+          {
+            "frames": [
+              "_xzm_free (libsystem_malloc.dylib)",
+              "_rjem_sdallocx (librerail_jemalloc_check_shim.dylib)",
+              "_RNvXsg_NtCs5Ib9kZ2EDXR_9hashbrown3rawINtB5_8RawTableTNtNtCs3XW7gbOxCtj_5alloc6string6StringINtNtCskxxAxOSiHJM_13ast_grep_core4node4NodeNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4tape7TapeDocEEENtNtNtCsaTNopw4qKPP_4core3ops4drop4Drop4dropB2f_ (rerail-sql-decisions-20261021.node)",
+              "_RNvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher3run10match_root (rerail-sql-decisions-20261021.node)",
+              "_RINvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher3run10run_clauseNtB2_7StoppedNCNCNvNtNtB6_4eval5query20evaluate_file_clauses_00EB8_ (rerail-sql-decisions-20261021.node)",
+              "_RINvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl7matcher4memo9with_fileINtNtCsaTNopw4qKPP_4core6result6ResultuNtNtB4_3run7StoppedENCNvNtNtB6_4eval5query20evaluate_file_clauses_0EB8_ (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl4eval5queryNtB2_4Leaf4file (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 27
+          }
+        ]
+      },
+      {
+        "file": "sample-3.txt",
+        "startUnixUs": 1792588588194198,
+        "captureSeconds": 1,
+        "exitCode": 0,
+        "activeNativeSamples": 815,
+        "parkedThreadSamples": 11410,
+        "subsystems": [
+          {
+            "symbol": "sqlite",
+            "samples": 814,
+            "percent": 99.88
+          },
+          {
+            "symbol": "profiling",
+            "samples": 1,
+            "percent": 0.12
+          }
+        ],
+        "approximateDriverPhaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "topSelf": [
+          {
+            "symbol": "_platform_memmove (libsystem_platform.dylib)",
+            "samples": 131,
+            "percent": 16.07
+          },
+          {
+            "symbol": "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+            "samples": 115,
+            "percent": 14.11
+          },
+          {
+            "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+            "samples": 69,
+            "percent": 8.47
+          },
+          {
+            "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+            "samples": 55,
+            "percent": 6.75
+          },
+          {
+            "symbol": "sqlite3BtreeIndexMoveto (rerail-sql-decisions-20261021.node)",
+            "samples": 53,
+            "percent": 6.5
+          },
+          {
+            "symbol": "sqlite3BtreeTableMoveto (rerail-sql-decisions-20261021.node)",
+            "samples": 52,
+            "percent": 6.38
+          }
+        ],
+        "bottomUpStacks": [
+          {
+            "frames": [
+              "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+              "sqlite3_step (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+              "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+              "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)",
+              "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational14evaluate_batch (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 115
+          },
+          {
+            "frames": [
+              "_platform_memmove (libsystem_platform.dylib)",
+              "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+              "sqlite3_step (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+              "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+              "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 107
+          },
+          {
+            "frames": [
+              "sqlite3BtreeTableMoveto (rerail-sql-decisions-20261021.node)",
+              "sqlite3VdbeFinishMoveto (rerail-sql-decisions-20261021.node)",
+              "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+              "sqlite3_step (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+              "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+              "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)"
+            ],
+            "samples": 48
+          }
+        ]
+      }
+    ],
+    "limits": "Three one-second windows describe sampled intervals, not whole-run CPU proportions. The first overlaps compile by about 14 ms; the remaining sampled time is cold evaluation."
+  },
+  "validation": {
+    "timedRuns": 15,
+    "diagnosticRuns": 3,
+    "externalRuns": 1,
+    "allRunsPassedParity": true,
+    "positiveCorpus": "Reused prior proof for this exact quality policy and addon; not a new corpus replay.",
+    "qualityProof": "fixtures/host/data-layer-port/profiling/sql-shape-decisions.json",
+    "qualityCorpus": {
+      "upstream": 200,
+      "positive": 135,
+      "clean": 65,
+      "productionGates": 219,
+      "editTransitions": 177
+    },
+    "note": "All three performance selections expect zero findings. The positive corpus is separate."
+  },
+  "limits": [
+    "Shared host; CPU medians and ranges do not establish small speed differences.",
+    "Reference optimization-level-1 profiling build, not a standard optimization-level-3 production benchmark.",
+    "Ordinary no-LTO correctness build is not mixed into this timing series.",
+    "Diagnostic captures and external sampling are excluded from timing medians.",
+    "This is three pinned subsets, not a full-repository scalability benchmark."
+  ],
+  "measurementCodeSha256": {
+    "scripts/profiling/run.py": "310905e13f63d855b958045ce6c2462b94725b409b9cdc6f45f2384de1019433",
+    "scripts/profiling/report.py": "2b85257d7e95bb9e81b7ec8ac9cdc2b72021690f4e2c556edfd68a84dea95b3d",
+    "scripts/profiling/sample.py": "6ea8fabe30c1a0a299b45588c5552a4105ac8fa48e0f8c3d374787f2abfa202b",
+    "scripts/profiling/sql-report.mjs": "8f7af52efa76ec56b44688ffada9946c672e84664a0e88fa73dfcdfb38c8f5b3",
+    "conformance/data-layer/suite.ts": "93e972de53aa2e61ff5fc2c33f2cdb99474a8dd05c12a7cdfd33301f3b86b94c"
+  }
+}

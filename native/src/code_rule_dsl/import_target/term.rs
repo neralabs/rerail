@@ -117,3 +117,37 @@ impl ImportTargetTest {
 fn empty_view() -> Arc<View> {
     Arc::new(View::new(Arc::default(), None))
 }
+
+impl crate::code_rule_dsl::matcher::LanguageTerm for ImportTargetTest {
+    fn key(&self) -> &'static str {
+        "importTarget"
+    }
+    fn reading(&self) -> &Reading {
+        &self.reading
+    }
+    fn holds_tape(&self, node: &Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> bool {
+        self.holds(node)
+    }
+    fn holds_sub(&self, node: &Node<'_, crate::code_rule_dsl::literal::SubDoc>) -> bool {
+        self.holds(node)
+    }
+    fn holds_str(
+        &self,
+        node: &Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>,
+    ) -> bool {
+        self.holds(node)
+    }
+    fn reads_resolution(&self) -> bool {
+        true
+    }
+    fn profile(&self) -> serde_json::Value {
+        let test = self;
+        serde_json::json!({
+            "via": format!("{:?}", test.via),
+            "moduleType": test.module_types.as_ref().map(|types| types.iter().map(|kind| format!("{kind:?}")).collect::<Vec<_>>()),
+            "builtin": test.builtin, "resolved": test.resolved, "failed": test.failed,
+            "extensionSpelled": test.extension_spelled, "published": test.published,
+            "devDependency": test.dev_dependency, "declared": test.declared, "aliased": test.aliased,
+        })
+    }
+}

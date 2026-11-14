@@ -1,0 +1,31 @@
+.policy "ruff-async100-cancel-scope-no-checkpoint" revision 2
+.description "Add an await inside asyncio, anyio or trio timeout and cancel-scope blocks; without a checkpoint the timeout can never fire."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC100 (flake8-async): a timeout or cancel-scope context (`trio.fail_after`, `anyio.move_on_after`,
+// `asyncio.timeout`, …) whose body never awaits. A timeout fires only at a checkpoint, so the block is
+// pointless. The last such item of the `with` counts; in an `async with`, only when it is the last item (the
+// items after it are entered with an await). A body with a `yield` anywhere (nested defs too) is left alone:
+// the caller it yields to may await. `yield from` does not count (Ruff's is_yield_expr is Yield only).
+//   with trio.fail_after(1): ...                    ← ASYNC100 at the with
+//   with trio.fail_after(1): await trio.sleep(2)    not reported
+//   async with asyncio.timeout(1), tg(): ...        not reported: an item after the timeout
+#include "python/misc2-async.rr"
+
+.violation ASYNC100(at: node, callee: symbol) code "ASYNC100"
+    "Add an await inside this `with {callee}(...):` block; without a checkpoint the timeout can never fire."
+    suppress ruff "ASYNC100"
+ASYNC100(w, q) :- async_timeout_item(w, i, q), !async_later_timeout(w, i),
+    (!op(w, "async") ; !async_later_item(w, i)),
+    field(w, "body", b), !async_checkpoint(b), count : { has(b, y, "yield"), !op(y, "from") } = 0.
+// async_timeout_item(w, i, q): with item i of statement w is a call of timeout context q.
+.decl async_timeout_item(w: node, i: node, q: symbol)
+async_timeout_item(w, i, q) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, i, _),
+    kind(i, "with_item"), field(i, "value", v), (kind(v, "as_pattern"), child(v, e, 0) ; !kind(v, "as_pattern"), e = v),
+    unparen(e, c), async_call(c, _, q), async_timeout_cm(q).
+.decl async_later_timeout(w: node, i: node)
+async_later_timeout(w, i) :- async_timeout_item(w, i, _), async_timeout_item(w, j, _), i < j.
+.decl async_later_item(w: node, i: node)
+async_later_item(w, i) :- async_timeout_item(w, i, _), precedes(i, j), kind(j, "with_item").

@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 /// The PHP view of `source` (the module's rules); `source` itself where nothing is blanked.
-pub(super) fn view(source: &str) -> Cow<'_, str> {
+pub fn view(source: &str) -> Cow<'_, str> {
     let bytes = source.as_bytes();
     let len = bytes.len();
     let mut view = Masked {
@@ -295,5 +295,4 @@ impl<'a> Masked<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

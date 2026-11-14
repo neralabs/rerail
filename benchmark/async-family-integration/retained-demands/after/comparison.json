@@ -1,0 +1,699 @@
+{
+  "schema": "rerail-demand-repair-v1",
+  "runs": {
+    "baseline-rr": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-before/rr.json",
+      "cpu_seconds": 9.358327,
+      "wall_seconds": 8.062443,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 72,
+      "prepared": "store",
+      "executions": 10272,
+      "vm_steps": 0,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {},
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "combine",
+          0.0021519999999999977,
+          0.00042400000000000077,
+          30.113792,
+          0
+        ],
+        [
+          "parse (worker)",
+          1.755739999999997,
+          0.27411900000000033,
+          653.328384,
+          0
+        ],
+        [
+          "batch (worker)",
+          5.096514000000002,
+          0.1554579999999999,
+          653.328384,
+          0
+        ],
+        [
+          "constants",
+          9.000000000000327e-05,
+          1.5999999999995185e-05,
+          30.294016,
+          0
+        ],
+        [
+          "stats",
+          0.31598399999999993,
+          0.09992599999999999,
+          653.328384,
+          7
+        ],
+        [
+          "wait",
+          0.02316999999999919,
+          0.09170700000000004,
+          653.328384,
+          0
+        ],
+        [
+          "local",
+          0.6742230000000008,
+          0.038884999999999975,
+          653.328384,
+          10203
+        ],
+        [
+          "cross",
+          0.0012720000000001619,
+          6.60000000000105e-05,
+          653.328384,
+          62
+        ],
+        [
+          "write",
+          9.999999999843467e-06,
+          0.00019099999999999673,
+          653.328384,
+          0
+        ]
+      ],
+      "top_own_cpu": []
+    },
+    "baseline-rr-profile": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-before/rr-profile.json",
+      "cpu_seconds": 16.675939,
+      "wall_seconds": 27.5893855,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 72,
+      "prepared": "store",
+      "executions": 10272,
+      "vm_steps": 2283088,
+      "findings": 0,
+      "demands": {
+        "origins": {
+          "requested": 10,
+          "admitted": 10,
+          "semantic": 10,
+          "scopes": 5,
+          "arguments": 0,
+          "rows": 23
+        },
+        "qualified": {
+          "requested": 261170,
+          "admitted": 12332,
+          "semantic": 0,
+          "scopes": 0,
+          "arguments": 0,
+          "rows": 0
+        }
+      },
+      "statement_types": {
+        "DROP": 2022,
+        "INSERT": 1382,
+        "SELECT": 4615,
+        "CREATE": 2031,
+        "ATTACH": 2,
+        "PRAGMA": 76,
+        "BEGIN": 72,
+        "COMMIT": 72
+      },
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "combine",
+          0.0031069999999999987,
+          0.0008780000000000038,
+          31.735808,
+          0
+        ],
+        [
+          "parse (worker)",
+          2.9046749999999983,
+          0.8998679999999997,
+          656.326656,
+          0
+        ],
+        [
+          "batch (worker)",
+          8.150759999999998,
+          0.3233730000000008,
+          656.326656,
+          0
+        ],
+        [
+          "constants",
+          0.00011200000000000099,
+          3.200000000000425e-05,
+          31.916032,
+          0
+        ],
+        [
+          "stats",
+          0.47447000000000006,
+          0.15363,
+          656.326656,
+          7
+        ],
+        [
+          "wait",
+          0.029674000000000755,
+          0.10515999999999984,
+          656.326656,
+          0
+        ],
+        [
+          "local",
+          1.2194779999999992,
+          0.3551350000000002,
+          656.326656,
+          10203
+        ],
+        [
+          "cross",
+          0.00262999999999991,
+          0.0010789999999999411,
+          656.326656,
+          62
+        ],
+        [
+          "write",
+          2.0000000000131024e-05,
+          0.0005279999999999729,
+          656.326656,
+          0
+        ]
+      ],
+      "top_own_cpu": [
+        {
+          "allocatedBytes": 8144100312,
+          "calls": 72,
+          "cpuSeconds": 7.360767999999996,
+          "footprintRiseBytes": 30097408,
+          "freedBytes": 5901856848,
+          "name": "worker batch/project and intern",
+          "ownAllocatedBytes": 8029541080,
+          "ownCpuSeconds": 6.786308,
+          "ownFootprintRiseBytes": 30097408
+        },
+        {
+          "allocatedBytes": 1258543272,
+          "calls": 5725,
+          "cpuSeconds": 1.1326399999999768,
+          "footprintRiseBytes": 0,
+          "freedBytes": 323242336,
+          "name": "worker parse/tree-sitter and facts/facts from tape",
+          "ownAllocatedBytes": 1258543272,
+          "ownCpuSeconds": 1.1326399999999768,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 959693872,
+          "calls": 72,
+          "cpuSeconds": 1.0488480000000093,
+          "footprintRiseBytes": 130187408,
+          "freedBytes": 881854768,
+          "name": "worker batch/text tests",
+          "ownAllocatedBytes": 959693872,
+          "ownCpuSeconds": 1.0488480000000093,
+          "ownFootprintRiseBytes": 130187408
+        },
+        {
+          "allocatedBytes": 4409286032,
+          "calls": 5725,
+          "cpuSeconds": 3.018852999999897,
+          "footprintRiseBytes": 4080144,
+          "freedBytes": 3410314880,
+          "name": "worker parse/tree-sitter and facts",
+          "ownAllocatedBytes": 1670079128,
+          "ownCpuSeconds": 0.8159830000000085,
+          "ownFootprintRiseBytes": 4080144
+        },
+        {
+          "allocatedBytes": 1290674712,
+          "calls": 5725,
+          "cpuSeconds": 0.6639780000000379,
+          "footprintRiseBytes": 0,
+          "freedBytes": 176953256,
+          "name": "worker parse/tree-sitter and facts/tape restore",
+          "ownAllocatedBytes": 1290674712,
+          "ownCpuSeconds": 0.6639780000000379,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 114559232,
+          "calls": 72,
+          "cpuSeconds": 0.5744599999999966,
+          "footprintRiseBytes": 0,
+          "freedBytes": 93588816,
+          "name": "worker batch/project and intern/intern atoms",
+          "ownAllocatedBytes": 114559232,
+          "ownCpuSeconds": 0.5744599999999966,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1215760984,
+          "calls": 1,
+          "cpuSeconds": 0.5547850000000001,
+          "footprintRiseBytes": 446726552,
+          "freedBytes": 868394960,
+          "name": "stats/the prepared program, from the store (decision 0073)",
+          "ownAllocatedBytes": 1209923784,
+          "ownCpuSeconds": 0.551393,
+          "ownFootprintRiseBytes": 444023192
+        },
+        {
+          "allocatedBytes": 106711728,
+          "calls": 5725,
+          "cpuSeconds": 0.32242700000002333,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1792408,
+          "name": "worker parse/read",
+          "ownAllocatedBytes": 106711728,
+          "ownCpuSeconds": 0.32242700000002333,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 274800,
+          "calls": 5725,
+          "cpuSeconds": 0.26417499999995164,
+          "footprintRiseBytes": 0,
+          "freedBytes": 320552,
+          "name": "worker parse/tree-sitter and facts/digest",
+          "ownAllocatedBytes": 274800,
+          "ownCpuSeconds": 0.26417499999995164,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1911184,
+          "calls": 5725,
+          "cpuSeconds": 0.2441730000000653,
+          "footprintRiseBytes": 0,
+          "freedBytes": 898592,
+          "name": "worker parse/memo lookup",
+          "ownAllocatedBytes": 1911184,
+          "ownCpuSeconds": 0.2441730000000653,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1277230528,
+          "calls": 72,
+          "cpuSeconds": 1.6961289999999993,
+          "footprintRiseBytes": 164364480,
+          "freedBytes": 4254083800,
+          "name": "local",
+          "ownAllocatedBytes": 374425984,
+          "ownCpuSeconds": 0.17347399999999658,
+          "ownFootprintRiseBytes": 164364480
+        },
+        {
+          "allocatedBytes": 4521400720,
+          "calls": 5725,
+          "cpuSeconds": 3.7844159999999407,
+          "footprintRiseBytes": 4080144,
+          "freedBytes": 3416173744,
+          "name": "worker parse",
+          "ownAllocatedBytes": 1743024,
+          "ownCpuSeconds": 0.11588299999997348,
+          "ownFootprintRiseBytes": 0
+        }
+      ]
+    },
+    "demand-rr": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/rr.json",
+      "cpu_seconds": 8.509865,
+      "wall_seconds": 7.332131416,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 72,
+      "prepared": "store",
+      "executions": 3849,
+      "vm_steps": 0,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {},
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "combine",
+          0.0020499999999999997,
+          0.0004689999999999972,
+          30.523392,
+          0
+        ],
+        [
+          "parse (worker)",
+          1.5983569999999998,
+          0.23744900000000002,
+          653.508608,
+          0
+        ],
+        [
+          "batch (worker)",
+          4.622643000000004,
+          0.13652099999999995,
+          653.508608,
+          0
+        ],
+        [
+          "constants",
+          8.199999999999874e-05,
+          1.2999999999999123e-05,
+          30.654464,
+          0
+        ],
+        [
+          "stats",
+          0.292767,
+          0.10363300000000002,
+          653.508608,
+          7
+        ],
+        [
+          "wait",
+          0.019511999999999308,
+          0.07561299999999987,
+          653.508608,
+          0
+        ],
+        [
+          "local",
+          0.5670660000000006,
+          0.0306850000000001,
+          653.508608,
+          3795
+        ],
+        [
+          "cross",
+          0.0009530000000000927,
+          6.90000000000135e-05,
+          653.508608,
+          47
+        ],
+        [
+          "write",
+          8.999999999925734e-06,
+          0.00015399999999998748,
+          653.508608,
+          0
+        ]
+      ],
+      "top_own_cpu": []
+    },
+    "demand-rr-profile": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/rr-profile.json",
+      "cpu_seconds": 9.248855,
+      "wall_seconds": 7.828101166,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 72,
+      "prepared": "store",
+      "executions": 3849,
+      "vm_steps": 336517,
+      "findings": 0,
+      "demands": {
+        "origins": {
+          "requested": 10,
+          "admitted": 10,
+          "semantic": 10,
+          "scopes": 5,
+          "arguments": 0,
+          "rows": 23
+        },
+        "qualified": {
+          "requested": 261170,
+          "admitted": 12332,
+          "semantic": 0,
+          "scopes": 0,
+          "arguments": 0,
+          "rows": 0
+        }
+      },
+      "statement_types": {
+        "CREATE": 915,
+        "INSERT": 909,
+        "SELECT": 897,
+        "PRAGMA": 76,
+        "DROP": 906,
+        "BEGIN": 72,
+        "COMMIT": 72,
+        "ATTACH": 2
+      },
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "combine",
+          0.0017510000000000026,
+          0.00041600000000000317,
+          31.965184,
+          0
+        ],
+        [
+          "parse (worker)",
+          1.6603569999999994,
+          0.5114969999999999,
+          654.966784,
+          0
+        ],
+        [
+          "batch (worker)",
+          4.630169999999998,
+          0.15066999999999992,
+          654.966784,
+          0
+        ],
+        [
+          "constants",
+          6.999999999999715e-05,
+          9.999999999999593e-06,
+          32.096256,
+          0
+        ],
+        [
+          "stats",
+          0.24098599999999992,
+          0.08415500000000001,
+          654.966784,
+          7
+        ],
+        [
+          "wait",
+          0.01981599999999961,
+          0.0752670000000001,
+          654.966784,
+          0
+        ],
+        [
+          "local",
+          0.6514450000000004,
+          0.2355919999999999,
+          654.966784,
+          3795
+        ],
+        [
+          "cross",
+          0.0015880000000000338,
+          0.0007220000000000004,
+          654.966784,
+          47
+        ],
+        [
+          "write",
+          1.0999999999983245e-05,
+          0.00022800000000000598,
+          654.966784,
+          0
+        ]
+      ],
+      "top_own_cpu": [
+        {
+          "allocatedBytes": 8144100312,
+          "calls": 72,
+          "cpuSeconds": 4.148391999999999,
+          "footprintRiseBytes": 8994792,
+          "freedBytes": 5901856848,
+          "name": "worker batch/project and intern",
+          "ownAllocatedBytes": 8029541080,
+          "ownCpuSeconds": 3.803452000000002,
+          "ownFootprintRiseBytes": 8994792
+        },
+        {
+          "allocatedBytes": 1258543272,
+          "calls": 5725,
+          "cpuSeconds": 0.6391239999999836,
+          "footprintRiseBytes": 0,
+          "freedBytes": 323242336,
+          "name": "worker parse/tree-sitter and facts/facts from tape",
+          "ownAllocatedBytes": 1258543272,
+          "ownCpuSeconds": 0.6391239999999836,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 959693872,
+          "calls": 72,
+          "cpuSeconds": 0.593472000000001,
+          "footprintRiseBytes": 92258952,
+          "freedBytes": 881854768,
+          "name": "worker batch/text tests",
+          "ownAllocatedBytes": 959693872,
+          "ownCpuSeconds": 0.593472000000001,
+          "ownFootprintRiseBytes": 92258952
+        },
+        {
+          "allocatedBytes": 4409286032,
+          "calls": 5725,
+          "cpuSeconds": 1.7639249999999957,
+          "footprintRiseBytes": 3538968,
+          "freedBytes": 3410314880,
+          "name": "worker parse/tree-sitter and facts",
+          "ownAllocatedBytes": 1670079128,
+          "ownCpuSeconds": 0.4739749999999966,
+          "ownFootprintRiseBytes": 3538968
+        },
+        {
+          "allocatedBytes": 1290674712,
+          "calls": 5725,
+          "cpuSeconds": 0.3952430000000078,
+          "footprintRiseBytes": 0,
+          "freedBytes": 176953256,
+          "name": "worker parse/tree-sitter and facts/tape restore",
+          "ownAllocatedBytes": 1290674712,
+          "ownCpuSeconds": 0.3952430000000078,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 114559232,
+          "calls": 72,
+          "cpuSeconds": 0.34493999999999736,
+          "footprintRiseBytes": 0,
+          "freedBytes": 93588816,
+          "name": "worker batch/project and intern/intern atoms",
+          "ownAllocatedBytes": 114559232,
+          "ownCpuSeconds": 0.34493999999999736,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1215912648,
+          "calls": 1,
+          "cpuSeconds": 0.28767000000000004,
+          "footprintRiseBytes": 504955312,
+          "freedBytes": 868546624,
+          "name": "stats/the prepared program, from the store (decision 0073)",
+          "ownAllocatedBytes": 1210083640,
+          "ownCpuSeconds": 0.28576,
+          "ownFootprintRiseBytes": 502251952
+        },
+        {
+          "allocatedBytes": 274800,
+          "calls": 5725,
+          "cpuSeconds": 0.17827999999998784,
+          "footprintRiseBytes": 0,
+          "freedBytes": 320552,
+          "name": "worker parse/tree-sitter and facts/digest",
+          "ownAllocatedBytes": 274800,
+          "ownCpuSeconds": 0.17827999999998784,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 106711728,
+          "calls": 5725,
+          "cpuSeconds": 0.16154200000002542,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1792408,
+          "name": "worker parse/read",
+          "ownAllocatedBytes": 106711728,
+          "ownCpuSeconds": 0.16154200000002542,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1911184,
+          "calls": 5725,
+          "cpuSeconds": 0.11958000000001746,
+          "footprintRiseBytes": 0,
+          "freedBytes": 898592,
+          "name": "worker parse/memo lookup",
+          "ownAllocatedBytes": 1911184,
+          "ownCpuSeconds": 0.11958000000001746,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1115707200,
+          "calls": 72,
+          "cpuSeconds": 0.9746930000000004,
+          "footprintRiseBytes": 104792712,
+          "freedBytes": 4092756840,
+          "name": "local",
+          "ownAllocatedBytes": 374479296,
+          "ownCpuSeconds": 0.10811300000000362,
+          "ownFootprintRiseBytes": 104792712
+        },
+        {
+          "allocatedBytes": 4521400720,
+          "calls": 5725,
+          "cpuSeconds": 2.1585030000000107,
+          "footprintRiseBytes": 3538968,
+          "freedBytes": 3416173744,
+          "name": "worker parse",
+          "ownAllocatedBytes": 1743024,
+          "ownCpuSeconds": 0.07341599999997506,
+          "ownFootprintRiseBytes": 0
+        }
+      ]
+    }
+  },
+  "edges_vs_ruff": [
+    {
+      "fixture": "1f85485a7075",
+      "expected": 120,
+      "actual": 120,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "38094aa6ac7e",
+      "expected": 2,
+      "actual": 2,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "483985bd330e",
+      "expected": 24,
+      "actual": 24,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "c6d2d16e3195",
+      "expected": 32,
+      "actual": 32,
+      "missing": [],
+      "unexpected": []
+    }
+  ],
+  "ratios": {
+    "rr": {
+      "cpu_seconds": 1.099703344295121,
+      "wall_seconds": 1.099604268194966,
+      "executions": 2.6687451286048325,
+      "vm_steps": null
+    },
+    "rr-profile": {
+      "cpu_seconds": 1.803027401770273,
+      "wall_seconds": 3.5244032895013815,
+      "executions": 2.6687451286048325,
+      "vm_steps": 6.784465569347165
+    }
+  },
+  "gates": {
+    "all_ruff_edge_fixtures_measured": true,
+    "ruff_edges_match": true,
+    "rr_full_workload_matches": true,
+    "rr_findings_match": true,
+    "rr-profile_full_workload_matches": true,
+    "rr-profile_findings_match": true
+  }
+}

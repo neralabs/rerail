@@ -1,0 +1,6344 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "connection_caches",
+    "error_handling",
+    "lazy_result_usage",
+    "module_level_caches",
+    "plan_scope_ownership",
+    "plan_scope_side_effects",
+    "swallowed_exceptions",
+    "transaction_callback_wrappers",
+    "transaction_closures",
+    "transaction_patterns"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "provenance": "Supplemental source cases evaluated by pinned analyzers and actual plugin reporters. Project-root globals refer to the temporary project; signed artifacts are copied unchanged. Swallowed-exception aggregate reporters remain separate retained contracts.",
+  "events": [
+    {
+      "test": "probe:plan_scope_side_effects:positive:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n value = work.resolve()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-020",
+          "message": "resolve() is eager resolution inside plan-scope construction.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:positive:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n value = work.resolve()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-020",
+          "message": "resolve() is eager resolution inside plan-scope construction.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:clean:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n scope.execute()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:clean:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n scope.execute()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:value:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n value = lazy.resolved_value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-010",
+          "message": "resolved_value is forbidden inside plan-scope construction.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:value:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n value = lazy.resolved_value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-010",
+          "message": "resolved_value is forbidden inside plan-scope construction.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:raw:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n txn.execute_raw(sql)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-030",
+          "message": "execute_raw() is raw database execution inside plan-scope construction.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:raw:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n txn.execute_raw(sql)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-030",
+          "message": "execute_raw() is raw database execution inside plan-scope construction.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:callback:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n session.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-040",
+          "message": "Nested legacy callback API write() is forbidden inside plan scopes.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:callback:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n session.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-040",
+          "message": "Nested legacy callback API write() is forbidden inside plan scopes.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:side-effect:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n subprocess.run(command)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-050",
+          "message": "Python side-effect call run() is forbidden inside plan scopes.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:side-effect:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_read_plan() as scope:\n subprocess.run(command)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-050",
+          "message": "Python side-effect call run() is forbidden inside plan scopes.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:branch-audit:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n if rows:\n  txn.insert(Row)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "PSE-AUDIT-010",
+          "message": "Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms.",
+          "tag": null,
+          "severity": "audit"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:branch-audit:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n if rows:\n  txn.insert(Row)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:nested-call-not-direct-test:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n if txn.count() > 0:\n  txn.insert(Row)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:nested-call-not-direct-test:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n if txn.count() > 0:\n  txn.insert(Row)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:attribute-not-name:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n if obj.rows:\n  pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:attribute-not-name:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n if obj.rows:\n  pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:nested-reset:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n with conn.open_write_plan() as nested:\n  if rows:\n   pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:nested-reset:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n rows = txn.execute()\n with conn.open_write_plan() as nested:\n  if rows:\n   pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:positive:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Any, workflow):\n return scope.fetch()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow must accept exactly SyncPlanScope, not Any",
+          "tag": null,
+          "severity": "error"
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow scope parameter is broader than its exact nominal base scope",
+          "tag": null,
+          "severity": "error"
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO008",
+          "message": "run_read_plan_scope_workflow workflow parameter must preserve its return generic",
+          "tag": null,
+          "severity": "error"
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO003",
+          "message": "run_read_plan_scope_workflow must not use fallback terminal fetch",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:positive:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: Any, workflow):\n return scope.fetch()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow must accept exactly SyncPlanScope, not Any",
+          "tag": null
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow scope parameter is broader than its exact nominal base scope",
+          "tag": null
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO008",
+          "message": "run_read_plan_scope_workflow workflow parameter must preserve its return generic",
+          "tag": null
+        },
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO003",
+          "message": "run_read_plan_scope_workflow must not use fallback terminal fetch",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:clean:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]):\n return scope.execute_read_workflow(workflow)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:clean:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: SyncPlanScope, workflow: SyncReadPlanWorkflow[T]):\n return scope.execute_read_workflow(workflow)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:read-is-not-store:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def get(txn):\n return txn._callback_versioned_txn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:read-is-not-store:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def get(txn):\n return txn._callback_versioned_txn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:store:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def random(txn, value):\n txn._callback_versioned_txn = value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO010",
+          "message": "_callback_versioned_txn ownership may only be written by enumerated owner functions",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:store:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def random(txn, value):\n txn._callback_versioned_txn = value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO010",
+          "message": "_callback_versioned_txn ownership may only be written by enumerated owner functions",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:nested-store:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def random(txn, value):\n (txn._callback_versioned_txn, other) = value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO010",
+          "message": "_callback_versioned_txn ownership may only be written by enumerated owner functions",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:nested-store:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "source": "def random(txn, value):\n (txn._callback_versioned_txn, other) = value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_callback_results.py",
+          "line": 2,
+          "column": null,
+          "code": "PSO010",
+          "message": "_callback_versioned_txn ownership may only be written by enumerated owner functions",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:nominal-string:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: \"SyncPlanScope\", workflow: SyncReadPlanWorkflow[T]):\n return scope.execute_read_workflow(workflow)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow must accept exactly SyncPlanScope, not 'SyncPlanScope'",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:nominal-string:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "source": "def run_read_plan_scope_workflow(scope: \"SyncPlanScope\", workflow: SyncReadPlanWorkflow[T]):\n return scope.execute_read_workflow(workflow)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/connection_plan_workflows.py",
+          "line": 1,
+          "column": null,
+          "code": "PSO001",
+          "message": "run_read_plan_scope_workflow must accept exactly SyncPlanScope, not 'SyncPlanScope'",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:contract-comment:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return imported_contract(\n  # CtePublicationContract\n  item,\n )\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:contract-comment:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return imported_contract(\n  # CtePublicationContract\n  item,\n )\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:deep-negative:analyzer",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return imported_contract(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(item)))))))))))))))))))))))))))))))))))))))))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_ownership:deep-negative:plugin",
+      "call": 1,
+      "check": "plan_scope_ownership",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f():\n return imported_contract(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(item)))))))))))))))))))))))))))))))))))))))))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:positive:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read(fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 26,
+          "code": "TXN003",
+          "message": "In lambda passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:positive:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read(fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "TXN003",
+          "message": "In lambda passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:clean:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n conn.read(fn=lambda txn: txn.select(Row))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:clean:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n conn.read(fn=lambda txn: txn.select(Row))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:global:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n def callback(txn):\n  global STATE\n  STATE = txn.select(Row)\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 2,
+          "code": "TXN002",
+          "message": "In 'callback()' passed to read(): TXN002: Transaction closure uses 'global STATE' - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:global:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n def callback(txn):\n  global STATE\n  STATE = txn.select(Row)\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "TXN002",
+          "message": "In 'callback()' passed to read(): TXN002: Transaction closure uses 'global STATE' - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:subscript:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n data = {}\n def callback(txn):\n  data[txn.key] = 1\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": 2,
+          "code": "TXN004",
+          "message": "In 'callback()' passed to write(): TXN004: Transaction closure assigns to 'data[...]' - outer scope variable will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:subscript:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n data = {}\n def callback(txn):\n  data[txn.key] = 1\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "TXN004",
+          "message": "In 'callback()' passed to write(): TXN004: Transaction closure assigns to 'data[...]' - outer scope variable will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:destructuring-store:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n data = {}\n def callback(txn):\n  data[0], other = txn.select(Row)\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": 2,
+          "code": "TXN004",
+          "message": "In 'callback()' passed to write(): TXN004: Transaction closure assigns to 'data[...]' - outer scope variable will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:destructuring-store:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n data = {}\n def callback(txn):\n  data[0], other = txn.select(Row)\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "TXN004",
+          "message": "In 'callback()' passed to write(): TXN004: Transaction closure assigns to 'data[...]' - outer scope variable will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:repeated-callback:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn):\n  rows.append(txn)\n conn.read(fn=callback)\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": 2,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": 2,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to write(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:repeated-callback:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn):\n  rows.append(txn)\n conn.read(fn=callback)\n conn.write(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to write(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:local-rhs:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n def callback(txn):\n  data = data.append(txn)\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:local-rhs:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n def callback(txn):\n  data = data.append(txn)\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:local-walrus:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n conn.read(fn=lambda txn: (data := data.append(txn)))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:local-walrus:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n conn.read(fn=lambda txn: (data := data.append(txn)))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:late-local:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n def callback(txn):\n  data.append(txn)\n  data = []\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 2,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to read(): TXN003: Transaction closure calls 'data.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:late-local:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn, data):\n def callback(txn):\n  data.append(txn)\n  data = []\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "TXN003",
+          "message": "In 'callback()' passed to read(): TXN003: Transaction closure calls 'data.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:module-binding:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "from source import rows\ndef f(conn):\n conn.read(fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 26,
+          "code": "TXN003",
+          "message": "In lambda passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null,
+          "severity": "error"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:module-binding:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "from source import rows\ndef f(conn):\n conn.read(fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "TXN003",
+          "message": "In lambda passed to read(): TXN003: Transaction closure calls 'rows.append()' on outer scope variable - state will be corrupted on retry. Return results instead.",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:ignored-default:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn=rows.append(1)):\n  pass\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:ignored-default:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn=rows.append(1)):\n  pass\n conn.read(fn=callback)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:skipped-lambda:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read(fn=lambda txn: (lambda: rows.append(txn)))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:skipped-lambda:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read(fn=lambda txn: (lambda: rows.append(txn)))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:last-definition:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn):\n  rows.append(txn)\n conn.read(fn=callback)\n def callback(txn):\n  pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:last-definition:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n def callback(txn):\n  rows.append(txn)\n conn.read(fn=callback)\n def callback(txn):\n  pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:source-trigger-spacing:analyzer",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read (fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_closures:source-trigger-spacing:plugin",
+      "call": 1,
+      "check": "transaction_closures",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "def f(conn):\n rows = []\n conn.read (fn=lambda txn: rows.append(txn))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:positive:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "transaction_callback_wrapper",
+          "message": "forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure",
+          "tag": "callback-helper",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:positive:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:clean:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(txn: ReadTransaction):\n return txn.select(Row)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:clean:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(txn: ReadTransaction):\n return txn.select(Row)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:string-annotation:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: \"Callable[[ReadTransaction], int]\"):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "transaction_callback_wrapper",
+          "message": "forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure",
+          "tag": "callback-helper",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:string-annotation:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: \"Callable[[ReadTransaction], int]\"):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:annotation-comment:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: Annotated[\n Handler, # Callable Transaction\n \"metadata\",\n]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:annotation-comment:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn, fn: Annotated[\n Handler, # Callable Transaction\n \"metadata\",\n]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:inline-lambda:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn):\n return conn.read(fn=lambda txn: txn.versioned_read(work))\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "transaction_callback_wrapper",
+          "message": "forbidden inline transaction callback wrapper: nested callback re-enters versioned transaction APIs instead of using read_version*/write_version*",
+          "tag": "inline-reentrant",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:inline-lambda:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn):\n return conn.read(fn=lambda txn: txn.versioned_read(work))\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:allowed-path:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:allowed-path:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:api-boundary:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "l2000_connection/other.py",
+          "source": "class SyncDatabaseConnection:\n def read(self, fn: Callable[[ReadTransaction], int]):\n  return self.versioned_read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:api-boundary:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2000_connection/other.py",
+          "source": "class SyncDatabaseConnection:\n def read(self, fn: Callable[[ReadTransaction], int]):\n  return self.versioned_read(fn=fn)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_patterns:positive:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "other/probe.py",
+          "source": "def f(conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "other/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "NEEDS_REVIEW",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:positive:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "other/probe.py",
+          "source": "def f(conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:clean:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(txn: ReadTransaction):\n return txn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:clean:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(txn: ReadTransaction):\n return txn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:internal:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def register_queue(conn: SyncDatabaseConnection):\n return conn.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "INTERNAL_TXN_VIOLATION",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:internal:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def register_queue(conn: SyncDatabaseConnection):\n return conn.write(fn=work)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:first-param-only:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "other/probe.py",
+          "source": "def f(first: SyncDatabaseConnection, other: SyncDatabaseConnection):\n return other.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "other/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "NEEDS_REVIEW",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:first-param-only:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "other/probe.py",
+          "source": "def f(first: SyncDatabaseConnection, other: SyncDatabaseConnection):\n return other.write(fn=work)\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:class-init:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class SomeTransaction:\n def __init__(self, conn: SyncDatabaseConnection):\n  self.conn = conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "LEGITIMATE",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:class-init:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class SomeTransaction:\n def __init__(self, conn: SyncDatabaseConnection):\n  self.conn = conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:opaque-string:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: \"Optional[SyncDatabaseConnection]\"):\n return conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "BACKEND_OPS",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:opaque-string:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: \"Optional[SyncDatabaseConnection]\"):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:subscript-base:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: Optional[SyncDatabaseConnection]):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:subscript-base:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: Optional[SyncDatabaseConnection]):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:connectionid-left:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: ConnectionId | SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:connectionid-left:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: ConnectionId | SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:positional-only:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: SyncDatabaseConnection, /):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:positional-only:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(conn: SyncDatabaseConnection, /):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:keyword-only:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(*, conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:keyword-only:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def f(*, conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:name-configuration:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "BOOTSTRAP": [
+            "special"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def special(conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "BOOTSTRAP",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:name-configuration:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "def special(conn: SyncDatabaseConnection):\n return conn\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:positive:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> Row:\n  return Row()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "lazy_result_usage",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:positive:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> Row:\n  return Row()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "lazy_result_usage",
+          "message": "MyTransaction.select_one returns Row; expected LazyResult/LazySeq",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:clean:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> LazyResult[Row]:\n  return lazy\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:clean:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> LazyResult[Row]:\n  return lazy\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:sibling-authority:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> Row:\n  return Row()\n def select_one_lazy(self):\n  return lazy\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:sibling-authority:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def select_one(self) -> Row:\n  return Row()\n def select_one_lazy(self):\n  return lazy\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:protocol:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction(Protocol):\n def select_one(self) -> Row:\n  ...\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:protocol:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction(Protocol):\n def select_one(self) -> Row:\n  ...\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:decorator:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n @legacy_sync\n def select_one(self) -> Row:\n  return Row()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:decorator:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n @legacy_sync\n def select_one(self) -> Row:\n  return Row()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:qualified-authority:analyzer",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def first(self) -> Row:\n  return self.execute_lazy().resolve()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:lazy_result_usage:qualified-authority:plugin",
+      "call": 1,
+      "check": "lazy_result_usage",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l2050_transaction/probe.py",
+          "source": "class MyTransaction:\n def first(self) -> Row:\n  return self.execute_lazy().resolve()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:swallowed_exceptions:positive:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `except Exception` discards error without re-raising (body: pass/ellipsis only)",
+          "tag": "except-critical",
+          "severity": 3
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:positive:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:clean:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n raise\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:clean:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n raise\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:warning:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception as error:\n return_value = error\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 0,
+          "code": "WARNING",
+          "message": "Swallowed exception: `except Exception` catches and communicates error but does not re-raise (body: Assign)",
+          "tag": "except-warning",
+          "severity": 2
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:warning:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception as error:\n return_value = error\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:tuple-protocol:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept (KeyError,):\n pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:tuple-protocol:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept (KeyError,):\n pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:nested-raise:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n def inner():\n  raise Exception()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `except Exception` discards error without re-raising (body: FunctionDef)",
+          "tag": "except-critical",
+          "severity": 3
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:nested-raise:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n def inner():\n  raise Exception()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:nested-handler:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n def inner():\n  try:\n   work()\n  except ValueError:\n   raise\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 7,
+          "column": 2,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `except ValueError` discards error without re-raising (body: Raise)",
+          "tag": "except-critical",
+          "severity": 3
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `except Exception` discards error without re-raising (body: FunctionDef)",
+          "tag": "except-critical",
+          "severity": 3
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:nested-handler:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n def inner():\n  try:\n   work()\n  except ValueError:\n   raise\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:two-suppress:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with contextlib.suppress(ValueError), contextlib.suppress(TypeError):\n work()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `contextlib.suppress(ValueError)` silently discards errors",
+          "tag": "suppress-legacy",
+          "severity": 3
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `contextlib.suppress(ValueError)` silently discards exceptions (body: Expr)",
+          "tag": "suppress-critical",
+          "severity": 3
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `contextlib.suppress(TypeError)` silently discards errors",
+          "tag": "suppress-legacy",
+          "severity": 3
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `contextlib.suppress(TypeError)` silently discards exceptions (body: Expr)",
+          "tag": "suppress-critical",
+          "severity": 3
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:two-suppress:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with contextlib.suppress(ValueError), contextlib.suppress(TypeError):\n work()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:import-reset:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "from contextlib import suppress\nfrom contextlib import ExitStack\nwith suppress(ValueError):\n work()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 3,
+          "column": 0,
+          "code": "CRITICAL",
+          "message": "Swallowed exception: `contextlib.suppress(ValueError)` silently discards errors",
+          "tag": "suppress-legacy",
+          "severity": 3
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:import-reset:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "from contextlib import suppress\nfrom contextlib import ExitStack\nwith suppress(ValueError):\n work()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:swallowed_exceptions:keyerror:analyzer",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with contextlib.suppress(KeyError):\n work()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:swallowed_exceptions:keyerror:plugin",
+      "call": 1,
+      "check": "swallowed_exceptions",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with contextlib.suppress(KeyError):\n work()\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true,
+      "retained_reason": "Signed aggregate baseline reporter retained upstream; native replay covers source detections"
+    },
+    {
+      "test": "probe:error_handling:positive:analyzer",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.error(\"bad\")\n raise\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "EH001",
+          "message": "log-then-reraise: logger call followed by bare raise",
+          "tag": "log-reraise",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:positive:plugin",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.error(\"bad\")\n raise\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "EH001",
+          "message": "log-then-reraise: logger call followed by bare raise",
+          "tag": "log-reraise"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:clean:analyzer",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.error(\"bad\")\n recover()\n raise\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:clean:plugin",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.error(\"bad\")\n recover()\n raise\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:comment-between:analyzer",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.warning(\"bad\")\n # comment\n raise\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "EH001",
+          "message": "log-then-reraise: logger call followed by bare raise",
+          "tag": "log-reraise",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:comment-between:plugin",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception:\n logger.warning(\"bad\")\n # comment\n raise\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "EH001",
+          "message": "log-then-reraise: logger call followed by bare raise",
+          "tag": "log-reraise"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:explicit-raise:analyzer",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception as error:\n logger.error(\"bad\")\n raise error\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:explicit-raise:plugin",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "try:\n work()\nexcept Exception as error:\n logger.error(\"bad\")\n raise error\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:admin:analyzer",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/probe.py",
+          "source": "def update(txn):\n txn.commit()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l8000_admin/tools/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "EH001",
+          "message": "explicit txn.commit() in function 'update'",
+          "tag": "admin-commit",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:error_handling:admin:plugin",
+      "call": 1,
+      "check": "error_handling",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/l8000_admin/tools/probe.py",
+          "source": "def update(txn):\n txn.commit()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l8000_admin/tools/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "EH001",
+          "message": "explicit txn.commit() in function 'update'",
+          "tag": "admin-commit"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:module_level_caches:positive:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:positive:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:clean:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = ObjectCache(name=\"memo\")\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:clean:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = ObjectCache(name=\"memo\")\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:chained-targets:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = memo = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        },
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `memo` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:chained-targets:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "cache = memo = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:class-decorator:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class C:\n @functools.lru_cache()\n def f(self):\n  return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 3,
+          "column": 1,
+          "code": "lru_cache",
+          "message": "`@functools.lru_cache` on `C.f()` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 2
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:class-decorator:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class C:\n @functools.lru_cache()\n def f(self):\n  return 1\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:allowlisted:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "source": "_memory_database_pool = [None]\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "line": 1,
+          "column": 0,
+          "code": "list_cache",
+          "message": "Module-level list-backed cache holder `_memory_database_pool` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 2
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:allowlisted:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "source": "_memory_database_pool = [None]\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:same-file-new-name:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "source": "_memory_database_pool = [None]\n_new_cache = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "line": 1,
+          "column": 0,
+          "code": "list_cache",
+          "message": "Module-level list-backed cache holder `_memory_database_pool` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 2
+        },
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "line": 2,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `_new_cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:same-file-new-name:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "source": "_memory_database_pool = [None]\n_new_cache = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/browser/sqljs_sqlite3.py",
+          "line": 2,
+          "column": null,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `_new_cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:file-trigger:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "state = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:file-trigger:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "state = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:connection_caches:positive:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._branch_tip_cache: dict = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CC001",
+          "message": "connection-level branch/revision tip cache",
+          "tag": "pattern-0",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:positive:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._branch_tip_cache: dict = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CC001",
+          "message": "connection-level branch/revision tip cache",
+          "tag": "pattern-0"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:clean:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._schema_cache: dict[str, str] = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:clean:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._schema_cache: dict[str, str] = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:stripped-line:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "  _lookup: dict[BranchId, str] = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CC001",
+          "message": "module-level dict keyed by BranchId/RevisionId",
+          "tag": "pattern-2",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:stripped-line:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "  _lookup: dict[BranchId, str] = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CC001",
+          "message": "module-level dict keyed by BranchId/RevisionId",
+          "tag": "pattern-2"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:reviewed:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/sql_versioned_write_transaction.py",
+          "source": "self._cached_tip_revision_id = value\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:reviewed:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/sql_versioned_write_transaction.py",
+          "source": "self._cached_tip_revision_id = value\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:skipped-test:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/tests/probe.py",
+          "source": "self._branch_tip_cache = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:skipped-test:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/tests/probe.py",
+          "source": "self._branch_tip_cache = {}\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:production-trigger:analyzer",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": false
+      },
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._revision_tip = value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CC001",
+          "message": "connection-level branch/revision tip cache",
+          "tag": "pattern-0",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:connection_caches:production-trigger:plugin",
+      "call": 1,
+      "check": "connection_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "self._revision_tip = value\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:active-root-positive:analyzer",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "transaction_callback_wrapper",
+          "message": "forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure",
+          "tag": "callback-helper",
+          "severity": null
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_callback_wrappers:active-root-positive:plugin",
+      "call": 1,
+      "check": "transaction_callback_wrappers",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "source": "def f(conn, fn: Callable[[ReadTransaction], int]):\n return conn.read(fn=fn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "transaction_callback_wrapper",
+          "message": "f: forbidden transaction callback wrapper helper: accept transactions directly or use existing connection/versioned dispatch infrastructure",
+          "tag": "callback-helper"
+        }
+      ],
+      "compare_clause": true
+    },
+    {
+      "test": "probe:transaction_patterns:active-root-internal:analyzer",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true,
+        "categories": {
+          "LEGITIMATE": [
+            "__enter__",
+            "__exit__",
+            "_create_introspector",
+            "_create_sparse_versioned_backend",
+            "_execute_graphql_subscription",
+            "_get_conn",
+            "_get_data_importer",
+            "_get_database_exporter",
+            "_get_database_importer",
+            "_get_import_validator",
+            "_get_introspector_for_connection",
+            "_get_migration_executor",
+            "_get_migration_history_manager",
+            "_get_migration_plan_generator",
+            "_import_database_handler",
+            "_import_table_data_handler",
+            "_import_tables_handler",
+            "_validate",
+            "begin_schema_transaction",
+            "benchmark_1hop_traversal",
+            "benchmark_2hop_traversal",
+            "benchmark_filtered_traversal",
+            "clear_query_statistics",
+            "close",
+            "connect",
+            "disable_prepared_cache",
+            "disable_query_instrumentation",
+            "enable_prepared_cache",
+            "enable_query_instrumentation",
+            "get_backend_type",
+            "get_bulk_loader",
+            "get_data_importer",
+            "get_database_exporter",
+            "get_database_importer",
+            "get_migration_executor",
+            "get_migration_plan_generator",
+            "get_prepared_cache",
+            "get_prepared_cache_debug_report",
+            "get_prepared_cache_statistics",
+            "get_query_instrumentation",
+            "get_query_statistics",
+            "is_connected",
+            "populate_benchmark_data",
+            "populate_benchmark_dataset",
+            "read",
+            "read_transaction",
+            "record_query",
+            "register",
+            "register_backup_tools",
+            "register_import_tools",
+            "run_all_benchmarks",
+            "schema_transaction",
+            "set_connection",
+            "warn_if_index_missing",
+            "with_pinned_branch",
+            "write",
+            "write_transaction"
+          ],
+          "BOOTSTRAP": [
+            "_ensure_bootstrap_session",
+            "_ensure_schema",
+            "_ensure_target_tip_stable",
+            "backfill_revision_parents",
+            "create_branch",
+            "create_config_logged_table",
+            "create_log_table",
+            "create_staged_commit",
+            "ensure_adapter_session",
+            "ensure_branch",
+            "ensure_database_initialized",
+            "ensure_migration_table_exists",
+            "ensure_type_metadata_table_exists",
+            "ensure_vector_support",
+            "ensure_versioning_metadata_tables",
+            "execute_rebase",
+            "initialize_config_schema_bridge",
+            "initialize_config_system",
+            "initialize_domain",
+            "initialize_rbac",
+            "initialize_rbac_system",
+            "register_embedding_trigger",
+            "versioned_write_transaction"
+          ],
+          "BACKGROUND": [
+            "_get_ripple_chain",
+            "_run_handler",
+            "collect_all_metrics",
+            "create_derived_ripple_session",
+            "detect_stale_messages",
+            "enqueue_ripples_for_revision",
+            "enqueue_ripples_for_revision_bridge",
+            "get_embedding_staleness",
+            "process_ripple_event",
+            "process_ripple_event_bridge",
+            "recover_stale_message",
+            "recover_stale_messages",
+            "wait_for_embeddings"
+          ],
+          "BACKEND_SPECIFIC": [],
+          "CAPABILITY": [],
+          "ADMIN_TOOLS": [],
+          "VALIDATION": [],
+          "SUBSCRIPTION": [],
+          "SCHEMA_OPS": [],
+          "DEPRECATED": [],
+          "BACKEND_OPS": [],
+          "BULK_OPS": []
+        }
+      },
+      "files": [
+        {
+          "path": "l4100_queue/probe.py",
+          "source": "def probe_register_queue(conn: SyncDatabaseConnection):\n return conn.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l4100_queue/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "INTERNAL_TXN_VIOLATION",
+          "message": "",
+          "tag": null,
+          "severity": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:transaction_patterns:active-root-internal:plugin",
+      "call": 1,
+      "check": "transaction_patterns",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "l4100_queue/probe.py",
+          "source": "def probe_register_queue(conn: SyncDatabaseConnection):\n return conn.write(fn=work)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l4100_queue/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "INTERNAL_TXN_VIOLATION",
+          "message": "probe_register_queue(conn) must be refactored to take a transaction",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:active-root-positive:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "cache = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:active-root-positive:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "cache = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:active-chained:analyzer",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "cache = memo = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `memo` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null,
+          "severity": 3
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:module_level_caches:active-chained:plugin",
+      "call": 1,
+      "check": "module_level_caches",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "cache = memo = {}\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `cache` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "dict_cache",
+          "message": "Module-level dict cache `memo` -- use `data_layer.cache` or add an explicit local-only exception",
+          "tag": null
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:direct-parenthesized-test:analyzer",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "source_gate": true
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n if (txn.count()):\n  pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "PSE-AUDIT-010",
+          "message": "Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms.",
+          "tag": null,
+          "severity": "audit"
+        }
+      ],
+      "compare_clause": false
+    },
+    {
+      "test": "probe:plan_scope_side_effects:direct-parenthesized-test:plugin",
+      "call": 1,
+      "check": "plan_scope_side_effects",
+      "entry": "probe.combined",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {},
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "with conn.open_write_plan() as scope:\n if (txn.count()):\n  pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_clause": false
+    }
+  ],
+  "loaded_source_files_checked": 125
+}

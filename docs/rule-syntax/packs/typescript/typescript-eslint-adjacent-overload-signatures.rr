@@ -1,0 +1,51 @@
+.policy "typescript-eslint-adjacent-overload-signatures" revision 3
+.description "Keep all overload signatures of a TypeScript function, method, call or constructor next to each other; scattered overloads are hard to read together."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   ts_member_name(m, x, t)
+
+// typescript-eslint's adjacent-overload-signatures: the overloads of one name are written together. In a list of
+// members (a class, interface or object type) or statements (a file, block or namespace), a function, method,
+// call or construct signature whose name appeared earlier is reported unless the member right before it has the
+// same name. Anything else in between (a field, another statement) separates them.
+//   declare function f(a: string): void; let x; declare function f(a: number): void;   → the second f
+//   interface I { m(): void; n(): void; m(a: string): void }                          → the second m
+//   class C { m(): void; static m(): void }        fine: static and instance names are different
+// Names compare as the plugin's getNameFromMember: `a` and 'a' are one name, `[a]` is another. Call signatures
+// are named "call", construct signatures "new". An abstract method has no name here: it separates.
+.violation adjacent_overload_signatures(at: node, x: symbol) code "@typescript-eslint/adjacent-overload-signatures"
+    "All {x} signatures should be adjacent."
+    suppress eslint "@typescript-eslint/adjacent-overload-signatures"
+    suppress oxlint "adjacent-overload-signatures"
+adjacent_overload_signatures(m, x) :- overload(l, m, k, x), overload(l, e, k, _), e < m, !after_same(m, k).
+
+// overload(l, m, k, x): item m of list l is a function or method with key k (what isSameMethod compares: kind,
+// static, name type and name), shown as x in the message.
+.decl overload(l: node, m: node, k: symbol, x: symbol)
+overload(l, m, cat("fn|", x), x) :- item(l, m), named_function(m, x).
+overload(l, m, cat(s, cat("|", cat(t, cat("|", x)))), cat(s, x)) :- item(l, m),
+    (kind(m, "method_definition") ; kind(m, "method_signature")), ts_member_name(m, x, t),
+    (op(m, "static"), s = "static " ; !op(m, "static"), s = "").
+overload(l, m, "call|", "call") :- item(l, m), kind(m, "call_signature").
+overload(l, m, "new|", "new") :- item(l, m), kind(m, "construct_signature").
+.decl named_function(m: node, x: symbol)  // a function statement, possibly exported or `declare`d
+named_function(m, x) :- (kind(m, "function_declaration") ; kind(m, "generator_function_declaration") ;
+    kind(m, "function_signature")), field(m, "name", n), text(n, x).
+named_function(m, x) :- (kind(m, "export_statement") ; kind(m, "ambient_declaration")), child(m, d, _),
+    !kind(d, "comment"), named_function(d, x).
+
+// item(l, m): m is a member of l, comments and decorators aside; a statement of a file or block.
+.decl item(l: node, m: node)
+item(l, m) :- (kind(l, "class_body") ; kind(l, "interface_body") ; kind(l, "object_type") ; kind(l, "program") ;
+    kind(l, "statement_block")), child(l, m, _), !skipped(m).
+.decl skipped(m: node)
+skipped(m) :- kind(m, "comment") ; kind(m, "decorator").
+// after_same(m, k): the item just before m (comments and decorators skipped) has key k too.
+after_same(m, k) :- overload(l, m, k, _), before(m, p), overload(l, p, k, _).
+.decl after_same(m: node, k: symbol)
+.decl before(m: node, p: node)
+before(m, p) :- next_sibling(p, m), !skipped(p).
+before(m, p) :- next_sibling(q, m), skipped(q), before(q, p).

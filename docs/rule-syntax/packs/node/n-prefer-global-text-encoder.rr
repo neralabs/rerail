@@ -1,0 +1,18 @@
+.policy "n-prefer-global-text-encoder" revision 6
+.description "Use the global TextEncoder instead of importing or requiring it from the util module; it is always available in Node.js."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/text-encoder: use the global TextEncoder, not the util module's TextEncoder. Option "always" (the
+// default) reports each use of the module's TextEncoder; "never" reports each use of the global:
+//   const { TextEncoder } = require("util")     import { TextEncoder } from "node:util"     require("util").TextEncoder
+//   export * from "util"                  reported (the export re-exports TextEncoder)
+//   "never":  TextEncoder  globalThis.TextEncoder                                             reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("TextEncoder", "util", "TextEncoder").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/text-encoder" "{msg}"
+    suppress eslint "n/prefer-global/text-encoder"
+prefer_global(n, m) :- prefer_global_use(n, m).

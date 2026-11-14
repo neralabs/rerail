@@ -1,0 +1,17 @@
+.policy "bandit-b110-try-except-pass" revision 2
+.description "Don't write a bare or catch-all Exception handler whose only statement is pass; log or handle the error, or catch the specific exception you expect."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B110 (try_except_pass): an `except:` or `except Exception:` handler whose whole body is `pass`.
+//   try: work()
+//   except Exception: pass               B110, at the except
+//   except ValueError: pass              not reported (Bandit's check_typed_exception is off, the default)
+//   except Exception: log(); pass        not reported: two statements
+
+#include "python/security.rr"   // catch_all_body: the handler Bandit inspects, and its one statement
+
+.violation B110(at: node) code "B110"
+    "This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when suppression is intentional."
+    suppress nosec "B110"
+B110(x) :- catch_all_body(x, s), kind(s, "pass_statement").

@@ -1,0 +1,33 @@
+.policy "sqlfluff-rf04-references-keywords" revision 3
+.description "Don't use SQL keywords as unquoted table aliases, column aliases or column names; rename them so they can't be misread."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's RF04 (references.keywords), defaults: unquoted identifiers only. A keyword used as an alias, or
+// as a column name in CREATE TABLE:
+//   SELECT 1 AS name                          reported at name
+//   SELECT x FROM tbl AS name                 reported
+//   CREATE TABLE t (type varchar(30))         reported at type
+//   CREATE TABLE t ("hash" bigint)            fine: quoted
+// The keyword list is a table generated from the JSON (gen-keywords.py). Code tree-sitter-sql cannot parse is
+// left alone, as sqlfluff leaves unparsable sections.
+
+#include "sql/syntax.rr"
+#include "../packs/sql/sqlfluff-rf04-references-keywords.facts.rr"   // sql_keyword
+
+.violation RF04(at: node) code "RF04" "Keywords should not be used as identifiers."
+    suppress sqlfluff "RF04", "L029", "all", "references", "references.keywords"
+RF04(n) :- named_here(n), !quoted(n, _), text(n, x), keyword_fold(k), k = @lower(x), !unparsed(n).
+// named_here(n): n names something new: an alias, or a column in CREATE TABLE (with a type).
+.decl named_here(n: node)
+named_here(n) :- field(p, "alias", n), kind(p, k), alias_owner(k).
+named_here(n) :- field(c, "name", n), kind(c, "column_definition"), (field(c, "type", _) ; field(c, "custom_type", _)),
+    child(cs, c, _), kind(cs, "column_definitions"), child(t, cs, _), kind(t, "create_table").
+.decl alias_owner(k: symbol)
+alias_owner("term"). alias_owner("relation"). alias_owner("from"). alias_owner("statement"). alias_owner("insert").
+alias_owner("cross_join"). alias_owner("lateral_cross_join"). alias_owner("lateral_join").
+.decl keyword_fold(k: symbol)
+keyword_fold(@lower(w)) :- sql_keyword(w).
+.decl unparsed(n: node)  // inside an ERROR node, or right before one
+unparsed(n) :- inside(n, _, "ERROR").
+unparsed(n) :- next_sibling(n, e), kind(e, "ERROR").

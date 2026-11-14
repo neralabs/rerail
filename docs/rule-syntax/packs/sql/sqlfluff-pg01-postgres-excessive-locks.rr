@@ -1,0 +1,25 @@
+.policy "sqlfluff-pg01-postgres-excessive-locks" revision 2
+.description "Use CONCURRENTLY on non-unique CREATE INDEX, DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW in PostgreSQL; otherwise the table is locked while it runs."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's PG01 (postgres.excessive_locks), PostgreSQL only. Statements that lock a table for their whole
+// run unless written with CONCURRENTLY; the finding is at the statement:
+//   CREATE INDEX idx ON t (c)            reported (CREATE UNIQUE INDEX is not: it may need the lock)
+//   DROP INDEX idx                       reported
+//   REINDEX TABLE t                      reported
+//   REFRESH MATERIALIZED VIEW v          reported
+//   CREATE INDEX CONCURRENTLY idx ON t (c)   fine
+// Statements inside a function body or DO block are not checked.
+
+#include "sql/syntax.rr"
+
+.violation PG01(at: node, what: symbol) code "PG01" "{what} should use CONCURRENTLY to avoid locking the table."
+    suppress sqlfluff "PG01", "all", "postgres", "postgres.excessive_locks"
+PG01(s, w) :- locking(k, w), kind(s, k), !has_kw(s, "keyword_concurrently"), !routine_body(s),
+    (k != "create_index" ; !has_kw(s, "keyword_unique")).
+.decl locking(k: symbol, what: symbol)
+locking("create_index", "CREATE INDEX"). locking("drop_index", "DROP INDEX").
+locking("reindex_statement", "REINDEX"). locking("refresh_statement", "REFRESH MATERIALIZED VIEW").
+.decl has_kw(s: node, k: symbol)
+has_kw(s, k) :- child(s, c, _), kind(c, k).

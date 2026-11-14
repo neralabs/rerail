@@ -1,0 +1,24 @@
+.policy "clippy-redundant-field-names" revision 2
+.description "Use field init shorthand in Rust struct expressions when the value is a variable named like the field."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   msrv_older(n, v)   n is under a #[clippy::msrv] older than v
+
+// Clippy's redundant_field_names (style): a struct expression field `x: x` whose value is a variable of
+// the field's own name; the shorthand `x` says the same.
+//   Point { x: x, y: 1 }       reported at `x: x`
+//   Point { x, y: y.0 }   Point { x: self::x }      not reported
+// Not under #[clippy::msrv] older than 1.17. Clippy also lints a macro_rules! body's `S { v: v }`; token
+// trees are not read here (divergences.json lists it).
+.violation redundant_field_names(at: node) code "redundant_field_names"
+    "Use field init shorthand here, e.g. Point { x } instead of Point { x: x }."
+    suppress clippy "clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"
+redundant_field_names(f) :- kind(f, "field_initializer"), field(f, "field", n), field(f, "value", v),
+    kind(v, "identifier"), bare_name(n, x), bare_name(v, x), !msrv_older(f, "1.17").
+// The shorthand came in 1.17. `r#type: r#type` and `r#type: type` are the same name.
+.decl bare_name(n: node, x: symbol)
+bare_name(n, x) :- (kind(n, "field_identifier") ; kind(n, "identifier")), text(n, t),
+    (prefix("r#", t), x = substr(t, 2, strlen(t) - 2) ; !prefix("r#", t), x = t).

@@ -1,0 +1,23 @@
+# Step 4: and `nul`, `vrai; nul; fausse`.
+#
+# New: a third keyword, sharing no first byte with the others.
+
+lexer ladder04
+
+class ws    = ' ' '\t' '\n' '\r'
+class alpha = 'a'..'z'
+class op    = ';'
+mask code   = ~empty
+
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "vrai" "fausse" "nul" } required
+token punctuation = start code & op
+keywords punctuation { ";" } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha & ~op
+
+tree ladder {
+  node document = scalaire (';' scalaire)*
+  choice scalaire = vrai | fausse | nul
+}

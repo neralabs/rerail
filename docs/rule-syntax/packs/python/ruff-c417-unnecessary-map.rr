@@ -1,0 +1,55 @@
+.policy "ruff-c417-unnecessary-map" revision 2
+.description "Use a comprehension or generator expression instead of map with a lambda; it avoids a function call for each item."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C417 (flake8-comprehensions): a call of the builtin map whose first argument is a lambda of one plain
+// parameter (no default, no `*`, not positional-only), with no keywords. Inside list(…), set(…) or
+// dict(…) (the builtins, the one argument, no keywords) the outer call is reported instead; for dict the
+// lambda must return a pair, a tuple or list of two. Ruff leaves the map when the lambda yields, when an
+// inner lambda reads its parameter late (`lambda x: lambda: x`), or when an iterable is `*xs` or holds a
+// walrus. Its fixes are unsafe; none here.
+//   map(lambda x: x + 1, xs)            ← C417: (x + 1 for x in xs)
+//   list(map(lambda x: x * 2, xs))      ← C417: [x * 2 for x in xs]
+//   dict(map(lambda v: (v, v**2), xs))  ← C417: {v: v**2 for v in xs}
+//   map(lambda x=1: x, xs)    map(lambda x, y: x, xs, ys)    map(f, xs)      not reported
+#include "python/comprehensions.rr"
+//   c4_builtin(c, x), c4_only(c, a), call_nkwargs(c, 0), list_like(e, k); ast_parent, param from python/ast, names
+
+.violation C417(at: node, id: symbol, msg: symbol) code "C417" "{msg}"
+    suppress ruff "C417"
+C417(m, "generator", "Replace this `map()` of a lambda with a generator expression `(<body> for <param> in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises.") :-
+    rewritable(m), !in_collection_call(m).
+C417(c, "list", "Replace this `list(map(...))` of a lambda with the list comprehension `[<body> for <param> in <iterable>]`, which avoids a function call per item.") :-
+    outer(c, "list", m), rewritable(m).
+C417(c, "set", "Replace this `set(map(...))` of a lambda with the set comprehension `{<body> for <param> in <iterable>}`, which avoids a function call per item.") :-
+    outer(c, "set", m), rewritable(m).
+C417(c, "dict", "Replace this `dict(map(...))` of a lambda with a dict comprehension `{key: value for <param> in <iterable>}`, using the lambda's two items as key and value.") :-
+    outer(c, "dict", m), rewritable(m), map_lambda(m, l), field(l, "body", b), unparen(b, p),
+    (list_like(p, "tuple") ; list_like(p, "list")), count : { child(p, i, _), !kind(i, "comment") } = 2.
+
+// map_lambda(m, l): m is `map(lambda …, …)` of the builtin map, with no keywords.
+.decl map_lambda(m: node, l: node)
+map_lambda(m, l) :- c4_builtin(m, "map"), call_nkwargs(m, 0), ruff_arg(m, 0, a), unparen(a, l), kind(l, "lambda").
+// rewritable(m): the lambda has one plain parameter, read only where the comprehension would bind it, and no
+// yield; no iterable is `*xs` or has a walrus.
+.decl rewritable(m: node)
+rewritable(m) :- map_lambda(m, l), field(l, "parameters", ps), count : { child(ps, p, _), !kind(p, "comment") } = 1,
+    child(ps, x, _), kind(x, "identifier"), !late_bound(l), field(l, "body", b), !has(b, _, "yield"),
+    !kind(b, "yield"), !map_star(m), count : { ruff_arg(m, i, it), i > 0, walrus(it) } = 0.
+.decl map_star(m: node)  // `map(f, *xs)`
+map_star(m) :- map_lambda(m, _), call_item(m, a, _), kind(a, "list_splat").
+.decl walrus(e: node)
+walrus(e) :- kind(e, "named_expression").
+walrus(e) :- has(e, _, "named_expression").
+// late_bound(l): `lambda x: lambda: x`: a lambda inside reads l's parameter.
+.decl late_bound(l: node)
+late_bound(l) :- map_lambda(_, l), param(l, x, _), has(l, l2, "lambda"), within(n, l2), look(n, x, l).
+// in_collection_call(m): m is an argument of a call of list, set or dict (or `builtins.list`, …).
+.decl in_collection_call(m: node)
+in_collection_call(m) :- map_lambda(m, _), ast_parent(m, c), kind(c, "call"), field(c, "function", f),
+    ruff_qual(f, q), (q = "builtins.list" ; q = "builtins.set" ; q = "builtins.dict").
+// outer(c, k, m): `list(map(…))`: the builtin k called with the one argument m, a map call.
+.decl outer(c: node, k: symbol, m: node)
+outer(c, k, m) :- c4_builtin(c, k), (k = "list" ; k = "set" ; k = "dict"), c4_only(c, m), map_lambda(m, _).

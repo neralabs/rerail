@@ -1,0 +1,115 @@
+{
+  "scope": "Snapshot capture costs are separate; root costs are inclusive and non-additive.",
+  "runs": {
+    "replay/cases/runs.jsonl": {
+      "fixed_order": {
+        "runs": 71,
+        "cpu": 0.23345600000000066,
+        "wall": 0.24001350300000004,
+        "prepareCpu": 0.0005339999999971479,
+        "vm": 3307950,
+        "scans": 133257,
+        "sorts": 1065,
+        "autoindex": 0,
+        "reprepare": 0,
+        "rows": 0,
+        "failures": [],
+        "parity_checks": 71,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            182,
+            0,
+            12292,
+            24584
+          ],
+          "py_attribute": [
+            65399,
+            0,
+            31393,
+            94189
+          ],
+          "py_call_site": [
+            65412,
+            0,
+            65401,
+            261600
+          ],
+          "py_exec_context": [
+            71,
+            0,
+            65399,
+            392394
+          ],
+          "strtest_0": [
+            6146,
+            0,
+            6146,
+            6146
+          ],
+          "text": [
+            31393,
+            0,
+            31393,
+            62786
+          ]
+        }
+      },
+      "batch_receiver_membership": {
+        "runs": 71,
+        "cpu": 0.4857309999999989,
+        "wall": 0.5007338359999999,
+        "prepareCpu": 0.0034160000000000856,
+        "vm": 3306188,
+        "scans": 133257,
+        "sorts": 1065,
+        "autoindex": 0,
+        "reprepare": 70,
+        "rows": 0,
+        "failures": [],
+        "parity_checks": 71,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            182,
+            0,
+            12292,
+            24584
+          ],
+          "py_attribute": [
+            71,
+            71,
+            31393,
+            94199
+          ],
+          "py_call_site": [
+            65412,
+            0,
+            65401,
+            261600
+          ],
+          "py_exec_context": [
+            71,
+            0,
+            65399,
+            392394
+          ],
+          "strtest_0": [
+            6146,
+            0,
+            6146,
+            6146
+          ],
+          "text": [
+            31393,
+            0,
+            31393,
+            62786
+          ]
+        }
+      }
+    }
+  }
+}

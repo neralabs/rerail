@@ -214,12 +214,15 @@
                         {
                           "matches": "first-positional",
                           "precedes": {
-                            "stopBy": "neighbor",
-                            "regex": "^,$",
-                            "precedes": {
-                              "stopBy": "neighbor",
-                              "matches": "byte-or-str"
-                            }
+                            "stopBy": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            "not": {
+                              "kind": "comment"
+                            },
+                            "matches": "byte-or-str"
                           }
                         }
                       ]

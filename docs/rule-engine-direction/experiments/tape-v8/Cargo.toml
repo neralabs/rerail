@@ -1,0 +1,17 @@
+[package]
+name = "v8spike"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tree-sitter = "=0.27.1"
+tree-sitter-language = "=0.1.9"
+tree-sitter-python = "=0.25.0"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-php = "=0.24.2"
+zstd = "=0.14.3"
+rusqlite = { version = "=0.40.2", features = ["bundled", "series", "functions"] }
+
+[profile.release]
+debug = 1

@@ -1,0 +1,193 @@
+### facts -> w  (45)
+    11 facts::producers::python::python_facts   <- facts/producers/python/families/candidates.rs, facts/vtab/syntax/candidates.rs, facts/vtab/syntax/python_demand.rs
+     3 model::FileInput   <- facts/core.rs, facts/vtab/syntax.rs, facts/vtab/syntax/python_parts.rs
+     3 workspace::grammar_version   <- facts/core.rs, facts/families.rs
+     3 facts::producers::python::import_screen   <- facts/vtab/syntax.rs, facts/vtab/syntax/candidates.rs, facts/vtab/syntax/python_demand.rs
+     2 literal::SubTree   <- facts/core.rs, facts/vtab/syntax/annotation.rs
+     2 scope::Reading   <- facts/vtab/syntax/annotation.rs, facts/vtab/syntax/python_demand.rs
+     2 scope::ScopeTable   <- facts/vtab/syntax/annotation.rs, facts/vtab/syntax/python_demand.rs
+     1 eval   <- facts/core.rs
+     1 language::adapter::Adapter   <- facts/vtab/syntax.rs
+     1 language::adapter::ValueRules   <- facts/vtab/syntax.rs
+     1 language::adapter::with_adapter   <- facts/vtab/syntax.rs
+     1 matcher::file_values   <- facts/vtab/syntax.rs
+### w -> top  (33)
+     5 transducer::semantic_facts::Facts   <- matcher/binding.rs, matcher/binds.rs, matcher/format_args.rs …
+     5 crate::panic_boundary::contain_panic   <- workspace/api.rs, workspace/index.rs
+     4 transducer::semantic_facts::Target   <- matcher/binding.rs, matcher/binds.rs, matcher/format_args.rs …
+     4 transducer::semantic_facts::slot   <- matcher/binding.rs, matcher/binds.rs, matcher/format_args.rs …
+     2 crate::lower_hex   <- calls/mod.rs, model.rs
+     2 waves::relational::Plan   <- eval/mod.rs, model.rs
+     2 prefilter::LANG_STRIDE   <- stats/ingest.rs, stats/inputs.rs
+     2 crate::purge_allocator_pages   <- workspace/api.rs
+     1 waves::relational::compile::compile   <- compile/mod.rs
+     1 prefilter::probes::TextProbe   <- matcher/anchors.rs
+     1 transducer::semantic_facts::BindingRequest   <- matcher/binding.rs
+     1 transducer::semantic_facts::BindsRequest   <- matcher/binds.rs
+### lang -> w  (27)
+     2 language::adapter::Adapter   <- identifier.rs, lines.rs
+     2 language::adapter::with_adapter   <- identifier.rs, lines.rs
+     2 language::adapter::parsed_by_forte   <- tape.rs
+     2 language::adapter::parse_input   <- tape.rs
+     1 blade::forte::tree   <- language.rs
+     1 blade::forte::tree::BladeLang   <- language.rs
+     1 suppress::Suppression   <- language.rs
+     1 language::adapter::package_manifests   <- module_graph.rs
+     1 blade::forte::tree::BladeNode   <- tape.rs
+     1 blade::forte::tree::BladeTree   <- tape.rs
+     1 blade::forte::tree::parse_tree   <- tape.rs
+     1 blade::view::ReadError   <- tape.rs
+### facts -> logic  (24)
+     6 typing::file_local::Binding   <- facts/vtab/syntax.rs, facts/vtab/syntax/within.rs
+     3 logic::plan::corpus::thread_usage   <- facts/vtab/syntax/stored_spike.rs, logic/strings.rs
+     2 logic::plan::corpus::matchers   <- facts/vtab/syntax.rs
+     2 logic::lanes::executor_for   <- facts/vtab/syntax.rs
+     2 typing::file_local::Binding::Metal   <- facts/vtab/syntax.rs
+     1 logic::native::forget_scope   <- facts/vtab.rs
+     1 logic::native::forget_engine   <- facts/vtab.rs
+     1 logic::sql::select::input_columns   <- facts/vtab/syntax.rs
+     1 logic::lanes::prof::run_on   <- facts/vtab/syntax.rs
+     1 logic::plan::corpus::ast_columns   <- facts/vtab/syntax.rs
+     1 typing::file_local::Binding::Cpu   <- facts/vtab/syntax/within.rs
+     1 typing::file_local   <- facts/vtab/syntax/within.rs
+### logic -> transducer  (21)
+     2 transducer::packed::block::BlockProgram   <- logic/native/setfix.rs, logic/native/setfix/rowcode.rs
+     2 transducer::packed::block::BlockOp   <- logic/native/setfix/device.rs, logic/native/setfix/rowcode.rs
+     2 transducer::packed::block::CmpOp   <- logic/native/setfix/device.rs, logic/native/setfix/rowcode.rs
+     2 transducer::packed::block::Rhs   <- logic/native/setfix/device.rs, logic/native/setfix/rowcode.rs
+     2 transducer::packed::ExecutionBackend   <- typing/file_local.rs
+     1 transducer::packed::metal_lattice::System   <- logic/native.rs
+     1 transducer::packed::metal_lattice::solve   <- logic/native.rs
+     1 transducer::packed::block::RowBatch   <- logic/native/setfix/rowcode.rs
+     1 transducer::packed::block::RowShape   <- logic/native/setfix/rowcode.rs
+     1 transducer::packed::LoweredMatcher   <- logic/plan/corpus/matchers.rs
+     1 transducer::packed::Error   <- typing/file_local.rs
+     1 transducer::packed::metal_nearest   <- typing/file_local.rs
+### rr -> logic  (15)
+     6 logic::plan::corpus::phase0   <- logic/rr.rs
+     3 logic::plan::corpus::observe   <- logic/rr.rs
+     2 typing::cross_rounds::PRAGMA   <- logic/front.rs, logic/rr/lower.rs
+     2 typing::cross_rounds::setting   <- logic/front.rs, logic/rr/lower.rs
+     1 logic::plan::corpus::tape_cache   <- logic/rr.rs
+     1 typing::file_local::document_column   <- logic/rr/lower.rs
+### facts -> transducer  (14)
+     4 transducer::packed::regex_block::SpanPrefilter   <- facts/vtab/syntax.rs, facts/vtab/syntax/core_rr.rs
+     2 transducer::packed::LoweredMatcher   <- facts/vtab/syntax.rs
+     2 transducer::packed::LoweredWave   <- facts/vtab/syntax.rs
+     2 transducer::packed::MatcherBackend   <- facts/vtab/syntax.rs
+     1 transducer::packed::regex_block::RanOn   <- facts/vtab/syntax.rs
+     1 transducer::packed::regex_block::ends_launch   <- facts/vtab/syntax.rs
+     1 transducer::packed::LoweredWave::new   <- facts/vtab/syntax.rs
+     1 transducer::packed::WaveRun   <- facts/vtab/syntax.rs
+### logic -> w  (14)
+     7 workspace::grammar_version   <- logic/plan/corpus.rs, logic/plan/corpus/combined.rs, logic/plan/corpus/cross_memo.rs …
+     2 model::FileInput   <- logic/plan/corpus.rs, logic/plan/corpus/guests.rs
+     2 stats::identity::UtilityDefinitionId   <- logic/sql/physical.rs, logic/sql/typed_boundary.rs
+     1 profile   <- logic/lanes.rs
+     1 matcher::transform::replace   <- logic/plan.rs
+     1 matcher::DocumentGate   <- logic/plan/corpus/matchers.rs
+### logic -> top  (12)
+     3 tools::settings   <- logic/plan/corpus.rs, logic/plan/corpus/reuse.rs
+     3 tools::with_settings   <- logic/plan/corpus.rs, logic/plan/corpus/reuse.rs
+     2 tools::process_counters   <- logic/plan/corpus.rs
+     2 tools::program_text   <- logic/plan/corpus/bridge.rs, logic/plan/corpus/phases.rs
+     1 waves::policies::Captor   <- logic/plan/corpus/matchers.rs
+     1 waves::policies::lower_matcher   <- logic/plan/corpus/matchers.rs
+### prof -> logic  (11)
+     2 logic::plan::placement::JoinForm   <- logic/profile.rs
+     1 logic::plan::corpus::thread_usage   <- logic/profile.rs
+     1 logic::native::component::DeviceReport   <- logic/profile.rs
+     1 logic::plan::placement::Placement   <- logic/profile.rs
+     1 logic::plan::placement::Shape   <- logic/profile.rs
+     1 logic::plan::placement::gpu_price   <- logic/profile.rs
+     1 logic::lanes::prof::report   <- logic/profile.rs
+     1 logic::lanes::scores   <- logic/profile.rs
+     1 logic::costs::summary   <- logic/profile.rs
+     1 logic::plan::corpus::phase0   <- logic/profile/roofline.rs
+### transducer -> w  (10)
+     2 violations::Witness   <- demand/driver.rs
+     1 violations::Captures::from_spans   <- demand/driver.rs
+     1 eval::violation_id   <- demand/driver.rs
+     1 language::adapter::Adapter   <- demand/vtab.rs
+     1 language::adapter::ValueRules   <- demand/vtab.rs
+     1 language::adapter::with_adapter   <- demand/vtab.rs
+     1 value::structure::Equality   <- demand/vtab.rs
+     1 value::Context   <- demand/vtab.rs
+     1 matcher::SiblingPositions   <- transducer/packed/compile/sets.rs
+### transducer -> metal  (10)
+     4 transducer::packed::metal_grid::EvaluationSpan   <- transducer/packed/packed_batch.rs
+     4 transducer::packed::metal_program_backend::block_program   <- transducer/packed/regex_block.rs
+     1 transducer::packed::metal_program_backend   <- transducer/packed/compilation.rs
+     1 transducer::packed::metal_grid::MetalGridInput   <- transducer/packed/packed_batch.rs
+### facts -> cpython  (7)
+     1 cpython::syntax::syntax_error   <- facts/vtab/syntax/python_syntax.rs
+     1 cpython::printed::Printed   <- facts/vtab/syntax/cpython.rs
+     1 cpython::printed::Want   <- facts/vtab/syntax/cpython.rs
+     1 cpython::printed::by_start   <- facts/vtab/syntax/cpython.rs
+     1 cpython::printed::of_kind   <- facts/vtab/syntax/cpython.rs
+     1 cpython::printed::printed   <- facts/vtab/syntax/cpython.rs
+     1 cpython::literal::literals   <- facts/vtab/syntax/cpython.rs
+### top -> ?CodeRuleDslRuntime  (7)
+     4 CodeRuleDslRuntime::compile   <- prefilter/lab.rs, waves/policies.rs
+     3 CodeRuleDslRuntime   <- logic/convert/policy.rs, slice/napi.rs, tools.rs
+### prof -> rrsyn  (6)
+     2 logic::front::Program   <- logic/profile.rs, logic/profile/analysis_report.rs
+     2 logic::front::Literal   <- logic/profile/analysis_report.rs, logic/profile/roofline.rs
+     1 logic::front::Atom   <- logic/profile/roofline.rs
+     1 logic::front::Term   <- logic/profile/roofline.rs
+### w -> transducer  (6)
+     2 demand::driver::catalog::sql_backend   <- matcher/semantic.rs
+     2 transducer::POSITIONAL_INDEX_VERSION   <- workspace/persisted.rs, workspace/storage.rs
+     1 transducer::kind_index_token   <- workspace/persisted.rs
+     1 transducer::persist_search_index_batch   <- workspace/storage.rs
+### facts -> top  (5)
+     1 prefilter::image   <- facts/families.rs
+     1 waves::policies::Captor   <- facts/vtab/syntax.rs
+     1 waves::findings::Capture   <- facts/vtab/syntax.rs
+     1 waves::findings::captured   <- facts/vtab/syntax.rs
+     1 crate::lower_hex   <- text/vocabulary.rs
+### facts -> rr  (5)
+     1 logic::rr::core_names   <- facts/vtab/syntax.rs
+     1 logic::rr::string_value   <- facts/vtab/syntax/core_rr.rs
+     1 logic::rr::code_body   <- facts/vtab/syntax/core_rr.rs
+     1 logic::rr::syntax_error   <- facts/vtab/syntax/core_rr.rs
+     1 logic::rr::single_metavars   <- facts/vtab/syntax/core_rr.rs
+### logic -> metal  (3)
+     1 transducer::packed::metal_sort::install_guard   <- logic/lanes.rs
+     1 transducer::packed::metal_join::available   <- logic/native/setfix.rs
+     1 transducer::packed::metal_join   <- logic/native/setfix/device.rs
+### sessions -> w  (3)
+     2 eval::parse_snapshot   <- sql_executor/documents.rs
+     1 model::FileInput   <- sql_executor/documents.rs
+### lang -> transducer  (3)
+     1 transducer::packed::json_parser::columns   <- tape.rs
+     1 transducer::packed::json_parser::Columns   <- tape.rs
+     1 transducer::packed::json_parser::NO_PARENT   <- tape.rs
+### transducer -> top  (3)
+     2 crate::lower_hex   <- transducer/packed.rs, transducer/packed/rir.rs
+     1 prefilter::kind_token   <- transducer.rs
+### logic -> cpython  (2)
+     1 cpython::value::str_repr   <- logic/plan.rs
+     1 cpython::value::PyStr::Text   <- logic/plan.rs
+### sessions -> top  (2)
+     1 waves::matches::documents   <- sql_executor.rs
+     1 crate::lower_hex   <- sql_executor/compiler.rs
+### prof -> metal  (2)
+     1 transducer::packed::metal_backend::reserved_mb   <- prof.rs
+     1 transducer::packed::metal_backend::driver_mb   <- prof.rs
+### top -> ?CompiledCodeRuleDsl  (2)
+     2 CompiledCodeRuleDsl   <- slice.rs, waves/policies.rs
+### logic -> ?profile_here  (2)
+     2 profile_here   <- threads.rs
+### logic -> ?profile_span_at  (2)
+     2 profile_span_at   <- threads.rs
+### top -> ?fixtures_dir  (1)
+     1 fixtures_dir   <- mod.rs
+### cpython -> lang  (1)
+     1 identifier::nfkc   <- cpython/syntax.rs
+### rr -> w  (1)
+     1 model::FileInput::new   <- logic/rr.rs
+### prof -> top  (1)
+     1 crate::purge_allocator_pages   <- prof.rs
+### w -> ?CompiledCodeRuleDsl  (1)
+     1 CompiledCodeRuleDsl   <- workspace/api.rs

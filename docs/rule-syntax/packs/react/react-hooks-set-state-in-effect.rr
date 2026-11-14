@@ -1,0 +1,65 @@
+.policy "react-hooks-set-state-in-effect" revision 2
+.description "Avoid setting state synchronously in the body of a useEffect, useLayoutEffect or useInsertionEffect callback; derive the value during render or set it from a subscription callback."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/set-state-in-effect (React Compiler): a setter called synchronously in an effect's body renders
+// again right after every commit; the value can usually be derived during render instead.
+//   useEffect(() => { setItems(filter(all)); }, [all]);          reported at the setter call
+//   useEffect(() => { fetch(u).then(r => setItems(r)); }, [u]);  not: the callback runs later
+//   const sync = () => setItems(…); useEffect(sync, []);          reported at `sync`, the effect
+//   useEffect(() => { sync(); }, []);                              reported at sync(): it sets state now
+// One finding per effect, at the first such call, as the compiler stops at it.
+// The function called or passed must be declared in the component's render code; one declared inside the
+// effect is not followed, as the compiler does not.
+#include "tsx/react-compiler.rr"
+
+.violation set_state_in_effect(at: node, msg: symbol)
+    code "react-hooks/set-state-in-effect"
+    "{msg}"
+    suppress eslint "react-hooks/set-state-in-effect"
+    suppress oxlint "set-state-in-effect"
+set_state_in_effect(c, m) :- effect_body(g), i = min j : { sync_set(g, x), visit_index(x, j) }, sync_set(g, c),
+    visit_index(c, i), says("inline", m).
+set_state_in_effect(a, m) :- effect(e), call_arg(e, a, 0), kind(a, "identifier"), ref_site(a, s), rc_fn_at(s, l),
+    sets_state(l), says("named", m).
+
+// sync_set(g, c): c sets state while effect callback g runs: a setter call in g's own code, or a call of a
+// local function that has one. The compiler reports the first of them in each effect.
+.decl sync_set(g: node, c: node)
+sync_set(g, c) :- effect_body(g), rc_set_state(c), rc_own(c, g), declared_before(c), !from_ref(c, g).
+sync_set(g, k) :- effect_body(g), rc_own(k, g), called_local(k, l), sets_state(l).
+// from_ref(c, g): setter call c's argument reads a ref, directly or through a const declared in effect g. The
+// compiler allows it: the value comes from the DOM or a ref, which render cannot know.
+//   useLayoutEffect(() => { setW(ref.current.offsetWidth); }, []);
+//   useLayoutEffect(() => { const r = ref.current.getBoundingClientRect(); setW(r.width); }, []);
+.decl from_ref(c: node, g: node)
+from_ref(c, g) :- sync_arg(c, g, a), rc_current(m), (m = a ; within(m, a)).
+from_ref(c, g) :- sync_arg(c, g, a), (n = a ; within(n, a)), kind(n, "identifier"), ref_site(n, d),
+    kind(d, "variable_declarator"), inside(d, l, "lexical_declaration"), prefix("const", l),
+    rc_own(d, g), field(d, "value", v), rc_current(m), within(m, v).
+.decl sync_arg(c: node, g: node, a: node)
+sync_arg(c, g, a) :- effect_body(g), rc_set_state(c), rc_own(c, g), call_arg(c, a, _).
+// declared_before(c): the setter's useState comes before the call; one declared after it (a `let` read early)
+// is an error of another kind to the compiler, which reports nothing here.
+.decl declared_before(c: node)
+declared_before(c) :- field(c, "function", n), ref_site(n, s), earlier(s, c).
+
+// effect(e): useEffect(…), useLayoutEffect(…) or useInsertionEffect(…) in a compiled function's render code;
+// effect_body(g): its callback, written in place.
+.decl effect(e: node)
+effect(e) :- rc_effect_call(e), rc_own(e, h), rc_render_fn(h, _).
+.decl effect_body(g: node)
+effect_body(g) :- effect(e), call_arg(e, a, 0), deparen(a, g), rc_fn(g).
+// sets_state(l): l is a function of the component's render code that calls a setter in its own code.
+.decl sets_state(l: node)
+sets_state(l) :- rc_fn(l), rc_own(l, h), rc_render_fn(h, _), rc_set_state(c), rc_own(c, l).
+// called_local(k, l): call k calls local function l, wherever k is.
+.decl called_local(k: node, l: node)
+called_local(k, l) :- kind(k, "call_expression"), field(k, "function", n), kind(n, "identifier"), ref_site(n, s),
+    rc_fn_at(s, l).
+
+.decl says(id: symbol, m: symbol)
+says("inline", "Don't set state synchronously in this effect: derive the value during render, or set it from a callback the effect subscribes; a setState here re-renders right after every commit.").
+says("named", "Don't pass a function that sets state synchronously as this effect: derive the value during render, or set it from a callback the effect subscribes.").

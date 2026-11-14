@@ -10,10 +10,10 @@ use super::resolve::{compile_resolves, validate_resolves};
 use super::utils::{UtilIds, UtilScope};
 use super::value::{compile_value_with, validate_value};
 use crate::code_rule_dsl::json::{bounded_text, invalid, non_empty_str, object};
-use crate::code_rule_dsl::language::adapter::{SyntaxFeature, SyntaxRules, gate, with_adapter};
+use crate::code_rule_dsl::language::adapter::{SyntaxFeature, gate};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CaptureAnalysis, CompareText, Count, HostTest, ParseTest, Reading, Related,
@@ -27,6 +27,7 @@ use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Keys a rule inside `parse` may use, whatever the grammar.
 const SUB_RULE_KEYS: &[&str] = &[
@@ -39,16 +40,16 @@ const ANNOTATION_KEYS: &[&str] = &["pattern", "matches", "resolves", "parse"];
 
 fn allowed(grammar: Grammar, key: &str) -> bool {
     SUB_RULE_KEYS.contains(&key)
-        || (grammar == Grammar::Annotation && ANNOTATION_KEYS.contains(&key))
+        || (grammar.of_host_syntax() && ANNOTATION_KEYS.contains(&key))
         // A text grammar's tree reaches its host node through `host`; a directive's item names a
         // global `resolves` reads.
-        || (grammar != Grammar::Annotation && key == "host")
-        || (grammar == Grammar::EslintDirective && key == "resolves")
+        || (!grammar.of_host_syntax() && key == "host")
+        || (grammar.item_resolves() && key == "resolves")
 }
 
 /// The grammars' names, as `parse.grammar` takes them.
 fn grammar_names() -> Vec<&'static str> {
-    Grammar::ALL.iter().map(|grammar| grammar.name()).collect()
+    Grammar::all().iter().map(|grammar| grammar.name()).collect()
 }
 
 /// Validates a `parse` object: its grammar and the rule of that grammar it holds.
@@ -77,6 +78,19 @@ pub(super) fn validate_parse(
             grammar.name()
         )));
     }
+    if let Some(marker) = parse.get("interpolation") {
+        if !grammar.interpolates() {
+            return Err(invalid(format!(
+                "{path}/interpolation requires pythonFString"
+            )));
+        }
+        let marker = marker
+            .as_str()
+            .ok_or_else(|| invalid(format!("{path}/interpolation must be a string")))?;
+        if marker.len() > 1024 {
+            return Err(invalid(format!("{path}/interpolation exceeds 1024 bytes")));
+        }
+    }
     let rule = sub_rule(parse);
     validate_sub_rule(&rule, path, grammar, true, limits, utils)?;
     Ok(grammar)
@@ -87,12 +101,13 @@ fn sub_rule(parse: &Map<String, Value>) -> Value {
     let mut rule = parse.clone();
     rule.remove("grammar");
     rule.remove("flags");
+    rule.remove("interpolation");
     Value::Object(rule)
 }
 
 /// `hosted`: the tree has a host node, which `host` tests (a `parse`'s literal; formatArgs' fields
 /// have none).
-pub(super) fn validate_sub_rule(
+pub fn validate_sub_rule(
     value: &Value,
     path: &str,
     grammar: Grammar,
@@ -102,7 +117,7 @@ pub(super) fn validate_sub_rule(
 ) -> Result<()> {
     let rule = object(value, path)?;
     for key in rule.keys() {
-        if key == "host" && !hosted && grammar != Grammar::Annotation {
+        if key == "host" && !hosted && !grammar.of_host_syntax() {
             return Err(invalid(format!(
                 "{path}/host: host tests the literal a parse holds; formatArgs' fields have none"
             )));
@@ -127,7 +142,7 @@ pub(super) fn validate_sub_rule(
     if let Some(kind) = rule.get("kind") {
         let kind = non_empty_str(Some(kind), &format!("{path}/kind"))?;
         // An annotation's kinds are Python's, which its rule's compilation checks.
-        if grammar != Grammar::Annotation && !grammar.kinds().contains(&kind) {
+        if !grammar.of_host_syntax() && !grammar.kinds().contains(&kind) {
             return Err(invalid(format!(
                 "{path}/kind: `{kind}` is not a {} kind; expected one of {}",
                 grammar.name(),
@@ -158,7 +173,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(compare) = rule.get("compare") {
         let comparison = parse_comparison(compare, &format!("{path}/compare"))?;
-        if grammar != Grammar::Annotation
+        if !grammar.of_host_syntax()
             && !matches!(
                 comparison.text,
                 CompareText::Source
@@ -185,7 +200,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(resolves) = rule.get("resolves") {
         validate_resolves(resolves, &format!("{path}/resolves"))?;
-        if grammar == Grammar::EslintDirective
+        if grammar.item_resolves()
             && let Some(other) = object(resolves, &format!("{path}/resolves"))?
                 .keys()
                 .find(|key| *key != "global")
@@ -203,7 +218,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(parse) = rule.get("parse") {
         let nested = validate_parse(parse, &format!("{path}/parse"), limits, utils)?;
-        if nested != Grammar::Annotation {
+        if !nested.of_host_syntax() {
             return Err(invalid(format!(
                 "{path}/parse/grammar: a string inside an annotation parses as an annotation"
             )));
@@ -293,7 +308,7 @@ fn validate_sub_relation(
 }
 
 /// A capture's name: a metavariable name without `$`.
-pub(super) fn capture_name<'a>(value: &'a Value, path: &str) -> Result<&'a str> {
+pub fn capture_name<'a>(value: &'a Value, path: &str) -> Result<&'a str> {
     let name = non_empty_str(Some(value), path)?;
     let valid = |c: char| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_';
     if !name.chars().all(valid) {
@@ -322,9 +337,9 @@ pub(super) fn compile_parse(
     let family = Family::of(language);
     gate(
         &format!("{path}/grammar"),
-        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::Parse(grammar))),
+        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::Parse(grammar)) },
     )?;
-    let rule = if grammar == Grammar::Annotation {
+    let rule = if grammar.of_host_syntax() {
         // An annotation's nodes are Python's: its rule compiles as the host's does.
         compile_ast_rule(&sub_rule(parse), grammar.host_language(), path, gaps, utils)?
     } else {
@@ -347,6 +362,11 @@ pub(super) fn compile_parse(
     host_rules(&rule, false, &mut hosts);
     Ok(AstMatcher::Semantic(Semantic::Parse(Box::new(ParseTest {
         grammar,
+        interpolation: parse
+            .get("interpolation")
+            .and_then(Value::as_str)
+            .unwrap_or("{}")
+            .to_owned(),
         host_sound: (!hosts.is_empty()).then(|| {
             hosts
                 .iter()
@@ -354,18 +374,7 @@ pub(super) fn compile_parse(
         }),
         rule,
         exports: exports.into_iter().collect(),
-        host_kinds: Arc::new(match grammar.literal_host() {
-            LiteralHost::PythonString => kind_ids(language, &["string", "concatenated_string"]),
-            LiteralHost::EcmaComment => kind_ids(language, &["comment"]),
-            LiteralHost::PhpString => kind_ids(
-                language,
-                &["string", "encapsed_string", "heredoc", "nowdoc"],
-            ),
-            LiteralHost::PhpComment => kind_ids(language, &["comment"]),
-            LiteralHost::RustString => {
-                kind_ids(language, &["string_literal", "raw_string_literal"])
-            }
-        }),
+        host_kinds: Arc::new(kind_ids(language, grammar.host_kinds())),
         reading: table_reading(utils.options.as_deref(), utils.python.as_deref()),
     }))))
 }
@@ -404,7 +413,7 @@ fn host_rules<'r>(matcher: &'r AstMatcher, negated: bool, found: &mut Vec<(&'r A
 
 /// Compiles a validated rule of a text grammar. `host` is where it reaches its host node (`None`
 /// for formatArgs' fields, which have none).
-pub(super) fn compile_sub_rule(
+pub fn compile_sub_rule(
     value: &Value,
     grammar: Grammar,
     path: &str,
@@ -523,6 +532,8 @@ pub(super) fn compile_sub_rule(
             min: spec.min,
             max: spec.max,
             binding: None,
+            // A parsed tree keeps its tokens.
+            gap: None,
         })));
     }
     if let Some(compare) = rule.get("compare") {
@@ -621,13 +632,8 @@ fn compile_sub_relation(
     ))
 }
 
-#[cfg(test)]
-mod annotation_tests;
-#[cfg(test)]
-mod host_tests;
-#[cfg(test)]
-mod m12b_tests;
-#[cfg(test)]
-mod ruff;
-#[cfg(test)]
-mod tests;
+// annotation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// host_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// m12b_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// cratify: `ruff` is rerail-lang-python's (it mounts it)
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

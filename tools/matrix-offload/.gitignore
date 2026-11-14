@@ -1,0 +1,7 @@
+# Build outputs and generated models stay local; data lives in the scratchpad.
+bin/
+build/
+*.mlpackage/
+*.mlmodelc/
+target/
+__pycache__/

@@ -1,0 +1,41 @@
+// python/types: what class of value an expression holds, from the engine's Python typing program.
+// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rr (its type relations).
+//
+// The engine infers Python types once, in one program (typing/programs/calls.rr beside this site). It runs over the
+// repository file by file, then in bounded cross-file rounds. There is no type checker: types come from what the
+// code assigns, returns, constructs and inherits, and every gap is "unknown", never a wrong class.
+// The program's answers arrive as facts keyed by file and span (`typing_calls__*`: a node is its path, kind, start
+// byte and end byte). A rule that reads one of them makes the engine run the program first. The rules below join
+// the spans back to this run's nodes.
+//
+// Types are answered where the program models a value: callees and receivers, assigned, returned and decorating
+// values, arguments and bases. Three-valued, like call targets:
+//   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name ("pkg.models.Base"),
+//                        or a builtin's name ("str", "int", "None", "module", "type")
+//   type_open(n)         n may also hold a value of a class not listed
+//   proven_type(n, t)    `isinstance(n, t)` is surely true: every class n may hold is t or a subclass, none unlisted
+//   possible_type(n, t)  `isinstance(n, t)` may be true, for a listed class
+//   possible_open(n)     possible_type is incomplete
+// A rule's "possibly a t" is possible_type(n, t) or possible_open(n); "not proven a t" is !proven_type(n, t).
+//
+// e.g. with `class Base: …`, `class Child(Base): …`, then `x = Child()` and `x.run()` in pkg/models.py, the
+// receiver x of `x.run()` has type_of(<x>, "pkg.models.Child") and proven_type for "pkg.models.Child",
+// "pkg.models.Base" and "object". In `def f(y): y.run()` the receiver has type_open(<y>): annotations are not
+// read yet.
+
+.decl typing_calls__type_of(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
+.decl typing_calls__type_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
+.decl typing_calls__proven_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
+.decl typing_calls__possible_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
+.decl typing_calls__possible_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
+
+.decl type_of(n: node, t: symbol)
+type_of(n, t) :- typing_calls__type_of(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
+.decl type_open(n: node)
+type_open(n) :- typing_calls__type_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).
+.decl proven_type(n: node, t: symbol)
+proven_type(n, t) :- typing_calls__proven_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
+.decl possible_type(n: node, t: symbol)
+possible_type(n, t) :- typing_calls__possible_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
+.decl possible_open(n: node)
+possible_open(n) :- typing_calls__possible_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).

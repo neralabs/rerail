@@ -1,0 +1,21 @@
+
+running 7 tests
+test code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups ... 
+thread 'code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups' (107401098) panicked at native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs:175:6:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("unknown join item sum")))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::rr::aggregate_demand::tests::already_restricted_helpers_are_stable_and_recursive_only_guards_are_refused ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::multiple_consumers_union_their_safe_demands ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name ... ok
+
+failures:
+
+failures:
+    code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 3218 filtered out; finished in 9.35s
+

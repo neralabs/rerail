@@ -1,0 +1,52 @@
+.policy "eslint-prefer-numeric-literals" revision 5
+.description "Use binary, octal or hexadecimal number literals instead of parseInt() on a constant string with radix 2, 8 or 16."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/names.rr"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-objects.rr"
+//   ref_site; deparen, static_prop, static_string, call_arg, call_arg_count; touching, cannot_touch (b-objects)
+
+// ESLint's prefer-numeric-literals: `parseInt(s, r)` or `Number.parseInt(s, r)` with exactly two arguments, a
+// constant string s (quoted, or a template without substitutions) and a number literal r of 2, 8 or 16. The
+// literal says the same thing directly. The global parseInt and Number only: a local one does not count
+// (ESLint 10, the recorded tool; ESLint 9.39 went by name).
+//   parseInt("111110111", 2)   Number.parseInt("767", 8)   parseInt(`1F7`, 16)     → reported
+//   parseInt(s, 2)   parseInt("1", 10)   parseInt("1", 2, x)   parseInt(1, 2)        fine
+// The fix writes 0b111110111, 0o767, 0x1F7: only when the string is all digits of its radix (so the literal
+// has the same value) and the call holds no comment. A word just before it gets a space, as ESLint's
+// canTokensBeAdjacent asks:  return(parseInt)("1", 2)  →  return 0b1. No options.
+.violation prefer_numeric_literals(at: node, system: symbol, f: node) code "prefer-numeric-literals"
+    "Use {system} literals instead of {f}()."
+    suppress eslint "prefer-numeric-literals"
+    suppress oxlint "prefer-numeric-literals"
+    suppress biome "lint/complexity/useNumericLiterals"
+    fix safe to_literal "Replace the call with the number literal."
+prefer_numeric_literals(c, system, f) :- radix_call(c, f, _, r), int_radix(r, system, _, _).
+
+// radix_call(c, f, v, r): c is `f(s, r)`, f parseInt or Number.parseInt (parentheses or ?. aside), s's value v.
+.decl radix_call(c: node, f: node, v: symbol, r: symbol)
+radix_call(c, f, v, r) :- kind(c, "call_expression"), field(c, "function", f), deparen(f, g), parse_int(g),
+    call_arg_count(c, 2), call_arg(c, s, 0), call_arg(c, n, 1), (kind(s, "string") ; kind(s, "template_string")),
+    static_string(s, v), kind(n, "number"), !suffix("n", n), value(n, r).
+.decl parse_int(g: node)
+parse_int(g) :- kind(g, "identifier"), text(g, "parseInt"), !ref_site(g, _).
+parse_int(g) :- static_prop(g, o, "parseInt"), kind(o, "identifier"), text(o, "Number"), !ref_site(o, _).
+.decl int_radix(r: symbol, system: symbol, lead: symbol, digits: symbol)  // the radix, ESLint's name, the prefix
+int_radix("2", "binary", "0b", "[01]+"). int_radix("8", "octal", "0o", "[0-7]+").
+int_radix("16", "hexadecimal", "0x", "[0-9a-fA-F]+").
+
+to_literal(c, _, _) :- lit_text(c, x), !inner_comment(c), lit_lead(c, x, l), y = cat(l, x) => replace(c, `$y`).
+// lit_lead(c, x, l): x is the literal; l is " " where the token before touches c and cannot touch x.
+.decl lit_lead(c: node, x: symbol, l: symbol)
+lit_lead(c, x, " ") :- lit_spaced(c, x).
+lit_lead(c, x, "") :- lit_text(c, x), !lit_spaced(c, x).
+.decl lit_spaced(c: node, x: symbol)
+lit_spaced(c, x) :- lit_text(c, x), touching(c, s), cannot_touch(s, x).
+layout_at(c) :- lit_text(c, _).
+.decl lit_text(c: node, x: symbol)
+lit_text(c, cat(p, v)) :- radix_call(c, _, v, r), int_radix(r, _, p, d), match(d, v).
+touch_pair(s, x) :- lit_text(c, x), touching(c, s).
+.decl inner_comment(c: node)
+inner_comment(c) :- radix_call(c, _, _, _), kind(k, "comment"), within(k, c).

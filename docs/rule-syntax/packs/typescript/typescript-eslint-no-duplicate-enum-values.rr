@@ -1,0 +1,49 @@
+.policy "typescript-eslint-no-duplicate-enum-values" revision 7
+.description "Give each TypeScript enum member a distinct value; duplicates make members indistinguishable at runtime."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   enum_member(n, m, i, x), enum_init(m, v); deparen(e, x) (eslint-a-common)
+
+// typescript-eslint's no-duplicate-enum-values: an enum member whose initializer has the same static value as
+// an earlier member's. Values are compared with Object.is, so a string and a number never match, and -0 is not 0.
+// Static values: string and number literals, templates without `${}`, and `+` or `-` applied to one of these.
+//   enum E { A = 1, B = 1 }              → B          enum E { A = "a", B = `a` }   → B
+//   enum E { A = 1, B = "1" }            fine         enum E { A, B = 0 }           fine: A has no initializer
+//   enum E { A = 0, B = -0 }             fine         enum E { A = -1, B = -(1) }   → B
+.violation no_duplicate_enum_values(at: node, v: node) code "@typescript-eslint/no-duplicate-enum-values"
+    "Duplicate enum member value {v}."
+    suppress eslint "@typescript-eslint/no-duplicate-enum-values"
+    suppress oxlint "no-duplicate-enum-values"
+no_duplicate_enum_values(m, x) :- same_value(b, m, x, e), e < m.
+
+// same_value(b, m, x, e): members m and e of enum b have equal values (Object.is); x is m's initializer.
+.decl same_value(b: node, m: node, x: node, e: node)
+same_value(b, m, x, e) :- enum_member_init(b, m, x), enum_string(x, v), enum_member_init(b, e, y), enum_string(y, v).
+same_value(b, m, x, e) :- enum_member_init(b, m, x), enum_number(x, f, z), enum_member_init(b, e, y), enum_number(y, f, z).
+.decl enum_member_init(b: node, m: node, x: node)  // member m of enum b is `name = x`, x without parentheses
+enum_member_init(b, m, x) :- enum_member(b, m, _, _), enum_init(m, i), deparen(i, x).
+
+// getMemberValue. enum_string(x, v): a string literal, or a template without `${}`.
+.decl enum_string(x: node, v: symbol)
+enum_string(x, v) :- (kind(x, "string") ; kind(x, "template_string"), !has(x, _, "template_substitution")), value(x, v).
+// enum_number(x, f, z): x is the number f; z is "-0" for negative zero, else "" (Object.is tells -0 from 0, and f is
+// kept a positive zero, `0.0 - f`). `+` and `-` convert a string as Number() does: blanks trimmed, "" is 0, a
+// decimal numeral its value, anything else NaN, which has no value. A BigInt (1n) has none either.
+.decl enum_number(x: node, f: float, z: symbol)
+enum_number(x, to_float(v), "") :- kind(x, "number"), !suffix("n", x), value(x, v).
+enum_number(x, f, z) :- unary_arg(x, "+", a), to_number_value(a, f, z).
+enum_number(x, 0.0 - f, w) :- unary_arg(x, "-", a), to_number_value(a, f, z),
+    (f = 0.0, z = "", w = "-0" ; f = 0.0, z = "-0", w = "" ; f != 0.0, w = "").
+.decl to_number_value(a: node, f: float, z: symbol)  // Number(a)
+to_number_value(a, f, z) :- enum_number(a, f, z).
+to_number_value(a, 0.0, "") :- enum_string(a, s), match("\\s*", s).
+to_number_value(a, to_float(n), "") :- enum_string(a, s),
+    match("\\s*(?<n>[+]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\\s*", s).
+to_number_value(a, 0.0 - to_float(n), z) :- enum_string(a, s),
+    match("\\s*-(?<n>(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\\s*", s),
+    (to_float(n) = 0.0, z = "-0" ; to_float(n) != 0.0, z = "").
+.decl unary_arg(x: node, o: symbol, a: node)
+unary_arg(x, o, a) :- kind(x, "unary_expression"), op(x, o), field(x, "argument", e), deparen(e, a).

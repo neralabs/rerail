@@ -1,0 +1,11 @@
+{"files": 1256, "level": 0, "stats": {}, "total": 8220}
+{"files": 1256, "level": 2, "stats": {"class_with_init_or_test_false": 50, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 67}, "total": 9831}
+{"files": 1256, "level": 3, "stats": {"class_with_init_or_test_false": 50, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 15}, "total": 10060}
+{"files": 1256, "level": 4, "stats": {"class_with_init_or_test_false": 50, "fixture_params_resolved": 662, "fixture_params_unresolved": 33, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 15}, "total": 14301}
+truth 15361 est 8220 err -46.5% files_exact 799/1256 under 7277 over 136 dirs_exact 23/77
+truth 15361 est 8215 err -46.5% files_exact 806/1256 under 7272 over 126 dirs_exact 23/77
+truth 15361 est 9831 err -36.0% files_exact 1003/1256 under 5671 over 141 dirs_exact 30/77
+truth 15361 est 10060 err -34.5% files_exact 1028/1256 under 5442 over 141 dirs_exact 32/77
+truth 15361 est 14301 err -6.9% files_exact 1226/1256 under 1222 over 162 dirs_exact 67/77
+truth 15361 est 14616 err -4.8% files_exact 1233/1256 under 940 over 195 dirs_exact 67/77
+truth 15361 est 14454 err -5.9% files_exact 1243/1256 under 940 over 33 dirs_exact 72/77

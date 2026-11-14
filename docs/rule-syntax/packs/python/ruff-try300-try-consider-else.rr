@@ -1,0 +1,36 @@
+.policy "ruff-try300-try-consider-else" revision 2
+.description "Move the final return of a try body into an else block; code that runs only on success should not sit under the handlers' protection."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY300 (tryceratops): a try body of two or more statements that ends in a `return`, in a try with
+// handlers and no `else`. The return belongs in `else`, out of the handlers' reach. A return value that may have
+// a side effect (Ruff's contains_effect: a call, a subscript, an await, a comprehension, a walrus, an operator on
+// a non-literal) is left alone.
+//   try:
+//       x = f()
+//       return x               ← TRY300
+//   except E: ...
+//
+//   try:
+//       x = f()
+//       return g(x)            not reported: g(x) may raise E
+//   except E: ...
+#include "python/exceptions.rr"
+//   exc_handler(t, x)
+#include "python/ruff.rr"
+//   side_effect(e): Ruff's contains_effect
+
+.violation TRY300(at: node) code "TRY300"
+    "Move this `return` into an `else` clause after the handlers so the `try` body holds only the code the handlers guard."
+    suppress ruff "TRY300"
+TRY300(r) :- exc_handler(t, _), !has_else(t), field(t, "body", b),
+    count : { child(b, s, _), !kind(s, "comment") } > 1,
+    child(b, r, i), kind(r, "return_statement"), count : { child(b, s, j), j > i, !kind(s, "comment") } = 0,
+    !effect_return(r).
+.decl effect_return(r: node)
+effect_return(r) :- kind(r, "return_statement"), child(r, v, 0), side_effect(v).
+
+.decl has_else(t: node)  // the try's own else clause (not one of a nested if or loop)
+has_else(t) :- child(t, e, _), kind(e, "else_clause").

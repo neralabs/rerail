@@ -6,7 +6,7 @@ use super::parse::{capture_name, compile_sub_rule, validate_sub_rule};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, FormatArgFeature, FormatArgRules, gate, with_adapter,
+    FormatArgFeature, gate,
 };
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
@@ -17,6 +17,7 @@ use crate::code_rule_dsl::model::Limits;
 use napi::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 const KEYS: &[&str] = &["style", "string", "args", "unused", "missing"];
 
@@ -35,12 +36,12 @@ fn style(value: &Value, path: &str) -> Result<Style> {
 
 /// Whether `A`'s format strings follow their bindings (`FormatArgRules::FOLLOWS_STRINGS`), once
 /// `A` reads `style`'s format calls.
-fn follows_strings<A: Adapter>(path: &str, style: Style) -> Result<bool> {
+fn follows_strings(pack: &dyn language_pack::LanguagePack, path: &str, style: Style) -> Result<bool> {
     gate(
         &format!("{path}/style"),
-        <A::FormatArgs as FormatArgRules>::feature(FormatArgFeature::Style(style)),
+        pack.format_args_feature(FormatArgFeature::Style(style)),
     )?;
-    Ok(<A::FormatArgs as FormatArgRules>::FOLLOWS_STRINGS)
+    Ok(pack.format_args_follows_strings())
 }
 
 /// The grammar-independent checks of a `formatArgs` object.
@@ -87,7 +88,7 @@ pub(super) fn compile_format_args(
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
     let style = style(value, path)?;
-    let follows = with_adapter!(Family::of(language), A => follows_strings::<A>(path, style))?;
+    let follows = { let pack = language_pack::pack(Family::of(language)); follows_strings(pack, path, style) }?;
     let unused = value
         .get("unused")
         .map(|unused| compile_ast_rule(unused, language, &format!("{path}/unused"), gaps, utils))
@@ -195,9 +196,6 @@ pub(super) fn check_captures(
     }
 }
 
-#[cfg(test)]
-mod php;
-#[cfg(test)]
-mod ruff;
-#[cfg(test)]
-mod tests;
+// cratify: `php` is rerail-engine's (it mounts it)
+// cratify: `ruff` is rerail-lang-python's (it mounts it)
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
