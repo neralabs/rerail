@@ -982,13 +982,14 @@ describe("the engine service's idle close", () => {
     await steer("owing", "Fix owing.py.");
     clock.now += 60_000;
     await service.closeIdleSessions();
-    expect([typeof ended("quiet"), live("quiet")]).toEqual(["number", false]);
+    // Each record ends at the idle close's time by the service's clock, as a suspended session's does.
+    expect([ended("quiet"), live("quiet")]).toEqual([clock.now, false]);
     expect([ended("owing"), live("owing")]).toEqual([null, true]);
     await prompt("quiet", "back");
     expect([ended("quiet"), live("quiet")]).toEqual([null, true]);
     clock.now += 24 * 60 * 60_000;
     await service.closeIdleSessions();
-    expect([typeof ended("owing"), live("owing")]).toEqual(["number", false]);
+    expect([ended("owing"), live("owing")]).toEqual([clock.now, false]);
     expect((await prompt("owing", "next morning")).map(delivery => delivery.content)).toEqual(["Fix owing.py."]);
     expect([ended("owing"), live("owing")]).toEqual([null, true]);
   });
@@ -1012,7 +1013,7 @@ describe("the engine service's idle close", () => {
     expect(ownerTokenOf(otherDatabase, "o"), "its owner row's token").toMatch(/^[0-9a-f-]{36}$/u);
     clock.now += 60_000;
     await service.closeIdleSessions();
-    expect([typeof endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual(["number", false]);
+    expect([endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual([clock.now, false]);
     await service.ingest({ kind: "user-prompt", eventId: "o:back", sessionId: "o", session, text: "back" }, configuration);
     expect([endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual([null, true]);
   });
