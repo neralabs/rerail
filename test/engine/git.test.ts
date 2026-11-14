@@ -264,29 +264,21 @@ describe("gitModifiedOrUntrackedListing", () => {
 });
 
 /**
- * What the clean filter of `heldListing` does while `held` is there: leave a process behind that holds Git's stderr after
- * Git exits, or keep Git waiting for it, so Git never finishes.
+ * Lists the changed files of a repository whose clean filter leaves a process behind, outside the repository, that holds
+ * Git's stderr after Git exits while a file is there, and answers what the read answered within `waitMs`, or that it was
+ * still waiting. Git runs the filter to compare a.py, changed on disk, with the index. The wait ends once the listing is
+ * answered, and so does removing the repository.
  */
-type HeldFilter = "leaves-a-process" | "keeps-git-waiting";
-
-/**
- * Lists the changed files of a repository whose clean filter waits, outside the repository, while a file is there (as
- * `filter` says), and answers what the read answered within `waitMs`, or that it was still waiting. Git runs the filter
- * to compare a.py, changed on disk, with the index. `whileReading` runs once the read has started. The wait ends once
- * the listing is answered, and so does removing the repository.
- */
-async function heldListing(filter: HeldFilter, waitMs: number, whileReading: () => void = () => undefined): Promise<unknown> {
+async function heldListing(waitMs: number): Promise<unknown> {
   const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
   const held = join(root, ".git", "held");
   const loop = `while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done`;
-  const clean = filter === "leaves-a-process" ? `(cd / && ${loop}) </dev/null >/dev/null & cat` : `cd / && (${loop}) </dev/null >/dev/null; cat`;
-  git(root, "config", "filter.held.clean", clean);
+  git(root, "config", "filter.held.clean", `(cd / && ${loop}) </dev/null >/dev/null & cat`);
   await writeFile(held, "");
   await writeFile(join(root, "a.py"), "print(2)\n");
   let late: NodeJS.Timeout | undefined;
   try {
     const read = gitModifiedOrUntrackedPaths(root);
-    whileReading();
     return await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
   } finally {
     clearTimeout(late);
@@ -294,10 +286,16 @@ async function heldListing(filter: HeldFilter, waitMs: number, whileReading: () 
   }
 }
 
-/** From now on `performance.now()` answers `ms` later than it would: the clock a read finds after the event loop stalled. */
+/** How far `clockAhead` has moved `performance.now()` in this test: one spy adds it, however often the clock moves. */
+const clock = { ahead: 0 };
+
+/** From now on `performance.now()` answers `ms` later than it did: the clock a read finds after the event loop stalled. */
 function clockAhead(ms: number): void {
-  const now = performance.now.bind(performance);
-  vi.spyOn(performance, "now").mockImplementation(() => now() + ms);
+  if (clock.ahead === 0) {
+    const now = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => now() + clock.ahead);
+  }
+  clock.ahead += ms;
 }
 
 /**
@@ -372,6 +370,7 @@ describe("Git reads and their time limit", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    clock.ahead = 0;
   });
 
   it("answers with what Git printed when the event loop stalls past the time limit after Git finished", async () => {
@@ -389,18 +388,21 @@ describe("Git reads and their time limit", () => {
   }, 30_000);
 
   it("answers once Git has exited and its output has ended, while a process it started holds its stderr", async () => {
-    await expect(heldListing("leaves-a-process", 5_000)).resolves.toEqual(["a.py"]);
+    await expect(heldListing(5_000)).resolves.toEqual(["a.py"]);
   }, 30_000);
 
   it("ends a read whose Git prints nothing at its first look past the time limit on the clock, after a stall", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
+    // In Git's place, a program that prints nothing and stays until it is ended, as a Git kept waiting does.
+    const started = gitInPlace("process.stdin.resume()");
+    const read = gitModifiedOrUntrackedPaths(root);
+    await started;
     // As if the event loop had stalled for 11 s as the read started: its first look, 1 s in by its timer, is 12 s in on
-    // the clock. A read whose limit were a timer of 10 s would still be waiting at 5 s.
-    const stalled = () => {
-      clockAhead(11_000);
-      vi.advanceTimersByTime(1_000);
-    };
-    await expect(heldListing("keeps-git-waiting", 5_000, stalled)).resolves.toBeUndefined();
+    // the clock. A read whose limit were a timer of 10 s would still be waiting at 2 s.
+    clockAhead(11_000);
+    vi.advanceTimersByTime(1_000);
+    await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
   }, 30_000);
 
   it("answers with what Git printed when the stall that took the read past the time limit on the clock ended after Git finished", async () => {
