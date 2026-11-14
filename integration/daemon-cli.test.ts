@@ -147,9 +147,13 @@ describe("Rerail daemon CLI", () => {
       await mkdir(folder);
       const lockedOut = join(root, "key.pem");
       await writeFile(lockedOut, selfSignedCertificate().key);
-      // A misspelled name and a path through a file; then two paths others can read where this account reads no key: a
-      // folder, and a key this account may not read.
-      const keys: [string, string][] = [unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")), [folder, await letOthersRead(folder, 0o755)]];
+      // A misspelled name and a path through a file; then paths others can read where this account reads no key: a
+      // folder, the certificate (as when --tls-cert and --tls-key are swapped), and a key this account may not read.
+      const keys: [string, string][] = [
+        unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")),
+        [folder, await letOthersRead(folder, 0o755)], [certFile, await letOthersRead(certFile, 0o644)],
+      ];
+      if (process.platform === "win32") keys.push(unread(await keyGetAclCannotRead(root)));
       const lockedOutRefusal = await lockOut(lockedOut);
       // Root, and a Windows account whose backup privilege is on (as over ssh, Node opening files for backup), still
       // read that key: for them it is a key this account reads, which serves this computer alone.
@@ -224,4 +228,16 @@ async function lockOut(keyFile: string): Promise<string> {
   const refusal = await letOthersRead(keyFile, 0o044);
   if (process.platform === "win32") await promisify(execFile)("icacls", [keyFile, "/deny", `${userInfo().username}:(RD)`], { windowsHide: true });
   return refusal;
+}
+
+/**
+ * Windows: a private key this account reads and other accounts may read, whose ACL `Get-Acl` cannot read. It sits in an
+ * NTFS alternate data stream (`key.pem:tls`), which Node stats as a file and reads, and whose path `Get-Acl` refuses
+ * ("The given path's format is not supported"). Returns its path.
+ */
+async function keyGetAclCannotRead(folder: string): Promise<string> {
+  const file = join(folder, "stream.pem");
+  await writeFile(`${file}:tls`, selfSignedCertificate().key);
+  await letOthersRead(file, 0o644);
+  return `${file}:tls`;
 }
