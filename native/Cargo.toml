@@ -215,6 +215,8 @@ rerail-markdown-lean = { path = "crates/markdown_lean" }
 rerail-markdown-inline-lean = { path = "crates/markdown_inline_lean" }
 # The lean SQL parser, measured directly (`tape::tests::sql_parse_costs`).
 rerail-sql-lean = { path = "crates/sql_lean" }
+# The lean Vue parser, measured directly (`tape::tests::vue_parse_costs`).
+rerail-vue-lean = { path = "crates/vue_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.

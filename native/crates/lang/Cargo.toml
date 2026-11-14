@@ -108,6 +108,8 @@ rerail-markdown-lean = { path = "../markdown_lean" }
 rerail-markdown-inline-lean = { path = "../markdown_inline_lean" }
 # SQL's lean parser: tree-sitter-sql's tape, written as the parse goes (`tape::sql_lean`).
 rerail-sql-lean = { path = "../sql_lean" }
+# Vue's lean parser: tree-sitter-vue's tape, written as the parse goes (`tape::vue_lean`).
+rerail-vue-lean = { path = "../vue_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }

@@ -71,6 +71,8 @@ pub mod markdown_lean;
 pub mod markdown_inline_lean;
 /// SQL's tape from the lean parser (`rerail_sql_lean`).
 pub mod sql_lean;
+/// Vue's tape from the lean parser (`rerail_vue_lean`).
+pub mod vue_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

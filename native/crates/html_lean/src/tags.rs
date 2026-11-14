@@ -1,6 +1,7 @@
 //! Tag names as tree-sitter-html's scanner reads them (`tag.h`): each name it knows is a type of
 //! its own, any other is `CUSTOM` (told apart by its name). The scanner's rules over the types:
-//! which elements are void, and which may not contain which (an implicit end tag).
+//! which elements are void, and which may not contain which (an implicit end tag). tree-sitter-vue's
+//! scanner reads tags by the same `tag.h`, so `rerail-vue-lean` reads them here too.
 
 /// The names the scanner knows, upper case, sorted (a name's index is its type, from 1; 0 is
 /// `CUSTOM`). `CUSTOM` itself is the scanner's name for its custom type.
@@ -130,6 +131,7 @@ static IS_NOT_IN_P: [bool; N + 1] = set(NOT_IN_P);
 const CUSTOM: u8 = index("CUSTOM");
 pub const SCRIPT: u8 = index("SCRIPT");
 pub const STYLE: u8 = index("STYLE");
+pub const TEMPLATE: u8 = index("TEMPLATE");
 const HTML: u8 = index("HTML");
 const HEAD: u8 = index("HEAD");
 const BODY: u8 = index("BODY");

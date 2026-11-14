@@ -4955,6 +4955,11 @@ pub(crate) fn install_languages() {
             // tree-sitter-sql.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Sql, name: "lean SQL parser", rank: 0, runs: true, parser: &tape::sql_lean::Lean });
         }
+        if cfg!(feature = "lang-vue") {
+            // The lean Vue parser (`tape::vue_lean`, decision 0239), whose tape the component's
+            // embedded program is built from; a file it refuses goes to tree-sitter-vue.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.
