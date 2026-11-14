@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 657 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #657</div>
+  <h1>A Rerail home runs one daemon, however many processes start it</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does one Rerail home end up with exactly one daemon, named in <code>daemon.json</code>, whatever starts, stops or dies, with nothing on <code>main</code> slower or broken?</p>
+  <ol><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Every build&#x27;s daemon locks its home, in <code>locks/</code>; a second exits. <b>Changes the intent.</b></li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A lock holder that never writes <code>daemon.json</code> fails every start after 15 s.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> rule first on the two design questions open on #626, since this pull request builds the lock per home, then review it as built.</p>
+  <div class="big">
+    <div><b class="w">1,587 lines</b><span>in 19 files. 463 ship, 1,124 are tests and text.</span></div><div><b class="w">Careful lane</b><span>A code owner approves.</span></div><div><b class="w">Waits on #626&#x27;s two answers</b><span>No maintainer has answered.</span></div><div><b class="w">5 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/657">GitHub</a> on 14 November 2026, at head cf986a055.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr class="intent"><td class="k"><span class="lb">A</span><b>One daemon per home</b></td><td class="in" data-l="Intended">The installed daemon holds a lock per machine; a checkout&#x27;s daemon &quot;takes no lock&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">A checkout&#x27;s busy daemon got a second beside it. <span class="tagx">Windows 11, at main</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 1.</b> Every build&#x27;s daemon holds <code>locks/daemon.lock</code> for its life; a second exits. Rerail 0.1.4 is not locked out. A maintainer must agree.</td></tr><tr><td class="k"><span class="lb">A</span><b>Finding the daemon</b></td><td class="in" data-l="Intended"><code>rerail daemon start</code> &quot;reuses a running daemon and says where&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">With <code>daemon.json</code> gone or wrong, every start fails and a stop finds none. <span class="tagx">#626</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> The daemon writes <code>daemon.json</code> back within a second; starts and stops wait for it. Beside a holder that never writes it, they fail.</td></tr><tr><td class="k"><span class="lb">B</span><b>Autostart</b></td><td class="in" data-l="Intended">Autostart is &quot;One attempt per process&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">2, 5 and 20 hooks that find no daemon launch as many starts. <span class="tagx">real processes, at main</span></td><td class="now" data-l="Now"><b>Closes the gap.</b> They launch one start between them, through <code>autostart.claim</code>, held 30 s at most.</td></tr></tbody></table>
+<figcaption>#626, 12 November 2026.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. One daemon per home</td><td data-l="Where main states the intent"><code>src/daemon/daemon.ts</code> lines 852 and 853, a code comment: &quot;the main daemon is the machine&#x27;s one main instance, and a second one stops here naming the first. A checkout&#x27;s daemon is a dev build with its own content store and takes no lock.&quot; <code>docs/how-setup-works.md</code> line 537: &quot;Development builds never take the lock and never open that store.&quot; ae6d9d08f rewords both: a checkout&#x27;s daemon skips the machine&#x27;s lock and takes the home&#x27;s.</td><td data-l="The cause, and what was measured">An installed daemon&#x27;s machine lock refuses a second one (#626); a checkout&#x27;s daemon has only its engine pipe. By our reading, <code>engineHoldsCapability</code> (<code>src/runtime/engine-proof.ts</code> line 109) gives the pipe&#x27;s holder 2,000 ms to prove it is this home&#x27;s. A daemon busy for longer does not answer, so the second listens on the fallback pipe and writes <code>daemon.json</code>. At main on Windows 11, beside a daemon held busy 8 s, the second was still running 7 s later.</td></tr><tr><td class="k">A. Finding the daemon</td><td data-l="Where main states the intent"><code>docs/reference.md</code> line 616: &quot;`rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared.&quot; <code>src/daemon/daemon.ts</code> line 93, the comment on <code>stateFile</code>: &quot;Written once the server is listening and removed on close.&quot; Nothing at main says what a start does beside a daemon that has not written the file: it launches another.</td><td data-l="The cause, and what was measured"><code>startDaemon</code> and <code>stopDaemon</code> find a daemon only through <code>daemon.json</code> (<code>lookupDaemon</code>, <code>src/runtime/daemon-control.ts</code> lines 724 and 1147). With the file gone or wrong, a start launches a daemon that exits with &quot;is in use by a running daemon&quot; (<code>src/runtime/engine-service.ts</code> line 512), or on the machine lock when installed (#626), and a stop says none runs. By #626&#x27;s steps, 0.1.4 and 0.1.3 do the same. Of the first head&#x27;s 15 tests, 7 fail at main on Linux x64 and 8 on Windows 11.</td></tr><tr><td class="k">B. Autostart</td><td data-l="Where main states the intent"><code>src/runtime/daemon-control.ts</code> lines 1047 and 1048, the comment on <code>autostartDaemon</code>: &quot;Bring the daemon up from inside a host session so the browser view is live without anyone running `rerail daemon start`. One attempt per process&quot;. Lines 1063 and 1064: &quot;the one daemon serves every repository&quot;.</td><td data-l="The cause, and what was measured"><code>autostartAttempted</code> (line 1044) is a flag in one process, and every hook is a process of its own, so each one that finds the daemon down launches a start. In a mix of 6 hooks, 4 <code>rerail daemon start</code> and 4 daemon processes at once, main launched 10 starts and on Windows 11 left 5 daemons running in 1 of 2 runs. Seen once in use, on a Windows 11 machine: 52 start processes, none of which became the daemon.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 279" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, The home&#x27;s lock and record check, high risk, 460 lines; B, The shared start claim, medium risk, 3 lines. Read first: home-daemon-lock.ts, daemon.ts, daemon-control.ts. To skim: 1,091 lines of tests and 33 lines of three docs pages and two release notes." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk high"/><text x="49" y="38" class="t s">High risk, 460 lines</text><text x="128" y="59" text-anchor="end" class="t s">home-daemon-lock.ts</text><g><title>home-daemon-lock.ts: 136 changed lines, high risk</title><path d="M134 50h21.1852a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-21.1852z" class="rk high"/></g><text x="164.185" y="59" class="t n">136</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">daemon.ts</text><g><title>daemon.ts: 91 changed lines, high risk</title><path d="M134 67h12.8519a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-12.8519z" class="rk high"/></g><text x="155.852" y="76" class="t n">91</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">2</text><text x="128" y="93" text-anchor="end" class="t s">daemon-control.ts</text><g><title>daemon-control.ts: 217 changed lines, high risk</title><path d="M134 84h36.1852a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-36.1852z" class="rk high"/></g><text x="179.185" y="93" class="t n">217</text><text x="336" y="93" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="89" r="8.5" class="nc"/><text x="254" y="93" text-anchor="middle" class="t b inv">3</text><text x="128" y="110" text-anchor="end" class="t s">2 other files</text><g><title>2 other files: 16 changed lines, high risk</title><path d="M134 101h0a2.96296 2.96296 0 0 1 2.96296 2.96296v5.07407a2.96296 2.96296 0 0 1 -2.96296 2.96296h-0z" class="rk high"/></g><text x="141.963" y="110" class="t n">16</text><rect x="4.5" y="124.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="138" text-anchor="middle" class="t b">B</text><rect x="30" y="129" width="14" height="10" rx="2" class="rk med"/><text x="49" y="138" class="t s">Medium risk, 3 lines</text><text x="128" y="159" text-anchor="end" class="t s">2 files</text><g><title>2 files: 3 changed lines, medium risk</title><path d="M134 150h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk med"/></g><text x="139.556" y="159" class="t n">3</text><line x1="4" y1="173" x2="336" y2="173" class="ar thin"/><text x="4" y="193" class="t b">Skim: tests and text</text><text x="128" y="213" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 810 changed lines, skim</title><path d="M134 204h146a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-146z" class="rk skim"/></g><text x="289" y="213" class="t n">810</text><text x="128" y="230" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 281 changed lines, skim</title><path d="M134 221h48.037a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-48.037z" class="rk skim"/></g><text x="191.037" y="230" class="t n">281</text><text x="128" y="247" text-anchor="end" class="t s">docs, release notes</text><g><title>Three docs pages and two release notes: 33 lines</title><path d="M134 238h2.11111a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-2.11111z" class="rk skim"/></g><text x="145.111" y="247" class="t n">33</text><rect x="4" y="263" width="14" height="10" rx="2" class="rk high"/><text x="22" y="272" class="t s">High</text><rect x="62.8" y="263" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="272" class="t s">Medium</text><rect x="133" y="263" width="14" height="10" rx="2" class="rk low"/><text x="151" y="272" class="t s">Low risk</text><rect x="214.6" y="263" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="272" class="t s">Skim</text></svg>
+<figcaption><code>daemon-control.ts</code> holds both changes: see step 4.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>home-daemon-lock.ts</code>: <code>holdHomeDaemonLock</code>, <code>homeDaemonLockHeld</code></b><span class="min">6 min</span><span class="x">Can a daemon exit, or run unlocked, where it should not?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon.ts</code>: <code>runHomeDaemon</code>, <code>#record</code>, <code>#restoreRecord</code>, <code>close</code></b><span class="min">5 min</span><span class="x">Can a rewrite land after <code>close</code> removed the file?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon-control.ts</code>: <code>lookupHomeDaemon</code>, <code>homeDaemonRuns</code>, <code>homeHolderMayRun</code></b><span class="min">9 min</span><span class="x">Can a start wait, or a stop load the engine, with no daemon?</span></div></li><li><div><b>B, about 130 lines of <code>daemon-control.ts</code>: <code>claimAutostart</code>, <code>claimHolds</code>, <code>endOwnClaim</code>; <code>setup-cli.ts</code>, <code>index.ts</code>. A: <code>engine-pipe.ts</code>, <code>daemon-entry.ts</code></b><span class="min">9 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">8 min</span><span class="x"><code>daemon-control.test.ts</code>: main&#x27;s previous-package test starts an older build&#x27;s daemon, with twice the time limit. No assertion is removed.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 214" role="img" aria-label="The changes by risk, high on top, against six checks. A, Home lock, high risk: fails without the fix holds with a limit, independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Start claim, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx hib"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk high"/><text x="28" y="34" class="t s b">High risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Home lock</text><g><title>Home lock, fails without the fix: The first head&#x27;s 15 tests with real daemons (f8240d5ba) fail 7 of 15 at main on Linux x64 and 8 of 15 on Windows 11. At 2cb75efa0 on Linux x64 each fix line taken out turns its test red. The limit: d100d92f8, which stops removing the holder record before it is replaced, has no test of its own.</title><circle cx="150" cy="52" r="7.4" class="ml"/><path d="M150 44.6A7.4 7.4 0 0 0 150 59.4Z" class="mlf"/></g><g><title>Home lock, independent review: A second set of runs, from a separate checkout with its own probes, found at f8240d5ba that a stop and an uninstall on Windows 11 loaded the native engine: fixed in a33140fbb. The automated reviewer requested changes at f8240d5ba and approves 2cb75efa0 with no finding. It reviewed neither main&#x27;s merge nor the four commits since. No person has reviewed.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Home lock, users lose nothing: Tests with real processes hold main&#x27;s answers: a killed daemon gives way to the next start in under 10 s, a stop and a start at the same moment leave at most one daemon, an older build&#x27;s daemon is used and stopped. The limits: answer 2 differs from main by design, and the record check costs idle CPU (part 6).</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Home lock, rules scan: nothing new: The automated reviewer&#x27;s rules scan (Rerail 0.1.1, the complexity pack and the repository&#x27;s own pack) over the 7 changed source files, 2cb75efa0 against a9101752c: 17 over the complexity ceiling at the base and 17 at the head, none new.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Home lock, Windows 11: no new failure: The 9 test files that take the home&#x27;s lock or start the built daemon pass at 2cb75efa0, in two runs from two checkouts: 179 passed, 14 skipped, 0 failed each time. The 78 files that changed or import a changed module ran at d100d92f8, not at the head: 1,672 passed, 36 skipped, 0 failed.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Home lock, CI at this head: The checks GitHub lists at cf986a055, read on 14 November 2026: 28 pass, 1 is skipped. The limit: `Unit tests (2/2)` passed on CI run 43564453448&#x27;s second attempt. On the first, one test of main failed in its own clean-up (`kill ESRCH`). In 3,600 repeats on Linux x64 it failed 2 times at main (c89f068ed) and 0 at cf986a055.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><rect x="1" y="75" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="80" width="14" height="10" rx="2" class="rk med"/><text x="28" y="89" class="t s b">Medium risk</text><rect x="8.5" y="97.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="111" text-anchor="middle" class="t b">B</text><text x="34" y="111" class="t b">Start claim</text><g><title>Start claim, fails without the fix: 2, 5 and 20 hooks that find no daemon launch 2, 5 and 20 starts at main and 1 at 2cb75efa0, on Linux x64 and on Windows 11. With the claim off at 50705c972 the three hook tests fail on Linux x64 with 2, 5 and 20 launches. With `endOwnClaim` made unconditional at 2cb75efa0, the other-launcher test fails.</title><circle cx="150" cy="107" r="8" class="mh"/><path d="M146 107l3 3l5 -6" class="mt"/></g><g><title>Start claim, independent review: The automated reviewer found at f8240d5ba that a start removed the claim even when it never got the start lock. 66e1c2b66 fixes it, with a test (f329ff54c), and its review of 2cb75efa0 has no finding. A second set of runs from a separate checkout took the fix out and saw that test fail. No person has reviewed.</title><circle cx="184" cy="107" r="7.4" class="ml"/><path d="M184 99.6A7.4 7.4 0 0 0 184 114.4Z" class="mlf"/></g><g><title>Start claim, users lose nothing: A process that left the start to another launches at its next call once that launch has ended without a daemon: a test holds it. The held-claim check takes 5.4 to 5.6 µs on Linux x64 and 24.4 to 25.9 µs on Windows 11, the median of 2,000 calls, three rounds. The limit: measured at f8240d5ba, not at the head.</title><circle cx="218" cy="107" r="7.4" class="ml"/><path d="M218 99.6A7.4 7.4 0 0 0 218 114.4Z" class="mlf"/></g><g><title>Start claim, rules scan: nothing new: The same scan covers `daemon-control.ts`, `setup-cli.ts` and `index.ts`: none new. `endOwnClaim` counts 2 and `startUnderLock` 1.</title><circle cx="252" cy="107" r="8" class="mh"/><path d="M248 107l3 3l5 -6" class="mt"/></g><g><title>Start claim, Windows 11: no new failure: The claim&#x27;s tests are in `daemon-control.test.ts`, `daemon-home.test.ts` and `setup-cli.test.ts`, three of the 9 files that pass at 2cb75efa0 in two runs from two checkouts. The 78 files passed at d100d92f8, whose claim code is the head&#x27;s: 1,672 passed, 36 skipped, 0 failed.</title><circle cx="286" cy="107" r="8" class="mh"/><path d="M282 107l3 3l5 -6" class="mt"/></g><g><title>Start claim, CI at this head: The checks GitHub lists at cf986a055, read on 14 November 2026: 28 pass, 1 is skipped. The limit: `Unit tests (2/2)` passed on CI run 43564453448&#x27;s second attempt. On the first, one test of main failed in its own clean-up (`kill ESRCH`). In 3,600 repeats on Linux x64 it failed 2 times at main (c89f068ed) and 0 at cf986a055.</title><circle cx="320" cy="107" r="7.4" class="ml"/><path d="M320 99.6A7.4 7.4 0 0 0 320 114.4Z" class="mlf"/></g><text x="8" y="144" class="t s">1  fails without the fix</text><text x="168" y="144" class="t s">2  independent review</text><text x="8" y="160" class="t s">3  users lose nothing</text><text x="168" y="160" class="t s">4  rules scan: nothing new</text><text x="8" y="176" class="t s">5  Windows 11: no new failure</text><text x="168" y="176" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="200" r="8" class="mh"/><path d="M10 200l3 3l5 -6" class="mt"/></g><text x="28" y="204" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="200" r="7.4" class="ml"/><path d="M92 192.6A7.4 7.4 0 0 0 92 207.4Z" class="mlf"/></g><text x="106" y="204" class="t s">holds with a limit</text></svg>
+<figcaption>Start at A. No person has reviewed; CI passed on a rerun.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. Home lock</td><td data-l="Check">fails without the fix</td><td data-l="It holds with this limit">The first head&#x27;s 15 tests with real daemons (f8240d5ba) fail 7 of 15 at main on Linux x64 and 8 of 15 on Windows 11. At 2cb75efa0 on Linux x64 each fix line taken out turns its test red. The limit: d100d92f8, which stops removing the holder record before it is replaced, has no test of its own.</td></tr><tr><td class="k">A. Home lock</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A second set of runs, from a separate checkout with its own probes, found at f8240d5ba that a stop and an uninstall on Windows 11 loaded the native engine: fixed in a33140fbb. The automated reviewer requested changes at f8240d5ba and approves 2cb75efa0 with no finding. It reviewed neither main&#x27;s merge nor the four commits since. No person has reviewed.</td></tr><tr><td class="k">A. Home lock</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">Tests with real processes hold main&#x27;s answers: a killed daemon gives way to the next start in under 10 s, a stop and a start at the same moment leave at most one daemon, an older build&#x27;s daemon is used and stopped. The limits: answer 2 differs from main by design, and the record check costs idle CPU (part 6).</td></tr><tr><td class="k">A. Home lock</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">The 9 test files that take the home&#x27;s lock or start the built daemon pass at 2cb75efa0, in two runs from two checkouts: 179 passed, 14 skipped, 0 failed each time. The 78 files that changed or import a changed module ran at d100d92f8, not at the head: 1,672 passed, 36 skipped, 0 failed.</td></tr><tr><td class="k">B. Start claim</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">The automated reviewer found at f8240d5ba that a start removed the claim even when it never got the start lock. 66e1c2b66 fixes it, with a test (f329ff54c), and its review of 2cb75efa0 has no finding. A second set of runs from a separate checkout took the fix out and saw that test fail. No person has reviewed.</td></tr><tr><td class="k">B. Start claim</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">A process that left the start to another launches at its next call once that launch has ended without a daemon: a test holds it. The held-claim check takes 5.4 to 5.6 µs on Linux x64 and 24.4 to 25.9 µs on Windows 11, the median of 2,000 calls, three rounds. The limit: measured at f8240d5ba, not at the head.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">The checks GitHub lists at cf986a055, read on 14 November 2026: 28 pass, 1 is skipped. The limit: <code>Unit tests (2/2)</code> passed on CI run 43564453448&#x27;s second attempt. On the first, one test of main failed in its own clean-up (<code>kill ESRCH</code>). In 3,600 repeats on Linux x64 it failed 2 times at main (c89f068ed) and 0 at cf986a055.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>The home&#x27;s lock and record check</b><span class="chip high"><i></i>High risk</span><span class="sx">Real-daemon tests at f8240d5ba: 7 of 15 fail at main on Linux x64, none here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A running daemon that <code>daemon.json</code> no longer names blocks every start, and <code>rerail daemon stop</code> says none runs. Nothing is recorded or steered until someone ends it by hand. On Windows a checkout&#x27;s busy daemon gets a second beside it.</dd>
+<dt>Who meets it</dt><dd>Every home whose <code>daemon.json</code> goes while its daemon runs: #626&#x27;s four steps fail every time at main. How often the file goes is not known. Seen once, on a busy Windows 11 machine: 52 start processes, no daemon.</dd>
+<dt>What it does</dt><dd><code>runHomeDaemon</code> takes an OS lock on <code>locks/daemon.lock</code> before the daemon opens a store or binds anything, and holds it until the process ends. <code>#record</code> and <code>#restoreRecord</code> read <code>daemon.json</code> every second and write it again when it differs. <code>lookupHomeDaemon</code> makes a start or a stop wait for that record while <code>homeDaemonRuns</code> says the lock is held.</dd>
+<dt>Risk</dt><dd>High. It decides which daemon a home runs and whether a start waits, uses it or launches one. A fault leaves a home where nothing is recorded. Where the lock cannot be asked or taken, main&#x27;s behaviour stays.</dd>
+<dt>Check</dt><dd>Can <code>homeDaemonRuns</code> answer yes where no daemon of this home runs? On Windows <code>homeHolderMayRun</code> asks the lock only while this home&#x27;s engine pipe is listed. <code>holdHomeDaemonLock</code> returns no lease on any failure of its first try. A restart at the heap ceiling launches the next daemon before the old process exits: does the old one always let go within the second the next one waits? <code>#restoreRecord</code> writes the capabilities to <code>daemon.json</code> alone, mode 0600, and logs only a process id.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Of the first head&#x27;s 15 tests with real daemons, 7 fail at main and none at f8240d5ba on Linux x64. On Windows 11, 8 fail at main and none at f8240d5ba." class="dg pic"><text x="4" y="17" class="t b">Linux x64, of 15 tests</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Linux x64, of 15 tests, main: 7 fail</title><path d="M80 24h84.6667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-84.6667z" class="rk was"/></g><text x="174.667" y="34" class="t n">7 fail</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Linux x64, of 15 tests, this change: none fail</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">none fail</text><text x="4" y="75" class="t b">Windows 11, of 15 tests</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Windows 11, of 15 tests, main: 8 fail</title><path d="M80 82h97.3333a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-97.3333z" class="rk was"/></g><text x="187.333" y="92" class="t n">8 fail</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Windows 11, of 15 tests, this change: none fail</title><path d="M80 99h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="109" class="t n">none fail</text></svg><figcaption>Method: <code>test/runtime/daemon-home.test.ts</code> as it stood at f8240d5ba: 15 tests that start real daemons, hooks and <code>rerail daemon start</code> processes. One run at main with that file added and one at f8240d5ba, on a 32-thread Linux x64 machine and on Windows 11 x64, Node 24.21.0. The file holds more tests now, and all pass at 2cb75efa0 on both systems.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>The shared start claim</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">20 hooks, no daemon: 20 starts at main, 1 at 2cb75efa0.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>Every process that finds the daemon down launches its own <code>rerail daemon start</code>. After a daemon stops, every hook in flight does so at the same moment: 52 start processes were seen once on a Windows 11 machine.</dd>
+<dt>Who meets it</dt><dd>Every machine with several sessions when the daemon goes down. At main, on Linux x64 and Windows 11, 2, 5 and 20 hooks launch 2, 5 and 20 starts. A comment on #626 names it as that issue&#x27;s second cause.</dd>
+<dt>What it does</dt><dd><code>claimAutostart</code> creates <code>autostart.claim</code> in the Rerail home exclusively: the process that made it launches, and <code>handOverClaim</code> writes the launcher&#x27;s process id into it. <code>claimHolds</code> lets the others leave the start to that launcher while it runs, 30 s at most. <code>startUnderLock</code> ends the claim through <code>endOwnClaim</code> when the start ends, only if the claim names this process.</dd>
+<dt>Risk</dt><dd>Medium. A claim that held too long would keep every session from starting the daemon. It holds only while its launcher runs, and 30 s at most. A start still takes the start lock, and the daemon the home&#x27;s lock.</dd>
+<dt>Check</dt><dd>Its code is in <code>daemon-control.ts</code>, which the map counts under A. Can a claim outlive its launcher? <code>claimHolds</code> needs a live process id and a file time within 30 s of now, either way. Two processes that replace a stale claim at the same moment can both launch: the start lock still lets one start a daemon. A launcher that hands its start to the active version&#x27;s CLI leaves the claim to end at its own exit.</dd>
+</dl><figure><svg viewBox="0 0 340 186" role="img" aria-label="Start processes launched when hooks find no daemon at the same moment: 2, 5 and 20 at main for 2, 5 and 20 hooks, and 1 at 2cb75efa0 for each." class="dg pic"><text x="4" y="17" class="t b">2 hooks</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>2 hooks, main: 2 starts</title><path d="M80 24h11.8333a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-11.8333z" class="rk was"/></g><text x="101.833" y="34" class="t n">2 starts</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>2 hooks, this change: 1</title><path d="M80 41h3.91667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-3.91667z" class="rk now"/></g><text x="93.9167" y="51" class="t n">1</text><text x="4" y="75" class="t b">5 hooks</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>5 hooks, main: 5 starts</title><path d="M80 82h35.5833a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-35.5833z" class="rk was"/></g><text x="125.583" y="92" class="t n">5 starts</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>5 hooks, this change: 1</title><path d="M80 99h3.91667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-3.91667z" class="rk now"/></g><text x="93.9167" y="109" class="t n">1</text><text x="4" y="133" class="t b">20 hooks</text><text x="74" y="150" text-anchor="end" class="t s">main</text><g><title>20 hooks, main: 20 starts</title><path d="M80 140h154.333a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-154.333z" class="rk was"/></g><text x="244.333" y="150" class="t n">20 starts</text><text x="74" y="167" text-anchor="end" class="t s">this change</text><g><title>20 hooks, this change: 1</title><path d="M80 157h3.91667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-3.91667z" class="rk now"/></g><text x="93.9167" y="167" class="t n">1</text></svg><figcaption>Method: tests with real processes. Each hook is a process of its own that looks for the daemon and, finding none, runs the real autostart. The count is of <code>rerail daemon start</code> processes launched, at main and at 2cb75efa0, on a 32-thread Linux x64 machine and on Windows 11 x64. Each run at 2cb75efa0 left 1 daemon.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>One daemon per home: a lock, or the socket alone? <span class="chip intent"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> the lock: the socket cannot find a daemon once <code>daemon.json</code> is gone.</p>
+<p><b>Would change our mind:</b> a ruling on #626 for the socket alone.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A lock per home, held for the daemon&#x27;s life <span class='tag new'>chosen</span></td><td data-l="What a user gets">One daemon per home whatever the socket or pipe does. A start and a stop can tell that a daemon runs when <code>daemon.json</code> is gone.</td><td data-l="Cost">A 136-line module, two files in <code>locks/</code>, and a second OS lock on an installed daemon, beside the machine&#x27;s. A start or a stop loads the native engine to ask it, on Windows only while this home&#x27;s pipe is listed.</td><td data-l="What it breaks">Where the engine does not load or the lock file does not open there is no lock, only main&#x27;s socket or pipe check. An older build&#x27;s daemon takes none.</td></tr><tr><td class="k">The socket or pipe alone, with the Windows fallback corrected</td><td data-l="What a user gets">No second daemon on Windows.</td><td data-l="Cost">Small.</td><td data-l="What it breaks">A daemon whose <code>daemon.json</code> went missing still blocks every start, in 0.1.4 too.</td></tr><tr><td class="k">A process-id file with no OS lock</td><td data-l="What a user gets">The same record with no native call.</td><td data-l="Cost">Small.</td><td data-l="What it breaks">A process id the system reuses, or a file left by a crash, blocks a start.</td></tr><tr><td class="k">Main&#x27;s machine lock for installed daemons, nothing for a checkout&#x27;s</td><td data-l="What a user gets">Nothing new to build, no files in <code>locks/</code>, and no engine load in a start or a stop.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">#626&#x27;s first part, for every build: start and stop never ask the machine&#x27;s lock, whose record names no home. On Windows a second daemon whenever a checkout&#x27;s build is one of the two. Read in the code, not built.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a checkout&#x27;s busy daemon whose daemon.json is gone</div><svg viewBox="0 0 340 131" role="img" aria-label="At main, beside a checkout&#x27;s busy daemon A whose daemon.json is gone, a start launches daemon B. On Linux B exits on the engine socket and the start fails. On Windows B runs beside A on a fallback pipe and writes daemon.json." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">daemon A runs, busy, with no daemon.json</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">a start finds no daemon and launches daemon B</text><line x1="95" y1="76" x2="95" y2="92" class="ar " marker-end="url(#ah)"/><line x1="245" y1="76" x2="245" y2="92" class="ar " marker-end="url(#ah)"/><text x="101" y="88" class="t s">Linux</text><text x="251" y="88" class="t s">Windows</text><rect x="20" y="93" width="146" height="30" rx="8" class="bx "/><text x="93" y="112" text-anchor="middle" class="t s">B exits; the start fails</text><rect x="174" y="93" width="146" height="30" rx="8" class="bx "/><text x="247" y="112" text-anchor="middle" class="t s">B runs beside A</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 180" role="img" aria-label="With this change daemon A holds the home&#x27;s lock, finds daemon.json gone and writes it back within a second. A start finds the lock held and waits for the record. When it is back the start uses A. When none comes in 15 s the start fails, naming A." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="26" text-anchor="middle" class="t s">daemon A holds the home&#x27;s lock</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">A finds daemon.json gone and writes it back</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="38" rx="8" class="bx "/><text x="170" y="102.5" text-anchor="middle" class="t s">a start finds the lock held and waits for the</text><text x="170" y="115.5" text-anchor="middle" class="t s">record</text><line x1="95" y1="125" x2="95" y2="141" class="ar " marker-end="url(#ah)"/><line x1="245" y1="125" x2="245" y2="141" class="ar " marker-end="url(#ah)"/><text x="101" y="137" class="t s">the record is back</text><text x="251" y="137" class="t s">none in 15 s</text><rect x="20" y="142" width="146" height="30" rx="8" class="bx good"/><text x="93" y="161" text-anchor="middle" class="t s">the start uses A</text><rect x="174" y="142" width="146" height="30" rx="8" class="bx "/><text x="247" y="161" text-anchor="middle" class="t s">the start fails</text></svg></div></div><p><b>Evidence.</b> At main, with a checkout&#x27;s build, a start after <code>daemon.json</code> is removed fails with &quot;engine socket ... is in use by a running daemon&quot; on Linux x64, and on Windows 11 a daemon started beside a busy one still ran 7 s later. At 2cb75efa0 on Linux x64, with the daemon given a lease that holds nothing, the test of a storm of starters fails. With the lock, 2, 5 and 20 daemons started at once leave 1 on both systems.</p></details></div>
+<div class="dblock"><h3>Keeping <code>daemon.json</code>: a read every second, or a folder watch?</h3>
+<p><b>We chose</b> the read. More CPU per 10 idle minutes: 0.14 to 0.38 s, Windows 11; 0.13 to 0.17 s, Linux x64.</p>
+<p><b>Would change our mind:</b> the watch, measured and not built, losing no event in a real daemon.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Read every second, write when it differs <span class='tag new'>chosen</span></td><td data-l="What a user gets">A gone or wrong record is back within about a second.</td><td data-l="Cost">Over 10 idle minutes a daemon with the check used 203 to 391 ms of CPU on Windows 11, against 16 to 63 ms without it, and 240 to 270 ms on Linux x64, against 100 to 120 ms.</td><td data-l="What it breaks">Nothing: only the holder writes the file.</td></tr><tr><td class="k">A folder watch, with a read every 30 s behind it</td><td data-l="What a user gets">The record back in milliseconds.</td><td data-l="Cost">About a twentieth of the read&#x27;s idle CPU, and about 25 lines. In idle Node processes on Windows 11 it cost 15 ms of CPU more than no check over 10 minutes.</td><td data-l="What it breaks">A platform that drops a change event restores only at the slow read. Not measured inside a real daemon, and not on macOS.</td></tr><tr><td class="k">No check</td><td data-l="What a user gets">Nothing.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">Nothing finds a daemon whose <code>daemon.json</code> went: with the check off, the busy-daemon test and the three spoiled-record tests fail (Linux x64, 50705c972).</td></tr></tbody></table></div><p><b>Evidence.</b> Real daemons, 10 idle minutes, with the check against without. At f8240d5ba&#x27;s tree: 240 ms against 100 ms on Linux x64, 203 ms against 62.5 ms on Windows 11. At 50705c972: 250 to 270 ms against 100 to 120 ms, and 375 to 391 ms against 16 to 47 ms with other test runs on the Windows machine. <code>daemon.json</code> removed 200 times from a real daemon at 50705c972: restored every time on both systems, within 1,029 ms.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="Pull request #657 is based on main at a9101752c, which this head has merged. It needs no other change, and none needs it. In trial merges it conflicts with #672 in two source files, with #648 in one source file and with #678, #673 and #652 in one test file, and merges clean with main at c89f068ed and with #677." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at a9101752c</text><text x="14" y="38" class="t s">merged in</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#657 One daemon per home</text><text x="170" y="116" text-anchor="middle" class="t s">two changes</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="171" class="t b">#672, open</text><text x="12" y="187" class="t s">2 source files:</text><text x="12" y="201" class="t s">conflict</text><rect x="116" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="124" y="171" class="t b">4 other open</text><text x="124" y="187" class="t s">1 file each:</text><text x="124" y="201" class="t s">conflict</text><rect x="228" y="154" width="108" height="58" rx="8" class="bx good"/><text x="236" y="171" class="t b">main, #677</text><text x="236" y="187" class="t s">clean</text></svg></figure>
+<div><p>Nothing has to merge first. Our #672 conflicts in two source files.</p>
+<details class="ev"><summary>Open pull requests that share a file</summary><p>Trial merges of cf986a055, 14 November 2026. Main (c89f068ed) and #677 (cf1a78a78) merge clean. #672 (e3e22bd70) conflicts in <code>src/cli/daemon-entry.ts</code> and <code>src/daemon/daemon.ts</code>: the second to merge makes the daemon&#x27;s entry hold the lock once and serve both starts; a trial composition of earlier heads, 01138399c with 50705c972, passed <code>tsc</code> and 97 daemon tests. #648 (e322936d3) conflicts in <code>src/daemon/daemon.ts</code>; #678, #673 and #652 in <code>test/runtime/daemon-control.test.ts</code> only. The lock alone fixes #626&#x27;s two reproductions. If a maintainer prefers, the claim becomes its own pull request. The description&#x27;s &quot;How it fits&quot; has every row.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS</b> never ran.</li>
+<li><b>No test ran</b> at a merge with main.</li>
+<li><b>Left as main intends:</b> a <code>daemon.json</code> naming a live process that is no daemon refuses every start.</li>
+<li><b>Windows, as on main:</b> beside a busy daemon, a program holding the lock file open lets a second daemon start. A retry, not built, would close it.</li>
+<li><b>In no known setup:</b> a start that cannot ask the lock fails beside a busy daemon after about 1.5 s. Main fails it on Linux and starts a second on Windows.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, eight limits that stay</summary><ul class="facts">
+<li><b>That Windows case, in full.</b> The busy daemon&#x27;s <code>daemon.json</code> is gone, and the program holds the lock file open twice: when a start asks the lock, and when the new daemon first tries it. A failed first try means no lock, as on main. Read from the code, not run.</li>
+<li><b>That last case, in full.</b> The start cannot ask the lock, the daemon can, and the busy daemon&#x27;s <code>daemon.json</code> is gone. Linux x64, d100d92f8, the start&#x27;s question made to fail: it fails after 1,513 ms. With 6a2140fa8&#x27;s line reverted, as at 50705c972, it waited 8,059 ms and used it.</li>
+<li><b>A restart at the heap ceiling.</b> The next daemon is launched before the old process exits, and tries for the lock for one second. No test of this branch restarts a real daemon that way.</li>
+<li><b>One fix has no test of its own:</b> d100d92f8 stops removing the holder record before it is replaced. The gap it closes is microseconds wide, and the tests of the atomic replace it relies on are main&#x27;s.</li>
+<li><b>The folder watch</b> was measured in idle Node processes: restored 200 of 200 times within 1 s on both systems. It was not measured inside a real daemon, and not on macOS.</li>
+<li><b>One timing test on Linux.</b> Of the 78 files at 2cb75efa0 on Linux x64, 1,703 tests passed, 5 were skipped and 1 failed: a <code>code-rule-runtime-lifecycle</code> timing test outside this change, beside another job at load 15. Alone it failed 0 of 10 runs.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The Rerail home gains <code>locks/daemon.lock</code>, <code>locks/daemon.json</code> and <code>autostart.claim</code>. Against 0.1.4 it gains <code>locks/</code>, which main already makes. Rerail 0.1.4 sharing the home is not locked out and leaves the lock intact (measured at f8240d5ba).</li>
+<li>Where the engine does not load or the lock file does not open there is no lock: a start or a stop goes on at once, and the engine socket or pipe keeps the daemon to one, as on main.</li>
+<li>An older build&#x27;s daemon takes no lock. On Windows it can still run beside a busy daemon of this build, on the fallback pipe. The holder keeps <code>daemon.json</code> naming itself, so hooks reach it.</li>
+<li>A hook that finds no <code>daemon.json</code> in the second before it is written back drops its event. A hook still looks once and never waits: ask 2 is about that.</li>
+<li>On Windows a holder that hangs before it binds its engine pipe is not waited for: a start launches a daemon that exits after about a second, naming it.</li>
+<li>A daemon started in-process, as <code>RerailDaemon.start</code> and the tests do, takes no lock and writes <code>daemon.json</code> once: only the entry point takes the lock.</li>
+<li>Two processes that replace a stale claim at the same moment can both launch a start. The start lock still lets one of them start a daemon.</li>
+<li>The record check costs an idle daemon one read of <code>daemon.json</code> a second: the calls of one check take 46 µs on Linux x64 and 75 µs on Windows 11, the median of 2,000, three times.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/626#issuecomment-6870426095">#626</a>: a lock per home, taken by every build, or the socket alone?</b> We recommend the lock.</div></li>
+<li><div><b>On #626: should a hook wait a second for <code>daemon.json</code> while the lock is held?</b> We recommend yes, as its own change.</div></li>
+</ol>
+<p><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Answer 2 asks no ruling. By design: main starts another (the description&#x27;s &quot;Decision 3&quot;).</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description is the record: &quot;How you tested it&quot; and &quot;The decisions&quot;.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">The checks GitHub lists at cf986a055, 14 November 2026. Four commits after 2cb75efa0 change nothing that runs: ae6d9d08f a comment and a docs sentence, 1076b71d3 the release notes, f53b774d3 a troubleshooting entry and one note&#x27;s wording, cf986a055 one reference phrase</td><td data-l="Result">29 checks: 28 pass, 1 skipped. 28 are CI run 43564453448&#x27;s, on its second attempt. On the first, <code>Unit tests (2/2)</code> failed on a test of main, unchanged here: <code>test/runtime/daemon-control.test.ts</code> &quot;stops an unresponsive live daemon pid and clears its state file&quot;, <code>kill ESRCH</code> in its clean-up. In 3,600 repeats on Linux x64 it failed 2 times at main and 0 at cf986a055. Outside CI no other test ran after 2cb75efa0.</td></tr><tr><td class="k">Linux x64, 32 threads</td><td data-l="What ran">The 9 test files that take the home&#x27;s lock or start the built daemon, at 2cb75efa0</td><td data-l="Result">193 passed, 0 failed.</td></tr><tr><td class="k">Linux x64, 32 threads</td><td data-l="What ran">The 78 test files that changed or import a changed module, at 2cb75efa0</td><td data-l="Result">1,703 passed, 5 skipped, 1 failed: <code>code-rule-runtime-lifecycle</code> &quot;starts a session before its evaluator opens, and answers a tool call at once without code rules&quot;, a timing test outside this change, beside another job at load 15. Alone it failed 0 of 10 runs at 2cb75efa0.</td></tr><tr><td class="k">Windows 11 x64</td><td data-l="What ran">The same 9 files at 2cb75efa0, two runs from two checkouts</td><td data-l="Result">179 passed, 14 skipped, 0 failed, each time, and no failure outside main&#x27;s results on that machine.</td></tr><tr><td class="k">Windows 11 x64</td><td data-l="What ran">The 78 files at d100d92f8, which differs from 2cb75efa0 in the lock&#x27;s first try, its test and one doc sentence</td><td data-l="Result">1,672 passed, 36 skipped, 0 failed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Each fix line taken out of 2cb75efa0, one at a time</td><td data-l="Result">Each turns its test red: the lock question that counts a failure as held (its stop then waits 15,106 ms and names an unrelated process), a lock file that does not open, the start claim of another launcher, the holder record of another daemon, the Windows pipe rule, and the storm of starters with a lease that holds nothing.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The three busy-daemon tests: 50 runs in a row at 2cb75efa0 on Linux x64; 20 runs at 50705c972 and 20 at d100d92f8 on Windows 11</td><td data-l="Result">Linux x64: 50 of 50 passed. Windows 11: 2 of 20 failed at 50705c972, 0 of 20 at d100d92f8. CI at 50705c972 failed on the same tests&#x27; own handshake, which read a file the test was still writing: fixed in a33502144.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s rules scan (Rerail 0.1.1, the complexity pack and the repository&#x27;s own pack) over the 7 changed source files, 2cb75efa0 against a9101752c</td><td data-l="Result">Complexity: 17 over the ceiling at the base and 17 at the head, none new. The repository&#x27;s pack: 1 and 1, none new.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>A restart at the heap ceiling has no test with real processes.</b> A read of the diff. <code>daemonExit</code> closes the daemon, launches the next one and exits. The home&#x27;s lock goes at that exit, and the next daemon tries for it for one second. <code>test/daemon/daemon-exit.test.ts</code>, main&#x27;s, holds the order with stand-ins. No test of this branch restarts a real daemon that way, and the description does not name the restart.</li>
+<li><b>The uninstall meets answer 2 too.</b> A read of the diff, not run. <code>rerail install --remove</code> stops the daemon through <code>stopDaemon</code>, which now waits and then fails beside a lock holder that never writes <code>daemon.json</code>. At main that stop answers that no daemon runs, and the uninstall goes on. The description says &quot;a start or a stop&quot; and does not name the uninstall.</li>
+<li><b>Two processes can replace one stale claim.</b> A read of the diff. The comment on <code>claimAutostart</code> says two processes that replace a claim at the same moment can both launch, and the stale-claim test accepts one launcher or more. The start lock still lets one start a daemon, and the test ends with 1 daemon. The description does not name this case.</li>
+<li><b>The lines of each change.</b> <code>daemon-control.ts</code> holds both changes, and this report counts its 217 lines under A. By the hunks of the diff at 2cb75efa0, about 130 of them are the claim&#x27;s. The split of the tests, 810 lines for A and 281 for B, is a count by hunk too. The description gives the totals only.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>The pull request, its checks, its reviews and issue #626 on GitHub, read on 14 November 2026, about 07:10 UTC. Rerail at main (c89f068ed) for each quoted intent. The diff of cf986a055 against its merge base a9101752c for the sizes and the read-first places. Our run records for the runs, each with its commit. <code>git merge-tree</code> for every trial merge.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
