@@ -85,6 +85,14 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
     Ok(db)
 }
 
+/// While it lives, this thread's writes to the statistics' file are not faults of the warm check: they are one of
+/// the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+fn writing() -> crate::code_rule_dsl::logic::profile::WarmScope {
+    let scope = crate::code_rule_dsl::logic::profile::warm_scope();
+    crate::code_rule_dsl::logic::profile::warm_job("the cost statistics");
+    scope
+}
+
 /// The writer's store, once opened.
 static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
@@ -98,6 +106,7 @@ fn write() {
     if samples.is_empty() && plans.is_empty() && forms.is_empty() {
         return;
     }
+    let _warm = writing();
     if w.is_none() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
@@ -457,6 +466,7 @@ impl rerail_accel::upkeep::Job for Retrain {
 /// Saves the model for this machine, or takes the saved one out when there is none.
 #[cfg(target_os = "macos")]
 fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, comparison: &rerail_accel::cost_model::Comparison) -> rusqlite::Result<()> {
+    let _warm = writing();
     let db = open(path)?;
     match model {
         Some(m) => {
@@ -683,5 +693,40 @@ pub mod tests {
         assert_eq!(job.due(), Due::No, "trained: not due");
         let saved: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM models", [], |r| r.get(0)).unwrap();
         assert_eq!(saved as usize, rerail_accel::cost_model::current().is_some() as usize, "saved when it won");
+    }
+
+    /// A warm run may write its cost statistics (`profile::WARM_WRITES_ALLOWED`, approved 2026-11-15): a child
+    /// process under `RERAIL_WARM=list` creates the file and writes a form's record, and exits with no fault.
+    #[test]
+    fn a_warm_run_writes_its_cost_statistics() {
+        if std::env::var_os("RERAIL_COSTS_WARM_CHILD").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-costs-warm-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "code_rule_dsl::logic::costs::tests::a_warm_runs_cost_statistics_child", "--nocapture", "--test-threads=1"])
+            .env("RERAIL_COSTS_WARM_CHILD", "1")
+            .env("RERAIL_WARM", "list")
+            .env("RERAIL_COSTS", &path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && !stderr.contains("in a warm run"), "{:?}\n{stderr}", out.status);
+        let n: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM kernel_forms", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "the record written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The child of `a_warm_run_writes_its_cost_statistics`.
+    #[test]
+    #[ignore = "run by a_warm_run_writes_its_cost_statistics"]
+    fn a_warm_runs_cost_statistics_child() {
+        if std::env::var_os("RERAIL_COSTS_WARM_CHILD").is_none() {
+            return;
+        }
+        rerail_accel::forms::interpreted("test", "a key", "a form", 1);
+        super::write();
     }
 }
