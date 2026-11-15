@@ -481,10 +481,14 @@ function launcherArgs(command: string, args: unknown): LauncherArgs | undefined 
   return words !== undefined && isWindowsCmd(command) ? cmdLauncherArgs(words) : undefined;
 }
 
-/** The launcher's arguments of a cmd.exe entry's words: the last command's, before the `)` that closes `cmdHookArgs`. */
+/**
+ * The launcher's arguments of a cmd.exe entry's words: the last command's, before the `)` that closes the line, when
+ * the words are one of the lines registration reads as its own (`CMD_HOOK_FORMS`).
+ */
 function cmdLauncherArgs(words: readonly string[]): LauncherArgs | undefined {
   const launched = words.slice(-4, -1) as [string, string, string];
-  return JSON.stringify(cmdHookArgs(launched)) === JSON.stringify(words) ? launched : undefined;
+  const text = JSON.stringify(words);
+  return CMD_HOOK_FORMS.some(form => JSON.stringify(form(launched)) === text) ? launched : undefined;
 }
 
 /**
@@ -636,11 +640,29 @@ function isFullWindowsPath(path: string): boolean {
  * onto the hook's answer. `NoDefaultCurrentDirectoryInExePath` keeps cmd from taking a `node.exe` in the hook's working
  * folder, a repository, before PATH's. cmd stays node's parent, so a host that kills it on a timeout leaves node
  * running; the hook then ends itself (`exitWhenParentGone`).
+ *
+ * `|| exit /b 0` after the recorded node fails open as the launcher does (`quiet` in `hook-launcher.ts`): a recorded
+ * node that is there but cannot start (a file an upgrade cut short, a build for another processor), or a launcher that
+ * ends in a native crash, would otherwise show Claude Code a hook error on every event, where a `node` entry's launcher
+ * answers for it. Claude Code goes on after an empty answer with exit 0 as after `{}`, and an `echo {}` there would
+ * follow any answer the hook wrote before such a crash and make that answer unreadable. The fallback has no such
+ * ending: a `node.exe` missing from PATH shows as a hook error, as it does when a `node` entry finds no node.
  */
-function cmdHookArgs([launcher, node, hook]: LauncherArgs): string[] {
-  const fallback = ["set", "NoDefaultCurrentDirectoryInExePath=1", "&", "node.exe", launcher, node, hook];
-  return ["/d", "/c", "if", "exist", node, "(", node, launcher, node, hook, ")", "else", "(", ...fallback, ")"];
+function cmdHookArgs(launched: LauncherArgs): string[] {
+  return cmdHookLine(launched, ["||", "exit", "/b", "0"]);
 }
+
+/** The words of a cmd.exe hook line, with `afterRecorded` after the recorded node's command inside its parentheses. */
+function cmdHookLine([launcher, node, hook]: LauncherArgs, afterRecorded: readonly string[]): string[] {
+  const fallback = ["set", "NoDefaultCurrentDirectoryInExePath=1", "&", "node.exe", launcher, node, hook];
+  return ["/d", "/c", "if", "exist", node, "(", node, launcher, node, hook, ...afterRecorded, ")", "else", "(", ...fallback, ")"];
+}
+
+/**
+ * The cmd.exe lines registration reads as its own, so a refresh replaces and a removal takes out each of them: the one
+ * it writes (`cmdHookArgs`), and the same line without `|| exit /b 0`, which a build of Rerail has written.
+ */
+const CMD_HOOK_FORMS: readonly ((launched: LauncherArgs) => string[])[] = [cmdHookArgs, launched => cmdHookLine(launched, [])];
 
 /**
  * Whether cmd.exe reads `path` back as one word when a spawn without a shell passes it alone. The spawn puts a word that
