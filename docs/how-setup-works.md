@@ -582,7 +582,9 @@ to move that way and takes no write lock.
 The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
 them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
 on a large file, and another process's write fails once it has waited 5 s. `rerail scrub` gives the space back to the
-disk when you run it.
+disk when you run it. To copy the database while the daemon runs, copy `rerail.sqlite-wal` with it, or stop the daemon
+first: during the move it writes every few hundred milliseconds, and a copy of `rerail.sqlite` alone can come out
+damaged.
 
 A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
 one may still be using the database: it starts only once the last audit an older Rerail recorded, with rules on or
