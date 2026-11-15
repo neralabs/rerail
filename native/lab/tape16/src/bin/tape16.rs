@@ -1321,16 +1321,58 @@ fn cmd_prim_gpu(path: &str) {
     let n = tree.len();
     println!("{}\n", rerail_tape_lab::measure::machine());
     println!("{path}: language {tag}, {nfiles} files as one forest, {n} nodes; GPU: one thread a group of 64 nodes, best of 8 warm dispatches; CPU: one thread, from the S-nodes, best of 3\n");
-    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has, climbing | GPU has, from counts | GPU span | BE nearest, carry by climbing | CPU nearest | CPU outermost | CPU has |");
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has, climbing | GPU has, from counts | GPU span | BE nearest, carry by climbing | GPU nearest, bounded climb | GPU nearest, back over the S-nodes | GPU outermost, prefix max | CPU nearest | CPU outermost | CPU has |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for (s, kinds) in SETS {
         let set = names.set(tag, &codes, kinds);
         let share = tree.nodes.iter().filter(|x| set[codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())] as usize]).count() as f64 / n as f64;
         let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set, rerail_tape_lab::f16::grammar_codes(tag)).unwrap_or_else(|e| die(&e));
         for (name, r, c) in rows {
-            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
-                r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
+            let (n2, o2) = r.scan.map_or((String::new(), String::new()), |(a, b)| (format!("{a:.3}"), format!("{b:.3}")));
+            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {n2} | {} | {o2} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
+                r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), r.back.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
         }
+    }
+}
+
+/// t39 step 23: parent reads and climbs under each leaf-slot rule, and the slots' memory.
+fn cmd_climb(path: &str) {
+    use rerail_tape_lab::climb::{RULES, climbs, memory};
+    use rerail_tape_lab::inplace::{Codes, Cols, forest};
+    use rerail_tape_lab::prim::{Names, SETS};
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
+    let mut by_tag: BTreeMap<u8, Vec<&rerail_tape_lab::tree::Tree>> = BTreeMap::new();
+    for (tag, t) in &trees {
+        by_tag.entry(*tag).or_default().push(t);
+    }
+    println!("{path}: slots by rule, per language (in memory B a node, escaped %, slots a point parent reads: mean / most, zstd 3 B a node a file at a time)\n");
+    println!("| language | nodes | {} |", RULES.iter().map(|r| r.0).collect::<Vec<_>>().join(" | "));
+    println!("|---|---|{}", "---|".repeat(RULES.len()));
+    for (tag, ts) in &by_tag {
+        let mut codes = Codes::default();
+        for t in ts {
+            codes.learn(t);
+        }
+        let cols: Vec<Cols> = ts.iter().map(|t| Cols::of_tree(t, &codes)).collect();
+        let m = memory(&cols);
+        println!("| {tag} | {} | {} |", m.nodes, m.rows.iter().map(|r| format!("{:.3} B, {:.2}%, {:.2} / {}, {:.3}", r.0, r.1, r.2, r.3, r.4)).collect::<Vec<_>>().join(" | "));
+    }
+    // The climbs, on prim-gpu's forest: the largest language with functions.
+    let names = Names::load();
+    let tag = *by_tag.iter().filter(|e| !names.kind_ids(*e.0, SETS[0].1).is_empty()).max_by_key(|e| e.1.iter().map(|t| t.len()).sum::<usize>()).unwrap().0;
+    let mine: Vec<_> = trees.into_iter().filter(|e| e.0 == tag).map(|e| e.1).collect();
+    let tree = forest(&mine);
+    drop(mine);
+    let mut codes = Codes::default();
+    codes.learn(&tree);
+    println!("\nlanguage {tag} as one forest, {} nodes: slot reads a node for each 64-node group's carry climb, full (to the root) / bounded; XF reads one slot a parent\n", tree.len());
+    println!("| set | parents a node, full / bounded | {} |", RULES.iter().map(|r| r.0).collect::<Vec<_>>().join(" | "));
+    println!("|---|---|{}", "---|".repeat(RULES.len()));
+    for (s, kinds) in SETS {
+        let set = names.set(tag, &codes, kinds);
+        let c = climbs(&tree, &codes, &set);
+        println!("| {s} | {:.3} / {:.3} | {} |", c.steps.0, c.steps.1, c.full.iter().zip(&c.bounded).map(|(f, b)| format!("{f:.3} / {b:.3}")).collect::<Vec<_>>().join(" | "));
     }
 }
 
@@ -1842,6 +1884,7 @@ fn main() {
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
         "inplace" => cmd_inplace(path, flag("--f11")),
+        "climb" => cmd_climb(path),
         "prim" => cmd_prim(path),
         "repeat" => cmd_repeat(path),
         "relative" => cmd_relative(path),

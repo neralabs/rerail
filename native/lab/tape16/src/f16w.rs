@@ -3,8 +3,8 @@
 //! file starts, so every cell is written once at its node's index:
 //!
 //! - at `open`: the code byte (or the prefix, and a side-list entry), the gap, every K-th node's checkpoint,
-//!   and the slot of the leaf before it, which describes this node (its previous sibling's size, or every
-//!   K-th sibling the distance back to the parent);
+//!   and the slot of the leaf before it, which describes this node (the distance back to the parent where it
+//!   is at most `f16::FIT` and on every K-th sibling, else its previous sibling's size);
 //! - at `close`: the length, and an inner node's slot (`size << 1`);
 //! - at `finish`: the last node's slot, and the side lists, each block's entries sorted, laid in parts.
 //!
@@ -12,7 +12,7 @@
 //! cost is set against format 15's writer (`tape_format::preorder_image`) from the same nodes.
 
 use crate::code8::{PART, side_parts};
-use crate::f16::{F16Lang, K, ckpt_width};
+use crate::f16::{F16Lang, K, ckpt_width, fit_limit};
 use crate::inplace::{BLOCK, Cols, bits_for};
 
 struct Open {
@@ -29,6 +29,8 @@ pub struct Writer<'a, const W: usize = 0> {
     /// Slot, gap and length widths in bytes, and their escapes (all ones).
     wb: [usize; 3],
     esc: [u64; 3],
+    /// Slot values below this name the parent (`f16::fit_limit`).
+    fit: u64,
     cut: u32,
     per: u32,
     low_w: usize,
@@ -58,6 +60,7 @@ impl<'a, const W: usize> Writer<'a, W> {
             lang,
             wb,
             esc: [mk(wb[0]), mk(wb[1]), mk(wb[2])],
+            fit: fit_limit(lang.widths[0]),
             cut,
             per,
             low_w: if per <= 256 { 1 } else { 2 },
@@ -142,7 +145,10 @@ impl<'a, const W: usize> Writer<'a, W> {
             // The node before is a leaf unless it is the parent: its slot describes this node.
             let before = i.wrapping_sub(1);
             if before != p {
-                let v = if idx as usize % K == 0 { (u64::from(i.wrapping_sub(p)) << 2) | 3 } else { (u64::from(i.wrapping_sub(prev)) << 2) | 1 };
+                // The parent distance on every K-th sibling, and wherever it is at most FIT (t39 step 23); else
+                // the previous sibling's.
+                let pd = (u64::from(i.wrapping_sub(p)) << 2) | 3;
+                let v = if idx as usize % K == 0 || pd < self.fit { pd } else { (u64::from(i.wrapping_sub(prev)) << 2) | 1 };
                 self.put(0, before, v);
             }
         }

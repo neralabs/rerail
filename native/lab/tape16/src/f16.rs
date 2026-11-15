@@ -4,8 +4,9 @@
 //!
 //! - **codes**: one byte a node, numbered by frequency a language (E21, `code8::Rank8`): a byte below the
 //!   cutoff is the code's number; past it, a prefix and the block's side list;
-//! - **slots**: the leaf slot by sibling, every 8th sibling holding the parent distance (E16): an inner node
-//!   `size << 1`, a leaf `size(previous sibling of the next node) << 2 | 1` or `parent distance << 2 | 3`;
+//! - **slots**: the leaf slot by sibling (E16), holding the parent distance on every 8th sibling (and wherever
+//!   it is at most `FIT`, 0 now: t39 step 23): an inner node `size << 1`, a leaf `parent distance << 2 | 3` or
+//!   `size(previous sibling of the next node) << 2 | 1`;
 //! - **positions**: each start as its gap to the previous start, each end as a length, and the absolute
 //!   start of every 8th node in a checkpoint array (E16);
 //! - **escapes**: a value too wide for its array's width is the all-ones value, listed in its 256-node block's
@@ -16,7 +17,7 @@
 
 use crate::code8::{Rank8, numbers_by};
 use crate::inplace::{Cols, Codes, Packed, Reader, bits_for};
-use crate::relative::{gaps, sib_slots};
+use crate::relative::{gaps, sib_slots, sib_slots_fit};
 use crate::repeat::{Esc, Hist};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -83,6 +84,17 @@ pub fn revision(tag: u8) -> u8 {
     1
 }
 pub const MARK_LONG: u8 = 255;
+
+/// The largest parent distance a leaf slot names off the K-th sibling (t39 step 23); 0 is E16's rule, the
+/// parent on every K-th sibling only. Measured: 15 takes 73–75% of the sibling steps away for up to 1.6% more
+/// on disk (every distance that fits the width, 85% for up to 2.8%), but only point parents read them, 10–20%
+/// faster; the bulk primitives read no parent (prefix max) or few (the bounded climb), so 0 is kept.
+pub const FIT: u64 = 0;
+
+/// The slot values below which a leaf names its parent, at slot width `w` (0: none, the E16 rule).
+pub fn fit_limit(w: u32) -> u64 {
+    if FIT == 0 { 0 } else { ((FIT << 2) | 4).min((1u64 << w) - 1) }
+}
 
 /// The checkpoints' width for a file of `source_len` bytes: whole bytes.
 pub fn ckpt_width(source_len: u64) -> u32 {
@@ -180,7 +192,9 @@ impl<'a> F16<'a> {
         // The side lists in parts of N nodes, as stored at rest and read there (E27).
         let n = c.len();
         let codes = Rank8::of_table(&ids, &lang.num, lang.cut, lang.table).use_parts();
-        let slot = Esc::new(&sib_slots(c, K), lang.widths[0]).use_parts(n);
+        // The leaf slot names the parent on every K-th sibling, and wherever its distance is at most FIT (t39
+        // step 23; 0, the E16 rule, now); the width is learned on the E16 values, and nothing more escapes.
+        let slot = Esc::new(&sib_slots_fit(c, K, fit_limit(lang.widths[0])), lang.widths[0]).use_parts(n);
         let (g, l) = gaps(c);
         let gap = Esc::new(&g, lang.widths[1]).use_parts(n);
         let len = Esc::new(&l, lang.widths[2]).use_parts(n);

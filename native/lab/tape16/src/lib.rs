@@ -17,6 +17,7 @@
 pub mod base;
 pub mod blocks;
 pub mod capture;
+pub mod climb;
 pub mod code8;
 pub mod f16;
 pub mod f16w;

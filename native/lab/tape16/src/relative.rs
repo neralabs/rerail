@@ -24,6 +24,15 @@ pub const POS_K: [usize; 3] = [8, 16, 32];
 
 /// The leaf slot by sibling, every K-th sibling holding the parent distance.
 pub fn sib_slots(c: &Cols, k: usize) -> Vec<u64> {
+    sib_slots_fit(c, k, 0)
+}
+
+/// t39 step 23: the sibling slot, but a leaf names the parent whenever its slot value (`distance << 2 | 3`) is
+/// below `limit` (0: only every k-th sibling, the E16 form; the escape: wherever it fits the width). A
+/// distance inside a repeated subtree is the same in every copy, so repeats keep their bits; a parent read
+/// takes a sibling step only where the distance is past the limit.
+pub fn sib_slots_fit(c: &Cols, k: usize, limit: u64) -> Vec<u64> {
+    let esc = limit;
     let n = c.len();
     // Each node's previous sibling and its index among its parent's children.
     let (mut prev, mut idx) = (vec![NONE; n], vec![0u32; n]);
@@ -47,8 +56,9 @@ pub fn sib_slots(c: &Cols, k: usize) -> Vec<u64> {
             let j = i + 1;
             let a = prev[j];
             assert!(a != NONE, "the node after a leaf has a previous sibling");
-            if idx[j] as usize % k == 0 {
-                (((j - c.parent[j] as usize) as u64) << 2) | 3
+            let pd = (((j - c.parent[j] as usize) as u64) << 2) | 3;
+            if idx[j] as usize % k == 0 || pd < esc {
+                pd
             } else {
                 (((j - a as usize) as u64) << 2) | 1
             }

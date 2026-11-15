@@ -63,6 +63,7 @@ target/debug/tape16 f16-gpu <cap>
 target/debug/tape16 gcodes <cap>             # --features grammar
 target/debug/tape16 inplace-gpu <cap>
 target/debug/tape16 prim-gpu <cap>
+target/debug/tape16 climb  <cap>
 ```
 
 With `--shards N`, `grid` streams a capture too large for the budget: every file feeds the
@@ -94,7 +95,8 @@ the test half is measured shard by shard, the rows summed.
 | `f16-gpu` | E26 | Format 16's fixed LZ4 blocks decoded on Metal (one thread and one SIMD group a block), every language in one dispatch, against the CPU, checked byte for byte. |
 | `gcodes` | E25 | Every code each grammar allows, from its node-types.json, and every captured node checked against them. |
 | `inplace-gpu` | T9, E10, E29 | Each in-place question as a Metal kernel, one thread a question, on each candidate's one-buffer image (format 16's included), checked against the CPU reader. |
-| `prim-gpu` | T9, E10, E30 | The bulk primitives as Metal kernels on XF, MF, BE and format 16, checked. |
+| `prim-gpu` | T9, E10, E30, E31 | The bulk primitives as Metal kernels on XF, MF, BE and format 16, checked; outermost by a prefix max and nearest by a bounded climb or back over the S-nodes too. |
+| `climb` | E31 | Under each leaf-slot rule (K = 4, 8, 16; parent distances named up to 7, 15, 31 or the width): slot bytes, escapes and zstd size a language, slots a point parent reads, and the slots each 64-node group's carry climb reads, full and bounded. |
 | `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
 `cargo test` runs the round trips: every codec whole and through `read_at` at random ranges, every

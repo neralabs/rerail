@@ -1266,6 +1266,84 @@ on the same data, so its small numbers are the GPU's clock states more than the 
   1.5× on sparse ones** (0.39–1.79 against 0.32–1.77). Has, from the S-nodes, costs 1.2–1.9× XF's
   (0.42–2.37 against 0.29–2.04), the most on the sparsest sets, where the climb is all of the work.
 
+### Step 23: the climbs and the parent, 80/20 (E31)
+
+Step 22 left nearest and outermost at 1.5–2.5× XF's on format 16: each group's carry climbed from
+its first node to the root, each parent a sibling walk. Two places can pay for the parent: the bulk
+primitives that climb, and the slot itself. Both were measured, on the M1 Max in high-power mode
+(load 3–6) and the M3, every answer checked.
+
+**The primitives, with no format change.**
+- **Outermost by a prefix max, no climb.** Among the S-nodes before k, the one whose subtree ends
+  last (the earlier one on a tie) is k's outermost S-ancestor when that end is past k; otherwise k
+  has none. A key `end << 32 | ~index` a group, its max scanned up and down the same 64-ary levels
+  as has from counts, then one sweep a group (`*_okey`, `o_up`, `o_down`, `*_outer2`).
+- **Nearest by a bounded climb.** The same scan says whether a group's first node has an
+  S-ancestor at all. Without one there is no climb. With one, the climb stops at the first
+  S-ancestor that encloses the whole group, or at the outermost (`*_near2`).
+- **Nearest back over the S-nodes, no parent read** (`*_near3`). Going back over the masks, the
+  first S-node whose subtree ends past k0 is its nearest S-ancestor, and each later one that does
+  is the next one out. It ties the bounded climb on dense sets and loses on sparse ones (groups
+  deep in a large S-node pass many closed ones, and fall back past 64 words), so it is not used.
+
+M1 Max, ns a node, the range over the five sets (fn, class, block, call, string):
+
+```text
+                          data-layer Python (2.5M nodes)     rerail Rust (1.4M nodes)
+                          F16          XF                    F16          XF
+nearest, climbing         0.24-0.27    0.17-0.33             0.38-0.47    0.17-0.41
+nearest, bounded climb    0.14-0.21    0.19-0.30             0.17-0.36    0.20-0.47
+outermost, climbing       0.23-0.27    0.17-0.28             0.38-0.47    0.17-0.41
+outermost, prefix max     0.10-0.11    0.17-0.23             0.12-0.16    0.16-0.31
+has, from counts          0.18-0.20    0.25-0.33             0.21-0.23    0.24-0.47
+```
+
+On the M3 (load 5–8), format 16's bounded nearest takes 0.05–0.10 ns on the data-layer and
+0.07–0.21 on rerail, and its prefix-max outermost 0.03–0.07, against XF's climbs at 0.05–0.21. So
+with these forms, **format 16's bulk work is level with XF's or faster**. Outermost no longer reads
+a parent at all, and nearest reads few.
+
+**The slot: a leaf names the parent where its distance is short.** Today a leaf's slot names the
+parent only on every 8th sibling. It could name it whenever the distance is at most a limit, and
+the sibling otherwise (`relative::sib_slots_fit`, `f16::FIT`). The readers already accept either
+tag anywhere, so only the writer changes. A distance inside a repeated subtree is the same in every
+copy, so repeats keep their bits. And since a sibling distance only escapes when the parent
+distance does too, no more values escape: memory is unchanged in every language.
+
+`tape16 climb <capture>` (`src/climb.rs`) counts the slots a point parent reads under each rule,
+the slots each carry climb reads, and the slots' bytes in memory and under zstd 3 (a file at a time,
+no dictionary). Point parent, slots read on average / zstd bytes a node of the slots:
+
+```text
+                   data-layer Python   rerail Rust      rerail TypeScript   rerail JSON
+K = 8 (E16)        1.92 / 0.416        1.98 / 0.481     1.89 / 0.523        2.77 / 0.154
+K = 4              1.70 / 0.444        1.69 / 0.508     1.71 / 0.546        1.88 / 0.188
+fit to 7           1.36 / 0.431        1.40 / 0.498     1.38 / 0.542        2.46 / 0.155
+fit to 15          1.23 / 0.444        1.26 / 0.508     1.24 / 0.551        2.31 / 0.157
+fit to the width   1.10 / 0.465        1.12 / 0.527     1.10 / 0.567        1.98 / 0.161
+```
+
+XF reads one slot. Fit to 15 removes 73–75% of the extra reads on code for 57–59% of fitting to
+the width's disk. K = 4 is worse on both counts. JSON's flat arrays keep most of their steps under
+any limit, since the distances there are long.
+
+Fit to 15 through the whole format (reader, writer byte for byte, at rest, every answer checked),
+M1 Max:
+- **Disk:** whole-tape zstd with the dictionary +0.1–1.6% on every language with more than 100,000
+  measured nodes (Python 1.874 → 1.888 B a node, Rust 2.215 → 2.242, JSON 0.932 → 0.933); the
+  small sets scatter (PHP −0.9%, Blade's 418 nodes +2.9%). Fitting to the width costs +0.3–2.8%.
+- **The point parent on the CPU:** 7.9 → 6.7 ns on the data-layer (1.9× → 1.6× XF's), and 11.4 →
+  10.0 on rerail (2.8× → 2.3×; half its sample is JSON).
+- **On the GPU, A/B on one machine, two runs each:** the point parent 0.22–0.27 → 0.19–0.22 ns on
+  the data-layer, 0.39–0.41 → 0.30–0.39 on rerail. The primitives do not change. A SIMD group
+  waits for its slowest lane, and the climbs pass through high ancestors, whose parents are far
+  past any limit.
+
+**The choice.** The 80/20 is in the primitives. They cost no bytes, and they take the bulk work level
+with XF's. What the slot rule buys is the point parent, 10–20% faster. The point parent is 0.4–1.7%
+of a rule's CPU (step 9), so that is 0.06–0.34%, against up to 1.6% more disk. So `FIT` stays 0,
+the E16 rule, with the curve above on record if point parents ever weigh more.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1459,3 +1537,7 @@ In order. Each step is measured on all three corpora, every answer checked.
 22. **The primitives on Metal (E30).** Done: match, has from counts and spans level with XF's or
     faster, nearest and outermost 1.5–2.5× (the carry's parent walk), every answer checked. Next, if
     the mix calls for it: a carry that climbs only as far as the sweep needs.
+23. **The climbs and the parent, 80/20 (E31).** Done: outermost by a prefix max (no climb) and nearest
+    by a bounded climb take format 16's bulk work level with XF's or faster, at no bytes. A leaf slot
+    naming short parent distances (fit to 15) makes the point parent 10–20% faster for up to 1.6%
+    more disk; measured and not taken (`FIT` = 0).

@@ -245,6 +245,12 @@ The sibling form keeps a flat array's slots small, which the back distance to th
 parent at a point 0.58 times a node at the median and 13.7 at the heaviest, which comes to 0.4–1.7%
 of a rule's CPU (t39 step 9).
 
+A leaf could name the parent wherever the distance is short, and the sibling only past that (E31,
+t39 step 23). Memory stays the same, since nothing more escapes, and repeats keep their bits. Up to
+15, it takes 73–75% of the sibling steps away. But only a point parent gains, 10–20%, which is
+0.06–0.34% of a rule's CPU, for up to 1.6% more disk. The bulk primitives read no parent, or few. So
+every 8th sibling alone holds the parent distance.
+
 ### 1.4 Positions: gaps, lengths, checkpoints
 
 In preorder, starts never decrease. So a start is stored as its gap to the previous node's start,
@@ -324,8 +330,10 @@ take 0.07–0.37 ns a question on the M1 Max, within 1.5× XF's. The parent is t
 0.22–0.30 ns, 1.6–2.3× XF's, as on the CPU. Every answer was checked against the CPU reader's.
 The bulk primitives (E30, t39 step 22), one thread a group of 64 nodes, take 0.01–0.09 ns a node to
 match a set on the M3, 0.06–0.09 for has from counts and 0.07 for spans, level with XF's or
-faster. Nearest and outermost take 0.12–0.23, 1.5–2.5× XF's, because each group's carry climbs by
-the sibling walk.
+faster. Climbing from each group's first node, nearest and outermost took 1.5–2.5× XF's. So
+outermost is a prefix max over the S-nodes' ends, with no climb, and nearest climbs only from a group
+that has an S-ancestor, up to the first that encloses the group (E31, t39 step 23). Both are then
+level with XF's or faster: 0.10–0.16 and 0.14–0.36 ns a node on the M1 Max.
 
 ### 1.8 What it costs, together (E24)
 
@@ -874,6 +882,8 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
 - E30 (2026-11-15, t39 step 22): the bulk primitives as Metal kernels on the tape as stored (1.7):
   match, has and spans level with XF's or faster; nearest and outermost 1.5–2.5×; every answer
   checked.
+- E31 (2026-11-15, t39 step 23): outermost by a prefix max and nearest by a bounded climb, level with
+  XF's or faster at no bytes; a slot naming short parent distances measured and not taken (1.3).
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not
