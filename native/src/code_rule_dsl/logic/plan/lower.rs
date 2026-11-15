@@ -338,13 +338,138 @@ pub(in crate::code_rule_dsl) fn rule_head_domains(rule: &super::super::front::Ru
         .collect())
 }
 
+/// A lowered program's tree, where a reader still reads one (decision 0173: on the run path, none should): given, or
+/// decoded from the program's version the first time a reader asks. Each decode is noted (`trees_decoded`) and,
+/// when profiling, named by the reader's place (the decision "a tree decoded from its version"), so what still reads
+/// a tree is seen, and a part made of versions alone (`Tree::of`) costs no tree until then. A clone shares the tree
+/// (and a decode made through either); an edit of a shared tree copies it, noted too (`trees_copied`).
+#[derive(Clone)]
+pub struct Tree {
+    tree: std::sync::Arc<std::sync::OnceLock<Program>>,
+    /// The version it is decoded from, with the maintained parts its tree states (`again`, `together`); `None` for a
+    /// tree given (`Tree::given`).
+    of: Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<std::sync::Arc<super::body::Maint>>)>,
+}
+
+/// A thread's count of one kind of tree read (`Tree`), and the place of the last.
+type Reads = std::cell::Cell<(usize, Option<&'static std::panic::Location<'static>>)>;
+
+thread_local! {
+    /// The trees this thread decoded from their versions, and the shared trees it copied to edit them (`Tree`): a
+    /// count and the last place each, beside the profile's decision naming every place.
+    static TREE_READS: [Reads; 2] = const { [std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None))] };
+}
+
+/// How many trees this thread decoded from their versions so far, and where the last was (`file:line`): a run reads
+/// its trees on its own thread, so a check around a run on one thread reads that run's.
+pub fn trees_decoded() -> (usize, Option<String>) {
+    tree_reads(0)
+}
+
+/// How many shared trees this thread copied to edit them so far, and where the last was (`trees_decoded`).
+pub fn trees_copied() -> (usize, Option<String>) {
+    tree_reads(1)
+}
+
+/// Forgets this thread's tree reads (`trees_decoded`, `trees_copied`): a check counts a run's alone.
+pub fn forget_tree_reads() {
+    TREE_READS.with(|t| t.iter().for_each(|c| c.set((0, None))));
+}
+
+fn tree_reads(which: usize) -> (usize, Option<String>) {
+    let (n, at) = TREE_READS.with(|t| t[which].get());
+    (n, at.map(|l| format!("{}:{}", l.file(), l.line())))
+}
+
+fn tree_read(which: usize, at: &'static std::panic::Location<'static>) {
+    TREE_READS.with(|t| t[which].set((t[which].get().0 + 1, Some(at))));
+}
+
+impl Tree {
+    /// A tree the caller holds.
+    pub fn given(program: Program) -> Self {
+        let tree = std::sync::OnceLock::new();
+        let _ = tree.set(program);
+        Tree { tree: std::sync::Arc::new(tree), of: None }
+    }
+    /// The tree of version `v`, decoded only where a reader asks.
+    pub fn of(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
+        Tree { tree: Default::default(), of: Some((v, None)) }
+    }
+    /// The tree of version `v` with maintained parts `m` (`again`, `together`), decoded only where a reader asks.
+    pub(in crate::code_rule_dsl) fn maintained(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, m: Option<std::sync::Arc<super::body::Maint>>) -> Self {
+        Tree { tree: Default::default(), of: Some((v, m)) }
+    }
+    /// The tree, where it was given rather than decoded from a version: what a check against the version reads.
+    pub fn given_tree(&self) -> Option<&Program> {
+        if self.of.is_some() { None } else { self.tree.get() }
+    }
+    #[track_caller]
+    fn get(&self) -> &Program {
+        if let Some(p) = self.tree.get() {
+            return p;
+        }
+        let at = std::panic::Location::caller();
+        self.tree.get_or_init(|| {
+            let (v, m) = self.of.as_ref().expect("a tree neither given nor of a version");
+            tree_read(0, at);
+            crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
+            let lists = crate::code_rule_dsl::logic::front::Lists::default();
+            let mut p = v.program(&lists).unwrap_or_else(|e| panic!("a version made by the run decodes: {e}"));
+            if let Some(m) = m {
+                (p.again, p.together) = m.to_tree(&lists);
+            }
+            p
+        })
+    }
+    /// The tree as the caller's, decoded where it is not held.
+    #[track_caller]
+    pub fn into_program(self) -> Program {
+        self.get();
+        std::sync::Arc::try_unwrap(self.tree).map_or_else(|shared| shared.get().expect("decoded above").clone(), |t| t.into_inner().expect("decoded above"))
+    }
+}
+
+impl std::fmt::Debug for Tree {
+    /// The tree's: a check comparing programs reads it (and decodes one held as a version).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl std::ops::Deref for Tree {
+    type Target = Program;
+    #[track_caller]
+    fn deref(&self) -> &Program {
+        self.get()
+    }
+}
+
+impl std::ops::DerefMut for Tree {
+    /// An edit of the tree: the caller states the same edit on the version (`corpus::made_from`).
+    #[track_caller]
+    fn deref_mut(&mut self) -> &mut Program {
+        let at = std::panic::Location::caller();
+        self.get();
+        if std::sync::Arc::get_mut(&mut self.tree).is_none() {
+            tree_read(1, at);
+            crate::code_rule_dsl::logic::profile::decision("a shared tree copied to be edited", || format!("{}:{}", at.file(), at.line()));
+        }
+        // An edited tree is no longer its version's.
+        self.of = None;
+        std::sync::Arc::make_mut(&mut self.tree).get_mut().expect("decoded above")
+    }
+}
+
 /// A program lowered for one dialect.
 #[derive(Clone)]
 pub struct Lowered {
-    pub program: Program,
+    pub program: Tree,
     /// `program`'s version, where the caller made it from another's (a split's part, decision 0244): `plan::run`
     /// reads it in place of an image made of `program`. `None` once `program` is edited, and for a program made here.
     pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    /// A maintained program's parts beside `version` (decision 0215): `None` for every other program.
+    pub(in crate::code_rule_dsl) maint: Option<std::sync::Arc<super::body::Maint>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
@@ -358,12 +483,63 @@ impl Lowered {
     }
     /// The version `plan::run` reads: `version`, else an image made of `program` (`Placed::of_program`).
     pub fn placed(&self) -> super::Result<super::body::Placed> {
-        match &self.version {
-            Some(v) if self.program.again.is_empty() && self.program.together.is_empty() => {
-                Ok(super::body::Placed::whole(v.clone()))
-            }
-            _ => super::body::Placed::of_program(&self.program),
+        let placed = match &self.version {
+            Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()),
+            Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()),
+            _ => return super::body::Placed::of_program(&self.program),
+        };
+        // A version made from another's is stated beside the tree until the run reads no tree (t36 item 7): in a debug
+        // build (every test's), it is checked to be the tree's program, so the two statements cannot drift apart unseen.
+        #[cfg(debug_assertions)]
+        self.same_as_tree(&placed)?;
+        Ok(placed)
+    }
+
+    /// Panics unless `placed`, made from `version`, is the program `program` is: each read back through an image (the
+    /// image's normal form), with the maintained parts.
+    #[cfg(debug_assertions)]
+    fn same_as_tree(&self, placed: &super::body::Placed) -> super::Result<()> {
+        // A tree decoded from the version is the version's: only one given beside it is checked.
+        let Some(tree) = self.program.given_tree() else { return Ok(()) };
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let of = super::body::Placed::of_program(tree)?;
+        let got = placed.v.program(&lists).map_err(super::Error::Plan)?;
+        let want = of.v.program(&lists).map_err(super::Error::Plan)?;
+        let maint = (placed.maint.as_ref().map(|m| m.to_tree(&lists)), of.maint.as_ref().map(|m| m.to_tree(&lists)));
+        use crate::code_rule_dsl::logic::program_facts::debug_digest as digest;
+        if digest(&(&got, &maint.0)) != digest(&(&want, &maint.1)) {
+            let rule = got.rules.iter().zip(&want.rules).position(|(a, b)| a != b);
+            let mut fields = got.clone();
+            fields.rules = want.rules.clone();
+            panic!(
+                "a version made from another's is not its tree's program: {} rules against {}; first rule that differs: {rule:?} ({:?} against {:?}); fields {}; maintained parts {}",
+                got.rules.len(),
+                want.rules.len(),
+                rule.map(|k| got.rules[k].to_string()),
+                rule.map(|k| want.rules[k].to_string()),
+                if digest(&fields) == digest(&want) { "the same" } else { "differ" },
+                if digest(&maint.0) == digest(&maint.1) { "the same" } else { "differ" },
+            );
         }
+        // And its composed digest (decision 0173 §7), which the program's keys are made of, is the tree's image's.
+        assert_eq!(placed.digest(), of.digest(), "a version made from another's has the program's rules and fields, but not their digest");
+        Ok(())
+    }
+
+    /// The program's digest (`Placed::digest`): its version's, kept as it was made, with its maintained parts'; the
+    /// tree's image's where it has no version.
+    pub fn digest(&self) -> super::Result<u64> {
+        Ok(match &self.version {
+            Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()).digest(),
+            Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()).digest(),
+            _ => super::body::Placed::of_program(&self.program)?.digest(),
+        })
+    }
+
+    /// Whether a tree given beside the version has maintained parts (`again`, `together`), which a version without
+    /// `maint` does not state; a tree of the version has none beyond `maint`.
+    pub(in crate::code_rule_dsl) fn tree_maintained(&self) -> bool {
+        self.program.given_tree().is_some_and(|p| !p.again.is_empty() || !p.together.is_empty())
     }
 }
 
@@ -550,7 +726,7 @@ pub fn lower(
         }
     }
     let ops = [names["+"], names["-"], names["*"]];
-    Ok(Lowered { program: out, version: None, domains, ops, dialect })
+    Ok(Lowered { program: Tree::given(out), version: None, maint: None, domains, ops, dialect })
 }
 
 impl Lowered {

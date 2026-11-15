@@ -369,10 +369,6 @@ impl<'a> Db<'a> {
     pub fn of(conn: &'a Connection) -> Self {
         Db { at: connection_scope(conn), conn: Some(conn) }
     }
-    /// A connection's scope alone (`connection_scope`), as a store opened on it keeps it.
-    pub fn scope(at: usize) -> Db<'static> {
-        Db { at, conn: None }
-    }
     /// The scope alone: a job off the connection's thread.
     pub fn detached(self) -> Db<'static> {
         Db { at: self.at, conn: None }
@@ -633,6 +629,11 @@ static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Bi
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+}
+
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.

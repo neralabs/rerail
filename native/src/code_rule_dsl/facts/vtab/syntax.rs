@@ -278,7 +278,7 @@ fn short_constant(text: &crate::code_rule_dsl::logic::front::ast::Atom) -> bool 
 /// Rules reading `text(v, t)` of a node `v` whose kind no body fixes see `text` within its bound only
 /// (`core_rr::TEXT_INLINE`): making every node's text at any length costs a run 40% more work (decision 0109). Each
 /// such rule gets twins, one per non-empty set of those atoms, reading `t = @rr_node_text(v)` in their place: the
-/// text of the nodes the rule binds, when past the bound (`long_node_text`). The rule and its twins together read every
+/// text of the nodes the rule binds, when past the bound (`LongTexts::long_text`). The rule and its twins together read every
 /// text, each once. More than `MAX` such atoms in one rule keep the any-kind projection instead. Returns the twins made.
 pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
     use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Term};
@@ -334,20 +334,84 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`), read from its document in the
-/// batch the run's connection `db` holds (bound to `node`, as the Python producer reads it); none for a shorter node
-/// (whose text `text` holds), a span, or a document the batch does not hold. Only the nodes a rule binds are read
-/// and interned (decision 0108 §1). The batch is the run's own: a document's key is its path's atom, the same in two
-/// runs of one process over roots that both hold the path (O174), so no table of the process may answer it.
-pub fn long_node_text(db: impl super::Scoped, n: i64) -> Option<String> {
-    let batch = super::bound_source(db, "node")?.python_batch()?;
-    let (key, low) = (n >> 32, n as u32);
-    let p = &batch.docs[batch.doc(key)?];
-    let local = p.local_of(low)?;
-    let core = *p.core.get(local as usize)?;
-    let text = p.facts.text(core);
-    (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+/// `rr_long_text_node(n)`: the batch's nodes whose text is past `text`'s inline bound, with the batch that holds
+/// their documents. `@rr_node_text(n)` reads a node's text through the run's own binding of this relation
+/// (`long_text`): the native engine's `func` step and SQL's function find it on the run's connection, so a text is
+/// read from the batch the run reads, never from a process-wide table of batches by document key.
+pub struct LongTexts {
+    nodes: Relation,
+    batch: Arc<Batch>,
+    /// Each document key's place in `batch.docs`.
+    docs: HashMap<u32, usize>,
 }
+
+impl LongTexts {
+    fn new(nodes: Relation, batch: &Arc<Batch>) -> Self {
+        let docs = batch.docs.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
+        Self { nodes, batch: Arc::clone(batch), docs }
+    }
+
+    /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`); none for a shorter node
+    /// (whose text `text` holds), a span, or a node of a document not in the batch. Only the nodes a rule binds are
+    /// read and interned (decision 0108 §1).
+    pub fn long_text(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low)?;
+        let core = *p.core.get(local as usize)?;
+        let text = p.facts.text(core);
+        (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+    }
+
+    /// The long text of node `n` through `source`, a binding of `rr_long_text_node`; none for another source.
+    pub fn of(source: &dyn Source, n: i64) -> Option<String> {
+        source.as_any()?.downcast_ref::<Self>()?.long_text(n)
+    }
+}
+
+impl Source for LongTexts {
+    fn python_batch(&self) -> Option<Arc<Batch>> {
+        Some(Arc::clone(&self.batch))
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn revision(&self) -> Option<u64> {
+        self.nodes.revision()
+    }
+    fn columns(&self) -> Vec<String> {
+        self.nodes.columns()
+    }
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.nodes.estimated_matches(column, batch)
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.nodes.indexed(column)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.nodes.range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.nodes.range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.nodes.lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.nodes.value(row, column)
+    }
+}
+
+/// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
+fn as_source(name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
+    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { Arc::new(rows) }
+}
+
+/// The relation of the nodes whose text `@rr_node_text` reads (`LongTexts`).
+pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
 /// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
 /// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
@@ -3049,7 +3113,7 @@ impl Batch {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
         let mut relations = vec![
-            ("rr_long_text_node", relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
+            (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
@@ -3457,7 +3521,7 @@ pub fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Ve
 pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let (batch, relations, _, _) = Batch::build(store, documents, projection, &[], &[], false)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
-        relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
+        relations.into_iter().map(|(name, r)| (name, as_source(name, r, &batch))).collect();
     out.extend(views(&batch));
     Ok(out)
 }
@@ -3596,7 +3660,7 @@ pub fn with_matchers(
     drop(built);
     // The batch's relations and views, but none the program derives (`Projection::derived`).
     let mut out: Vec<(String, Arc<dyn Source>)> =
-        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
     out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
     if !matchers.is_empty() {

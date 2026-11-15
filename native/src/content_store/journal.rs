@@ -282,10 +282,10 @@ mod fsevents {
     const UTF8: u32 = 0x0800_0100;
     const NO_DEFER: u32 = 0x2;
     const FILE_EVENTS: u32 = 0x10;
-    // Events that say the journal lost track: rescan, dropped, ids wrapped, the root moved, a volume came or went.
-    const MUST_SCAN: u32 = 0x1;
-    // A rescan (MustScanSubDirs) is a loss: the changes under its directory were not told one by one.
-    const LOST: u32 = MUST_SCAN | 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
+    // Events that say the journal lost track: dropped, ids wrapped, the root moved, a volume came or went. A rescan
+    // (`MustScanSubDirs`) is not one: it names its directory, which the caller forgets whole as it does any path
+    // (`observe::forget`).
+    const LOST: u32 = 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
     const HISTORY_DONE: u32 = 0x10;
     /// How long a replay may wait for its cookie.
     const WAIT: Duration = Duration::from_secs(2);

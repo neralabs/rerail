@@ -8953,8 +8953,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let _span = super::profile::span(|| "the program's version".into());
         program.normalized(apart)?
     };
-    // The normalized program as the tree, decoded where a reader still reads one: the program digests (the choices'
-    // key, the composed path's), which are digests of the tree's text until decision 0173's step 6.
+    // The normalized program as the tree, decoded only for the version trace (a measurement aid).
     let lists = super::front::Lists::default();
     let normal_tree: std::cell::OnceCell<Program> = std::cell::OnceCell::new();
     let normal_tree = || -> Result<&Program> {
@@ -9008,8 +9007,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         // The composed query is one statement over every needed rule. Where SQLite cannot prepare it (a relation it
         // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
         // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
-        // Keyed by the tree's text: the program digests are the tree's until decision 0173's step 6.
-        let plan=compose::planned(p,&format!("{:?}", normal_tree()?),db,&mut inputs.clone())?;
+        // Keyed by the program's digest (`Placed::digest`).
+        let plan=compose::planned(p,db,&mut inputs.clone())?;
         if let Err(e)=db.prepare_cached(&plan.sql) {
             super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
             if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
@@ -9065,7 +9064,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
-    let chosen_key = if corpus { Some(choices::key(normal_tree()?)) } else { None };
+    let chosen_key = if corpus { Some(choices::key(&normal_v)) } else { None };
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.

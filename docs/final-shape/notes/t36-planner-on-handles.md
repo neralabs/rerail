@@ -710,3 +710,82 @@ ported, over the targeted tests and dl1.
     `edit` filter, 823 in `session`, 3 in `cross_memo`, 23 in `constants`, over the same filters and the corpus tests,
     then removed; dl1: the same 48 findings cold and warm; cold 44.0 and 42.9 G against the baseline's 45.2 and
     45.4 G, warm 2.7 G on both (load about 60).
+
+- **Item 7, step 9: done** (2026-11-15). Every edit the run makes of a part states its edit on the part's version;
+  none is found again by reading the edited tree.
+  - The edits by relation state their own relations (`Version::part`, decision 0244): the cross memo's split (the
+    components' rules and natives out), the run's constants (the constants' cone; each part less `once`) and the
+    session's cut (the clean strata out). `file_local::part_as`, which guessed the relations from the edited tree's
+    heads and checked only the count of rules, is gone: an edit that rewrote a rule in place and kept the count would
+    have run the old rule.
+  - The edits that rewrite rules are derivations of the part's version (decision 0241's form), each rule they leave
+    copied by its handle and each they rewrite or make added, in the tree's order:
+    - the cone of requests: `answers::gate` returns its edit (each rule after it, the rule it was where unchanged),
+      and the gated program is made from it with the declarations, gates (`Builder::add_tree_gates`, with their
+      sources) and answers (`Builder::set_answers`) it adds; the cone and the rest are parts of it by the cone
+      (`answers::Loading::cone`);
+    - the cross memo's replay (the guarded rules rewritten, the copies added, its declarations, inputs and
+      qualifiers), `drop_guards` and `supports`; `keep_copies` is a view, its natives an overlay; and
+      `maintain::rewrite`'s maintained program, which the run reads with its `Maint` (`Lowered::maint`).
+  - A tree-diffing form (`Version::derived_as`: the edit found by matching the edited tree's rules to the old one's)
+    was tried and dropped: it reads both trees whole on every run, which is the cost this item removes.
+  - Guards, in a debug build (every test's): `Lowered::placed` checks that a version made from another's is its
+    tree's program (the image of each, the maintained parts too), and `corpus::made_from` that every edit of a part
+    with a version made one (no quiet fall back to an image of the tree). Both were seen to fail: rules dropped from
+    the file-local part's version (7 of 7 `corpus::tests::a_`, 8 of `edit`), and the gated program's version not
+    made (the `cone` tests). Swapping a part's inputs and outputs at the split was not seen, rightly: the later edits
+    state them from the tree, so the version run was right.
+  - Cost: the debug check decodes each placed version and images its tree; the corpus tests' three largest chunks
+    took about 86 s each against about 40 s without it.
+  - Checked: the targeted filters (`answers`, `cross_memo`, `session`, `file_local`, `supports`, `maintain`,
+    `retain`, `keeps`, `prepared`, `edit`, `phase0`, `cone`) and the 91 corpus tests, with both guards on; dl1: the
+    same 48 findings cold and warm; cold 44.5 and 45.4 G against the baseline's 46.1 and 47.0 G, warm 2.8 G.
+  - Still trees beside the versions, for the readers that read one: the program digests (`memo::program_digest`,
+    `cross_digest`, the choices' key, decoded from the version in `plan::run`) until decision 0173 step 6, the
+    split's analyses, and `maintain::rewrite`'s tree, decoded from its version each session run. The run's
+    `shared_split.clone()` still copies the parts' trees.
+
+- **Decision 0173, step 6: the program digests compose** (2026-11-15). The keys a run makes of its programs read
+  the versions' digests (decision 0173 §7, kept as each version is made), not a tree's text.
+  - `Placed::digest`: the version's, less the rules a program of some of its rules leaves out, with its maintained
+    parts' (`Maint::digest`: each stratum derived again, by its relations' names and its rules' and deltas' hashes,
+    and each set run as one component). `Lowered::digest` is its version's, the tree's image's where it has none.
+  - The choices' key (`choices::key`) and the composed plan's (`compose::planned`, the run's and each stage's) are
+    of the run's `Placed`: `plan::run` no longer decodes the normalized tree for them (only for the version trace),
+    and `compose::stages` no longer decodes each stage's (`compose::tree_text` is gone).
+  - The memo's key (`memo::program_digest`) is of the file-local part's version; the relations its rules reach and
+    the cross-file part's reads, which the keys take the earlier phases' rows of, are walked on the versions
+    (`heads`, `reads`). The file-local part's constants are the split's (`Programs::constants`), not its analysis
+    run again each run: on the part's relations the two are the same fixpoint (its rules read no cross-file
+    relation), which a debug check states.
+  - The kept parts' key (`retain::key`) is of a digest: the maintained cross-file part's (`Lowered::digest`), and
+    the cone's rounds' (their program, still a tree, imaged once).
+  - Order: each key is a sum, so it does not see the rules' order. None of the keyed results depends on it: the
+    choices' rewrites and the composed plan keep the program's meaning, and a part's rows are a set.
+  - Not ported: `prepared_key`. It keys the preparation's input (the program texts, the settled facts, inputs and
+    outputs) before any version exists; imaging the program to key it would cost what reusing the preparation saves.
+    And `Model::analysis`'s key (`plan::program_digest`), the planner's analysis of a tree, which goes with that
+    analysis's port.
+  - Guard: `Lowered::placed`'s debug check states that a version made from another's has the tree's digest too.
+  - Checked: `choices`, `compose`, `memo`, `session`, `retain`, `cross_memo`, `keeps`, `cone`, `maintain` and the 91
+    corpus tests with the guards on.
+
+- **The run's parts are their versions; a session run decodes and copies no tree** (2026-11-15).
+  - `Lowered::program` is a `lower::Tree`: a tree given, or a version's (`Tree::of`, `Tree::maintained` with its
+    maintained parts), decoded only where a reader asks. A clone shares the tree, and a decode made through either;
+    an edit of a shared tree copies it. Each decode and each copy is counted per thread with the last place
+    (`trees_decoded`, `trees_copied`) and, profiling, every place named as a decision.
+  - The split's parts (`Programs::local`, `cross`) are `Tree`s: the run's `shared_split.clone()` copies none.
+  - Made on the version, the tree then the new version's: `maintain::rewrite`'s program (it decoded its version
+    each session run), the session's cut (`Cut::program`), the supports, the qualifiers (`qualify`, in place of
+    tree edits and `requalified`), the input deltas' declarations, the run's constants and the parts less them.
+    The rewrite's reads of the cut and the session's reads of the maintained part are its fields
+    (`constants_tested_in`, `derived_widths_in`, `Fields`); `constants_tested`'s closure is one, `tested_through`.
+  - Made once for a prepared program, and shared by its later runs: the cone of requests (`cone_of`,
+    `Prepared::cone`; every run that loads documents derived it from a copy of the cross-file part), the maintained
+    cross-file part (`maintained_cross_of`, `Prepared::maintained`, for the part's digest and the session's settings),
+    and the run's parts (`Prepared::parts`, for the constants a run finds). A run whose cross memo split the
+    cross-file part makes its own. A reader of these trees decodes them once, not each run.
+  - Not ported: the run's other readers of the parts' trees (the joined text tests, the chunks' programs, the
+    cross-file part's readers), which read the shared trees; they go with their own steps of item 7.
+  - Guard: `a_maintained_run_decodes_and_copies_no_tree` (a maintained run, with the outputs of an empty store's).

@@ -966,9 +966,7 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// driver; none, no limit.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>> }
 
-/// `at`: the scope of the connection the store was opened on (`vtab::Db`), whose bound sources a step that reads the
-/// run's documents reads (`rr_node_text`).
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>>, at: usize }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -1569,7 +1567,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     }
     syms.check()?;
     drop(syms);
-    let store = Arc::new(RwLock::new(Store { rels, syms: symbols, at: conn.at() }));
+    let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     forgotten_on_close();
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (conn.at(), name.clone());
@@ -4951,7 +4949,9 @@ pub enum Step {
     Ne { a: Key, b: Key },
     /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
     /// interned; no value (NULL), no binding.
-    Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool },
+    /// `texts`: for `@rr_node_text`, the run's binding of the long-text nodes it reads through (`functions::long_text`).
+    Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool,
+        texts: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
     /// `out = @doc(n)`: node n's document, bound or tested.
@@ -5185,7 +5185,15 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
                 let Some(Key::Slot(o)) = tok(o, syms) else { return Err(err("a function's value into a constant")) };
                 let bind = !is_bound(&bound, Key::Slot(o));
                 grow(&mut bound, o); bound[o] = true;
-                steps.push(Step::Func { name, kinds, args, out: o, bind });
+                // A node's long text is read through the run's binding of the long-text nodes, which the rule reads
+                // too (`syntax::long_text_twins`).
+                let texts = if name == "rr_node_text" {
+                    let nodes = crate::code_rule_dsl::facts::vtab::bound_source(conn, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
+                    Some(nodes.ok_or_else(|| err("@rr_node_text without the run's long-text nodes bound"))?)
+                } else {
+                    None
+                };
+                steps.push(Step::Func { name, kinds, args, out: o, bind, texts });
             }
             JoinItem::Test { op, s, p, want } => {
                 use crate::code_rule_dsl::logic::strings;
@@ -5835,22 +5843,18 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
-            Step::Func { name, kinds, args, out, bind } => {
-                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
-                let value = {
-                    let mut texts = Vec::new();
+            Step::Func { name, kinds, args, out, bind, texts } => {
+                use crate::code_rule_dsl::logic::strings::functions::{eval, long_text, Kind};
+                let value = if let Some(nodes) = texts {
+                    long_text(Some(&**nodes), val(slots, args[0])).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
+                } else {
+                    let mut strs = Vec::new();
                     let mut numbers = Vec::new();
                     for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
-                    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-                    if *name == "rr_node_text" {
-                        // From the batch bound on the store's connection (`syntax::long_node_text`): the run's own.
-                        let db = crate::code_rule_dsl::facts::vtab::Db::scope(cx.store.at);
-                        crate::code_rule_dsl::facts::vtab::syntax::long_node_text(db, numbers[0]).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
-                    } else {
-                        eval(name, &texts, &numbers)
-                    }
+                    let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                    eval(name, &strs, &numbers)
                 };
                 let mark = cx.texts.len();
                 let v = match value {
@@ -6403,8 +6407,8 @@ pub mod probe_tests {
     fn a_tested_result_reads_its_slot() {
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
         let split = Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2) };
-        let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false };
-        let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true };
+        let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None };
+        let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true, texts: None };
         assert!(tested(2).mentions(2) && !made.mentions(2));
         let cat = |bind| Step::Cat { out: 2, a: Key::Slot(3), b: Key::Slot(3), bind };
         assert!(cat(false).mentions(2) && !cat(true).mentions(2));

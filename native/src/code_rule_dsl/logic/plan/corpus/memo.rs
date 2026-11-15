@@ -96,23 +96,24 @@ pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
 }
 
 /// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
-/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
-pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
+/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it, all
+/// of which its version's image holds. The version's digest (decision 0173 §7), kept as the version was made: the
+/// key reads no rule. A sum, so it does not see the rules' order, which a part's rows do not depend on.
+pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-program/v3\0");
-    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
-    // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
-    // (O-stored-patterns).
-    hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
+    hash.update(b"rerail.corpus-local-program/v4\0");
+    hash.update(v.digest().to_le_bytes());
     let digest: [u8; 32] = hash.finalize().into();
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
         let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-        let text = format!(
-            "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
-            program.rules, program.decls, facts, program.inputs, program.outputs, program.rx_spans, program.ast_patterns
-        );
+        let text = match v.program(&crate::code_rule_dsl::logic::front::Lists::default()) {
+            Ok(p) => format!(
+                "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
+                p.rules, p.decls, p.facts, p.inputs, p.outputs, p.rx_spans, p.ast_patterns
+            ),
+            Err(e) => format!("no program: {e}\n"),
+        };
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
     }
     digest

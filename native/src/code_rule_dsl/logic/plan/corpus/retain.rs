@@ -130,13 +130,14 @@ pub(in crate::code_rule_dsl) type Measured = (Vec<(String, i64, i64, i64, i64)>,
 /// A relation's statistics by column, and its exact postings by (column, value).
 pub(in crate::code_rule_dsl) type InputStats = (Vec<[i64; 4]>, Vec<(usize, i64, i64)>);
 
-/// The key of a cross-file part: the prepared program's key and the part's program as lowered.
-pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program) -> [u8; 32] {
+/// The key of a cross-file part: the prepared program's key and the part's program as lowered, by its digest
+/// (`Lowered::digest`, decision 0173 §7), which reads no rule.
+pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: u64) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
-    hash.update(b"rerail.cross-retained/v1\0");
+    hash.update(b"rerail.cross-retained/v2\0");
     hash.update(prepared);
-    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}", cross.rules, cross.decls, cross.inputs, cross.outputs).as_bytes());
+    hash.update(cross.to_le_bytes());
     hash.finalize().into()
 }
 
@@ -348,8 +349,28 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
 impl Cut {
     /// `cross` without the clean strata's rules: the relations dirty rules read become inputs, and clean outputs are
     /// left to `outputs`.
+    ///
+    /// Where `cross` has a version, the cut is a part of it (decision 0244), read and made by its handles: its tree is
+    /// the part's (`lower::Tree::of`), decoded by no reader on the run's path.
     pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> lower::Lowered {
-        let mut program = cross.program.clone();
+        use crate::code_rule_dsl::logic::program_image::PartFields;
+        let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
+        let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
+        if let Some(v) = &cross.version {
+            let read: BTreeSet<&str> = v.rules().filter(|r| dirty(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))).collect();
+            let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
+            for rel in self.clean.iter().filter(|r| read.contains(r.as_str())) {
+                if !inputs.contains(rel) {
+                    inputs.push(rel.clone());
+                }
+            }
+            let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
+            let part = super::made_from(true, v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok(), "the session's cut");
+            if let Some(part) = part {
+                return lower::Lowered { program: lower::Tree::of(part.clone()), version: Some(part), maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect };
+            }
+        }
+        let mut program = (*cross.program).clone();
         program.rules.retain(|r| !self.clean.contains(r.head.rel.as_str()));
         program.natives.retain(|rel, _| !self.clean.contains(rel));
         if self.strata.0 == 0 {
@@ -363,17 +384,16 @@ impl Cut {
         }
         program.outputs.retain(|o| !self.clean.contains(o));
         crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        // A part of the cross part's version, where it has one (decision 0244): rules and natives kept by relation.
-        let version = cross.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &program));
-        lower::Lowered { program, version, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
+        // A program the image has no form for: its tree alone.
+        lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
-    /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
+    /// The clean relations a program reads (its inputs, `is_input`), as kept: each as a source (bound by the caller, as the other inputs) and
     /// as the engine's relation (adopted by the caller, read in place).
-    pub(in crate::code_rule_dsl) fn sources(&self, kept: &Retained, program: &front::Program) -> Vec<(String, Arc<dyn Source>, Option<Arc<InRel>>)> {
+    pub(in crate::code_rule_dsl) fn sources(&self, kept: &Retained, is_input: &dyn Fn(&str) -> bool) -> Vec<(String, Arc<dyn Source>, Option<Arc<InRel>>)> {
         self.clean
             .iter()
-            .filter(|rel| program.inputs.contains(*rel))
+            .filter(|rel| is_input(rel))
             .filter_map(|rel| {
                 let k = kept.rels.get(rel)?;
                 Some((rel.clone(), k.source(rel), Some(Arc::clone(&k.rel))))
@@ -1153,7 +1173,7 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:p.clone(),version:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {program:lower::Tree::given(p.clone()),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
         assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
         let mut changed=inputs.clone();

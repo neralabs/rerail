@@ -296,7 +296,6 @@ pub mod tests {
         let mut values = Rel::new("values", b"ii");
         values.push(&[i64::MAX, 7]);
         let mut store = Store {
-            at: 0,
             rels: vec![input, values, Rel::new("output", b"i")],
             syms: shared,
         };
@@ -329,7 +328,6 @@ pub mod tests {
         input.push(&[i64::MAX]);
         input.push(&[1]);
         let mut store = Store {
-            at: 0,
             rels: vec![input, Rel::new("output", b"i")],
             syms: shared,
         };
@@ -454,7 +452,6 @@ pub mod tests {
         let j = parse_join(&db, &spec, &mut syms).unwrap();
         let j2 = parse_join(&db, &spec.replace("v0", "v5"), &mut syms).unwrap();
         let store = Store {
-            at: 0,
             rels: vec![Rel::new("output", b"iiiii"), Rel::new("counts", b"ii")],
             syms: shared,
         };
@@ -504,7 +501,6 @@ pub mod tests {
         input.push(&[1, 3]);
         input.set_delta(0, 2);
         let mut store = Store {
-            at: 0,
             rels: vec![input, Rel::new("output", b"iii")],
             syms: shared,
         };
@@ -549,7 +545,6 @@ pub mod tests {
         }
         input.set_delta(0, 3);
         let mut store = Store {
-            at: 0,
             rels: vec![input, Rel::new("output", b"iii")],
             syms: shared,
         };
@@ -584,7 +579,6 @@ pub mod tests {
         let mut syms = Interner::for_loading(&shared);
         let j = parse_join(&db, &spec, &mut syms).unwrap();
         let store = Store {
-            at: 0,
             rels: vec![Rel::new("output", b"iiiii")],
             syms: shared,
         };
@@ -656,7 +650,6 @@ pub mod tests {
         let first = parse_join(&db, &spec, &mut syms).unwrap();
         values.lock().unwrap()[0][1] = 100;
         let store = Store {
-            at: 0,
             rels: vec![Rel::new("output", b"ii")],
             syms: shared,
         };

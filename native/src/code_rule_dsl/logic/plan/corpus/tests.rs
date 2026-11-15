@@ -656,6 +656,52 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions. The maintained part is a tree of
+/// its version (`maintain::rewrite`), decoded by no reader, and the run's copy of the prepared split shares the
+/// parts' trees, copying none. The outputs are a run's with an empty store.
+#[test]
+fn a_maintained_run_decodes_and_copies_no_tree() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("no-trees");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import k\ndef h():\n    pass\n");
+    let rule = dir.join("uses.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.output unused
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
+    };
+    run("kept.sqlite");
+    write("c.py", "def h():\n    pass\n");
+    super::lower::forget_tree_reads();
+    let (maintained, rows) = run("kept.sqlite");
+    let (decoded, copied) = (super::lower::trees_decoded(), super::lower::trees_copied());
+    let (_, fresh) = run("fresh.sqlite");
+    assert_eq!(rows, fresh);
+    assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
+    assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
+    assert_eq!(copied.0, 0, "the maintained run copied shared trees, the last at {:?}", copied.1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
 /// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
 /// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under

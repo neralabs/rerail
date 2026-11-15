@@ -187,12 +187,13 @@ impl Wave {
         joined(&mut cold, &logic.rules);
         let mut warm = cold.clone();
         joined(&mut warm, &crate::code_rule_dsl::logic::rr::parse(KEPT).map_err(invalid)?);
-        let keyed = |p: crate::code_rule_dsl::logic::front::Program| {
-            let key = crate::code_rule_dsl::logic::plan::choices::key(&p);
-            (p, key)
+        // Each program keyed by its version's digest (decision 0173 §7), once.
+        let keyed = |p: crate::code_rule_dsl::logic::front::Program| -> StoreResult<_> {
+            let key = crate::code_rule_dsl::logic::plan::choices::key(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).map_err(invalid)?);
+            Ok((p, key))
         };
         Ok(Self {
-            sources: [keyed(cold), keyed(warm)],
+            sources: [keyed(cold)?, keyed(warm)?],
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
