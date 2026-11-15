@@ -5180,3 +5180,14 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
+
+## O-quiet-counters-shared. The quiet-stratum test reads process-wide counters beside other tests
+
+**Seen (2026-11-15).** `a_session_passes_on_a_quiet_stratum` failed in 3 of 6 runs of the session tests together
+(`quiet relations held with no column measured`, 2 and 3), and passes alone. It reads `plan::quiet_strata()` and
+`plan::unmeasured_quiet()` before and after its run: process-wide atomics, which the other session tests' runs add
+to as they run beside it.
+
+**Closure:** the counts are the run's, in its report (`Outcome`, `corpus::Report`), and the test reads its own
+run's; the session tests pass 10 runs together.
+

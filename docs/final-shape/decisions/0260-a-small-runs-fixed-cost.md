@@ -38,6 +38,19 @@ A trace of one run (`xctrace record --template 'Time Profiler' --launch`), 770 m
 Measured on `dl1` (`layer-violations.rr`, cutoff off, warm store): 6.0 to 7.8 G instructions before, 2.8 to 3.0 G
 after; with the statistics off, 2.3 to 2.9 G.
 
+## A combine's programs: one phase 0, on the run's thread
+
+Found while timing the session tests: `combine_read` read its programs on the pool with plain `par_iter`, without
+the run's context (`run_state::Carry`). Each read that met a program with includes derived its graph there, a nested
+run of `bootstrap.rr`, and in a test it asked the process's store, not the test's ("a store asked for off a test's
+thread"). Carrying the context alone made those nested runs share the test's store at once: 3 of 16 runs of the
+library tests failed (`content store writer is busy`; a memo made under another atom table than its writer's),
+against 15 of 15 without.
+
+Now the programs are parsed on the pool with the context carried (`rr::read_seed`), every graph is derived by one
+run of phase 0 on the run's thread (`phase0::graphs`), and each is then resolved on the pool, where it finds its
+graph kept (`rr::read_parsed`). Lowering on the pool carries the context too. The library tests: 15 of 15.
+
 ## Open
 
 - The matchers compiled each process (38 ms, with 20 ms of reading a grammar's JSON).

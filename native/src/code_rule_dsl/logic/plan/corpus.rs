@@ -898,8 +898,34 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     // returned, as one thread gives them.
     use rayon::prelude::*;
     use crate::code_rule_dsl::logic::rr::{recorded_on_worker, replay};
+    // The run's context on each job's thread (`run_state::Carry`): its observer and store, a test's own included.
+    // Without it a read on the pool asked the process's store, not the test's.
+    let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
-        let each: Vec<_> = programs.par_iter().map(|text| recorded_on_worker(|| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e)))).collect();
+        use crate::code_rule_dsl::logic::rr::{read_parsed, read_seed};
+        let parsed: Vec<_> = programs
+            .par_iter()
+            .map(|text| {
+                let _in = carry.enter();
+                read_seed(text)
+            })
+            .collect();
+        // Every program's include graph by one run of phase 0, here, before the reads: each read on the pool then
+        // finds its graph kept. Derived there, each was a nested run of its own on the run's store, beside the others
+        // (`content store writer is busy`; a memo made under another atom table than its writer's).
+        let seeds: Vec<_> = parsed.iter().filter_map(|p| p.as_ref().ok().and_then(|r| r.seed.clone())).collect();
+        if !seeds.is_empty() {
+            // An error is left to the read that meets it, which reports it in its program's place.
+            let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
+        }
+        let each: Vec<_> = programs
+            .par_iter()
+            .zip(parsed)
+            .map(|(text, parsed)| {
+                let _in = carry.enter();
+                recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
+            })
+            .collect();
         each.into_iter().map(|(got, read)| {
             replay(read);
             got
@@ -934,7 +960,9 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         .par_iter()
         .zip(&own_only)
         .zip(texts.par_iter_mut())
-        .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
+        .map(|((text, &own_only), slot)| {
+            let _in = carry.enter();
+            recorded_on_worker(|| -> Result<Program> {
             if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
                 front::declared(read)?;
                 return Ok(read.clone());
@@ -950,7 +978,8 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
             front::declared(&prog)?;
             Ok(prog)
-        }))
+            })
+        })
         .collect();
     let mut parsed = each
         .into_iter()

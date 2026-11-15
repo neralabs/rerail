@@ -121,7 +121,11 @@ enum Read {
 
 /// `src` read once, its includes resolved (`Text`).
 pub fn read_text(src: &str) -> Result<Text, Error> {
-    let statements = from_tape::statements(src, &nodes(src))?;
+    read_parsed(from_tape::statements(src, &nodes(src))?)
+}
+
+/// `read_text` of statements already parsed.
+pub(in crate::code_rule_dsl) fn read_parsed(statements: Vec<syntax::Statement>) -> Result<Text, Error> {
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         refuse_ungrounded(&statements, &BTreeSet::new())?;
         return Ok(Text(Read::Plain(statements)));
@@ -286,7 +290,7 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
 pub struct TextRead {
     /// `None` for a text that includes nothing, or while phase 0 itself runs (`text_seed`).
     pub seed: Option<super::plan::corpus::phase0::Seed>,
-    statements: Vec<syntax::Statement>,
+    pub(in crate::code_rule_dsl) statements: Vec<syntax::Statement>,
 }
 
 /// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rr` first unless the
