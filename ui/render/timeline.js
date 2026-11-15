@@ -273,12 +273,13 @@ export function coverageGaps(sess) {
 }
 
 /**
- * The heading over the places listed: how many of the `total` the session's record holds they are, and when the check
- * met more than the record takes (`more`), that it did. Its words hold for every reason a place can have, given beside
- * it: what happened to shell edits there is the reason's to say.
+ * The heading over the `shown` places listed: how many of the places the session's record holds they are, and when the
+ * check met more than the record takes, that it did. It reads both from the session, as `coverageGaps` does. Its words
+ * hold for every reason a place can have, given beside it: what happened to shell edits there is the reason's to say.
  */
-export function placesHeading(shown, total, more = false) {
-  if (more) return `Rules could not fully check more than ${fmt(total)} places; the first ${fmt(shown)} of the ${fmt(total)} recorded:`;
+export function placesHeading(sess, shown) {
+  const total = discoveryGaps(sess);
+  if (discoveryGapsMore(sess)) return `Rules could not fully check more than ${fmt(total)} places; the first ${fmt(shown)} of the ${fmt(total)} recorded:`;
   const which = shown < total ? `the first ${fmt(shown)} of these ${fmt(total)} places` : plural(shown, "this place", "these places");
   return `Rules could not fully check ${which}:`;
 }
@@ -290,7 +291,7 @@ const placeItem = place => h("li", null, h("code", null, place.path ?? "the whol
 function renderPlaces(sess, loaded) {
   const places = loaded ? discoveryGapPlaces(sess) : [];
   setAttr(t.places, "hidden", places.length === 0);
-  setText(t.places.firstChild, placesHeading(places.length, discoveryGaps(sess), discoveryGapsMore(sess)));
+  setText(t.places.firstChild, placesHeading(sess, places.length));
   syncChildren(t.places.lastChild, places, placeKey, placeItem, () => undefined);
 }
 

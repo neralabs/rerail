@@ -128,8 +128,8 @@ declare module "*/ui/render/pack-panel.js" {
 declare module "*/ui/render/timeline.js" {
   /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
   export function coverageGaps(s: { sessionId: string }): string;
-  /** The heading over the places a session's shell-write check could not check: `shown` of `total`, and whether it met `more`. */
-  export function placesHeading(shown: number, total: number, more?: boolean): string;
+  /** The heading over the `shown` places a session's shell-write check could not check, from the session's count and whether it met more. */
+  export function placesHeading(s: { sessionId: string }, shown: number): string;
 }
 
 declare module "*/ui/state.js" {
