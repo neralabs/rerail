@@ -1679,9 +1679,14 @@ const LONG_WORD: u64 = 1 << 63;
 pub struct RecordTables {
     pub words: Vec<u64>,
     /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta.
-    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry.
+    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry. Where every
+    /// word is 16 bytes at most (`second`), 32 bytes each: then its bytes 8 to 16, and a zero.
     pub slots: usize,
     pub tails: usize,
+    /// Every word is 16 bytes at most: a token compares its second eight bytes with its
+    /// slot's, straight-line in the loop, as the lean lexer its ninth byte (`word_code`). Else
+    /// a hit on a long word calls the tail compare (`tail_fn`).
+    pub second: bool,
     pub table: crate::records::WordTable,
     /// The extracts of the first and last bytes.
     pub starts: u16,
@@ -1780,8 +1785,14 @@ impl RecordTables {
             let long = if (m & 0xff) > 8 { LONG_WORD } else { 0 };
             u64::from(m & 0xff) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | long
         }).collect();
-        for (&k, &m) in table.keys.iter().zip(&metas) {
+        let second = table.meta.iter().all(|&m| (m & 0xff) <= 16);
+        for (&k, (&m, &w)) in table.keys.iter().zip(metas.iter().zip(&table.meta)) {
             words.extend([k, m]);
+            if second {
+                // A slot's second eight bytes: its word's, zeros for a short word or none.
+                let code = (w >> 8) as usize;
+                words.extend([if code == 0 { 0 } else { table.tails[code - 1][0] }, 0]);
+            }
         }
         let tails = 8 * words.len();
         for t in &table.tails {
@@ -1891,7 +1902,7 @@ impl RecordTables {
         words.extend(entries);
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, second, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -4441,14 +4452,29 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let h1 = f.ins().imul(h1, c.mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
     // The slot's key and meta, side by side: one pair load.
-    let off = f.ins().ishl_imm(slot, 4);
+    let off = f.ins().ishl_imm(slot, if t.second { 5 } else { 4 });
     let sa = f.ins().iadd(c.slots, off);
     let kk = f.ins().load(types::I64, ro, sa, 0);
     let meta = f.ins().load(types::I64, ro, sa, 8);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
     let mlen = f.ins().band_imm(meta, 0xff);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
-    let hit = f.ins().band(same_key, same_len);
+    let mut hit = f.ins().band(same_key, same_len);
+    if t.second {
+        // Its second eight bytes, as the slot's: read where it has them (else its first again,
+        // in bounds as `raw`), none for a token of eight bytes at most. Straight-line, as the
+        // lean lexer's ninth byte.
+        let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 8);
+        let past = f.ins().iadd_imm(from, 8);
+        let at = f.ins().select(long, past, from);
+        let chunk = f.ins().load(types::I64, fl, at, 0);
+        let rest = f.ins().iadd_imm(len, -8);
+        let chunk = cut_to(f, chunk, rest);
+        let chunk = f.ins().select(long, chunk, zero);
+        let want = f.ins().load(types::I64, ro, sa, 16);
+        let same = f.ins().icmp(IntCC::Equal, chunk, want);
+        hit = f.ins().band(hit, same);
+    }
     // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
     let w = f.ins().ushr_imm(meta, 8);
     let bits = f.ins().select(hit, w, zero);
@@ -4490,42 +4516,48 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     }
     // A hit on a word past eight bytes: the meta's top bit, in the bits taken (`LONG_WORD`).
-    let check = f.ins().ushr_imm(bits, 55);
-    f.ins().brif(check, long, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
+    if t.second {
+        f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
+    } else {
+        let check = f.ins().ushr_imm(bits, 55);
+        f.ins().brif(check, long, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
+    }
 
-    // A word past eight bytes: its other words, compared (seven at most, unrolled).
-    f.switch_to_block(long);
-    f.set_cold_block(long);
-    let word = word.unwrap_or_else(|| word_of(&mut *f));
-    let wi = f.ins().iadd_imm(word, -1);
-    let toff = f.ins().imul_imm(wi, 56);
-    let tail = f.ins().iadd(tables, toff);
-    // Out of the loop where it has the call (`tail_fn`); else straight-line here.
-    let all = match rd.calls.iter().find(|x| x.0 == TAIL_CALL) {
-        Some((_, id, sig)) => {
-            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
-            let signature = f.import_signature(sig.clone());
-            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
-            let call = f.ins().call(callee, &[from, len, tail]);
-            f.inst_results(call)[0]
-        }
-        None => {
-            let mut all = f.ins().iconst(types::I8, 1);
-            for j in 1..8i64 {
-                let past = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 8 * j);
-                let chunk = f.ins().load(types::I64, fl, from, (8 * j) as i32);
-                let rest = f.ins().iadd_imm(len, -8 * j);
-                let chunk = cut_to(f, chunk, rest);
-                let want = f.ins().load(types::I64, ro, tail, t.tails as i32 + 8 * (j as i32 - 1));
-                let same = f.ins().icmp(IntCC::Equal, chunk, want);
-                let ok = f.ins().bor(past, same);
-                all = f.ins().band(all, ok);
+    if !t.second {
+        // A word past eight bytes: its other words, compared (seven at most, unrolled).
+        f.switch_to_block(long);
+        f.set_cold_block(long);
+        let word = word.unwrap_or_else(|| word_of(&mut *f));
+        let wi = f.ins().iadd_imm(word, -1);
+        let toff = f.ins().imul_imm(wi, 56);
+        let tail = f.ins().iadd(tables, toff);
+        // Out of the loop where it has the call (`tail_fn`); else straight-line here.
+        let all = match rd.calls.iter().find(|x| x.0 == TAIL_CALL) {
+            Some((_, id, sig)) => {
+                let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+                let signature = f.import_signature(sig.clone());
+                let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+                let call = f.ins().call(callee, &[from, len, tail]);
+                f.inst_results(call)[0]
             }
-            all
-        }
-    };
-    let code2 = f.ins().select(all, code, no_word);
-    f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code2.into(), hits.into()]);
+            None => {
+                let mut all = f.ins().iconst(types::I8, 1);
+                for j in 1..8i64 {
+                    let past = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 8 * j);
+                    let chunk = f.ins().load(types::I64, fl, from, (8 * j) as i32);
+                    let rest = f.ins().iadd_imm(len, -8 * j);
+                    let chunk = cut_to(f, chunk, rest);
+                    let want = f.ins().load(types::I64, ro, tail, t.tails as i32 + 8 * (j as i32 - 1));
+                    let same = f.ins().icmp(IntCC::Equal, chunk, want);
+                    let ok = f.ins().bor(past, same);
+                    all = f.ins().band(all, ok);
+                }
+                all
+            }
+        };
+        let code2 = f.ins().select(all, code, no_word);
+        f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code2.into(), hits.into()]);
+    }
 
     f.switch_to_block(coded);
     let cv = f.block_params(coded).to_vec();
@@ -5365,8 +5397,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 byte_calls.push((READ_CALL | (k as u16) << 3 | j as u16, id, sig, func));
             }
         }
-        // The long words' tail compare (`tail_fn`), out of the loop.
-        if let Some((_, t, _)) = records {
+        // The long words' tail compare (`tail_fn`), out of the loop; none where each slot has
+        // its word's second eight bytes (`RecordTables::second`).
+        if let Some((_, t, _)) = records.filter(|(_, t, _)| !t.second) {
             let mut sig = words_signature(module, 3);
             sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
             let id = module.declare_function(&format!("{name}_tail"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;

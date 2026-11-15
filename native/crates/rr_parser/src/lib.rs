@@ -1715,6 +1715,15 @@ pub mod tests {
         for pad in [59usize, 60, 61, 62, 63] {
             inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
         }
+        // A word past eight bytes (`violation`) beside words that differ from it past its eighth
+        // byte, or are it with a byte more or less (`RecordTables::second`): at a block's start,
+        // across its edge, and as the file's last bytes.
+        for t in ["violation", "violatiox", "violationx", "violatio", "violations", "violation_x", "aviolation"] {
+            for pad in [0usize, 55, 56, 58, 63] {
+                inputs.push(format!("{}{t} .decl violation(x)", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}x. {t}", " ".repeat(pad)).into_bytes());
+            }
+        }
         // A comment's closer about 64 bytes after its opener, where a short reader's window
         // (`RuleMode::Short`) ends, at each offset in its block; one the file ends in.
         for n in [0usize, 59, 60, 61, 62, 63, 64, 65] {

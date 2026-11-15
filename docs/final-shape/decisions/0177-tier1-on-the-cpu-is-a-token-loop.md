@@ -1629,15 +1629,53 @@ ldp   [table + hash]        // the keyword's bytes and kind
 ccmp ; csel                 // a match keeps the kind
 ```
 
-Three differences from lean remain. All three are register choices,
-not steps:
+Three differences from lean remained. The generated code and the
+lean lexer are both Rust, compiled by the same rustc, so each comes
+from a difference in the source, not from rustc:
 
-- The hash multiplier is loaded from the stack at each probe. Lean
-  keeps it in a register (`x19`). The multiplier is `kept` so rustc
-  does not rebuild it at each use; rustc then spills it.
-- The bytes' address is reloaded at the loop's back branch, since
-  its register held the token's kind. Lean keeps its address in a
-  register and loads its two masks from the stack instead.
-- The probe's shift, `(8 - len) * 8`, is three instructions
-  (`lsl`, `sub`, `and`). Lean's is two (`lsl`, `neg`), since the
-  shift amount is taken mod 64.
+- The hash multiplier was loaded from the stack at each probe. Lean
+  keeps it in a register (`x19`). Our source hid it behind an empty
+  `asm!` (`kept`), so rustc could only keep it in a slot.
+- The bytes' address was reloaded at the back branch. Our token body
+  called a function of its own for a word past eight bytes, so more
+  values had to live across a call than registers keep.
+- The probe's shift, `(8 - len) * 8`, is three instructions where
+  lean's is two. Lean's length is known to be 1 to 8 (`clamp(1, 8)`
+  after `words != 0`); ours, `min(len, 8)`, may be 0.
+
+## A long word is compared in the loop, as lean's
+
+**Intro.** Lean's `word_code` checks a word past eight bytes inline:
+its one such word, `violation`, has its ninth byte compared. Ours
+called a function (`tail_fn`) on a hit of a long word, which
+compares up to seven more words. A call in the token body makes
+rustc keep its values across it.
+
+**The change.** Where every word is 16 bytes at most (rr's are), a
+slot is 32 bytes and holds the word's bytes 8 to 16. The token
+compares its own, read at `from + 8` where it is longer than eight
+bytes, into `hit`: straight-line, no call, as lean's ninth byte.
+Longer words keep the call. The multiplier is a literal where the
+hash is, as lean's (`kept` removed).
+
+The token path, stepped by instruction (lean's in brackets):
+
+- A plain word: 46 instructions [67]. The bytes' address and the
+  table's base stay in registers: no reload, no `adrp`.
+- A word that may be a keyword: 86. The multiplier is now made at
+  each probe (`mov` and three `movk`), as rustc makes a literal
+  where no register is free across the loop. Lean's loop has one.
+  Ours keeps four state words across it (refusal, pending marks,
+  their start, the word before) that only rare tokens change, where
+  lean keeps one (`cursor`). That is the next step.
+
+Counts, reported (before, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 100.1 | 107.7 | 97.9 |
+| Punctuation | 55.9 | 57.5 | 53.5 |
+| Mixed | 59.2 | 59.9 | 63.1 |
+| Strings | 293.2 | 282.9 | 240.6 |
+| Numbers | 172.0 | 162.8 | 107.3 |
+| Comments | 270.6 | 261.2 | 193.2 |

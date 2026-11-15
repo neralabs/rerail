@@ -71,24 +71,18 @@ fn aot_tapes_are_the_jits() {
     assert_eq!(differ, Vec::<usize>::new(), "files whose tape is not the JIT's");
 }
 
-/// The word hash's multiplier, a wide constant made where a file's token loop starts, is made
-/// once (`clif_rust`'s `kept`): rustc keeps it, as the lean lexer keeps its own in a register,
-/// where it made the literal again at each word (four instructions). A constant of two parts
-/// or fewer, or an `orr`'s immediate, stays a literal.
+/// The word hash's multiplier is a literal where the hash is, as the lean lexer writes its
+/// own (`word_slot`): no barrier hides it from rustc. And a word past eight bytes is compared
+/// in the loop, straight-line, as the lean lexer's ninth byte: rr's words are 16 bytes at most
+/// (`RecordTables::second`), so no tail compare is a function of its own.
 #[test]
-fn the_word_multiplier_is_kept() {
-    use rerail_compiler::clif_rust::wide;
+fn the_word_multiplier_is_a_literal() {
     let c = rerail_rr_parser::compiled().expect("compiles");
-    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult;
-    assert!(wide(mult), "{mult:#x}");
+    let t = c.parser.tier1.records.as_ref().expect("the record pass");
     let src = include_str!("tier1_aot.rs");
-    assert!(src.contains(&format!("kept({mult:#x})")), "the multiplier made at each use");
-    for v in [0x5555_5555_5555_5555u64, 0x00ff_00ff_00ff_00ff, 0xffff_0000_ffff_0000, 0x8000_0000_0000_0001, 0x1234_0000_0000_5678, 0xffff_ffff_1234_5678, 0x7fff_ffff_ffff_fffe] {
-        assert!(!wide(v), "{v:#x}: two instructions at most");
-    }
-    for v in [0x1234_5678_9abc_def1u64, 0x0001_0002_0003_0000] {
-        assert!(wide(v), "{v:#x}: three parts or more");
-    }
+    assert!(!src.contains("kept("), "a barrier on a constant");
+    assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
+    assert!(t.second, "rr's words fit in two words each");
 }
 
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
