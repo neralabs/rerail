@@ -583,7 +583,7 @@ impl ContentStore {
             .expect("content store connection unavailable");
         if let Some(stop) = stop {
             let stop = std::sync::Arc::clone(stop);
-            connection.progress_handler(1000, Some(move || stop()));
+            connection.progress_handler(1000, Some(move || stop()))?;
         }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
         let outer = IN_RETRY.replace(true);
@@ -595,7 +595,9 @@ impl ContentStore {
             Ok(value)
         });
         if stop.is_some() {
-            connection.progress_handler(0, None::<fn() -> bool>);
+            // Cleared on every path, the transaction's own error first.
+            let cleared = connection.progress_handler(0, None::<fn() -> bool>);
+            return value.and_then(|v| cleared.map(|()| v).map_err(Into::into));
         }
         value
     }
