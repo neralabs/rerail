@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
 
 const autostart = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
@@ -19,6 +19,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { sourceModule } from "../support/processes/lock-race.js";
 
@@ -635,6 +636,19 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
     const { said, listings } = await statusWith(rerailHome, {}, Date.now() + 60 * 60_000);
     expect({ count: countOf(said), listings }).toEqual({ count: 3, listings: 1 });
+  });
+
+  // `.1` left as a link whose target is gone, as a link to a drive no longer there. It holds no part of the log. On
+  // Windows the link to a folder is a junction, which needs no rights to make and which no hook can move a log over.
+  it.for([
+    { link: "a symbolic link to a file", make: symlinkOrSkip },
+    { link: "a link to a folder", make: (_context: TestContext, target: string, path: string) => linkFolder(target, path) },
+  ])("reads the log at once when .1 is $link whose target is gone", async ({ make }, context) => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000, 9_500));
+    make(context, join(rerailHome, "gone", "log"), join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    const { said, listings } = await statusWith(rerailHome, {});
+    expect({ count: countOf(said), listings }).toEqual({ count: 2, listings: 1 });
   });
 
   // A hook that still runs takes `.1` under its own name just before status lists the home, and a second one moves it on

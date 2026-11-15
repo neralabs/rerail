@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
 import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
@@ -452,7 +452,12 @@ function readUnmet(home: string, parts: Map<string, LogPart>): boolean {
 /** The files of the log a listing found, by name: each one's file id, or null when it was gone before it was looked at. */
 type LogNames = Map<string, string | null>;
 
-/** The files of the log in `home`, in the order a hook moves a log through them: the live log, the logs hooks took, `.1`. */
+/**
+ * The files of the log in `home`, in the order a hook moves a log through them: the live log, the logs hooks took, `.1`.
+ * A name that is a link whose target is gone, as a link to a drive no longer there, holds no file of the log and is left
+ * out: taken for a name gone before it was looked at, it would make every status read wait out all its pauses, for as
+ * long as the link stays, and on Windows a hook cannot move a log over a junction, so it stays.
+ */
 function listLog(home: string): LogNames {
   let listed: string[];
   try {
@@ -461,7 +466,29 @@ function listLog(home: string): LogNames {
     return new Map();
   }
   const order = [HOOK_FAILURES_FILE, ...listed.filter(name => TAKEN_LOG.test(name)), MOVED_ASIDE_FILE];
-  return new Map(order.filter(name => listed.includes(name)).map(name => [name, fileIdAt(join(home, name)) ?? null] as const));
+  const names: LogNames = new Map();
+  for (const name of order.filter(each => listed.includes(each))) {
+    const id = listedId(join(home, name));
+    if (id !== undefined) names.set(name, id);
+  }
+  return names;
+}
+
+/**
+ * The {@link fileId} of the file a listing found at `path`: null when the name was gone before it was looked at, and
+ * undefined when the name is a link whose target is gone.
+ */
+function listedId(path: string): string | null | undefined {
+  return fileIdAt(path) ?? (isLink(path) ? undefined : null);
+}
+
+/** Whether the name `path` is a link (a junction, on Windows), not the file it leads to; false when it is gone. */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /** Reads each file `names` holds that `parts` has not met, and says whether one of them is still unmet or a name was gone. */
