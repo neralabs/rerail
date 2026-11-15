@@ -67,9 +67,15 @@ export interface SessionGaps {
   ignoredEdits: number;
   /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
-  /** What the session's walks could not check, each text once (`source-discovery-gap`). */
+  /** The places the session's walks could not check, each once (`source-discovery-gap`). */
   discoveryGaps: number;
 }
+
+/** A `source-discovery-gap` event's payload, as `recordDiscoveryGap` writes it. */
+const discoveryGapPayloadSchema = z.object({ boundary: z.string(), path: z.string().optional(), reason: z.string() });
+
+/** A place a session's walks could not check (`source-discovery-gap`), and when it was first met. */
+export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { readonly observedAt: number };
 
 const NO_GAPS: SessionGaps = {
   droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0,
@@ -310,16 +316,17 @@ export class SqliteSessionStore {
   }
 
   /**
-   * Marks what a boundary's walks could not check, so shell writes there went unchecked, with the gap's text whole. A
-   * gap is recorded once per session and text, at the first boundary that meets it: its id is the text's digest, so an
-   * unreadable folder that every later turn end meets again, a daemon restart and a reopened session add no copy of it.
+   * Marks a place a boundary's walks could not check, so shell writes there went unchecked: its path and why. A place is
+   * recorded once per session and key (its path and its reason's kind, `DiscoveryGap.key`), at the first boundary that
+   * meets it: its id is the key's digest, so a place every later turn end meets again, in whatever order, a daemon
+   * restart and a reopened session add no copy of it.
    */
   recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
     this.append({
       sessionId: session.sessionId,
-      eventId: `source-discovery-gap:${createHash("sha256").update(gap.message).digest("hex")}`,
+      eventId: `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
       kind: "source-discovery-gap",
-      payload: { boundary: gap.boundary, message: gap.message },
+      payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
     }, session, attribution);
   }
 
@@ -534,6 +541,23 @@ export class SqliteSessionReader {
         AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
     return row ?? { ...NO_GAPS };
+  }
+
+  /** The first `limit` places the session's walks could not check, in the order the session met them. Indexed by session and kind. */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    const database = this.#database.open();
+    if (database === undefined) return [];
+    return database
+      .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
+      .from(events)
+      .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap")))
+      .orderBy(asc(events.sequence))
+      .limit(limit)
+      .all()
+      .flatMap(({ observedAt, payloadJson }) => {
+        const payload = discoveryGapPayloadSchema.safeParse(JSON.parse(payloadJson));
+        return payload.success ? [{ ...payload.data, observedAt }] : [];
+      });
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

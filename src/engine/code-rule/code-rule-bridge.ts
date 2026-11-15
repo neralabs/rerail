@@ -317,11 +317,15 @@ function observedText(walk: SourceWalk, stamped: StampedSource, previous: Observ
 function firstSightIsBaseline(walk: SourceWalk, path: string, previous: ObservedSource | undefined): boolean {
   return previous === undefined && underBaselineRoot(walk.baselineRoots, path);
 }
-/** An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's. */
+/**
+ * An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's.
+ * A file seen before in a folder the walk could not list keeps the folder's error (`failFolder`), and the folder's gap
+ * stands for it: the walk's gaps are the same whether or not a walk saw the folder's files before.
+ */
 function recordReadError(scan: SourceScan, source: Source): void {
-  if (source.readError === undefined) return;
+  if (source.readError === undefined || underBaselineRoot(scan.failedRoots, source.path)) return;
   if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
-  else scan.errors.push(`${source.path}: ${source.readError}`);
+  else scan.errors.push({ path: source.path, reason: source.readError });
 }
 function unreadOversize(source: Source): source is Source & { readonly stamp: string } {
   return source.readError === OVERSIZE_ERROR && source.stamp !== undefined && sourceLanguageOfPath(source.path) === undefined;
@@ -329,7 +333,7 @@ function unreadOversize(source: Source): source is Source & { readonly stamp: st
 /** A folder the walk could not read: its first sight next time is a baseline, and each source seen under it keeps the error. */
 function failFolder(walk: SourceWalk, path: string, readError: string): void {
   const { previousSources, scan } = walk;
-  scan.errors.push(`${path || "."}: ${readError}`);
+  scan.errors.push({ path: path || ".", reason: readError });
   scan.failedRoots.add(path);
   const failed = new Set([path]);
   for (const [sourcePath, source] of previousSources)
@@ -412,15 +416,15 @@ interface WorktreeDiscovery {
   requested: boolean;
   /** When the next walk may start. */
   nextWalkAt: number;
-  /** What the last walk could not check, reported at each boundary as the session walk's `error` is. */
-  error: string | undefined;
+  /** What the last walk could not check, reported at each boundary as the session walk's `gaps` are. */
+  gaps: readonly WalkGap[];
   /** The unlisted files the last walk found too large to read, as `SourceDiscovery.unread`. */
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
 }
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
-    roots: new Set(), fresh: new Set(), baselineRoots: new Set(), walk: undefined, requested: false, nextWalkAt: 0, error: undefined, unread: new Map(),
+    roots: new Set(), fresh: new Set(), baselineRoots: new Set(), walk: undefined, requested: false, nextWalkAt: 0, gaps: [], unread: new Map(),
   };
 }
 
@@ -437,7 +441,8 @@ interface SourceDiscovery {
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
   readonly worktrees: WorktreeDiscovery;
-  error: string | undefined;
+  /** What the session folder's last walk could not check, or why that walk failed whole. */
+  gaps: readonly WalkGap[];
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
   pendingReported: boolean;
   /**
@@ -488,10 +493,19 @@ export async function filesystemClock(): Promise<number> {
   }
 }
 
+/**
+ * One entry a walk could not check, so shell writes there went unchecked: its path as the session folder names it (`.` for
+ * the folder itself), absent when the walk failed whole, and why.
+ */
+interface WalkGap {
+  readonly path?: string;
+  readonly reason: string;
+}
 interface SourceScan {
   readonly sources: Map<string, Source>;
   readonly failedRoots: Set<string>;
-  readonly errors: string[];
+  /** What the walk could not check, in the order it met them. */
+  readonly errors: WalkGap[];
   /** Unlisted files too large to read, by path (`SourceDiscovery.unread`); left out of `errors`. */
   readonly unread: Map<string, { readonly stamp: string; readonly readError: string }>;
   /**
@@ -608,29 +622,81 @@ function worktreeWalkAbandoned(discovery: SourceDiscovery): boolean {
   return discovery.worktrees.walk !== undefined && discovery.worktrees.roots.size > 0;
 }
 /** Each of `unread` this session has not yet reported at its stamp, now marked reported. */
-function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread"]): string[] {
-  const errors: string[] = [];
+function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread"]): WalkGap[] {
+  const gaps: WalkGap[] = [];
   for (const [path, { stamp, readError }] of unread) {
     if (discovery.reported.get(path) === stamp) continue;
     discovery.reported.set(path, stamp);
-    errors.push(`${path}: ${readError}`);
+    gaps.push({ path, reason: readError });
   }
-  return errors;
+  return gaps;
 }
 /**
  * What the last walks of the session folder and of the other worktrees could not check, with each unlisted file too large
- * to read that this session has not yet reported at its stamp; else whether the session folder's walk is still to finish.
+ * to read that this session has not yet reported at its stamp, in path order: walks list their gaps in the order their
+ * reads finish, which differs from walk to walk.
  */
-function discoveryGap(discovery: SourceDiscovery, errors: string[] = []): string | undefined {
-  // `errors` takes each gap the text joins, each walk's errors one gap: the caller that records them gets each alone.
-  errors.push(...[discovery.error, discovery.worktrees.error].filter(error => error !== undefined));
-  for (const unread of [discovery.unread, discovery.worktrees.unread]) errors.push(...newlyUnread(discovery, unread));
-  if (errors.length > 0) return errors.join("; ");
+function walkGaps(discovery: SourceDiscovery): WalkGap[] {
+  const gaps = [...discovery.gaps, ...discovery.worktrees.gaps];
+  for (const unread of [discovery.unread, discovery.worktrees.unread]) gaps.push(...newlyUnread(discovery, unread));
+  return gaps.sort(compareWalkGaps);
+}
+function compareWalkGaps(left: WalkGap, right: WalkGap): number {
+  return compareDeterministicStrings(left.path ?? "", right.path ?? "") || compareDeterministicStrings(left.reason, right.reason);
+}
+/** A checkpoint's `source-incomplete` text: `gaps` (`walkGaps`) joined, else whether the session folder's walk is still to finish. */
+function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): string | undefined {
+  if (gaps.length > 0) return gaps.map(gap => (gap.path === undefined ? gap.reason : `${gap.path}: ${gap.reason}`)).join("; ");
   if (!discovery.baselineComplete) return "Initial source discovery is still pending";
   return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
 }
+/**
+ * The most gaps one bridge tells `onDiscoveryGap` of. Past it, one more gap says the walks could not check more than that
+ * (`UNTOLD_GAPS`): a tree of unreadable files records a bounded number of rows, at the boundary that first meets them.
+ */
+export const MAX_TOLD_GAPS = 1_000;
+const UNTOLD_GAPS = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
+/**
+ * `gap` as the bridge tells it, keyed by its path and its reason's kind: the error code that opens a filesystem error's
+ * text (`EACCES: permission denied, opendir '…'`), else the reason whole, as for a file too large to read.
+ */
+function toldGap(boundary: DiscoveryGap["boundary"], gap: WalkGap): DiscoveryGap {
+  const kind = /^([A-Z][A-Z0-9_]*): /u.exec(gap.reason)?.[1] ?? gap.reason;
+  return { boundary, ...gap, key: JSON.stringify([gap.path ?? "", kind]) };
+}
+function untoldGaps(boundary: DiscoveryGap["boundary"]): DiscoveryGap {
+  return { boundary, reason: UNTOLD_GAPS, key: JSON.stringify(["", UNTOLD_GAPS]) };
+}
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+/**
+ * A path removed while the walk examined it: ENOENT from its lstat, opendir, open or read, or the real path of one being
+ * removed, which on Windows can fail with EBADF.
+ */
+function vanished(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const { code, syscall } = error as NodeJS.ErrnoException;
+  return code === "ENOENT" || (code === "EBADF" && syscall === "realpath");
+}
+/**
+ * A path a folder's listing named that was gone when the walk examined it: nothing is left there to check, so it is no
+ * gap, as a read finds a file gone (`#failedSourceRead`). A path the walk starts at stays a gap when it cannot be read.
+ */
+function goneWhenExamined(walk: SourceWalk, absolute: string, error: unknown): boolean {
+  return vanished(error) && !walk.roots.has(absolute);
+}
+/**
+ * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
+ * left to its own examination, which finds it gone (`goneWhenExamined`): it never fails the folder that listed it.
+ */
+function ignoredFolder(walk: SourceWalk, child: string): boolean {
+  try {
+    return walk.view.ignoresPath?.(sessionPath(walk.discovery.root, child), true) === true;
+  } catch (error) {
+    if (vanished(error)) return false;
+    throw error;
+  }
 }
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
@@ -643,12 +709,14 @@ function withinFolder(folder: string, path: string): boolean {
 function withoutUncaptured({ previousReadError: _uncaptured, ...rest }: CodeRuleEdit): CodeRuleEdit {
   return rest;
 }
-/** Recording what a boundary found is best-effort: a record that throws is logged, and the boundary goes on. */
-function reportBestEffort(report: () => void): void {
+/** Recording what a boundary found is best-effort: a record that throws is logged, and the boundary goes on. Whether it recorded. */
+function reportBestEffort(report: () => void): boolean {
   try {
     report();
+    return true;
   } catch (error) {
     process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
+    return false;
   }
 }
 /**
@@ -803,13 +871,21 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
 /**
- * One thing the walks a checkpoint answered after could not check, so shell writes there went unchecked: what the last
- * walk of the session folder or of the other worktrees could not read, or an unlisted file too large to read. `message`
- * is its text whole, as the checkpoint's `source-incomplete` failure joins it with the others.
+ * One place the walks a checkpoint answered after could not check, so shell writes there went unchecked: a folder or file
+ * the last walk of the session folder or of the other worktrees could not read, or an unlisted file too large to read.
+ * The checkpoint's `source-incomplete` failure joins each as `path: reason`.
  */
 export interface DiscoveryGap {
   readonly boundary: Extract<CodeRuleCheckpoint, "turn" | "final">;
-  readonly message: string;
+  /** The place as the session folder names it (`src/locked`, `.` for the folder, `../other/src` in another worktree); absent when the walk failed whole. */
+  readonly path?: string;
+  /** Why, as the walk was told: `EACCES: permission denied, opendir '…'`, `Source exceeds 1000000 byte policy limit`. */
+  readonly reason: string;
+  /**
+   * What tells this gap from another, whatever walk met it and in whatever order: its path and its reason's kind (the
+   * error code, else the reason). The same key is the same gap, though its reason's text may differ (`opendir`, `open`).
+   */
+  readonly key: string;
 }
 
 /**
@@ -849,6 +925,8 @@ export class CodeRuleBridge {
   readonly #discoveryWaitMs: number;
   readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
   readonly #onDiscoveryGap: ((gap: DiscoveryGap) => void) | undefined;
+  /** The key of each gap told to `onDiscoveryGap` (`#untold`), since the workspace opened. */
+  readonly #toldGaps = new Set<string>();
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
   /**
@@ -874,8 +952,8 @@ export class CodeRuleBridge {
       /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
       /**
-       * Told of each gap of the walks (`DiscoveryGap`) a checkpoint answers with, each time it answers with it; a walk
-       * still to finish is `onDiscoveryPending`'s.
+       * Told of each gap of the walks (`DiscoveryGap`) a checkpoint answers with, once per key while the bridge lives, at
+       * most `MAX_TOLD_GAPS` of them; a walk still to finish is `onDiscoveryPending`'s.
        */
       onDiscoveryGap?(gap: DiscoveryGap): void;
       /** Told of each file a finished tool edit wrote that no rule checked because Git ignores it. */
@@ -928,9 +1006,10 @@ export class CodeRuleBridge {
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
+      this.#toldGaps.clear();
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
+        versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), gaps: [], unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
@@ -1404,9 +1483,18 @@ export class CodeRuleBridge {
     reportBestEffort(() => this.#onDiscoveryPending?.(boundary));
   }
 
-  /** Recording what a checkpoint's walks could not check is best-effort too: it never fails the checkpoint. */
-  #reportDiscoveryGap(gap: DiscoveryGap): void {
-    reportBestEffort(() => this.#onDiscoveryGap?.(gap));
+  /**
+   * Tells `onDiscoveryGap` each of `gaps` not yet told (`#untold`), best-effort too: it never fails the checkpoint. A gap
+   * is told once its record returned; when one throws, it and the rest are told at the next checkpoint, so a database
+   * that refuses writes costs one failed write and one log line a boundary.
+   */
+  #tellGaps(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): void {
+    for (const gap of gaps) {
+      const told = this.#untold(toldGap(boundary, gap));
+      if (told === undefined) continue;
+      if (!reportBestEffort(() => this.#onDiscoveryGap?.(told))) return;
+      this.#toldGaps.add(told.key);
+    }
   }
 
   /**
@@ -1515,7 +1603,7 @@ export class CodeRuleBridge {
   }
 
   #recordDiscoveryError(discovery: SourceDiscovery, error: unknown): void {
-    if (this.#discovery === discovery && !discovery.cancelled) discovery.error = errorMessage(error);
+    if (this.#discovery === discovery && !discovery.cancelled) discovery.gaps = [{ reason: errorMessage(error) }];
   }
 
   /**
@@ -1567,7 +1655,7 @@ export class CodeRuleBridge {
     try {
       await this.#walkSources(discovery, "worktrees", "edit");
     } catch (error) {
-      if (!this.#abandoned(discovery)) discovery.worktrees.error = errorMessage(error);
+      if (!this.#abandoned(discovery)) discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
     }
     discovery.worktrees.nextWalkAt = Date.now() + Math.max(this.#worktreeWalkGapMs, Date.now() - startedAt);
   }
@@ -1676,7 +1764,7 @@ export class CodeRuleBridge {
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     discovery.baselineComplete = true;
     discovery.baselineRoots = scan.failedRoots;
-    discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
+    discovery.gaps = scan.errors;
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
@@ -1687,7 +1775,7 @@ export class CodeRuleBridge {
     const worktrees = discovery.worktrees;
     for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
-    worktrees.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
+    worktrees.gaps = scan.errors;
     worktrees.unread = scan.unread;
   }
 
@@ -2018,7 +2106,8 @@ export class CodeRuleBridge {
       info = await lstat(absolute);
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
+      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error)) return;
+      this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
     }
   }
 
@@ -2040,9 +2129,18 @@ export class CodeRuleBridge {
     }
   }
 
-  /** Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. */
+  /**
+   * Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. One removed as the
+   * walk asks (`vanished`) marks no checkout, and never fails the folder that listed it.
+   */
   #noteCheckout(walk: SourceWalk, gitEntry: string): void {
-    const checkout = this.#owningCheckout(walk.discovery.root, sessionPath(walk.discovery.root, gitEntry));
+    let checkout: string | undefined;
+    try {
+      checkout = this.#owningCheckout(walk.discovery.root, sessionPath(walk.discovery.root, gitEntry));
+    } catch (error) {
+      if (vanished(error)) return;
+      throw error;
+    }
     if (checkout !== undefined) walk.scan.checkouts.add(checkout);
   }
 
@@ -2051,7 +2149,7 @@ export class CodeRuleBridge {
     if (neverWalked(entry)) return false;
     if (!entry.isDirectory()) return entry.isFile();
     const child = join(absolute, entry.name);
-    return !walk.roots.has(child) && walk.view.ignoresPath?.(sessionPath(walk.discovery.root, child), true) !== true;
+    return !walk.roots.has(child) && !ignoredFolder(walk, child);
   }
 
   /**
@@ -2349,19 +2447,30 @@ export class CodeRuleBridge {
 
   /**
    * The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none.
-   * Each gap the walks found is told to `onDiscoveryGap` too, alone; a walk still to finish is none.
+   * Each gap the walks found is told to `onDiscoveryGap` too, alone, the first time it is met (`#untold`); a walk still
+   * to finish is none.
    */
   #discoveryResponse(discovery: SourceDiscovery, boundary: DiscoveryGap["boundary"]): CodeRuleResponse {
-    const gaps: string[] = [];
+    const gaps = walkGaps(discovery);
     const message = discoveryGap(discovery, gaps);
     if (message === undefined) return this.#lastResponse;
-    for (const gap of gaps) this.#reportDiscoveryGap({ boundary, message: gap });
+    this.#tellGaps(boundary, gaps);
     return {
       ...this.#lastResponse,
       failures: [...this.#lastResponse.failures, {
         clauseId: "source-discovery", code: "source-incomplete", message, stage: "scan",
       }],
     };
+  }
+
+  /**
+   * `gap` when no gap of its key was told since the workspace opened; past `MAX_TOLD_GAPS` gaps, the one that says the
+   * rest go untold (`untoldGaps`), until it is told. A gap that heals and comes back is not told again.
+   */
+  #untold(gap: DiscoveryGap): DiscoveryGap | undefined {
+    if (this.#toldGaps.has(gap.key)) return undefined;
+    const told = this.#toldGaps.size < MAX_TOLD_GAPS ? gap : untoldGaps(gap.boundary);
+    return this.#toldGaps.has(told.key) ? undefined : told;
   }
 
   #requireSession(): string {

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
@@ -457,51 +458,174 @@ describe("source-scoped steers", () => {
     }
   });
 
-  it("records on the session's history, once, what its turn ends' walks could not read, and nothing for a turn end that read it all", async () => {
-    const root = await realpath(await temporaryDirectory());
-    const locked = join(root, "locked");
-    await mkdir(locked);
-    await writeFile(join(locked, "a.py"), "x = 1\n");
-    // Rerail's own files outside the session's folder, as its home is: the walk reads only the folder's.
-    const store = await realpath(await temporaryDirectory());
-    const databasePath = join(store, "rerail.sqlite");
-    const denial = `EACCES: permission denied, opendir '${locked}'`;
-    let denied = false;
-    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
-    vi.mocked(opendir).mockImplementation(async (...args) => {
-      if (denied && args[0] === locked) throw Object.assign(new Error(denial), { code: "EACCES" });
-      return actual.opendir(...args);
-    });
-    const runtime = new RerailRuntime({
-      storageRoot: join(store, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
-    });
-    const reader = new SqliteSessionReader(databasePath);
-    const session = { host: "claude-code" as const, sessionId: "unread", cwd: root };
-    const gapRecords = () => reader.events(session.sessionId).filter(event => event.kind === "source-discovery-gap").map(event => event.payload);
-    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
-    try {
-      await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await runtime.codeRulesOpened(session.sessionId);
-      expect(await turnEnd("turn-1")).toEqual([]);
-      expect(gapRecords()).toEqual([]);
-      denied = true;
-      // The turn end's answer is what it was before: the gap goes on the record, not to the agent.
-      expect(await turnEnd("turn-2")).toEqual([]);
-      expect(await turnEnd("turn-3")).toEqual([]);
-      // The walk's own text: the folder, and the file it saw there before, which it can no longer read.
-      expect(gapRecords()).toEqual([{ boundary: "turn", message: `locked: ${denial}; locked/a.py: ${denial}` }]);
-      expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 1, uncheckedBoundaries: 0 });
-    } finally {
-      await runtime.dispose();
-      reader.close();
-      vi.mocked(opendir).mockRestore();
+  describe("what a session's turn ends could not check", () => {
+    const session = { host: "claude-code" as const, sessionId: "unread", cwd: "" };
+    /** A runtime over the session's folder `root` whose code rules read every file and find nothing, its home in `store`. */
+    function gapRuntime(root: string, store: string): RerailRuntime {
+      return new RerailRuntime({
+        storageRoot: join(store, "sessions"), databasePath: join(store, "rerail.sqlite"), workspaceRoot: root, autostart: false, embedder: testEmbedder,
+        createAuditor: () => ({
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+          close: async () => undefined,
+        }),
+      });
     }
+    async function opened(runtime: RerailRuntime, root: string, eventId = "start"): Promise<void> {
+      await runtime.ingest({ kind: "session-start", eventId, session: { ...session, cwd: root } });
+      await runtime.codeRulesOpened(session.sessionId);
+    }
+    const turnEnd = (runtime: RerailRuntime, turn: number) => runtime.ingest({ kind: "turn-end", eventId: `turn-${turn}`, sessionId: session.sessionId, text: "" });
+    /** Each `source-discovery-gap` row of the session, in the order recorded: its payload and the bytes it takes. */
+    function gapRows(store: string): Array<{ payload: unknown; bytes: number }> {
+      const database = new Database(join(store, "rerail.sqlite"), { readonly: true });
+      try {
+        return database.prepare<[string], { payloadJson: string; bytes: number }>(
+          "SELECT payload_json AS payloadJson, length(payload_json) + length(payload_v8) AS bytes FROM events WHERE session_id = ? AND kind = 'source-discovery-gap' ORDER BY sequence",
+        ).all(session.sessionId).map(row => ({ payload: JSON.parse(row.payloadJson) as unknown, bytes: row.bytes }));
+      } finally {
+        database.close();
+      }
+    }
+    const DESCRIPTIONS: Readonly<Record<string, string>> = { EACCES: "permission denied", EMFILE: "too many open files" };
+    const denial = (folder: string, code = "EACCES") => `${code}: ${DESCRIPTIONS[code]}, opendir '${folder}'`;
+    /**
+     * Makes every walk fail to open each folder of `denied` (by its code there) as a folder the user may not read does.
+     * With `stagger`, walk k ends the denial of the folder at index i of `order` ((i + k) % 10) ms late, so no two walks in
+     * a row meet them in one order.
+     */
+    async function denyFolders(denied: ReadonlyMap<string, string>, order: readonly string[] = [], stagger = false): Promise<void> {
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      const calls = new Map<string, number>();
+      vi.mocked(opendir).mockImplementation(async (...args) => {
+        const folder = String(args[0]);
+        const code = denied.get(folder);
+        if (code === undefined) return actual.opendir(...args);
+        const call = (calls.get(folder) ?? 0) + 1;
+        calls.set(folder, call);
+        if (stagger) await new Promise(resolve => setTimeout(resolve, (order.indexOf(folder) + call) % 10));
+        throw Object.assign(new Error(denial(folder, code)), { code });
+      });
+    }
+    afterEach(() => {
+      vi.mocked(opendir).mockRestore();
+    });
+
+    it("records each of ten places that stay unreadable once, over 200 turn ends whose walks meet them in other orders", async () => {
+      const root = await realpath(await temporaryDirectory());
+      // Rerail's own files outside the session's folder, as its home is: the walk reads only the folder's.
+      const store = await realpath(await temporaryDirectory());
+      const folders = Array.from({ length: 10 }, (_, index) => join(root, `pkg${index}`));
+      for (const folder of folders) {
+        await mkdir(folder);
+        await writeFile(join(folder, "a.py"), "a = 1\n");
+      }
+      const denied = new Map<string, string>();
+      await denyFolders(denied, folders, true);
+      const runtime = gapRuntime(root, store);
+      const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
+      try {
+        await opened(runtime, root);
+        expect(await turnEnd(runtime, 0)).toEqual([]);
+        for (const folder of folders) denied.set(folder, "EACCES");
+        // The turn end's answer is what it was before: each place goes on the record, not to the agent.
+        for (let turn = 1; turn <= 200; turn += 1) expect(await turnEnd(runtime, turn)).toEqual([]);
+        expect(gapRows(store).map(row => row.payload)).toEqual(folders.map((folder, index) => ({ boundary: "turn", path: `pkg${index}`, reason: denial(folder) })));
+        expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 10, uncheckedBoundaries: 0 });
+      } finally {
+        await runtime.dispose();
+        reader.close();
+      }
+    }, 120_000);
+
+    it("records no second copy of a place whose files it saw, after the session reopens and after a restart", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "x = 1\n");
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const first = gapRuntime(root, store);
+      try {
+        await opened(first, root);
+        await turnEnd(first, 1);
+        denied.set(locked, "EACCES");
+        await turnEnd(first, 2);
+        expect(gapRows(store)).toHaveLength(1);
+        await first.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+        await opened(first, root, "start-again");
+        await turnEnd(first, 3);
+        expect(gapRows(store)).toHaveLength(1);
+      } finally {
+        await first.dispose();
+      }
+      // A restarted runtime's walk never saw the folder's files: the place is the same.
+      const second = gapRuntime(root, store);
+      try {
+        await opened(second, root, "start-after-restart");
+        await turnEnd(second, 4);
+        expect(gapRows(store)).toHaveLength(1);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+      } finally {
+        await second.dispose();
+      }
+    }, 60_000);
+
+    it("records a place that breaks at each of 200 turn ends as one short row of its own", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      try {
+        await opened(runtime, root);
+        for (let turn = 1; turn <= 200; turn += 1) {
+          const folder = join(root, `f${String(turn).padStart(3, "0")}`);
+          await mkdir(folder);
+          denied.set(folder, "EACCES");
+          await turnEnd(runtime, turn);
+        }
+        const rows = gapRows(store);
+        expect(rows).toHaveLength(200);
+        expect(new Set(rows.map(row => JSON.stringify(row.payload))).size).toBe(200);
+        // A row holds its own place, never one before it: its size does not grow with the places before it.
+        const limit = 2 * (200 + root.length);
+        expect(rows.filter(row => row.bytes > limit)).toEqual([]);
+        expect(rows.reduce((sum, row) => sum + row.bytes, 0)).toBeLessThan(200 * limit);
+      } finally {
+        await runtime.dispose();
+      }
+    }, 120_000);
+
+    it("records a place that breaks, heals and breaks again in one session once, and once more when it breaks for another reason", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      try {
+        await opened(runtime, root);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 1);
+        denied.delete(locked);
+        await turnEnd(runtime, 2);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 3);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+        denied.set(locked, "EMFILE");
+        await turnEnd(runtime, 4);
+        expect(gapRows(store).map(row => row.payload)).toEqual([
+          { boundary: "turn", path: "locked", reason: denial(locked) },
+          { boundary: "turn", path: "locked", reason: denial(locked, "EMFILE") },
+        ]);
+      } finally {
+        await runtime.dispose();
+      }
+    }, 60_000);
   });
 
   it("passes how long the session's code-rule evaluator took to open to the timing log", async () => {

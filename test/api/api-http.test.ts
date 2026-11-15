@@ -242,11 +242,12 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
-    // A walk's gap is recorded once per text, however many turn ends meet it.
-    const locked = { boundary: "turn" as const, message: "src/locked: EACCES: permission denied, opendir '/repo/src/locked'" };
+    // A place a walk could not check is recorded once per key, however many turn ends meet it, whatever its text says then.
+    const locked = { boundary: "turn" as const, path: "src/locked", reason: "EACCES: permission denied, opendir '/repo/src/locked'", key: JSON.stringify(["src/locked", "EACCES"]) };
     sessionStore.recordDiscoveryGap(SESSION, locked);
-    sessionStore.recordDiscoveryGap(SESSION, locked);
-    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", message: "big.bin: Source exceeds 1000000 byte policy limit" });
+    sessionStore.recordDiscoveryGap(SESSION, { ...locked, reason: "EACCES: permission denied, open '/repo/src/locked'" });
+    const large = { path: "big.bin", reason: "Source exceeds 1000000 byte policy limit" };
+    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", ...large, key: JSON.stringify(["big.bin", large.reason]) });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
