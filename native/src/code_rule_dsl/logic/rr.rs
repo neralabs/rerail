@@ -364,7 +364,8 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
             && let Ok(bytes) = store.get_source(id)
             && let Ok(m) = module_image::decode(&bytes)
         {
-            let _ = store.pin_held_sources(&[id]);
+            // The pin is a write: behind the run, on the store's writer (decision 0104).
+            store.write_back("a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
             crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
             modules.push(m);
             continue;
@@ -375,12 +376,24 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
             Error::Syntax(m) => Error::Syntax(format!("{}: {m}", paths[members[0]].display())),
             e => e,
         })?;
+        // Written behind the run, on the store's writer (decision 0104: no write outside the waves). A cache's write:
+        // where the writer's queue is full it is dropped, and the next run lowers the module again.
         if let Some(store) = &store
             && let Ok(bytes) = module_image::encode(&m)
-            && let Ok(id) = store.put_source(&bytes, &[key])
         {
-            let _ = store.pin_held_sources(&[id]);
-            crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
+            let queued = store.write_back_unless_full(
+                crate::content_store::write_back::Syms::None,
+                "a module's image",
+                bytes.len(),
+                Vec::new(),
+                Box::new(move |s| {
+                    let id = s.put_source(&bytes, &[key])?;
+                    s.pin_held_sources(&[id])
+                }),
+            );
+            if queued {
+                crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
+            }
         }
         modules.push(m);
     }
