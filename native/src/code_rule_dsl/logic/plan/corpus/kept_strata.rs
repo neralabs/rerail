@@ -283,13 +283,14 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
     out
 }
 
-/// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
+/// What the store keeps of program `prog` (of `key` and `binds`, `retain::keys`) at `root`, as a `Retained`; `inputs` the run's,
 /// whose columns an input's kept rows are read under; `sccs` its strata, computed once by the caller.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
+    binds: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
     domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
@@ -310,12 +311,13 @@ pub(in crate::code_rule_dsl) fn load(
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
-    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
+    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too: the key of
+    // the part's program alone (`binds`, `retain::keys`), which an edit of a file-local rule leaves.
     for (rel, _) in inputs {
         let leaf = leaves.identity(rel).ok_or_else(|| super::Error::Plan("the program has no image: its leaves are read from its version".into()))?;
         let mut h = Sha256::new();
         h.update(b"rerail.kept-input/v1\0");
-        h.update(key);
+        h.update(binds);
         h.update(leaf);
         frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }

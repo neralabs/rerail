@@ -357,7 +357,7 @@ impl RoundProgram {
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
             Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests(&atoms, &self.program, &domains))?.frames().cloned(),
+            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.program, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests(&atoms, &self.program, &domains))?.frames().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
