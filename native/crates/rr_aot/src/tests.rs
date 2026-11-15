@@ -108,8 +108,9 @@ fn a_bitmask_is_pairwise_adds() {
 
 /// A short token's function (`native_cpu_block::RuleMode::Short`): a rule's function whose
 /// calls are all its whole function's, of its own signature (a number's run past 16 bytes, a
-/// comment past its first closer word), so its way for a short token calls nothing, as a lexer
-/// reads a few digits or a line comment. A number's and a comment's at least.
+/// comment or a string past its first 64 bytes, a string whose bytes its counts need), so its
+/// way for a short token calls nothing, as a lexer reads a few digits, a line comment or a
+/// plain string. A number's, a comment's and a string's at least.
 #[test]
 fn a_short_tokens_function_calls_only_its_whole() {
     use rerail_compiler::native_cpu_stream;
@@ -121,7 +122,7 @@ fn a_short_tokens_function_calls_only_its_whole() {
         let made = calls(f);
         made.first().is_some_and(|&one| made.iter().all(|&x| x == one) && ir.iter().any(|(id, g)| *id == one && g.signature == f.signature))
     });
-    assert!(short.count() >= 2, "a number's and a comment's short functions");
+    assert!(short.count() >= 3, "a number's, a comment's and a string's short functions");
 }
 
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU

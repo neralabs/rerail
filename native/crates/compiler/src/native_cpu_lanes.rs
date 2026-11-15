@@ -29,7 +29,7 @@ use cranelift_frontend::FunctionBuilder;
 const MAX_LAG: u8 = 16;
 
 /// Which instructions are computed on the byte vectors, and what is known of them.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Plan {
     /// Computed on the byte vectors.
     pub lanes: Vec<bool>,
@@ -56,7 +56,7 @@ pub struct Plan {
 /// bits came in zero, and values only they read. The full body computes them behind one branch,
 /// so a block with nothing for them (a block without numbers, for a number check) skips them,
 /// their class masks and their `prev`s included.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Region {
     pub gate: usize,
     /// A test before the gate's: the gate's other operand, when the gate's byte class is made a

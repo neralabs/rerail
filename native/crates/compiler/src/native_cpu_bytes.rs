@@ -25,6 +25,7 @@ use cranelift_codegen::ir::{InstBuilder, MemFlags, Value, condcodes::IntCC, type
 use cranelift_frontend::FunctionBuilder;
 
 /// The outputs of a program made from the bytes.
+#[derive(Clone)]
 pub struct Bytewise<'a> {
     /// The program before its CPU form (`BlockNative::cpu_form` makes some outputs zero).
     pub native: &'a BlockNative,
@@ -34,6 +35,10 @@ pub struct Bytewise<'a> {
     /// The functions of `escaped(a)`'s carry in past the byte before (`carry_fn`): each
     /// `(a, id, signature)`. Where `a` has none, its loop is inline (in that function itself).
     pub carries: Vec<(usize, cranelift_module::FuncId, cranelift_codegen::ir::Signature)>,
+    /// In a short function (`native_cpu_block::RuleMode::Short`): its whole function, whose
+    /// call, with the function's own parameters, a rare carry's way returns instead of calling
+    /// the carry's function, so the short one calls nothing on its way.
+    pub bail: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature)>,
 }
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
@@ -70,7 +75,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new() }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
@@ -383,6 +388,19 @@ impl<'a> Bytewise<'a> {
         f.ins().brif(first, slow, &[], join, &[zero.into()]);
         f.switch_to_block(slow);
         f.set_cold_block(slow);
+        // A short function's (`bail`): its whole function's call, returned.
+        if let Some((id, sig)) = &self.bail {
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+            let entry = f.func.layout.entry_block().expect("an entry");
+            let args = f.func.dfg.block_params(entry).to_vec();
+            let call = f.ins().call(callee, &args);
+            let got = f.inst_results(call).to_vec();
+            f.ins().return_(&got);
+            f.switch_to_block(join);
+            return f.block_params(join)[0];
+        }
         let parity = match self.carries.iter().find(|c| c.0 == a) {
             Some((_, id, sig)) => {
                 let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));

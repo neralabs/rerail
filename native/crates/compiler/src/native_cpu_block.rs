@@ -2913,6 +2913,65 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // The end and the count tests in one pass (`read_fn`), as a lexer's string
                     // reader: its last and its hits on to the other tests (`tested`'s rest).
                     let read = rd.calls.iter().find(|x| x.0 == READ_CALL | (k as u16) << 3 | j as u16);
+                    // A short reader's (`RuleMode::Short`): the read's first window inline, as
+                    // `read_fn`'s, and a token whose closer is past it, or whose bytes the
+                    // counts need, its whole function's call, returned. As a lexer reads a short
+                    // string with no `\` straight through.
+                    let whole = match mode {
+                        RuleMode::Short(_) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16),
+                        _ => None,
+                    };
+                    let counts: Vec<crate::records::TokenCheck> = tests.iter().map(|(t, _)| *t).filter(|t| t.count && !t.always()).collect();
+                    if let (Some(_), Some(rest), Some((_, id, sig)), Some((b, file))) = (read, rest, whole, rd.bytes) {
+                        let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+                        let signature = f.import_signature(sig.clone());
+                        let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+                        let long = f.create_block();
+                        f.set_cold_block(long);
+                        let runs = b.carried_runs(&[a.closer]);
+                        let zero = f.ins().iconst(types::I64, 0);
+                        let p0 = f.ins().iadd_imm(s, 1);
+                        let cins: Vec<(usize, Value)> = runs.iter().map(|&r| (r, if b.apart(a.opener, r) { zero } else { b.carry_at(f, &file, r, p0, heads) })).collect();
+                        let (ws, _) = b.words_carried(f, &file, &[a.closer], p0, &cins, heads);
+                        let found = f.create_block();
+                        f.ins().brif(ws[0], found, &[], long, &[]);
+                        f.switch_to_block(found);
+                        let tz = f.ins().ctz(ws[0]);
+                        let close = f.ins().iadd(p0, tz);
+                        let l = f.ins().iadd_imm(close, i64::from(a.off));
+                        let (refuse0, hits0) = always_hits(counts.iter().chain(tests.iter().map(|(t, _)| t).filter(|t| t.always())));
+                        match counts_need_by_offset(b.native, &counts) {
+                            Some(ns) => {
+                                let (vec, quiet) = (f.create_block(), f.create_block());
+                                let n1 = f.ins().isub(l, s);
+                                let span = f.ins().iadd_imm(n1, 1);
+                                let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
+                                f.ins().brif(fits, vec, &[], long, &[]);
+                                f.switch_to_block(vec);
+                                let mut some = zero;
+                                for n in &ns {
+                                    let x = needs_wide(f, n, c.bytes, s, span);
+                                    some = f.ins().bor(some, x);
+                                }
+                                f.ins().brif(some, long, &[], quiet, &[]);
+                                f.switch_to_block(quiet);
+                                let (r0, h0) = (f.ins().iconst(types::I64, refuse0), f.ins().iconst(types::I64, hits0));
+                                f.ins().jump(rest, &[l.into(), tag.into(), r0.into(), h0.into()]);
+                            }
+                            None => {
+                                f.ins().jump(long, &[]);
+                            }
+                        }
+                        // No closer in the file: the whole function's, as any other long read.
+                        f.switch_to_block(none);
+                        f.ins().jump(long, &[]);
+                        f.switch_to_block(long);
+                        let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                        let got = f.inst_results(call).to_vec();
+                        f.ins().return_(&got);
+                        f.switch_to_block(not);
+                        continue;
+                    }
                     if let (Some((_, id, sig)), Some(rest)) = (read, rest) {
                         let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
                         let signature = f.import_signature(sig.clone());
@@ -3367,6 +3426,15 @@ fn needs_wide(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, b
     f.ins().bor(w0, w1)
 }
 
+/// The refusal and the hits of the tests that hold at every token (`TokenCheck::always`).
+fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) -> (i64, i64) {
+    tests.filter(|t| t.always()).fold((0i64, 0i64), |(r, h), t| match t.then {
+        crate::records::CheckThen::Escape => (-1, h),
+        crate::records::CheckThen::At(k) => (r, h | 1i64 << k),
+        crate::records::CheckThen::After(k) => (r, h | 1i64 << (crate::records::AFTER_SHIFT + u32::from(k))),
+    })
+}
+
 /// A rule's end block that tests its token `s..=l` (`l` its parameter) by its token tests
 /// (`records::check_holds`), then on to `done` with the last and the refusal (a sign bit). A
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
@@ -3389,11 +3457,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let mut ones = f.ins().iconst(types::I64, -1);
     let mut rest = None;
     // The tests that hold at every token (`TokenCheck::always`): their hits, made nowhere.
-    let always = tests.iter().filter(|(t, _)| t.always()).fold((0i64, 0i64), |(r, h), (t, _)| match t.then {
-        crate::records::CheckThen::Escape => (-1, h),
-        crate::records::CheckThen::At(k) => (r, h | 1i64 << k),
-        crate::records::CheckThen::After(k) => (r, h | 1i64 << (crate::records::AFTER_SHIFT + u32::from(k))),
-    });
+    let always = always_hits(tests.iter().map(|(t, _)| t));
     // A refusal in (`read_none`), and the always tests'.
     let mut refuse = if always.0 == 0 { no } else { f.ins().iconst(types::I64, always.0) };
     let mut hits = f.ins().iconst(types::I64, always.1);
@@ -5200,7 +5264,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 let mut with = ids.clone();
                 with.push((LONG_CALL | k as u16, id, sig.clone()));
                 let mut sfunc = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig.clone());
-                rule_fn(&mut sfunc, rec, t, &bytewise, made.outputs.len(), RuleMode::Short(k), &with, &carry_names)?;
+                let mut short_bw = bytewise.clone();
+                short_bw.bail = Some((id, sig.clone()));
+                rule_fn(&mut sfunc, rec, t, &short_bw, made.outputs.len(), RuleMode::Short(k), &with, &carry_names)?;
                 let made = calls_of(&sfunc);
                 if !made.is_empty() && made.iter().all(|&x| x == id.as_u32()) {
                     let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
@@ -5623,10 +5689,20 @@ fn bodiless_body(native: &BlockNative, slot_of: &[u16], records: bool) -> bool {
 }
 
 /// The functions `func` calls (their user names' indexes, a `FuncId` each), by its calls left
-/// in its layout: a name declared but no longer called is not one.
+/// in its layout in blocks its entry reaches: a name declared but no longer called is not one,
+/// nor a call in a block no branch reaches (compiled out).
 pub fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
     let mut v = Vec::new();
-    for b in func.layout.blocks() {
+    let mut cfg = cranelift_codegen::flowgraph::ControlFlowGraph::new();
+    cfg.compute(func);
+    let mut reached = std::collections::HashSet::new();
+    let mut stack: Vec<cranelift_codegen::ir::Block> = func.layout.entry_block().into_iter().collect();
+    while let Some(b) = stack.pop() {
+        if reached.insert(b) {
+            stack.extend(cfg.succ_iter(b));
+        }
+    }
+    for b in func.layout.blocks().filter(|b| reached.contains(b)) {
         for inst in func.layout.block_insts(b) {
             if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst] {
                 if let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name {

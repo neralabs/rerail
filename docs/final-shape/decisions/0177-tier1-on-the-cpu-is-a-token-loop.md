@@ -1381,3 +1381,36 @@ refusal in for this, zero everywhere else.
 `the_cpus_records_are_the_interpreters` now has comments whose
 closer lies 59 to 65 bytes after the opener, and comments the file
 ends in, at five offsets in their block. These cases found the bug.
+
+## A plain string calls nothing
+
+**Intro.** A lexer reads a string without a `\` straight through to
+its closing quote. The CPU's string took three calls: the loop called
+the string rule's function, that called the fused read (the end and
+the counts' gate), and the read called the counts where the gate
+failed. Each of the first two saved registers.
+
+**The change.** The string rule gets a short function too. Its arm
+makes the fused read inline (`read_fn`'s first window): the closer in
+the 64 bytes after the quote, then the counts' gate over the token.
+A string whose closer is in that window and whose bytes the counts
+don't need goes straight on to the rule's other tests. Every other
+string returns the whole function's call: a longer one, one whose
+bytes the counts need, one the file ends in.
+
+Two things kept other calls in it:
+
+- The quote's own test, `quote & ~escaped`, asks whether a run of `\`
+  ends just before it. Where one does (rare), the scalar test calls
+  the run's carry function. In a short function that path returns
+  the whole function's call instead (`Bytewise::bail`).
+- The tests' entry block calls the counts. The inline read jumps past
+  it, so nothing reaches that call. `calls_of` now counts the calls
+  in blocks the entry reaches, as the compiled code has them.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Strings | 337 | 306 | 241 |
+
+Other kinds did not change. `the_cpus_records_are_the_interpreters`
+has `\` runs right before a string's quote, at four offsets.

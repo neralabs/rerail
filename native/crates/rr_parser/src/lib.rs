@@ -1726,6 +1726,13 @@ pub mod tests {
                 inputs.push(format!("{}a(x). /*{body}", " ".repeat(pad)).into_bytes());
             }
         }
+        // A `\` run right before a string's quote: the opener's escape carry, which a short
+        // reader leaves to its whole function (`Bytewise::bail`).
+        for run in ["\\", "\\\\", "\\\\\\"] {
+            for pad in [0usize, 1, 62, 63] {
+                inputs.push(format!("{}a({run}\"s\", 1).\n", " ".repeat(pad)).into_bytes());
+            }
+        }
         // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
         // across the windows' edges, the run before a window found back to its start; a
         // string or comment over many blocks; the escape at the opener's byte.
