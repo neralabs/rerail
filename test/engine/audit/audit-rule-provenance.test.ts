@@ -196,30 +196,44 @@ function storedEmptyProvenance(path: string): number {
 }
 
 /**
- * Times each run of every statement this thread prepares from here on (`get`, `all` and `run`), and puts `prepare`
- * back. A move's thread prepares its own statements, which this does not see.
+ * Times the statements this thread prepares from here on that read audits (`FROM audits`): each `get`, `all` and `run`,
+ * and each row `iterate` gives. The time a write takes to commit is left out: it waits on the disk, whatever a statement
+ * reads. Puts `prepare` back on `restore`. A move's thread prepares its own statements, which this does not see.
  */
-function timeStatements(): { totalMs: () => number; restore: () => void } {
-  const runs: number[] = [];
+function timeAuditReads(): { totalMs: () => number; restore: () => void } {
+  let total = 0;
+  const timed = <T>(run: () => T): T => {
+    const began = performance.now();
+    try {
+      return run();
+    } finally {
+      total += performance.now() - began;
+    }
+  };
   const prepare = Database.prototype.prepare;
   const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
     const statement = prepare.call(this, source);
+    if (!/\bFROM audits\b/u.test(source)) return statement;
     for (const kind of ["get", "all", "run"] as const) {
       const original = statement[kind].bind(statement) as (...values: unknown[]) => unknown;
-      Object.assign(statement, {
-        [kind]: (...values: unknown[]) => {
-          const began = performance.now();
-          try {
-            return original(...values);
-          } finally {
-            runs.push(performance.now() - began);
-          }
-        },
-      });
+      Object.assign(statement, { [kind]: (...values: unknown[]) => timed(() => original(...values)) });
     }
+    const iterate = statement.iterate.bind(statement) as (...values: unknown[]) => IterableIterator<unknown>;
+    Object.assign(statement, {
+      iterate: (...values: unknown[]) => {
+        const rows = iterate(...values);
+        return {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next: () => timed(() => rows.next()),
+          return: (value?: unknown) => rows.return?.(value) ?? { done: true, value },
+        };
+      },
+    });
     return statement;
   });
-  return { totalMs: () => runs.reduce((total, ms) => total + ms, 0), restore: () => spy.mockRestore() };
+  return { totalMs: () => total, restore: () => spy.mockRestore() };
 }
 
 /** The start of the line a move writes while it waits for an older Rerail sharing the file. */
@@ -861,29 +875,26 @@ describe("audit rule provenance", () => {
     // Eight days on, so the move does not wait for them.
     const clock = (): number => Date.now() + 8 * 24 * 3_600_000;
 
-    // The longest time from one of the move's pauses to the next: one batch, and the check before it. A batch that read
-    // the start of each of those 2,000 rows held the write lock 125 ms on Linux and 470 ms on Windows.
-    const gaps: number[] = [];
-    let last: number | undefined;
-    const pause = (): Promise<void> => {
-      const now = performance.now();
-      if (last !== undefined) gaps.push(now - last);
-      last = now;
-      return Promise.resolve();
-    };
-    expect(await move(path, { clock, pause })).toBe(20);
-    expect(Math.max(...gaps)).toBeLessThan(25);
+    // What the move's reads of audits take, its batches and the checks before each: reading the start of each of those
+    // 2,000 rows took 125 ms in one batch, under its write lock, on Linux and 470 ms on Windows.
+    const moving = timeAuditReads();
+    try {
+      expect(await move(path, { clock })).toBe(20);
+    } finally {
+      moving.restore();
+    }
+    expect(moving.totalMs()).toBeLessThan(25);
     expect(inlineAudits(path)).toBe(2_000);
 
     // A later start finds nothing left to move and starts no thread. On its calling thread, the daemon's, which answers
     // hooks, reading the start of each of those rows took 18 to 1,134 ms on a real daemon's start.
-    const timed = timeStatements();
+    const starting = timeAuditReads();
     try {
       expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(0);
     } finally {
-      timed.restore();
+      starting.restore();
     }
-    expect(timed.totalMs()).toBeLessThan(20);
+    expect(starting.totalMs()).toBeLessThan(20);
   }, 120_000);
 
   it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
@@ -900,7 +911,7 @@ describe("audit rule provenance", () => {
       return Promise.reject(new Error("stopped"));
     };
     const stderr = spyOnStderr();
-    const timed = timeStatements();
+    const timed = timeAuditReads();
     let logged = "";
     try {
       expect(await moveRuleProvenancesInWorker(path, stop.signal, { timer })).toBe(0);
