@@ -1,6 +1,7 @@
 # 0259: The store catches up a wave at a time, and the write-behind is a spool on disk
 
-Status: stage 1 built (2026-11-15); the spool (stage 2) next. Drafted as 0255 (renumbered: 0255–0258 are taken in
+Status: stage 1 built (2026-11-15). Stage 2 (the spool, §5) is replaced by decision 0260 §8: the journal is a
+file-backed delta block. Drafted as 0255 (renumbered: 0255–0258 are taken in
 other worktrees). Supersedes decision 0102's commits by size and idleness (a batch closed at half the queue's cap,
 `BATCH_IDLE`), and, with the spool, its in-memory cap; settles decision 0147's journal. Keeps decision 0240 (the
 writer only writes; a phase's run leaves its writes queued) and 0024 §5 (the store may lag; what it lacks can be
