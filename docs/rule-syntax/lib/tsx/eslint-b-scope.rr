@@ -70,7 +70,7 @@ member_call_static(c, o, x) :- called(c, m), static_prop(m, o, x).
 //   const m = Math; m      let m; m = Math; m      function f(m = Math) { m }      an alias's references
 //   const { Math: m } = globalThis; m     a key of a pattern destructuring the global object
 // The value "" stands for the global object itself, which is followed the same way.
-.decl traced_global(x: symbol)  // the including rule's names; no rows here
+.decl traced_global(x: symbol) extensible  // the including rule's names; no rows here
 .decl global_value(n: node, x: symbol)
 global_value(n, x) :- gval(n, x), x != "".
 .decl gval(n: node, x: symbol)

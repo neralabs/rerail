@@ -1206,6 +1206,8 @@ impl Lowerer {
                 "must" | "may" | "," => {
                     self.three.insert(name.clone());
                 }
+                // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
+                "extensible" => {}
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {

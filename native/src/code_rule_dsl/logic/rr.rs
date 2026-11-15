@@ -220,6 +220,7 @@ impl Text {
         let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
+        closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
         let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
@@ -254,6 +255,7 @@ impl Text {
         // `core.rr`'s names, unless the text is in T's shape and reads no `core.rr` (`resolve`).
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
+        closed_program(&files, &own)?;
         // Lowering reads one kind of clause statically: a kind set's (`fscope("module")`, `lfscope(k) :- fscope(k)`),
         // whose relation has one column. Those are kept; the rest are the run's. Only what is kept is copied.
         let unary: std::collections::BTreeSet<&str> = if clauses {
@@ -410,6 +412,45 @@ pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::State
 
 /// `library_modules`, with each module's files and its key.
 #[allow(clippy::type_complexity)]
+/// The relations `statements` declare, and whether each is declared `extensible` (decision 0263).
+fn declared_in(statements: &[syntax::Statement]) -> impl Iterator<Item = (&str, bool)> {
+    statements.iter().filter_map(|(item, _)| match item {
+        syntax::Item::Decl { name, tail, .. } => Some((name.as_str(), tail.iter().any(|w| w == "extensible"))),
+        _ => None,
+    })
+}
+
+/// A library's relations are closed (decision 0263): a file adds no rules or facts to a relation another file
+/// declares, unless that declaration says `extensible`. `open`: the relations of the files `file` includes, with the
+/// file declaring each and whether it is extensible.
+fn closed_heads(file: &str, statements: &[syntax::Statement], open: &std::collections::HashMap<&str, (&Path, bool)>) -> Result<(), Error> {
+    let own: BTreeSet<&str> = declared_in(statements).map(|(n, _)| n).collect();
+    for (item, line) in statements {
+        let syntax::Item::Clause { heads, .. } = item else { continue };
+        for h in heads.iter().filter(|h| !own.contains(h.rel.as_str())) {
+            if let Some((home, false)) = open.get(h.rel.as_str()) {
+                return Err(Error::Syntax(format!(
+                    "{file}:{line}: `{}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
+                    h.rel,
+                    home.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `closed_heads` for a program's own statements, over every library file it includes.
+fn closed_program(files: &[(PathBuf, [u8; 32], std::sync::Arc<Vec<syntax::Statement>>)], own: &[syntax::Statement]) -> Result<(), Error> {
+    let mut open = std::collections::HashMap::new();
+    for (path, _, statements) in files {
+        for (rel, ext) in declared_in(statements) {
+            open.entry(rel).or_insert((path.as_path(), ext));
+        }
+    }
+    closed_heads("the program", own, &open)
+}
+
 fn library_modules_with_files(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
     let core = library().join("core.rr").canonicalize().ok();
@@ -473,6 +514,17 @@ fn library_modules_with_files(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax
     // Each module is kept in the store as its image (decision 0246 §6), by its key: the image's format, the engine's
     // build, its files' bytes and the keys of the modules in its scope. A module whose image the store holds is read
     // from it, not lowered.
+    // Each file adds to no relation of the files it includes but their `extensible` ones (decision 0263); files that
+    // include each other are one module, and write each other's relations.
+    for i in 0..n {
+        let mut open = std::collections::HashMap::new();
+        for &j in reach[i].iter().filter(|&&j| unit_of[j] != unit_of[i]) {
+            for (rel, ext) in declared_in(&files[j].1) {
+                open.entry(rel).or_insert((paths[j].as_path(), ext));
+            }
+        }
+        closed_heads(&paths[i].display().to_string(), &files[i].1, &open)?;
+    }
     let store = if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { super::plan::corpus::phases::reading_store() } else { None };
     let mut statements: Vec<Option<Vec<syntax::Statement>>> = files.into_iter().map(|(_, s)| Some(s)).collect();
     let mut modules: Vec<lower::Module> = Vec::with_capacity(units.len());

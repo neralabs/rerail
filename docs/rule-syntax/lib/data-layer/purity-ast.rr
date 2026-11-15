@@ -95,7 +95,7 @@ body_member(b, f) :- body_node(b), child(b, s, _), kind(s, "decorated_definition
 // double quotes when s has a single quote and no double one, backslashes doubled. Control characters are not
 // escaped (\n stays a newline). The check lists the strings it needs in repr_want.
 //   py_repr("cache", "'cache'")      py_repr("'Run'", "\"'Run'\"")
-.decl repr_want(s: symbol)
+.decl repr_want(s: symbol) extensible
 .decl py_repr(s: symbol, r: symbol)
 py_repr(s, cat("'", @replace_all(@replace_all(s, "\\\\", "\\\\"), "'", "\\'"), "'")) :- repr_want(s),
     (!contains("'", s) ; contains("\"", s)).

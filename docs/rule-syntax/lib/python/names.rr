@@ -126,7 +126,7 @@ tscope(t, s) :- tgt(t), nearest(t, c, lscope), kind(c, k), comp_scope(k), walrus
 walrus_tgt(t) :- kind(a, "named_expression"), field(a, "name", t).
 // rotgt(s, x): an untracked target binds name x in syntactic scope s (a comprehension for its `for` targets).
 // python/imports adds rows for relative imports it cannot resolve (the name is bound, to something unknown).
-.decl rotgt(s: node, x: symbol)
+.decl rotgt(s: node, x: symbol) extensible
 rotgt(s, x) :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s).
 
 // Imports, per scope: `ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.

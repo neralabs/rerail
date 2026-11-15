@@ -56,13 +56,13 @@ node_ancestor(n, a) :- node_estree_kind(n), within(n, a), node(_, a, k, _, _), !
 node_hidden_kind("parenthesized_expression"). node_hidden_kind("arguments").
 // node_estree_kind(n): the nodes node_ancestor is asked about; an including rule fills it (bounded: within's rows
 // are every pair).
-.decl node_estree_kind(n: node)
+.decl node_estree_kind(n: node) extensible
 
 // top_assign(n, t). Climb member objects (`module.exports.a.b`: from module.exports to the whole member), then the
 // node must be an assignment's left side, then climb assignments that hold it, on either side.
 .decl top_assign(n: node, t: node)
 top_assign(n, t) :- top_assign_ask(n), node_obj_top(n, m), node_left_of(m, a), node_assign_top(a, t).
-.decl top_assign_ask(n: node)  // the nodes a rule asks top_assign about
+.decl top_assign_ask(n: node) extensible  // the nodes a rule asks top_assign about
 .decl node_obj_ask(n: node)
 node_obj_ask(n) :- top_assign_ask(n).
 node_obj_ask(m) :- node_obj_ask(n), node_obj_of(n, m).

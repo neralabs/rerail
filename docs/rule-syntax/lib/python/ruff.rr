@@ -201,7 +201,7 @@ slice_which(0, "lower"). slice_which(1, "upper"). slice_which(2, "step").
 // ---- 3b. arguments by name or position ---------------------------------------------------------------------------
 // call_param(c, x, i, v): v is the argument call c passes for parameter x, at position i or as keyword x
 // (Ruff's find_argument_value). The caller lists the (callee, x, i) it asks about in param_slot.
-.decl param_slot(q: symbol, x: symbol, i: number)
+.decl param_slot(q: symbol, x: symbol, i: number) extensible
 .decl call_param(c: node, x: symbol, v: node)
 call_param(c, x, v) :- call_q(c, q), param_slot(q, x, i), ruff_arg(c, i, v).
 call_param(c, x, v) :- call_q(c, q), param_slot(q, x, _), call_kwarg(c, x, v).

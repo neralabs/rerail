@@ -3677,3 +3677,14 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
     }
     out
 }
+
+/// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
+/// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rr`).
+#[test]
+fn a_program_adds_only_to_extensible_library_relations() {
+    let closed = "#include \"python/ast.rr\"\nunparen(a, a) :- kind(a, \"call\").\n";
+    let refused = super::read_text(closed).unwrap().lower(false).expect_err("unparen is not extensible");
+    assert!(refused.to_string().contains("`unparen` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+    let open = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    super::read_text(open).unwrap().lower(false).expect("cmp_same_ask is extensible");
+}

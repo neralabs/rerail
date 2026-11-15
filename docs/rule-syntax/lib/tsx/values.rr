@@ -32,15 +32,15 @@
 // ("fs", "fs"), ("node:fs", "fs"), ("node:test", "node:test"). A specifier with no row (an npm package "test") is
 // not a built-in. No rules here; shipped as facts like es_global (today the rows come with the facts of
 // packs/node/n-no-unsupported-features-node-builtins.facts.rr, generated from eslint-plugin-n's trace map).
-.decl node_module(spec: symbol, root: symbol)
+.decl node_module(spec: symbol, root: symbol) extensible
 // api_known(p): the API names the including rule's table traces, with their prefixes ("fs#promises" for
 // "fs#promises.readFile"). Values are followed only along these, as ReferenceTracker follows only its trace map;
 // without the bound, `p = p.parent` in a loop would build ever longer names. No rules here; the table's rows.
-.decl api_known(p: symbol)
+.decl api_known(p: symbol) extensible
 // node_global(g): a global ReferenceTracker traces, as the policy declares them: the names of `globals.node`
 // (the npm globals package) the trace map has, and globalThis. A global outside it is never traced, whatever the
 // environment declares. No rules here; the rows come with the table, like node_module's.
-.decl node_global(g: symbol)
+.decl node_global(g: symbol) extensible
 // cjs_global(g): the globals only a CommonJS module has; an ES module has no require, module or exports.
 .decl cjs_global(g: symbol)
 cjs_global("require"). cjs_global("module"). cjs_global("exports"). cjs_global("__dirname"). cjs_global("__filename").
