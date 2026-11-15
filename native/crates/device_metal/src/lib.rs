@@ -714,10 +714,10 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
     pub use rerail_lang::code_rule_dsl::tree;
-    #[path = "typing"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
     pub mod typing {
         pub use rerail_logic::code_rule_dsl::typing::*;
-        #[path = "file_local"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "file_local")]
         pub mod file_local {
             pub use rerail_logic::code_rule_dsl::typing::file_local::*;
             #[cfg(any(test, feature = "test-hooks"))]

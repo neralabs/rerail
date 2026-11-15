@@ -326,7 +326,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
-    #[path = "findings"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "findings")]
     pub mod findings {
         pub use rerail_w::code_rule_dsl::findings::*;
         #[cfg(any(test, feature = "test-hooks"))]
