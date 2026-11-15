@@ -6768,6 +6768,7 @@ fn run_observed(
                                 counts: (0, 0, 0),
                                 again: Vec::new(),
                                 walked: (0, 0, 0),
+                                atoms: None,
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
@@ -7561,6 +7562,9 @@ struct Driver<'d, 'k> {
     counts: (usize, usize, usize),
     again: Vec<(String, &'static str)>,
     walked: (usize, usize, usize),
+    /// The run's version's atoms and relations alone (`Builder::under`, made at the first form): each form is an
+    /// overlay of it (decision 0241), so a form costs its own size, not the run's names.
+    atoms: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
@@ -7596,70 +7600,18 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.at_end.contains(rel)
     }
 
-    fn form(&mut self, base: &front::Program, scc: &BTreeSet<String>, rules: &[&front::Rule], moved: &BTreeSet<String>, model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<(front::Program, Vec<String>)> {
+    fn form(&mut self, v0: &crate::code_rule_dsl::logic::plan::body::Placed, rules: &[crate::code_rule_dsl::logic::plan::body::RuleKey], scc: &BTreeSet<String>, moved: &BTreeSet<String>, model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<(crate::code_rule_dsl::logic::plan::body::Placed, Vec<String>)> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "form".into());
-        // The stratum alone: its rules, and every relation they read declared as an input of it.
-        let mut mentioned: BTreeSet<String> = scc.clone();
-        for r in rules {
-            mentioned.extend(r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string()));
-            if r.body.iter().any(|l| matches!(l, front::Literal::Nearest { .. })) {
-                mentioned.extend(retain::TREE.iter().map(|t| (*t).to_owned()));
-            }
-        }
-        for rel in scc {
-            if let Some(n) = base.natives.get(rel) {
-                mentioned.extend(n.reads().into_iter().map(str::to_owned));
-            }
-        }
-        let mut one = front::Program { rules: rules.iter().map(|r| (*r).clone()).collect(), kindsets: base.kindsets.clone(), ..Default::default() };
-        let mut domains = BTreeMap::new();
-        for rel in &mentioned {
-            if let Some(d) = base.decls.get(rel.as_str()) {
-                one.decls.insert(rel.clone().into(), d.clone());
-            }
-            if let Some(d) = self.cross.domains.get(rel) {
-                domains.insert(rel.clone(), d.clone());
-            }
-            if base.nullary.contains(rel) {
-                one.nullary.insert(rel.clone());
-            }
-            if let Some(q) = base.qualifiers.get(rel) {
-                one.qualifiers.insert(rel.clone(), q.clone());
-            }
-            if let Some(t) = base.tapes.get(rel) {
-                one.tapes.insert(rel.clone(), t.clone());
-            }
-            if scc.contains(rel) {
-                if let Some(l) = base.lattice.get(rel) {
-                    one.lattice.insert(rel.clone(), l.clone());
-                }
-                if let Some(f) = base.facts.get(rel) {
-                    one.facts.insert(rel.clone(), f.clone());
-                }
-                if let Some(n) = base.natives.get(rel) {
-                    one.natives.insert(rel.clone(), n.clone());
-                }
-            } else {
-                one.inputs.push(rel.clone());
-            }
-        }
-        let clean: BTreeSet<String> = mentioned.iter().filter(|r| !scc.contains(*r)).cloned().collect();
-        let mini = lower::Lowered { program: one, domains, ops: self.cross.ops, dialect: self.cross.dialect };
-        let cut = retain::Cut { clean, strata: (1, 1), changed: moved.iter().cloned().collect() };
-        let (has_delta, bound_olds) = (&self.has_delta, &self.bound_olds);
+        let places: Vec<usize> = rules.iter().map(|k| k.index()).collect();
+        let (has_delta, bound_olds, inputs) = (&self.has_delta, &self.bound_olds, &self.inputs);
         let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
-        let mut given = |_: &str| None;
-        let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &front::components_of(&mini.program).map_err(|e| Error::Plan(e.to_string()))?, &mut given, Some(&one))?;
-        // Its form derived again (decision 0090 §4) stays: the run chooses between the two by its input deltas.
-        let mut form = m.program.program;
-        if maintain::levels_wanted() {
-            for rel in form.rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<_>>() {
-                form.qualifiers.entry(rel).or_default().insert("levels".to_owned());
-            }
-        }
-        // Its inputs are the run's and the old rows: a relation of an earlier stratum is the engine's, as derived.
-        let inputs = &self.inputs;
-        form.inputs.retain(|r| inputs.contains(r) || r.ends_with("__old"));
+        let atoms = match &self.atoms {
+            Some(a) => Arc::clone(a),
+            None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
+        };
+        let m = maintain::form(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &one, &|r| inputs.contains(r))?;
+        let form = m.placed;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(&form).ok_or_else(|| Error::Plan("a maintained form holds its rules alone".into()))?;
         let mut adopted = Vec::new();
         for (name, source, held) in m.sources {
             let Some(of) = name.strip_suffix("__old").map(str::to_owned) else { continue };
@@ -7669,16 +7621,17 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             }
             bind_kept(self.binder, self.modules, self.db, &mut model.stats, name.clone(), source, held, maintains)?;
             if !model.stats.lazy.0.contains_key(&name) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, form.decls.get(name.as_str()).map(|c| c.len()), &name);
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(&name), &name);
             }
             self.bound_olds.insert(of);
         }
         // The inputs' deltas this form reads (`r__plus`, `r__minus`): bound with the run, measured then, but the run's
         // model was made from the base program, which reads none, so none had a size (each was priced as the
         // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
-        for r in form.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).map(|a| a.rel.as_str()) {
-            if (r.ends_with("__plus") || r.ends_with("__minus")) && form.inputs.iter().any(|i| i == r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, form.decls.get(r).map(|c| c.len()), r);
+        let v = &form.v;
+        for r in v.rules().flat_map(|r| r.body()).filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())) {
+            if (r.ends_with("__plus") || r.ends_with("__minus")) && f.is_input(r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(r), r);
             }
         }
         if m.maintained > 0 {
@@ -7688,8 +7641,8 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.counts.1 += m.derived_again;
         self.counts.2 += m.recursive;
         self.again.extend(m.again);
-        for r in &form.rules {
-            if let Some(of) = r.head.rel.strip_suffix("__minus") {
+        for r in v.rules() {
+            if let Some(of) = v.rel_name(r.head().rel()).strip_suffix("__minus") {
                 self.has_delta.insert(of.to_owned());
             }
         }

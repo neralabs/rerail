@@ -546,4 +546,47 @@ ported, over the targeted tests and dl1.
     need") and the maintained rewrite as a derivation; the builder's views keep the parent's parts, and step 9 lists
     the missing piece ("a view whose fields are overlaid, and a fold that does not count a view's removals"). So
     `maintain::rewrite_with`, `Driver::form`, `supports`, `maintained_cross` and the `Forms` arena stay as they were
-    until that is decided.
+    until that is decided. Decided (2026-11-15): a derivation per form (decision 0241), done below.
+
+- **Item 7, step 7: a maintained form is a derivation of the run's version** (2026-11-15, decision 0241).
+  - One rewrite writes every maintained program with the builder, from rules read by their handles
+    (`maintain::rewrite_over`): a rule it writes is an IR over a source rule's literals (each copied, or its atom
+    read as another relation or with other flags, through `Rewrite::atom_as`), its head's computed terms named as
+    `named_heads` named them; its gates (`Builder::add_gates`), nullary relations and declarations are stated with
+    the builder, and `together`'s check that a set is one component reads the IR's heads and reads
+    (`front::apart_of_graph`). The tree rewrite (`rewrite_with`, `together`, `unmaintainable`, `insert`) is gone.
+  - A stratum's form (`maintain::form`, called by `Driver::form` with the run's version and the stratum's rule
+    keys) is a derivation under the run's ids holding what the one-stratum program held: the declarations of what
+    its rules mention, those relations' nullary, qualifier and tape rows (read from the run's sorted fields by
+    relation: `add_nullary`, `add_qualifiers`, `set_tapes`), its own lattice, native and fact rows
+    (`Builder::copy_about`, `set_fact_cells`), every kind set, its inputs (the run's and the old rows) and its
+    levels qualifiers. Its `Maint` is written beside it (`Maint::written`: each group's rules as given, copied from
+    the run's version, and its deltas).
+  - Written first as a base under the run's ids (`Builder::under`), a form cost the run's names: cold dl1 went from
+    about 49 G to 58-60 G instructions; of the forms' 1,470 one-ms samples, 1,300 were the per-form copy of the
+    run's string table (`Encoder::with_ids_of`) and its write (`Builder::finish`), and 80 `copy_about` scanning
+    every qualifier row. Now the run's names are a version of their own, made once per run at its first form (`Driver::atoms`,
+    `Builder::under` with nothing stated), each form an overlay of it that never folds
+    (`Builder::finish_overlay`, also for its `Maint`), and the per-relation rows are read by relation: the forms'
+    share of a cold batch is 57 samples (`Driver::form`), against the tree path's 31 plus 152 encoding each
+    form's image (`Placed::of_program`).
+  - The run adds a form as the version it is given (`Versions::push`; `Versions::add`, `index_of` and the program
+    addresses are gone), and reads it by its place: `Slot::Reached`, the form jobs, `strand_forms`,
+    `absorb_forms` and `run_forms` hold version places, and `set_prog` is `set_version` (the run's `prog` stays the
+    program). Its projections (`analyses::projections`) and components (`Placed::components`, which compose now
+    shares) are read from the version; its inputs join the run's as owned names (`RunInputs`). The `Forms` arena is
+    gone. `Run::tree` decodes a rule of a later version where a reader still takes a tree (the fixpoints' made
+    rules, the profile's rule text); `add_again` takes no trees.
+  - The session's maintained part (`maintain::rewrite`) is written over its cut program's image (a derivation
+    holding all its parts, `Builder::derive`) and decoded for its run, which takes a tree until step 9.
+  - Not changed: `supports` (counting's rewrite of the cross program) and `maintained_cross` rewrite the cross
+    program before any run, as trees: they are the session part's inputs, which step 9 moves.
+  - Checked while porting, by oracles removed after: each form's decode (its rules in order, declarations,
+    inputs, outputs, nullary, qualifiers, tapes, lattices, facts, natives, kind sets, gates, again groups with
+    their rules and deltas, sets together, and the whole program's debug text) equalled the tree form's, with the
+    same counts, reasons and old sources; and the session rewrite's decode, views, domains, counts and sources
+    equalled the tree's. Over the engine's maintain, again, session, edit, retain, cone, supports, kept, frame,
+    strata, keeps, demand, negation, inline, choices, phase0, answer, native, setfix, program_image, `rr::` and forms
+    tests.
+  - Checked after: logic `plan::` (110); the engine filters above and `corpus::` (in chunks). dl1 (images required, profiling build): the same 48 findings cold and warm as the
+    baseline; 48.4 G instructions cold and 2.6 G warm, the baseline engine 46.6 G and 2.6 G beside it (load 70-90).

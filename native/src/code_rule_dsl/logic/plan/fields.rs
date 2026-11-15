@@ -313,15 +313,12 @@ mod tests {
         let vs = Versions::with(&p, placed.clone());
         assert!(std::ptr::eq(vs.fields(0).unwrap().about, f.about));
         assert!(vs.fields(1).is_none());
-        assert_eq!(vs.index_of(&p), Some(0));
-        // A whole program added (a maintained form) is a whole version of its own, found by its address, once.
+        // A whole program added (a maintained form) is a whole version of its own.
         let mut vs = vs;
         let mut form = Program::default();
         form.decls.insert("e".into(), [("a".into(), "int".into())].into());
         form.inputs = vec!["e".into()];
-        vs.add(&form).unwrap();
-        vs.add(&form).unwrap();
-        let k = vs.index_of(&form).unwrap();
+        let k = vs.push(Placed::of_program(&form).unwrap());
         assert_eq!(k, 1);
         assert_eq!((vs.whole(k).inputs().collect::<Vec<_>>(), vs.whole(k).columns("e")), (vec!["e"], Some(vec![("a", "int")])));
         assert!(vs.fields(2).is_none());

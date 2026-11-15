@@ -125,6 +125,12 @@ impl<'p> Builder<'p> {
         b.parts.owns_about = true;
         b
     }
+    /// A derivation of `input` that states each of its parts (decision 0241): a new base under `input`'s atom and
+    /// relation ids, holding none of `input`'s rules or parts. What is not stated is empty. Finished with nothing
+    /// stated, it is `input`'s names alone, which a maintained form overlays.
+    pub fn under(input: &'p Version) -> Builder<'p> {
+        Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
+    }
     /// A base of all of `v`, under `v`'s atom and relation ids: each rule copied as it is, its source kept.
     pub(crate) fn folding(v: &'p Version) -> Builder<'p> {
         let mut b = Builder::derive(v);
@@ -393,6 +399,14 @@ impl<'p> Builder<'p> {
         Ok(self.enc.finish(&self.parts, &self.removed))
     }
 
+    /// The edit as an overlay of its parent, never folded: for a version whose ids must stay as written (a
+    /// maintained form over its run's names, decision 0241, and its `Maint`), so that its cost is its own size.
+    pub fn finish_overlay(mut self) -> Result<Arc<Version>, String> {
+        let parent = self.parent.ok_or("an overlay of no parent")?;
+        self.removed.sort_unstable();
+        self.removed.dedup();
+        Version::over(parent, &self.finish_bytes()?)
+    }
     /// The version the edit makes: a view, an overlay, or folded (`Builder`'s doc).
     pub fn finish(mut self) -> Result<(Arc<Version>, Made), String> {
         let Some(parent) = self.parent else {
@@ -498,6 +512,12 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     pub fn atom(mut self, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         self.body();
         self.atom_node(rel.into(), args, 0);
+        self
+    }
+    /// An atom with flags: negated, gated.
+    pub fn atom_with(mut self, rel: impl Into<Rel<'b>>, args: &[T<'_>], neg: bool, gated: bool) -> Self {
+        self.body();
+        self.atom_node(rel.into(), args, if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 });
         self
     }
     /// A negated atom.
@@ -676,6 +696,11 @@ pub trait Rewrite {
     fn term(&mut self, _site: Site<'_>, _t: TermRef<'_>) -> Option<T<'static>> {
         None
     }
+    /// The relation (by name) and flags (`neg`, `gated`) to write atom `a` (a body atom, or an aggregate's) with;
+    /// `None` keeps its own.
+    fn atom_as(&mut self, _a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+        None
+    }
     /// Whether to keep body literal `l`.
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
@@ -722,7 +747,14 @@ impl Walk<'_, '_> {
         }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
-        let at = self.open_mapped(a.node());
+        let renamed = if matches!(site, Site::Head(_)) { None } else { rw.atom_as(a) };
+        let at = match renamed {
+            Some((rel, neg, gated)) => {
+                let r = self.enc.rel(&rel);
+                self.enc.open(kind::ATOM | if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 }, r)
+            }
+            None => self.open_mapped(a.node()),
+        };
         self.prefix.clear();
         rw.prefix(a, &mut self.prefix);
         for t in std::mem::take(&mut self.prefix) {

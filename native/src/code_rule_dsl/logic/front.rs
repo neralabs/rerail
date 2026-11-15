@@ -960,6 +960,14 @@ pub fn apart(prog: &Program) -> Vec<usize> {
     }).collect()
 }
 
+/// `apart` over a graph given by its names (sorted) and each name's reads (sorted, each with whether negative): for
+/// a program held as a version, whose rules are not trees.
+pub fn apart_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, together: &[BTreeSet<String>]) -> Vec<usize> {
+    let g = Graph { names, succ, aggs: rustc_hash::FxHashSet::default() };
+    let sccs = g.named(&g.together(together));
+    (0..together.len()).filter(|&i| !sccs.iter().any(|s| *s == together[i])).collect()
+}
+
 /// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order
 /// they leave the stack.
 fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {

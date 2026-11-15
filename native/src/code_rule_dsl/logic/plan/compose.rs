@@ -40,7 +40,7 @@ pub(super) fn clear() {
 /// its tree's.
 pub(super) fn tree_text(p: &Placed) -> Result<String> {
     let prog = p.v.program(&super::super::front::Lists::default()).map_err(Error::Plan)?;
-    Ok(format!("{prog:?}\0{:?}", together(p)))
+    Ok(format!("{prog:?}\0{:?}", p.together()))
 }
 
 /// `p`'s composed query, keyed by `text`, its program's tree's text (`tree_text`), and the inputs' fields.
@@ -92,7 +92,7 @@ pub fn accepts(p: &Placed) -> Result<bool> {
     {
         return Ok(false);
     }
-    for scc in components(p)? {
+    for scc in p.components()? {
         if scc.len() != 1 {
             return Ok(false);
         }
@@ -110,18 +110,6 @@ pub fn accepts(p: &Placed) -> Result<bool> {
         }
     }
     Ok(true)
-}
-
-/// `p`'s components, dependencies first, in the tree's order (`front::components_of`), its maintained program's sets
-/// run together.
-fn components(p: &Placed) -> Result<Vec<BTreeSet<String>>> {
-    let f = p.fields()?;
-    Ok(analyses::components_by_name(f.v, f.about, &together(p))?)
-}
-
-/// The sets `p`'s maintained program runs as one component (`Program::together`, `body::Maint`), by name.
-fn together(p: &Placed) -> Vec<BTreeSet<String>> {
-    p.maint.as_ref().map_or_else(Vec::new, |m| m.together.iter().map(|s| s.iter().map(|&r| m.v.rel_name(r).to_owned()).collect()).collect())
 }
 
 /// What `roots` read, directly or through rules or natives, the roots included (`front::needed`), over `f`'s version
@@ -290,7 +278,7 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             BTreeMap::new(),
         );
     }
-    for scc in components(p)? {
+    for scc in p.components()? {
         let rel = scc.iter().next().unwrap();
         if !needed.contains(rel) || pf.is_input(rel) {
             continue;

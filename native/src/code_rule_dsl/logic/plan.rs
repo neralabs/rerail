@@ -4095,18 +4095,18 @@ struct Run<'a, 'b> {
     /// such a view from its input in place, filtered, and its rows are counted there (`rows_of`), so no SQL view is
     /// made. Found once per program, not per atom of each spec.
     projections: Arc<HashMap<String, Vec<(usize, i64)>>>,
-    /// The program's inputs, as a set: asked per atom of each spec (`prog.inputs` is a list).
-    inputs: Arc<rustc_hash::FxHashSet<&'a str>>,
+    /// The program's inputs, as a set: asked per atom of each spec (`prog.inputs` is a list); and those of the
+    /// maintained forms placed since (`RunInputs`).
+    inputs: Arc<RunInputs<'a>>,
     /// The run's programs' rules as versions (`body::Versions`), which the planner reads them by: the program's,
     /// and each maintained form's as it is placed (t36 item 2, until `run` takes a version).
     versions: Arc<body::Versions>,
-    /// The trees each of `versions`' versions was made from, by its place: a rule's tree by its key (`tree`), for the
-    /// readers that still read one (a maintained form's driver, the fixpoints' made rules, the profile's rule text;
-    /// a stratum's rules derived again are read from its `Maint`, and their trees are here for those readers alone).
-    /// The run's rule lists hold keys.
-    trees: Arc<Vec<&'a [Rule]>>,
-    /// Where `prog` is among `versions` (0, the program; a maintained form's place once added), whose fields the run
-    /// reads (`fields`) rather than the tree's (t36 item 7). Set with `prog` (`set_prog`).
+    /// The program's rules as trees, version 0's, for the readers that still read one (the fixpoints' made rules,
+    /// the profile's rule text): a rule of a later version (a maintained form, a stratum's rules derived again) is
+    /// decoded where one is read (`tree`). The run's rule lists hold keys.
+    trees: &'a [Rule],
+    /// The version among `versions` whose fields the run reads (`fields`): 0, the program's; a maintained form's
+    /// while the run plans or runs its pieces (`set_version`).
     version: usize,
     /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
     /// rows. A component with a request pauses for it (`setfix`'s `request`).
@@ -4202,6 +4202,20 @@ pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
         .collect()
 }
 
+/// A run's inputs: the program's, borrowed from its version, and those its maintained forms added (their old rows
+/// and the deltas they read), owned, since a form's version is the run's and moves with it.
+#[derive(Clone, Default)]
+struct RunInputs<'a> {
+    program: rustc_hash::FxHashSet<&'a str>,
+    added: rustc_hash::FxHashSet<Box<str>>,
+}
+
+impl RunInputs<'_> {
+    fn contains(&self, rel: &str) -> bool {
+        self.program.contains(rel) || self.added.contains(rel)
+    }
+}
+
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
 
 impl<'a> Run<'a, '_> {
@@ -4209,41 +4223,40 @@ impl<'a> Run<'a, '_> {
     fn fields(&self) -> Fields<'_> {
         self.versions.whole(self.version)
     }
-    /// The tree of rule `k`, a rule of one of the run's versions: for the readers that still read the tree.
-    fn tree(&self, k: RuleKey) -> &'a Rule {
-        &self.trees[k.version()][k.index()]
-    }
-    /// Adds maintained form `form` to the run's versions (`Versions::add`), with its tree: its version's place.
-    fn add_form(&mut self, form: &'a Program) -> Result<usize> {
-        if let Some(k) = self.versions.index_of(form) {
-            return Ok(k);
+    /// The tree of rule `k`, a rule of one of the run's versions: for the readers that still read the tree. A
+    /// program's rule is its tree; a later version's is decoded.
+    fn tree(&self, k: RuleKey) -> std::borrow::Cow<'a, Rule> {
+        if k.version() == 0 {
+            return std::borrow::Cow::Borrowed(&self.trees[k.index()]);
         }
-        Arc::make_mut(&mut self.versions).add(form)?;
-        Arc::make_mut(&mut self.trees).push(&form.rules);
-        debug_assert_eq!(self.versions.len(), self.trees.len());
-        Ok(self.versions.len() - 1)
+        let p = self.versions.placed(k.version());
+        let lists = super::front::Lists::default();
+        std::borrow::Cow::Owned(super::program_image::Tree::new(&p.v, &lists).rule(p.rule(k.index())))
+    }
+    /// Adds maintained form `form` (a derivation of the run's version, decision 0241) to the run's versions, and its
+    /// inputs to the run's: its version's place.
+    fn add_form(&mut self, form: body::Placed) -> Result<usize> {
+        let f = Fields::of(&form).ok_or_else(|| Error::Plan("a maintained form holds its rules alone".into()))?;
+        let inputs = Arc::make_mut(&mut self.inputs);
+        inputs.added.extend(f.inputs().filter(|r| !inputs.program.contains(*r)).map(Box::from));
+        Ok(Arc::make_mut(&mut self.versions).push(form))
     }
     /// Adds the rules stratum `g` of `maint` is derived again by, or its deltas (`deltas`), to the run's versions
-    /// (`Versions::add_again`) unless they are held already: their keys, in order. `tree` is the same rules as trees,
-    /// for the readers that still read one (`tree`: the fixpoints' made rules, the profile's rule text).
-    fn add_again(&mut self, maint: &Arc<body::Maint>, g: usize, deltas: bool, tree: &'a [Rule]) -> Vec<RuleKey> {
+    /// (`Versions::add_again`) unless they are held already: their keys, in order.
+    fn add_again(&mut self, maint: &Arc<body::Maint>, g: usize, deltas: bool) -> Vec<RuleKey> {
         let n = if deltas { maint.again[g].deltas.len() } else { maint.again[g].rules.len() };
-        debug_assert_eq!(n, tree.len());
         let v = match self.versions.again_at(maint, g, deltas) {
             Some(v) => v,
             None => {
                 let Some(v) = Arc::make_mut(&mut self.versions).add_again(maint, g, deltas) else { return Vec::new() };
-                Arc::make_mut(&mut self.trees).push(tree);
-                debug_assert_eq!(self.versions.len(), self.trees.len());
                 v
             }
         };
         body::Versions::keys(v, n).collect()
     }
-    /// Makes `p` the run's program (the program, or a maintained form added to `versions`): its tree and its version.
-    fn set_prog(&mut self, p: &'a Program) {
-        self.version = self.versions.index_of(p).expect("a program of the run's versions");
-        self.prog = p;
+    /// Makes the run's `k`-th version the one whose fields it reads (0, the program; a maintained form's place).
+    fn set_version(&mut self, k: usize) {
+        self.version = k;
     }
 
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
@@ -4386,11 +4399,10 @@ impl<'a> Run<'a, '_> {
     /// The deferred deltas (decision 0090 §4) among `wanted`, made now: a stratum that runs reads them.
     fn make_deferred(&mut self, wanted: &[&str], deferred: &mut HashMap<String, (usize, usize, usize)>) -> Result<()> {
         let maint = Arc::clone(self.versions.placed(0).maint.as_ref().ok_or_else(|| Error::Plan("a deferred delta of a program with no maintenance".into()))?);
-        let prog = self.prog;
         for r in wanted {
             let Some((g, k, _)) = deferred.remove(*r) else { continue };
             // A key of the group's deltas' version (`add_again`: held once).
-            let dk = self.add_again(&maint, g, true, &prog.again[g].deltas)[k];
+            let dk = self.add_again(&maint, g, true)[k];
             let head = self.versions.head_at(dk).to_owned();
             let _span = super::profile::span(|| format!("delta {head} made where it is read"));
             if !self.native_stratum_now(&BTreeSet::from([head.clone()]), &[dk])? {
@@ -5436,7 +5448,7 @@ impl<'a> Run<'a, '_> {
             projections: Arc::clone(&self.projections),
             inputs: Arc::clone(&self.inputs),
             versions: Arc::clone(&self.versions),
-            trees: Arc::clone(&self.trees),
+            trees: self.trees,
             version: self.version,
             answer: None,
             asking: None,
@@ -5450,17 +5462,17 @@ impl<'a> Run<'a, '_> {
     /// A strand for a component of maintained forms (decision 0117): each form's pieces read `reads` (its
     /// `strand_reads_with`), its statistics resolved as its rules read them (`resolve`); one fork of the statistics
     /// and one prime of the scope for all of them.
-    fn strand_forms(&mut self, forms: &[(&'a Program, Vec<&str>)], reads: &BTreeSet<String>, rules: &[u64]) -> Result<Strand<'a>> {
+    fn strand_forms(&mut self, forms: &[(usize, Vec<&str>)], reads: &BTreeSet<String>, rules: &[u64]) -> Result<Strand<'a>> {
         let arena = super::native::component::prime(&self.db)?;
         let vs = Arc::clone(&self.versions);
         for (form, resolve) in forms {
-            self.model.resolve(vs.whole(vs.index_of(form).expect("a form of the run's versions")), resolve.iter().copied())?;
+            self.model.resolve(vs.whole(*form), resolve.iter().copied())?;
         }
-        let fields: Vec<Fields<'_>> = forms.iter().map(|f| vs.whole(vs.index_of(f.0).expect("a form of the run's versions"))).collect();
+        let fields: Vec<Fields<'_>> = forms.iter().map(|f| vs.whole(f.0)).collect();
         let model = self.model.fork_with(&|r: &str| fields.iter().find_map(|f| f.arity(r)).unwrap_or(0), reads, rules);
         Ok(Strand(Run {
-            prog: forms[0].0,
-            version: vs.index_of(forms[0].0).expect("a form of the run's versions"),
+            prog: self.prog,
+            version: forms[0].0,
             db: self.db.detached(),
             model,
             views: Arc::clone(&self.views),
@@ -5474,7 +5486,7 @@ impl<'a> Run<'a, '_> {
             projections: Arc::clone(&self.projections),
             inputs: Arc::clone(&self.inputs),
             versions: Arc::clone(&self.versions),
-            trees: Arc::clone(&self.trees),
+            trees: self.trees,
             answer: None,
             asking: None,
             why_class: None,
@@ -5486,12 +5498,12 @@ impl<'a> Run<'a, '_> {
 
     /// Takes back a component of forms' strand (`strand_forms`): per form, its relations `own` and what the strand
     /// learnt of them and of its rules.
-    fn absorb_forms(&mut self, s: Strand<'a>, forms: &[(&Program, BTreeSet<String>, Vec<u64>)]) {
+    fn absorb_forms(&mut self, s: Strand<'a>, forms: &[(usize, BTreeSet<String>, Vec<u64>)]) {
         let Strand(mut run, _, waves) = s;
         super::lanes::wave::credit(waves);
         let vs = Arc::clone(&self.versions);
         for (form, own, rules) in forms {
-            let f = vs.whole(vs.index_of(form).expect("a form of the run's versions"));
+            let f = vs.whole(*form);
             self.model.absorb_with(&|r: &str| f.arity(r).unwrap_or(0), &mut run.model, own, rules);
         }
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| forms.iter().any(|f| f.1.contains(r))));
@@ -5515,10 +5527,10 @@ impl<'a> Strand<'a> {
     /// Runs a component of maintained forms (decision 0117): each form's pieces in order (`run_members`), with the
     /// form as the strand's program. A form stopped leaves its later pieces to the loop's thread; the next form runs
     /// (forms of one level read none of each other's relations).
-    fn run_forms(&mut self, forms: &[(&'a Program, Vec<(BTreeSet<String>, Vec<RuleKey>)>)]) -> (Vec<(usize, Option<Result<(Option<String>, Option<String>)>>)>, Vec<crate::content_store::atoms::Reserved>) {
+    fn run_forms(&mut self, forms: &[(usize, Vec<(BTreeSet<String>, Vec<RuleKey>)>)]) -> (Vec<(usize, Option<Result<(Option<String>, Option<String>)>>)>, Vec<crate::content_store::atoms::Reserved>) {
         let (mut out, mut reserved, mut times) = (Vec::with_capacity(forms.len()), Vec::with_capacity(forms.len()), Vec::new());
         for (form, pieces) in forms {
-            self.0.set_prog(form);
+            self.0.set_version(*form);
             let mut r = Default::default();
             out.push(self.run_members(pieces, &mut times, &mut r, None));
             reserved.push(r);
@@ -7274,10 +7286,11 @@ pub trait Maintain {
     fn need(&mut self, rels: &[String], model: &mut Model) -> Result<()>;
     /// Whether the caller reads `rel` after the run (besides the outputs): a relation not read is then held.
     fn at_end(&self, rel: &str) -> bool;
-    /// The maintained form of stratum `scc` (its rules `rules`), whose reads `moved` changed: a program of its own
-    /// (its rules over the deltas and old rows, and its relations' deltas), with the old rows it reads bound and
-    /// their statistics in `model`, and the relations bound as the engine's (adopted).
-    fn form(&mut self, base: &Program, scc: &BTreeSet<String>, rules: &[&Rule], moved: &BTreeSet<String>, model: &mut Model) -> Result<(Program, Vec<String>)>;
+    /// The maintained form of stratum `scc` (its rules `rules`, of the run's version `v0`), whose reads `moved`
+    /// changed: a derivation of `v0` (decision 0241: its rules over the deltas and old rows, and its relations'
+    /// deltas), with the old rows it reads bound and their statistics in `model`, and the relations bound as the
+    /// engine's (adopted).
+    fn form(&mut self, v0: &body::Placed, rules: &[RuleKey], scc: &BTreeSet<String>, moved: &BTreeSet<String>, model: &mut Model) -> Result<(body::Placed, Vec<String>)>;
     /// Whether `rel`'s deltas (`rel__minus`, `rel__plus`) are relations of the run now: given, or made by its form.
     fn has_delta(&self, rel: &str) -> bool;
     /// `rel` changed and has no deltas (derived again, and its old rows not kept): its readers derive again.
@@ -7297,11 +7310,6 @@ fn hold_quiet(run: &mut Run, f: Fields<'_>, db: &Connection, rel: &String, o: Ar
     run.native_rels.insert(rel.clone());
 }
 
-/// Programs made while a run goes (a maintained stratum's form, decision 0117 step 3), each kept where it is until
-/// the run ends: the run's rules are borrowed from them.
-#[derive(Default)]
-struct Forms(RefCell<Vec<Box<Program>>>);
-
 /// A stratum of a maintained run, as its level's start placed it (decision 0117 step 3).
 enum Slot<'f> {
     /// Run as the base program's stratum (its reads unchanged and its rows not kept), or not placed yet.
@@ -7310,24 +7318,14 @@ enum Slot<'f> {
     Quiet,
     /// Maintained or derived again (`again`) by its form's pieces, in order; issued as a job when a strand can run
     /// them, with the relations its pieces make and their rules' digests.
-    Reached { form: &'f Program, pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)>, again: bool, job: Option<FormJob<'f>> },
+    Reached { form: usize, pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)>, again: bool, job: Option<FormJob<'f>> },
 }
 
 /// A reached stratum's part in a component of forms issued as one job (decision 0117, as decision 0113 §2 packs
 /// strata): the first member's slot holds the job and, per member, its slot, form, relations and rules' digests.
 enum FormJob<'f> {
-    Lead(rerail_accel::stream::Handle<FormsOut<'f>>, Vec<(usize, &'f Program, BTreeSet<String>, Vec<u64>)>),
+    Lead(rerail_accel::stream::Handle<FormsOut<'f>>, Vec<(usize, usize, BTreeSet<String>, Vec<u64>)>),
     Member,
-}
-
-impl Forms {
-    fn add(&self, p: Program) -> &Program {
-        let b = Box::new(p);
-        let at: *const Program = &*b;
-        self.0.borrow_mut().push(b);
-        // SAFETY: a box's contents do not move when the vector grows, and no box is dropped before `self` is.
-        unsafe { &*at }
-    }
 }
 
 /// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
@@ -8169,8 +8167,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     if !(atoms && !native.is_empty()) {
         crate::code_rule_dsl::facts::vtab::setup_now(db)?;
     }
-    // The maintained run's driver (decision 0117 step 3), and the forms it makes, which outlive the run's state.
-    let forms = Forms::default();
+    // The maintained run's driver (decision 0117 step 3).
     let mut maintaining = hooks.maintain.take();
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
     let (mut reached, mut quiet_slots) = (0usize, 0usize);
@@ -8183,7 +8180,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (mut issued_forms, mut issued_jobs, mut ran_by_jobs) = (0usize, 0usize, 0usize);
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(f0.inputs().collect()), versions: Arc::new(body::Versions::with(prog, placed)), trees: Arc::new(vec![prog.rules.as_slice()]), version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::with(prog, placed)), trees: &prog.rules, version: 0, answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -8738,28 +8735,24 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     let key = stratum_key(scc);
                     reached += 1;
                     let _span = super::profile::span(|| format!("stratum {} placed", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
-                    // The driver writes the form from the stratum's trees (until it writes over the run's version).
-                    let trees: Vec<&Rule> = rules.iter().map(|&r| run.tree(r)).collect();
-                    let (form, adopted) = m.form(prog, scc, &trees, &moved, &mut run.model)?;
-                    super::version_trace::note("plan.form", prog, &form);
-                    let form: &Program = forms.add(form);
-                    // The form's own version: its fields, read once here, and shared by `run.versions`' copy.
-                    let k = run.add_form(form)?;
-                    if run.versions.fields(k).is_none() {
-                        return Err(Error::Plan(format!("{key}: its maintained form has no image")));
+                    // The driver writes the form over the run's version (decision 0241): a derivation of it.
+                    let v0 = run.versions.placed(0).clone();
+                    let (form_v, adopted) = m.form(&v0, &rules, scc, &moved, &mut run.model)?;
+                    if std::env::var_os("RERAIL_VERSION_TRACE").is_some() {
+                        let lists = super::front::Lists::default();
+                        super::version_trace::note("plan.form", prog, &form_v.v.program(&lists).map_err(Error::Plan)?);
                     }
+                    let k = run.add_form(form_v)?;
                     let form_v = run.versions.placed(k).clone();
                     let form_f = Fields::of(&form_v).expect("a whole version");
                     run.native_rels.extend(adopted);
-                    // The run's input set holds names for the run's life (`'a`): the tree's, which outlives the form's
-                    // version here.
-                    Arc::make_mut(&mut run.inputs).extend(form.inputs.iter().map(String::as_str));
-                    Arc::make_mut(&mut run.projections).extend(projections(form));
-                    let form_sccs = components_of(form)?;
-                    // The form's rules by head, as keys of its version (its rule `i` is the form's rule `i`).
+                    let form_projections = super::program_image::analyses::projections(&form_v.v);
+                    Arc::make_mut(&mut run.projections).extend(form_projections.into_iter().map(|(r, eqs)| (form_v.v.rel_name(r).to_owned(), eqs)));
+                    let form_sccs = form_v.components()?;
+                    // The form's rules by head, as keys of its version (its rule `i` is the version's rule `i`).
                     let mut by_head: HashMap<&str, Vec<RuleKey>> = HashMap::new();
-                    for (i, r) in form.rules.iter().enumerate() {
-                        by_head.entry(r.head.rel.as_str()).or_default().push(RuleKey::new(k, i));
+                    for i in 0..form_v.v.size() {
+                        by_head.entry(form_v.v.rel_name(form_v.rule(i).head().rel())).or_default().push(RuleKey::new(k, i));
                     }
                     let mut pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)> = form_sccs
                         .into_iter()
@@ -8775,22 +8768,22 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     if let Some(fm) = form_v.maint.as_ref()
                         && let Some(g) = fm.group_of(scc)
                     {
-                        run.set_prog(form);
+                        run.set_version(k);
                         let chosen = run.again_wanted(fm, g, &HashMap::new());
-                        run.set_prog(prog);
+                        run.set_version(0);
                         if chosen?.0 {
                             again = true;
                             outcome.again += 1;
                             // Its pieces are now the form's rules for deriving it again, planned as any rules are.
-                            let again_rules = run.add_again(fm, g, false, &form.again[g].rules);
-                            let deltas = run.add_again(fm, g, true, &form.again[g].deltas);
+                            let again_rules = run.add_again(fm, g, false);
+                            let deltas = run.add_again(fm, g, true);
                             pieces = std::iter::once((scc.clone(), again_rules))
                                 .chain(deltas.into_iter().map(|k| (BTreeSet::from([run.versions.head_at(k).to_owned()]), vec![k])))
                                 .collect();
                         }
                     }
                     if native.contains("program") {
-                        run.set_prog(form);
+                        run.set_version(k);
                         for (piece, rules) in &pieces {
                             let vs = Arc::clone(&run.versions);
                             wants.extend(rules.iter().flat_map(|&r| {
@@ -8803,9 +8796,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                                 .map(|(rel, atom)| (rel.to_owned(), atom.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c).collect())));
                             specs.extend(run.seed_specs(piece, rules));
                         }
-                        run.set_prog(prog);
+                        run.set_version(0);
                     }
-                    slots[j] = Slot::Reached { form, pieces, again, job: None };
+                    slots[j] = Slot::Reached { form: k, pieces, again, job: None };
                 }
                 if !wants.is_empty() {
                     let _wave = super::profile::span(|| "device wave (count tables, a maintained level)".into());
@@ -8832,11 +8825,11 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     let width = env_f("RERAIL_STRATA_WIDTH", 6.0).max(1.0) as usize;
                     // Per form that may run off the thread: its slot, reads, relations, rules' digests, statistics to
                     // resolve and estimate.
-                    let mut ready: Vec<(usize, &Program, BTreeSet<String>, BTreeSet<String>, Vec<u64>, Vec<String>, f64)> = Vec::new();
+                    let mut ready: Vec<(usize, usize, BTreeSet<String>, BTreeSet<String>, Vec<u64>, Vec<String>, f64)> = Vec::new();
                     for j in at..end {
                         let Slot::Reached { form, pieces, .. } = &slots[j] else { continue };
-                        let form: &Program = form;
-                        run.set_prog(form);
+                        let form = *form;
+                        run.set_version(form);
                         let mut own: BTreeSet<String> = BTreeSet::new();
                         let mut reads: BTreeSet<String> = BTreeSet::new();
                         let ok = pieces.iter().all(|(piece, rules)| match run.strand_reads_with(piece, rules, &own) {
@@ -8847,7 +8840,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                             }
                             Err(_) => false,
                         });
-                        run.set_prog(prog);
+                        run.set_version(0);
                         if !ok {
                             continue;
                         }
@@ -8890,10 +8883,10 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         let est: f64 = group.iter().map(|g| g.6).sum();
                         let reads: BTreeSet<String> = group.iter().flat_map(|g| g.2.iter().cloned()).collect();
                         let digests: Vec<u64> = group.iter().flat_map(|g| g.4.iter().copied()).collect();
-                        let resolve: Vec<(&Program, Vec<&str>)> = group.iter().map(|g| (g.1, g.5.iter().map(String::as_str).collect())).collect();
+                        let resolve: Vec<(usize, Vec<&str>)> = group.iter().map(|g| (g.1, g.5.iter().map(String::as_str).collect())).collect();
                         // A component whose statistics cannot be made for its strand runs on the loop's thread.
                         let Ok(strand) = run.strand_forms(&resolve, &reads, &digests) else { continue };
-                        let data: Vec<(&Program, Vec<(BTreeSet<String>, Vec<RuleKey>)>)> = group.iter().map(|g| match &slots[g.0] {
+                        let data: Vec<(usize, Vec<(BTreeSet<String>, Vec<RuleKey>)>)> = group.iter().map(|g| match &slots[g.0] {
                             Slot::Reached { pieces, .. } => (g.1, pieces.clone()),
                             _ => unreachable!("a reached slot"),
                         }).collect();
@@ -8933,7 +8926,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     // its atoms published; each member then runs here the pieces after one that stopped.
                     if let Some(FormJob::Lead(h, members)) = job {
                         let (strand, outs, reserved) = stream.wait(h).map_err(Error::Plan)?;
-                        let taken: Vec<(&Program, BTreeSet<String>, Vec<u64>)> = members.iter().map(|m| (m.1, m.2.clone(), m.3.clone())).collect();
+                        let taken: Vec<(usize, BTreeSet<String>, Vec<u64>)> = members.iter().map(|m| (m.1, m.2.clone(), m.3.clone())).collect();
                         run.absorb_forms(strand, &taken);
                         drop(reserved);
                         for (m, out) in members.into_iter().zip(outs) {
@@ -8949,7 +8942,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                             return Err(e);
                         }
                     }
-                    run.set_prog(form);
+                    run.set_version(form);
                     // Its form derives it again from its reads as they are (no old rows, no delta read or made): the
                     // base program's rules for it.
                     let delta_rel = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
@@ -8958,7 +8951,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     for (k, (piece, piece_rules)) in pieces.iter().enumerate().skip(from) {
                         let ok = run.native_stratum_now(piece, piece_rules);
                         if !matches!(ok, Ok(true)) {
-                            run.set_prog(prog);
+                            run.set_version(0);
                             let why = run.why_not.take().unwrap_or_default();
                             // Derived again with nothing of it run yet (a head the engine has no native form for,
                             // `@place`): made as the base program makes it, by its SQL fallback below; its readers
@@ -8971,7 +8964,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                             return Err(ok.err().unwrap_or_else(|| Error::Plan(format!("{piece:?}, of the maintained form of {key}: the native engine declined: {why}"))));
                         }
                     }
-                    run.set_prog(prog);
+                    run.set_version(0);
                     if base {
                         for r in scc {
                             m.no_delta(r);
@@ -9048,8 +9041,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 let wanted: Vec<&str> = again.rules.iter().flat_map(|&id| m.v.rule(id).expect("a rule of the maintenance's version").body().filter_map(|l| l.atom()).map(|a| m.name(a.rel()))).collect();
                 run.make_deferred(&wanted, &mut deferred)?;
                 // Its rules derived again and its deltas, keys of versions of their own (`add_again`).
-                let rules = run.add_again(m, g, false, &prog.again[g].rules);
-                let deltas = run.add_again(m, g, true, &prog.again[g].deltas);
+                let rules = run.add_again(m, g, false);
+                let deltas = run.add_again(m, g, true);
                 if !run.native_stratum_now(&scc, &rules)? {
                     return Err(Error::Plan(format!("{scc:?} derived again: the native engine declined: {}", run.why_not.take().unwrap_or_default())));
                 }

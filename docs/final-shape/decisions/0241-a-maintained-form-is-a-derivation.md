@@ -24,7 +24,11 @@ image under the run's version's atom and relation ids, holding only the parts th
 - **Its `Maint`** (decision 0215): its strata derived again, an overlay of the derivation, and its sets run
   together.
 
-So its cost is the form's size, and its fields equal the tree form's exactly. Its relations and atoms keep the run's
+So its cost is the form's size, and its fields equal the tree form's exactly. A base under the run's ids would
+copy every name of the run per form (each base holds its own string table: in a cold dl1 batch, 1,300 of the forms' 1,470 one-ms
+samples were that copy and its write). So the run's names are made once per run, as a version of names alone (the
+run's atoms and relations, no rules and no parts), and each form is an overlay of that version, never folded: an
+overlay of a version with no rules or parts holds only what the form states, and reads the run's names in place. Its relations and atoms keep the run's
 ids where the run has them, so a name the run and the form share is one id in both.
 
 ## Why not an overlay of the run's version
@@ -48,5 +52,8 @@ on one.
 
 - The run adds a form as the version it is given (no lookup by the tree's address, no image made from a tree per
   form), and its again rules and deltas are its `Maint`'s.
-- `maintain::rewrite_with` writes the form with the builder. The session's maintained part (E3) still passes a tree
-  until t36 item 7 step 9; its caller decodes the derivation.
+- One rewrite writes every maintained program with the builder (`maintain::rewrite_over`, from rules read by
+  their handles): a stratum's form over the run's version (`maintain::form`), and the session's maintained part
+  (E3, `maintain::rewrite`) over its cut program's image, a derivation of it holding all its parts. Until t36 item 7
+  step 9 the session's run still takes a tree, so `rewrite` encodes the cut program and decodes the result; the tree
+  rewrite (`rewrite_with`) is gone.

@@ -7,7 +7,7 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<&low
     let f = p.fields()?;
     let roots: BTreeSet<String> = f.outputs().map(str::to_owned).chain(inputs.kept.iter().cloned()).collect();
     let needed = needed(f,roots.iter().map(String::as_str));
-    let sccs = components(p)?;
+    let sccs = p.components()?;
     // Each component's rules, by key, in the program's order.
     let rules: Vec<Vec<RuleKey>> = sccs.iter().map(|s|(0..p.len()).filter(|&k|s.contains(head(p,k))).map(RuleKey::program).collect()).collect();
 
