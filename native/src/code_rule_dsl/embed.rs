@@ -12,8 +12,9 @@
 //! one grammar and passes the same tape checks. An embedder builds, from a file's tape and source,
 //! at most one program, which is
 //! - its text, written as the host's language reads the file (a Blade view's PHP, a Vue
-//!   component's scripts and template expressions), and its tree, parsed from that text with the
-//!   grammar of `Program::dialect`, one of the dialects the host embeds through that `via` (a Vue
+//!   component's scripts and template expressions), and its parse, read from that text in the
+//!   grammar of `Program::dialect` (`Parse::read`: the dialect's lean parser's tape, or
+//!   tree-sitter's tree where it refuses), one of the dialects the host embeds through that `via` (a Vue
 //!   file's scripts are TypeScript, TSX or JavaScript, as its `lang` says). Its nodes span the
 //!   text, as any tree's do;
 //! - where its text stands in the host source (`SegmentMap`), recorded as the program is written:
@@ -55,6 +56,41 @@ pub enum Parse {
     Tape(crate::code_rule_dsl::tape::TapeImage),
 }
 
+impl Parse {
+    /// A program's text read in `dialect`: by the dialect's lean parser where it has one and that
+    /// parser reads the text, else by tree-sitter (one behavior: tree-sitter's tape, or a
+    /// refusal). `None` where tree-sitter has no grammar for the dialect.
+    pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
+        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, php_lean};
+        let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok());
+        let lean = match dialect {
+            GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
+            GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
+            GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
+            GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            _ => None,
+        };
+        if let Some(tape) = lean.and_then(Result::ok) {
+            return Some(Self::Tape(tape));
+        }
+        Self::tree_sitter(dialect, text).map(Self::Tree)
+    }
+
+    /// tree-sitter's tree of a program's text in `dialect`.
+    pub fn tree_sitter(dialect: GrammarDialect, text: &str) -> Option<tree_sitter::Tree> {
+        use ast_grep_language::LanguageExt;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&dialect.get_ts_language()).ok()?;
+        parser.parse(text, None)
+    }
+
+    /// Whether a lean parser read the text.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_lean(&self) -> bool {
+        matches!(self, Self::Tape(_))
+    }
+}
+
 /// A program an embedder built from a host file.
 pub struct Program {
     /// The dialect its text is parsed with and read as.
@@ -77,7 +113,7 @@ pub struct Program {
 pub trait Embedder: Send + Sync {
     /// The program the host whose tape's root is `root`, over `source`, embeds; `None` where it
     /// embeds none. The tape is read in place (`host`), whichever parser wrote it.
-    fn build(&self, root: HostNode<'_>, source: &str) -> Option<Program>;
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program>;
 }
 
 static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =

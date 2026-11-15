@@ -2632,7 +2632,30 @@ impl<'a> P<'a> {
         }
         if t.kind == T::Name && t.word == w::AWAIT {
             let next = self.peek_at(1);
-            if can_start_expression(next.kind) && !(next.nl && self.asi) {
+            if !can_start_expression(next.kind) || next.nl && self.asi {
+                return self.refuse();
+            }
+            // In JavaScript, `await (…)` and a postfix (`await (a)()`, `await (a).b`, `?.`, `[…]`,
+            // a template, `++` or `--` on its line): tree-sitter-javascript reads a call of a
+            // name `await`, the parenthesized text its arguments, and the postfix on the call.
+            // The parenthesized text is read to see the token after it, then again.
+            // tree-sitter-typescript and -tsx read an await of the postfix expression.
+            let mut called = false;
+            if next.kind == T::LParen && !self.ts {
+                let m = self.mark();
+                self.bump()?;
+                // Text no expression reads (`(...a)`, `()`) can only be arguments.
+                called = self.primary(EXPR).is_err() || {
+                    let after = self.tok();
+                    match after.kind {
+                        T::LParen | T::Dot | T::QDot | T::LBracket | T::Backtick => true,
+                        T::PlusPlus | T::MinusMinus => !after.nl,
+                        _ => false,
+                    }
+                };
+                self.restore(m);
+            }
+            if !called {
                 self.deeper()?;
                 let n = self.open_in(K::AwaitExpression, s);
                 self.bump()?;
@@ -2641,22 +2664,17 @@ impl<'a> P<'a> {
                 while self.ts && (self.is_word(w::AS) || self.is_word(w::SATISFIES)) && !self.stops() {
                     arg = self.as_expression(arg_start, arg, EXPR)?;
                 }
-                // `await (…)` and a postfix: tree-sitter reads a call of a name `await`.
-                if next.kind == T::LParen && arg.kind != K::ParenthesizedExpression {
-                    return self.refuse();
-                }
                 self.close(n);
                 self.depth -= 1;
                 self.after = V_EXPR;
                 return Ok(n);
             }
-            return self.refuse();
         }
         let start = self.here();
         let e = self.postfix(s)?;
         let t = self.tok();
         if matches!(t.kind, T::PlusPlus | T::MinusMinus) && !self.stops() && !t.nl {
-            if !matches!(e.kind, K::Identifier | K::Undefined | K::MemberExpression | K::SubscriptExpression | K::ParenthesizedExpression) {
+            if !matches!(e.kind, K::Identifier | K::Undefined | K::MemberExpression | K::SubscriptExpression | K::ParenthesizedExpression | K::CallExpression) {
                 return self.refuse();
             }
             let n = self.wrap(N { at: start, kind: e.kind }, K::UpdateExpression, s, slot(f::ARGUMENT, Ctx::Expr));

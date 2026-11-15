@@ -2871,7 +2871,11 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "let s = `a${b}c` + tag`d` + /re[/]g/.source; a = b\n(c)\n",
         "x = async (a) => { await a }\ny = a => a?.b?.[c]?.(d)\n",
         "a\n++b\nreturn\n",
+        // `await (…)` and a postfix: JavaScript calls a name `await`; TypeScript awaits.
+        "async function f() { await (a)(); await (a).b; await (a)[0]; await (a)?.b; await (a)`t`; await (a)++; await (a)\n++b; await (a); f()++ }\n",
     ];
+    // Arguments no expression reads: a call of `await` in JavaScript, errors in TypeScript.
+    let js = ["async function f() { await (...a); await (); await (a, b)() }\n"];
     let jsx = ["const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n"];
     let ts = [
         "let x: A | B & C[] = y as const;\nlet z = <T>w;\n",
@@ -2880,11 +2884,12 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "abstract class A<T> extends B<T> implements C { private readonly x!: T; abstract m(): void; constructor(public y?: number) { super() } }\n",
         "enum E { A = 1, B, }\nconst enum F {}\ndeclare module 'm' { export function f(): void; }\nnamespace N.M { }\n",
         "function f<T>(this: Window, a?: T, ...b: T[]): a is T;\nfunction f() {}\nexport = f;\n",
+        "async function f() { await (a)!; await (a)<T>(); await (a as B).c() }\n",
         "const g = f<string>(x)!.y satisfies Z;\nimport q = require('q');\nimport type { R } from 'r' with { type: 'json' };\n",
     ];
     let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
     let cases: [(Dialect, Vec<&str>); 3] = [
-        (Dialect::JavaScript, common.iter().chain(&jsx).copied().collect()),
+        (Dialect::JavaScript, common.iter().chain(&js).chain(&jsx).copied().collect()),
         (Dialect::TypeScript, common.iter().chain(&ts).copied().collect()),
         // `<T>w` is an element's start in TSX, not a type assertion.
         (Dialect::Tsx, common.iter().chain(&ts[1..]).chain(&jsx).chain(&tsx).copied().collect()),
@@ -4114,6 +4119,11 @@ fn the_product_reads_vue_with_the_lean_parser() {
 #[test]
 #[ignore = "a measurement; needs RERAIL_PY_FILES"]
 fn vue_parse_costs() {
+    let ecma_dialect = |d: GrammarDialect| match d {
+        GrammarDialect::TypeScript => rerail_ecma_lean::Dialect::TypeScript,
+        GrammarDialect::Tsx => rerail_ecma_lean::Dialect::Tsx,
+        _ => rerail_ecma_lean::Dialect::JavaScript,
+    };
     use crate::code_rule_dsl::tape::vue_lean;
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let gd = GrammarDialect::Vue;
@@ -4125,6 +4135,43 @@ fn vue_parse_costs() {
     files.retain(|f| vue_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    // The embedded programs' texts, each read by the lean ECMAScript parser (tree-sitter where it
+    // refuses one) and by tree-sitter alone.
+    let programs: Vec<(GrammarDialect, String)> = files
+        .iter()
+        .filter_map(|f| {
+            let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
+            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar).root()?;
+            let view = crate::code_rule_dsl::vue::view::View::build(root, f, &|| false)?;
+            Some((view.dialect(), view.text().to_owned()))
+        })
+        .collect();
+    let read_lean = programs
+        .iter()
+        .filter(|(d, text)| crate::code_rule_dsl::embed::Parse::read(*d, text, &|| false).is_some_and(|p| p.is_lean()))
+        .count();
+    let program_bytes: usize = programs.iter().map(|(_, text)| text.len()).sum();
+    let tape_of = |d: GrammarDialect, text: &str, parse: crate::code_rule_dsl::embed::Parse| match parse {
+        crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.node_count(),
+        crate::code_rule_dsl::embed::Parse::Tree(tree) => {
+            let grammar = Grammar::embedded(d).unwrap();
+            TapeImage::encode_tree_image(tree.root_node(), &grammar, text, None, &|| false).map_or(0, |t| t.node_count())
+        }
+    };
+    let program_nodes: usize = programs
+        .iter()
+        .map(|(d, text)| tape_of(*d, text, crate::code_rule_dsl::embed::Parse::Tree(crate::code_rule_dsl::embed::Parse::tree_sitter(*d, text).unwrap())))
+        .sum();
+    eprintln!("{} programs, {read_lean} read by the lean parser, {program_bytes} bytes, {program_nodes} program nodes", programs.len());
+    for (d, text) in &programs {
+        if let Err(why) = crate::code_rule_dsl::tape::ecma_lean::encode(ecma_dialect(*d), &Grammar::embedded(*d).unwrap(), text, &|| false) {
+            let dir = std::env::var("RERAIL_VUE_REFUSED").unwrap_or_default();
+            if !dir.is_empty() {
+                std::fs::write(format!("{dir}/{}.txt", text.len()), text).unwrap();
+            }
+            eprintln!("refused, {:?}: {why:?}", d);
+        }
+    }
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || {
         let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -4139,28 +4186,47 @@ fn vue_parse_costs() {
             let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
             usize::from(std::hint::black_box(FileImage::embedding(tape, &grammar, f, &|| false)).is_ok())
         })),
-        ("tree-sitter: the documents", Box::new(|f| {
+        ("tree-sitter host: the documents", Box::new(|f| {
             let tree = parser.borrow_mut().parse(f, None).unwrap();
             usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
         })),
     ];
-    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    let programs_by = |lean: bool| {
+        programs
+            .iter()
+            .map(|(d, text)| {
+                let parse = if lean {
+                    crate::code_rule_dsl::embed::Parse::read(*d, text, &|| false).unwrap()
+                } else {
+                    crate::code_rule_dsl::embed::Parse::Tree(crate::code_rule_dsl::embed::Parse::tree_sitter(*d, text).unwrap())
+                };
+                tape_of(*d, text, parse)
+            })
+            .sum::<usize>()
+    };
+    // Each step a pass: the files' steps over every file, the programs' over every program.
+    let each_file = &files;
+    let mut passes: Vec<(&str, Box<dyn Fn() -> usize + '_>)> = steps
+        .into_iter()
+        .map(|(name, step)| (name, Box::new(move || each_file.iter().map(|f| step(f)).sum::<usize>()) as Box<dyn Fn() -> usize>))
+        .collect();
+    passes.push(("lean: the programs' tapes", Box::new(|| programs_by(true))));
+    passes.push(("tree-sitter: the programs' tapes", Box::new(|| programs_by(false))));
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); passes.len()];
     for _ in 0..3 {
-        for (i, (_, step)) in steps.iter().enumerate() {
+        for (i, (_, pass)) in passes.iter().enumerate() {
             let (i0, c0) = retired();
             let t0 = cpu();
-            let mut n = 0;
-            files.iter().for_each(|f| n += step(f));
-            std::hint::black_box(n);
+            std::hint::black_box(pass());
             let (i1, c1) = retired();
             let t = cpu() - t0;
             best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
         }
     }
     eprintln!("Vue: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
-    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+    for ((name, _), (t, ins, cyc)) in passes.iter().zip(&best) {
         eprintln!(
-            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            "{name:32} {:9.1} instructions a host node, {:7.1} cycles a host node, {:6.2} ns a byte, {:8.3} s",
             *ins as f64 / nodes as f64,
             *cyc as f64 / nodes as f64,
             t * 1e9 / bytes as f64,

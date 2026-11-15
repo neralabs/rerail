@@ -647,7 +647,7 @@ impl FileImage {
                 if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                     continue;
                 }
-                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
+                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, budget) {
                     programs.push((via, program));
                 }
             }
@@ -1302,7 +1302,7 @@ impl TapeImage {
 
     /// The tape of a tree-sitter tree of `source` alone, leaving out the placeholders `omitted`
     /// marks (an embedded program's).
-    fn encode_tree_image(
+    pub fn encode_tree_image(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
