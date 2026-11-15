@@ -1915,7 +1915,9 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .into_values()
         .filter_map(|g| {
             let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
-            let copies = |u: &str| kept.iter().any(|k| k.starts_with("rr_wide_") && k.ends_with(&format!("_{u}")));
+            let copies = |u: &str| {
+                super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
+            };
             let own = unread.into_iter().find(|u| copies(u));
             kept.extend(own);
             kept.sort();
@@ -2369,6 +2371,48 @@ pub mod tests {
         assert!(prog.facts.contains_key("env") && prog.facts.contains_key("cfg"), "{:?}", prog.facts.keys().collect::<Vec<_>>());
         // The class keeps one member's rules: its namesake's, not its first's as well.
         assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "q").count(), 1, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+
+    /// A relation nothing reads joins the class of its own widened copy and names it (all its readers read the copy);
+    /// one whose name only ends like a copy's relation (`same_q` against `rr_wide_node_text_cmp_same_q`) stays apart.
+    #[test]
+    fn an_unread_relation_names_its_own_copys_class_only() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl base(n: number)
+            .input base
+            .decl q(n: number)
+            .decl rr_wide_node_text_q(n: number)
+            q(n) :- base(n).
+            rr_wide_node_text_q(n) :- base(n).
+            .decl other(n: number)
+            .input other
+            .decl same_q(n: number)
+            .decl cmp_same_q(n: number)
+            .decl rr_wide_node_text_cmp_same_q(n: number)
+            same_q(n) :- other(n).
+            cmp_same_q(n) :- other(n).
+            rr_wide_node_text_cmp_same_q(n) :- other(n).
+            .decl out(n: number)
+            .output out
+            out(n) :- rr_wide_node_text_q(n), rr_wide_node_text_cmp_same_q(n), cmp_same_q(n).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        let mut merged = report.merged.clone();
+        merged.sort();
+        assert_eq!(
+            merged,
+            vec![("cmp_same_q".to_owned(), "rr_wide_node_text_cmp_same_q".to_owned()), ("q".to_owned(), "rr_wide_node_text_q".to_owned())],
+            "{:?}",
+            prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>()
+        );
+        // `same_q` neither joined nor named the class: the reached rule reads `cmp_same_q` still. (Its own rules go
+        // with the other unread relations' rules, `simplify`'s dead-rule pass.)
+        let out = prog.rules.iter().find(|r| r.head.rel == "out").unwrap();
+        let reads: Vec<&str> = out.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
+        assert!(reads.contains(&"cmp_same_q") && !reads.contains(&"same_q"), "{reads:?}");
     }
 
     /// Two atoms of one keyed row merge by renaming the later's variable, in the head's computed terms too: the

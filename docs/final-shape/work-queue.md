@@ -147,6 +147,15 @@ into notes once the queue is done).
     fails on a switch the lowering and preparation sources read that is neither preparing nor listed as changing
     nothing. Open: (4) and the maintained text-test path stay untested until question 2.
 
+  - *Review 4* (a4e4173b4): (1) the switch guard scanned neither `plan/corpus.rs` nor `plan/keeps.rs` and matched
+    only literal `var("…")`; (2) `RERAIL_LIBRARIES` and `RERAIL_REQUESTS` change the combined program but keyed
+    nothing (its key, `texts_digest`, held only the scope guards), so `=copied` reused the default program. Fixed:
+    `COMBINING` (scope guards, libraries, requests) is hashed into `texts_digest` when set (an unset switch keeps
+    the key); the guard matches every `"RERAIL_…"` literal and scans `run_observed` up to the prepared program and
+    `combine_read` (against `COMBINING`); `RERAIL_SOURCES_PHASE` is keyed through the facts it adds,
+    `RERAIL_DUMP_PROGRAMS` and `RERAIL_TIMELINE` change nothing. `keeps.rs` is the plan's, not preparation's (Q14).
+    `native_stratum_`: nothing found.
+
 ### Q3. No duplicate widened copies; the dropping test strict again
 
 - **Keep**: 0174's widened copies where they serve a reader; the user's "Prune knows requests" (gated prune);
@@ -207,6 +216,15 @@ into notes once the queue is done).
     `node_text` read of `rr_wide_node_text_cmp_same_ask`), looked equal to `same_some`. It is now a greatest
     fixpoint: copies equal to their sources with only equal copies read as sources. dropping_unreached 8/8,
     `every_switch_lowering_reads_is_classified`, the simplify test pass (cargo). Pending review 4.
+  - *Review 4* (a31db6c55): (3) the assertion compared raw rule text, and `simplify` renames inlined variables
+    apart with one counter (`_f<k>`, `_t<k>`), so an equal copy could drop out of `same` unchecked; (4) `congruence`
+    took any read relation ending in `_<u>` as `u`'s copy (`rr_wide_node_text_cmp_same_ask` against `same_ask`), so
+    an unreached `same_ask` could name the reached class. Suggestions: no direct test of the unread path; a shared
+    namespace class named after an unread member; a copy whose source prune emptied. Fixed: the assertion compares
+    rules up to variable names (first appearance); a copy is exactly `rr_wide_<attr>_<u>` for an `ON_REQUEST`
+    attribute; test `an_unread_relation_names_its_own_copys_class_only` (with the near name `same_q`). Not changed:
+    a copy's name has no program prefix, so a class holding one never takes the shared-namespace arm; a copy whose
+    source has no rules is not "left with its relation's own rules" (Done-when).
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -331,6 +349,19 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     sets `RUSTFLAGS` and `CARGO_TARGET_DIR` on purpose to compare flags (lab code, not mine to change; for the
     tape16 owner). Relax builds stop on macOS refusing to exec (AppleSystemPolicy "Security policy would not allow
     process", the Relax binary and native build scripts, 15:29–15:42), intermittent: the user decides the route.
+
+### Q14. Plan-time switches and the plan cache
+
+(Found in Q2's review 4.) `keeps::choose` (what each derived relation keeps, stored or inlined) runs in
+`plan::run` and its choices are kept in the plan cache (`PlanKey`, a program digest; a session's plans across
+runs, `SESSION_PLANS`). `RERAIL_INLINE`, `RERAIL_INLINE_ONLY` and `RERAIL_OBSERVED_STEPS` change those choices
+and are not in that key; `RERAIL_INLINE` and `RERAIL_INLINE_ONLY` are in `PREPARING`, which keys the prepared
+program, not the plans.
+
+- **Done when**: each switch the plan reads is either in the plan cache's key or shown not to change a kept plan
+  (a session that turns one on mid-run gets the plans it asks for), with a guard like Q2's over `plan.rs` and
+  `plan/`.
+- **Record**: —
 
 ## Questions for the user
 

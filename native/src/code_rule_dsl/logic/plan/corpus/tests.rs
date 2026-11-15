@@ -1123,13 +1123,20 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_PREPARED_TRACE",
         "RERAIL_SPIKE_PROJECTION",
         "RERAIL_TAPE_CACHE",
+        "RERAIL_DUMP_PROGRAMS",
+        "RERAIL_TIMELINE",
+        // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
+        "RERAIL_SOURCES_PHASE",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     let places = [
         "logic/rr", "logic/front.rs", "logic/front", "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs",
         "logic/magic", "logic/plan/lower.rs", "logic/plan/corpus/cross_memo.rs", "typing/file_local.rs", "typing/file_local",
     ];
-    let read = regex::Regex::new(r#"var(?:_os)?\("(RERAIL_[A-Z0-9_]+)"\)"#).unwrap();
+    // Not `plan/keeps.rs`: what a relation keeps (stored or inlined, `keeps::choose`) is chosen in `plan::run`, per
+    // run, and kept in the plan cache, not in the prepared program; its switches are that cache's (work queue Q14).
+    // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
+    let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     let mut files = Vec::new();
     let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
     let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
@@ -1150,5 +1157,23 @@ fn every_switch_lowering_reads_is_classified() {
             }
         }
     }
-    assert!(unlisted.is_empty(), "switches lowering reads that are neither PREPARING nor NOT_PREPARING: {unlisted:?}");
+    // `corpus.rs` itself, where the run reads most of its switches: its preparation (`run_observed` up to the prepared
+    // program kept) and `combine_read`, whose switches key the combined program (`COMBINING`).
+    let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
+    let region = |from: &str, to: &str| -> &str {
+        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
+        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
+        &corpus[a..b]
+    };
+    for (name, text, allowed) in [
+        ("run_observed's preparation", region("\nfn run_observed(", "Arc::new(Prepared {"), super::PREPARING),
+        ("combine_read", region("\nfn combine_read(", "\n}\n"), super::COMBINING),
+    ] {
+        for c in read.captures_iter(text) {
+            if !allowed.contains(&&c[1]) && !NOT_PREPARING.contains(&&c[1]) {
+                unlisted.insert(format!("{} in corpus.rs, {name}", &c[1]));
+            }
+        }
+    }
+    assert!(unlisted.is_empty(), "switches lowering reads that are neither PREPARING (COMBINING) nor NOT_PREPARING: {unlisted:?}");
 }

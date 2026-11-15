@@ -78,6 +78,12 @@ pub mod world;
 pub mod connections;
 pub mod reuse;
 
+/// The switches that change the combined program (`combine_read`): its key (`texts_digest`) holds their values, so a
+/// combined program kept or stored under one value is not another's (`RERAIL_LIBRARIES=copied`,
+/// `RERAIL_REQUESTS=copied`: the copies to compare; `RERAIL_SCOPE_GUARDS=off`, decision 0091's measurement). Every
+/// prepared key holds the combined program's.
+pub const COMBINING: &[&str] = &["RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"];
+
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
 /// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
@@ -649,9 +655,12 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
 fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
-    // Without decision 0091's guards (`scoping`, a measurement's switch) the same texts combine to another program.
-    if programs.len() > 1 && std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|v| v == "off") {
-        hash.update(b"scope guards off");
+    // Under another value of a switch `combine_read` reads, the same texts combine to another program (`COMBINING`).
+    // Only those set: an unset switch keeps the key every run has had.
+    for switch in COMBINING {
+        if let Some(v) = std::env::var_os(switch) {
+            hash.update(format!("\0{switch}={}", v.to_string_lossy()).as_bytes());
+        }
     }
     debug_assert_eq!(programs.len(), graphs.len(), "a graph digest per program text");
     let extra_graph = crate::code_rule_dsl::logic::rr::graph_digest(extra).ok().flatten();

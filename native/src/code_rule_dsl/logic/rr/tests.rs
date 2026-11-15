@@ -3477,6 +3477,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
                 at.to_owned()
             };
+            let variable = regex::Regex::new(r#"Var\("([^"]+)"\)|var: "([^"]+)""#).unwrap();
             let rules_as = |rel: &str, same: &BTreeSet<String>| {
                 let name = |n: &str| if same.contains(n) { source(n) } else { n.to_owned() };
                 p.rules
@@ -3490,7 +3491,18 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                                 a.rel = name(&a.rel).as_str().into();
                             }
                         }
-                        format!("{x:?}")
+                        // Up to variable names: `simplify` renames inlined variables apart with one counter for the
+                        // whole program (`_f<k>`, `_t<k>`), so a copy and its relation inlining one filter differ there.
+                        let text = format!("{x:?}");
+                        let mut vars: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                        variable
+                            .replace_all(&text, |c: &regex::Captures| {
+                                let name = c.get(1).or(c.get(2)).unwrap().as_str().to_owned();
+                                let n = vars.len();
+                                let k = *vars.entry(name).or_insert(n);
+                                if c.get(1).is_some() { format!("Var(\"v{k}\")") } else { format!("var: \"v{k}\"") }
+                            })
+                            .into_owned()
                     })
                     .collect::<BTreeSet<_>>()
             };
