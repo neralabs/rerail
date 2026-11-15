@@ -782,6 +782,28 @@ impl Rank8 {
     pub fn len(&self) -> usize {
         self.nodes
     }
+    /// In-memory bytes: one a node, and the side list (the rank read's group counts are E23's, not counted).
+    pub fn bytes(&self) -> usize {
+        self.nodes + self.side_bytes()
+    }
+    /// The stored bytes (padded to whole 64-node groups with zeros).
+    pub fn raw(&self) -> &[u8] {
+        &self.bytes
+    }
+    /// The cutoff: a byte below it is the code's number.
+    pub fn cut(&self) -> u32 {
+        self.cut
+    }
+    /// The stored bytes and the side list apart, as an at-rest form blocks them.
+    pub fn split(&self) -> (Vec<u8>, Vec<u8>) {
+        let mut side = Vec::new();
+        for v in &self.start {
+            side.extend_from_slice(&v.to_le_bytes());
+        }
+        side.extend_from_slice(&self.off);
+        side.extend_from_slice(&self.low);
+        (self.bytes[..self.nodes].to_vec(), side)
+    }
     pub fn tail_nodes(&self) -> usize {
         self.off.len()
     }

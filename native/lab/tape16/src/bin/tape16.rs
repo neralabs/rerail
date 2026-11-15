@@ -15,6 +15,7 @@
 //! tape16 disk  <cap>                                   E18: the forms on disk, zstd and LZ4: bytes, decode, matches
 //! tape16 ralz  <cap>                                   E19: LZ4 in fixed blocks, stored as repeats, raw or LZ4
 //! tape16 code8 <cap>                                   E20: codes in 8 bits, overloaded by the adjacent code; E21: numbered by frequency, one cutoff
+//! tape16 f16     <cap>                                 E24: format 16's tape as one form: memory, disk, load
 //! tape16 nofield <cap>                                 E22: the field taken out of the code
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
@@ -1105,8 +1106,18 @@ fn cmd_inplace(path: &str, f11: bool) {
     const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
     // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
     // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR"];
-    const C: usize = 11;
+    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR", "F16"];
+    const C: usize = 12;
+    // F16 (E24): each language's numbering and widths, over every file (as XF's widths are).
+    let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
+        let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
+        capture::stream(cap, |f| {
+            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            learn.entry(f.tag).or_default().add(&Cols::of_tree(&tree, &codes[&f.tag]));
+            Ok(())
+        }).unwrap_or_else(|e| die(&e));
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t]))).collect()
+    };
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
     let mut bytes = [0usize; C];
@@ -1146,7 +1157,8 @@ fn cmd_inplace(path: &str, f11: bool) {
         let xf = XF::<ForLen>::new(&tree, lang);
         let mf = XF::<PredGap>::new(&tree, lang);
         let xr = XR::new(&tree, lang);
-        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts(), xr.parts()].iter().enumerate() {
+        let f16 = rerail_tape_lab::f16::F16::new(&Cols::of_tree(&tree, lang), &f16langs[&f.tag]);
+        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts(), xr.parts(), f16.parts()].iter().enumerate() {
             for k in 0..4 {
                 parts[c + 1][k] += p[k];
             }
@@ -1184,7 +1196,9 @@ fn cmd_inplace(path: &str, f11: bool) {
             cols
         };
         // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
-        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image(), xr.image()];
+        // F16's image: its arrays' bytes as stored, side lists after each.
+        let f16_image: Vec<u8> = f16.streams().iter().flat_map(|(a, b)| a.iter().chain(b.iter()).copied()).collect();
+        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image(), xr.image(), f16_image];
         for (c, im) in images.iter().enumerate() {
             let z = zstd::bulk::compress(im, 3).unwrap();
             disk1[c] += z.len();
@@ -1204,6 +1218,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             { let (v, k) = best3(|| XF::<ForLen>::of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XF::<PredGap>::of(&cols)); (v.image(), k) },
             { let (v, k) = best3(|| XR::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| rerail_tape_lab::f16::F16::new(&cols, &f16langs[&f.tag])); (v.streams().iter().flat_map(|(a, b)| a.iter().chain(b.iter()).copied()).collect(), k) },
         ];
         for (c, (im, k)) in built.iter().enumerate() {
             if im != &images[c + 1] {
@@ -1222,6 +1237,7 @@ fn cmd_inplace(path: &str, f11: bool) {
         bench(&xf, &tree, &want, &order, set, &mut costs[8], &mut counts[8], &mut wrong[8], &mut bytes[8]);
         bench(&mf, &tree, &want, &order, set, &mut costs[9], &mut counts[9], &mut wrong[9], &mut bytes[9]);
         bench(&xr, &tree, &want, &order, set, &mut costs[10], &mut counts[10], &mut wrong[10], &mut bytes[10]);
+        bench(&f16, &tree, &want, &order, set, &mut costs[11], &mut counts[11], &mut wrong[11], &mut bytes[11]);
         nodes += n;
         files += 1;
         if f11 {
@@ -1370,7 +1386,16 @@ fn cmd_prim(path: &str) {
         field_of: c.table.iter().map(|t| t.1).collect(),
         fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
     })).collect();
-    const C: [&str; 5] = ["F15", "XF", "MF", "BE", "XR"];
+    const C: [&str; 6] = ["F15", "XF", "MF", "BE", "XR", "F16"];
+    let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
+        let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
+        capture::stream(cap, |f| {
+            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            learn.entry(f.tag).or_default().add(&rerail_tape_lab::inplace::Cols::of_tree(&tree, &codes[&f.tag]));
+            Ok(())
+        }).unwrap_or_else(|e| die(&e));
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t]))).collect()
+    };
     // Rows: (primitive, set) → per candidate cost and count.
     let mut rows: Vec<String> = Vec::new();
     for (s, _) in SETS {
@@ -1593,6 +1618,7 @@ fn cmd_prim(path: &str) {
         one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&XR::new(&tree, lang), 4, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&rerail_tape_lab::f16::F16::new(&rerail_tape_lab::inplace::Cols::of_tree(&tree, lang), &f16langs[&f.tag]), 5, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         nodes += n;
         files += 1;
         Ok(())
@@ -1679,6 +1705,20 @@ fn cmd_code8(path: &str) {
     }
 }
 
+/// E24 (t39 step 16): format 16's tape as one form, at rest (`f16.rs`); its questions are in `inplace` and `prim`.
+fn cmd_f16(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::f16::run(fs);
+        rerail_tape_lab::f16::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
 /// E22 (t39 step 14): the field taken out of the code (`nofield.rs`).
 fn cmd_nofield(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1747,6 +1787,7 @@ fn main() {
         "ralz" => cmd_ralz(path),
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
+        "f16" => cmd_f16(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

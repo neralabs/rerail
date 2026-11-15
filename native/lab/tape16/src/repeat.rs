@@ -99,6 +99,20 @@ impl Hist {
     pub fn width(&self, share: f64) -> u32 {
         width_of(&self.hist, self.n, share)
     }
+    /// The same choice among whole bytes (8, 16, 24, … bits): the width costing least, escapes included.
+    pub fn width_bytes(&self) -> u32 {
+        let top = (0..=64).rev().find(|&b| self.hist[b] > 0).unwrap_or(0) as u32;
+        let mut best = (u64::MAX, top.max(1).next_multiple_of(8));
+        for w in (8..=top.max(8).next_multiple_of(8)).step_by(8) {
+            // A value longer than w bits escapes (as `width_of` counts it).
+            let above: u64 = self.hist[(w as usize + 1).min(65)..].iter().sum();
+            let cost = self.n * u64::from(w) + above * (8 + u64::from(top));
+            if cost < best.0 {
+                best = (cost, w);
+            }
+        }
+        best.1
+    }
 }
 
 fn width_of(hist: &[u64; 66], n: u64, share: f64) -> u32 {
@@ -155,7 +169,14 @@ impl Esc {
     }
     #[inline(always)]
     pub fn get(&self, i: usize) -> u64 {
-        let v = extract(&self.words, i * self.w as usize, self.w);
+        // At a whole-byte width a field is one load (little-endian words: field i is byte or half-word i), as
+        // code generated for the width reads it.
+        let v = match self.w {
+            // SAFETY: the words hold every field, and one word of padding.
+            8 => u64::from(unsafe { *self.words.as_ptr().cast::<u8>().add(i) }),
+            16 => u64::from(unsafe { std::ptr::read_unaligned(self.words.as_ptr().cast::<u16>().add(i)) }),
+            _ => extract(&self.words, i * self.w as usize, self.w),
+        };
         if v != (1u64 << self.w) - 1 {
             return v;
         }

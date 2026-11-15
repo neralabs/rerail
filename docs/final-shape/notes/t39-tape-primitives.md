@@ -981,6 +981,59 @@ Every read agrees with step 13's, on every corpus.
   with E22. A static table per language could use a perfect hash (one probe, a select), but the
   field stays in the code.
 
+### Step 16: format 16's tape as one form (E24)
+
+Steps 7–15 chose each part alone. E24 (`src/f16.rs`) builds them as one tape, F16, and runs it
+through every question and primitive the lab has, beside the earlier forms:
+- **`tape16 inplace`**: the E10 questions and the E7 rule mixes.
+- **`tape16 prim`**: the bulk and point primitives.
+- **`tape16 f16`**: memory by array, disk, load.
+
+The parts:
+- codes in one byte, numbered by frequency (step 13);
+- sibling slots and gap positions at K = 8 (step 8);
+- every array at a whole-byte width fixed a language (8 bits everywhere measured), with escapes;
+- checkpoints at the file's width in whole bytes;
+- at rest, fixed blocks of 1,024 nodes under LZ4 HC with a 64 KiB dictionary per array (step 11),
+  or zstd over whole arrays.
+
+For `tape16 f16` the numbering, widths and dictionaries are learned on the even files and measured
+on the odd ones. In `inplace` and `prim` they are learned over the capture, as XF's widths are.
+
+The results are written into 0156 (1.7, 1.8). In short, on the M1 Max at load 3–4, every answer
+right on all three captures:
+
+- **Memory: 4.5–4.8 B a node, about half of format 15's** (8.5–9.9). XF takes 4.15–4.59 on the same
+  captures, MF 3.37–3.97, BE 2.43–2.86.
+- **Disk: 0.9–2.1 B a node under zstd**, 17–21% under format 15 on code. In fixed blocks it is 6–12%
+  over LZ4 on whole arrays on code.
+- **Questions:**
+  - Code reads and children walks are as fast as format 15's (1.0 and 3.7–4.6 ns), and children
+    walks are twice as fast as XF's.
+  - Spans in order run at 2.5 ns a node against XF's 4.4, and field lookups at 9–10 ns against
+    13–15.
+  - Point parents (5.9–11.7 ns) and point starts (4.9–5.0) cost 1.5–2.6× XF's.
+  - The rule mixes are under XF's at the median, over all 121 rules and at the heaviest rule.
+    Only the tree walk, which climbs 5 parents a node, costs more (83–113 against 73–80).
+
+Four fixes to the lab came out of the first run. Each is what generated code does:
+
+- **Whole-byte fields as one load.** `Esc::get` read every field through the generic bit
+  extractor: two word loads and shifts, with an index multiply. At 8 and 16 bits it is now one
+  load. Slot reads went from 4.1 to 3.7 ns and children walks from 6.3 to 4.6 on the small capture.
+- **A cursor step in preorder** (`Reader::start_next`, `end_with_start`). `lines_all` and
+  `spans_all` read every start at random, which for gap positions is a fold of up to 7 gaps a
+  node. A start in order is the previous one plus a gap. Every span in order went from 10.4 to
+  2.5 ns a node. Every other form keeps its direct read.
+- **The 64-at-a-time sweep, unrolled** (`Reader::match_groups`, which the primitives now call in
+  place of `packed_codes`). The byte loop had stayed a loop. Unrolled, as XF's `match_w` is, and
+  testing the prefix bytes eight at a time, it went from 0.6 to 0.4–0.5 ns a node (XF 0.3).
+- **A set compiled once.** The table of a set's codes by number was rebuilt on every call; it is
+  now kept with the set, as a rule compiles its set once per language.
+
+What is left over XF is the relative forms' price, and it falls on point reads: a parent's sibling
+steps, a start's fold. Rules that read in order through cursors (E17) do not pay it.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1155,3 +1208,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 15. **Step 13's branch (E23).** Done: mispredicts cost 0.05 ns a read or less. The branch's shape
     costs about 0.1 at random and blocks vectorising in order (0.47 against 0.07). Reads in order
     decode a block whole (0.09 ns a node); reads at random keep the branch.
+16. **The tape as one form (E24).** Done: 4.5–4.8 B a node in memory, 0.9–2.1 on disk, every
+    question and primitive in place and checked; written into 0156 sections 1–4. Next: the device
+    decode of a fixed LZ4 block, the code table's unseen tuples (E2), and the writer (E6).

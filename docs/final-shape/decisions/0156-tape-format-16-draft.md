@@ -1,8 +1,11 @@
-# 0156: Tape format 16, events, blocks and a codec the GPU decodes (draft)
+# 0156: Tape format 16, a byte tape read in place, in fixed blocks at rest (draft)
 
 Status: draft (2026-11-13), a design pass for the user's review. Nothing is built. Revised the same
 day after the user's answers: open choices are written as tradeoffs to measure, not as bars to meet
 ("Tradeoffs", below).
+Revised 2026-11-15: sections 1–4 rewritten as the form the lab measured
+([t39](../notes/t39-tape-primitives.md) steps 7–16). The event stream, the literal-pool codec and
+the content-defined blocks of the first version are in Departures.
 Replaces, if accepted: 0025 (v9np), 0140's writer, and parts of 0026 and 0032.
 Survey: `notes/t35-tape-format-issues.md` (cited below as "t35 n").
 
@@ -29,9 +32,9 @@ construction.
 
 The user's requirements always said this: simdjson's tape; compression the GPU reads; the same
 structure with the same bits "without affecting the decodability"; LZ references into compressed
-content "plus some kind of index structure" for random access; less data in memory. Sections 1.1
-and 4 below, and the decode-speed experiments, drifted from it. Section 4 is withdrawn; 1.1's
-deltas stay only where a question can still be answered in place (T9).
+content "plus some kind of index structure" for random access; less data in memory. The first
+version's event stream and resident form, and the decode-speed experiments, drifted from it. They
+are in Departures; sections 1–4 are now the form read in place.
 
 ## Intro
 
@@ -57,227 +60,293 @@ The user added five requirements (t35 U1–U5, as amended on 2026-11-13):
 5. **Loading without the full source**, through a compact side form that rebuilds the text that
    is not implicit. And **files up to 256 TB** (2^48 bytes).
 
-**The proposal in one paragraph.** A tape becomes a stream of events: each node opens and closes,
-and every number is relative to the event before it, so a repeated subtree is repeated bytes. The
-stream is cut into blocks at content-defined boundaries; a block knows nothing of where it sits, so
-an edit changes only the blocks around it and identical blocks are stored once. Each block is
-compressed with a literal-pool LZ, in which every reference points into the compressed block's own
-literals or into a shared dictionary, never into decoded output. So any byte decodes in one hop, a
-GPU decodes with no synchronisation between copies, and a small index gives random access inside a
-compressed block. Absolute positions, depths, parents and sizes are recomputed at decode by prefix
-scans. Text goes in a parallel stream of piece ids that rebuilds the source exactly where it is
-asked for. Hashes live in the store per algorithm, and over blocks as a Merkle tree.
+**The proposal in one paragraph.** A tape is five arrays over a file's named nodes in preorder,
+read where they lie (1):
+- a byte a node for its code, numbered by frequency per language, so that below a cutoff the byte is
+  the code;
+- a slot: an inner node's size, or, for a leaf, the size of the next node's previous sibling;
+- each start as a gap from the previous start, and each end as a length;
+- an absolute start every 8 nodes.
 
-## 1. The node stream
+A short side list per 256-node block holds the few values too wide for their array. Every width and
+the numbering are fixed per language, so a writer streams. A repeated subtree is the same bytes in
+its codes and slots, and in its gaps and lengths too where its text repeats. At rest each array is cut into fixed blocks of 1,024 nodes, each
+raw or one LZ4 block over the language's dictionary, so one read decodes one block (2). Cold storage
+may use zstd over whole arrays. Loading inflates to exactly the in-memory bytes. Text goes in a
+parallel stream of piece ids that rebuilds the source exactly where it is asked for (6). Hashes live
+in the store per algorithm (5).
 
-### 1.1 Events, not columns of absolutes
+## 1. The in-memory tape
 
-Every node has an *open* and a *close* event. In nesting order (preorder opens, postorder closes,
-interleaved as the tree nests), each event's position is stored as its distance from the event
-before it. Two streams, each with exactly one entry per node:
+Rewritten on 2026-11-15 from what the lab measured
+([t39](../notes/t39-tape-primitives.md) steps 7–16). The event stream this section first proposed
+is in Departures.
 
-```text
-open stream, in preorder, one record per node          close stream, in postorder, one per node
-  kind   u16   grammar's kind id                          trail  u32   end − position of the event
-  field  u8    grammar's field id (0: none)                            before this close
-  flags  u8    extra, error, missing                                   (bit 31: measured backwards)
-  memb   u16   supertype memberships, a mask (1.3)
-  lead   u32   start − position of the event before
-  pops   u32   closes between the previous open and this one
-```
+### 1.1 Arrays, one entry a node
 
-A worked example, `f(a, b)\n` in Python, named nodes only (format 14's rule is unchanged):
+A tape is one file's named nodes in preorder, as five arrays read where they lie. Node i is entry i
+of every array except the checkpoints, which have one entry for every 8 nodes:
 
 ```text
-event                    at   delta   record
-open  module              0    0      #0 module            lead 0  pops 0
-open  expression_stmt     0    0      #1 expression_stmt   lead 0  pops 0
-open  call                0    0      #2 call              lead 0  pops 0
-open  identifier f        0    0      #3 identifier/func   lead 0  pops 0
-close identifier f        1    1                                          trail 1   "f"
-open  argument_list       1    0      #4 argument_list     lead 0  pops 1
-open  identifier a        2    1      #5 identifier        lead 1  pops 0         "("
-close identifier a        3    1                                          trail 1   "a"
-open  identifier b        5    2      #6 identifier        lead 2  pops 1         ", "
-close identifier b        6    1                                          trail 1   "b"
-close argument_list       7    1                                          trail 1   ")"
-close call                7    0                                          trail 0
-close expression_stmt     7    0                                          trail 0
-close module              8    1                                          trail 1   "\n"
+array        entry                                      width
+codes        the code's number, or a prefix             1 byte
+slots        size << 1, or a leaf's sibling slot        a language's width, in whole bytes (8 bits on
+                                                        every language measured)
+gaps         start − the previous node's start          a language's width (8 bits measured)
+lengths      end − start                                a language's width (8 bits measured)
+checkpoints  the absolute start of nodes 0, 8, 16, …     a file's width, in whole bytes (24 bits for
+                                                        files under 16 MB)
 ```
 
-`g(x, y)` anywhere else, in any file, writes the same 7 open records and 7 close records, bit for
-bit (requirement 3). Every delta is the length of one gap or one leaf, never a distance across the
-file, so values stay small (the spike: v7's delta varints compress well, absolute positions badly;
-`tape-v8-measurements.md` Recommendation 1).
+Every array but the checkpoints has one width for every file of the language, fixed with the
+language's code numbering (1.2) for the grammar build and the format version. A value too wide for
+its array is stored as the all-ones value, an escape that names nothing (1.5).
 
-**Fixed widths, always.** Every field has one width in every tape: no per-document widths, no
-`Redo`, no width branches in readers (t35 14–16). The bytes that are nearly always zero cost almost
-nothing once compressed (2). Limits: one gap or leaf under 2 GiB (bit 31 of `trail`); a block under
-2^32 nodes. Files have no limit but the 2^48-byte placement (3.3). The user accepted the 2 GiB
-limit (2026-11-13). If it ever binds, it can be lifted without changing the record: a longer gap is
-written as a chain of gaps, and a longer leaf as a leaf with continuations (zero-width extra events
-carrying the next 2 GiB).
+So a writer knows every width before a file starts. A repeated subtree is the same bytes in its
+codes and slots wherever it sits and in whatever file, and in its gaps and lengths too where its
+text repeats (requirement 3; t39 steps 7, 8, 13). Only the checkpoints differ. The same bytes are
+also what a compressor matches (2.1).
 
-**What is not stored, and why that is now cheap.** Size, parent, depth, absolute start and end are
-all derived at decode by scans (4). The writer never patches a cell it already wrote: a node's size
-was the reason it had to (t35 3).
+### 1.2 Codes: one byte, numbered by frequency
 
-**Wraps, late fields, take-backs.** A writer keeps an uncommitted window, as the lean writer's
-commit points do now. Records are fixed-width and relative, so:
-- A wrap (an operator found after its left operand) inserts one record. The operand's `lead` and
-  `pops` move to the wrapper, and the operand's become 0. Nothing after the window changes: no
-  renumbering, no rebased blocks, no marks (t35 4, 8, 20, 21).
-- A late field or kind rewrites the one record in place.
+A **code** is a node's (kind, field, flags, supertype memberships). Kind and field are the
+grammar's own ids. The memberships are a mask over the supertypes the grammar lists for the kind
+(below). Each language has one **code table** for its grammar build and format version, numbered
+by frequency over a training corpus, the most frequent first. There is no per-tape table.
 
-### 1.2 Early ends
+- **Below the cutoff, the byte is the code.** A language with more than 256 codes has a cutoff of
+  255: bytes 0–254 are the 255 most frequent codes, and byte 255 is a prefix.
+- **Past the cutoff**, a node's code is 255 + a low byte kept in its block's side list (1.5). A
+  language past 511 codes takes a second prefix (254).
+- **A language with 256 codes or fewer** (JSON, `.rr`, SQL, small grammars) has no cutoff.
+- Measured on files the numbering never saw: 0.36–1.12% of nodes past the cutoff on Python, Rust,
+  TypeScript and JavaScript (t39 step 13).
 
-Where tree-sitter gives a node an end before its last descendant's start, its close is measured
-backwards: bit 31 of `trail`. That node alone carries it. There is no document-wide
-`TAIL_FROM_START` and no re-parse (t35 19, 27).
+A rule's kind or field test compiles to numbers, once per language. A test for one code below the
+cutoff is one byte compare. A set of codes is a 256-bit set, read 64 nodes at a time, and it decodes
+the low byte only where the set holds a code past the cutoff. Reading the code at random costs a
+compare and a branch, 0.55–0.63 ns on the M3 (t39 steps 13 and 15). In order, a block's codes are
+widened in bulk and its side list patched in, at 0.09 ns a node.
 
-### 1.3 Codes are the grammar's
+The field stays in the code. Without it, kind, flags and memberships fit a byte with no prefix.
+But the field then needs the parent's code and the child's index, a 5–20 KiB table, and 3–6× the
+read, for 7–12% less disk (t39 step 14).
 
-There is no per-tape code table. `kind` and `field` are the grammar's own ids, the same in every
-tape, and `memb` is a bitmask over the supertypes the grammar lists for that kind, in ascending
-order. A node's actual memberships depend on where it sits (decision 0025's finding still holds),
-but they are always a subset of that list, which comes from `node-types.json` and is fixed for the
-grammar build. So the mask is exact, and needs no learned table, catalog or per-tape entry.
-
-Measured here on the 31 grammars in the cargo registry: at most 11 supertypes can contain a kind
-(Ruby's `constant`; Python 4, Rust 4, JavaScript 3), so 16 bits hold every mask. The same count
-shows format 15's limits would fail a grammar we may add: Haskell has 84 fields, past its 64.
+What is in the code table, from the grammar:
+- **Kind ids**, per language, including contextual aliases in the grammar's alias range. Tree-sitter
+  gives an aliased node its alias symbol's id, and the spike's "kind aliases assigned codes once per
+  grammar at registration" is the same idea (`tape-v8-measurements.md` Part 1). There is no per-tape
+  alias table (t35 52).
+- **Field ids**, u8: SQL has 61 fields today, three short of format 15's limit of 64, and Haskell has
+  84.
+- **Memberships**, a mask over the supertypes the grammar lists for the kind, in ascending order. A
+  node's actual memberships depend on where it sits (decision 0025's finding still holds), but they
+  are always a subset of that list, which comes from `node-types.json`. On the 31 grammars in the
+  cargo registry at most 11 supertypes can contain a kind (Ruby's `constant`; Python 4, Rust 4,
+  JavaScript 3), so 16 bits hold every mask.
+- **Flags**: extra, error, missing. The varying `extra` of one Python kind is its flag bit (t35 13).
 
 On Rerail's vendored grammars (`native/grammars/*/grammar.json`, supertypes expanded through hidden
 rules), plus tree-sitter-php 0.24.2 and tree-sitter-rust 0.24.2:
 
 ```text
-grammar       fields   supertypes   most candidates for one kind
-python          32        6           4  (identifier)
-javascript      36        5           3
-typescript      43        7           5  (member_expression)
-php             31        5           3
-rust            31        6           4
-sql             61        0           0     61 fields: three short of format 15's limit of 64
-vue              0        0           0
+grammar       fields   supertypes   most candidates for one kind   codes seen (rerail, data-layer)
+python          32        6           4  (identifier)                391, 440
+javascript      36        5           3                              321, 308
+typescript      43        7           5  (member_expression)         469
+php             31        5           3                              326
+rust            31        6           4                              494, 362
+sql             61        0           0                              148, 54
 ```
-
-Every mask fits in 5 bits today, so 16 bits leave room. SQL's 61 fields mean the u8 field is needed
-now, not only for grammars we might add. This counts from `grammar.json`; E2 checks it against the
-parser's cursor on a corpus.
-
-The removals:
-- **Code ids:** no first-use numbering, no 1 MiB id map, no renumbering, no `DeviceCode` rebuild per
-  admission (t35 6–9, 19 in section 8).
-- **Fixed limits:** kind is u16 and field u8, so the 1,024-kind and 64-field limits go (t35 12).
-- **Alias table:** contextual aliases become kind ids in the grammar's alias range. Tree-sitter
-  gives an aliased node its alias symbol's id, and the spike's "kind aliases assigned codes once per
-  grammar at registration" is the same idea (`tape-v8-measurements.md` Part 1). The per-tape alias
-  string table goes (t35 52).
-- **Extra:** the varying `extra` of one Python kind is just its flag bit (t35 13).
 
 Kind ids stay per language. Global ids (language × 2^16 + kind) stay in indexes only, as the
 spike's Option B and decision 0055 say.
 
-## 2. The codec: literal-pool LZ
+**Open: a code the table lacks.** A file can hold a (kind, field, flags, mask) tuple the training
+corpus never showed. The table can list every tuple the grammar allows, which `node-types.json`
+bounds, with the unseen ones numbered last, past the cutoff. Or a tape can carry a short extension
+list. Counting the grammar's allowed tuples is the next check (E2).
 
-A block's records are split into byte planes. Byte k of every record's field f forms one plane, so
-the high bytes of `lead`, `pops` and `trail` are long runs of zeros. The planes, concatenated, are
-compressed as one stream:
+### 1.3 Structure: the slot
 
-```text
-block   header   format, dictionary id, planes, node count, decoded length, checkpoint count
-        seqs     sequences: (literal run length, then a copy or a run)
-        lits     the block's literal bytes, contiguous
-        index    a checkpoint every K sequences: output offset, literal offset, sequence offset
-```
+An inner node's slot is its size (`size << 1`). A leaf's slot (`… | 1`) describes the node after it,
+which always has a previous sibling with the same parent: it holds that sibling's size
+(`<< 2 | 1`), or, for every 8th sibling, the distance back to the parent (`<< 2 | 3`).
 
-A sequence is a literal run (bytes taken in order from `lits`), then either:
-- a **copy**: n bytes from a *pool offset*, where the pool is the shared dictionary followed by this
-  block's `lits`; or
-- a **run**: one byte repeated n times. A zero plane is one run.
+- **Subtree end** and **next sibling**: `i + size`, from the node's own slot, or `i + 1` for a leaf.
+- **First child**: `i + 1`, when the slot's tag says inner.
+- **Parent**: the node before is the parent if it is inner. Otherwise its slot names the previous
+  sibling (step there and repeat) or the parent. A read takes at most 7 sibling steps, 0.9–1.8 on
+  average.
 
-The rule that makes it decodable on the GPU and at random: **a copy never reads decoded output.**
-It reads literal bytes, which sit in the compressed block or in the dictionary. So:
-- **Any output byte is one hop away.** Find its sequence through `index` (a binary search), decode at
-  most K sequences, copy from the pool. That is random access inside a compressed block
-  (requirement 2, as the user sketched it).
-- **There are no dependencies between copies.** The user's `v8-decompress-on-gpu.cc` needs a
-  `__syncthreads()` wherever a back-reference overlaps its own output (offset < length). Here no copy
-  depends on another. Each thread takes K sequences from a checkpoint; output and literal offsets
-  come from a prefix sum over the threadgroup; then every copy runs in parallel.
-- **The dictionary is shared.** One dictionary per (grammar build, format), stored once, content
-  addressed, resident on the device for every invocation (requirement 1, user's note). A dictionary
-  is never replaced in place: a new one has a new id, and old blocks keep naming theirs.
-- **Repeats become references.** Requirement 3 makes a repeated subtree identical bytes in each
-  plane, and the encoder references the first occurrence's literals or the dictionary's.
+The sibling form keeps a flat array's slots small, which the back distance to the parent did not
+(JSON escaped 14–19% of its slots that way), so one width a language costs under 0.05 B a node
+(t39 step 8). Its price is the point parent: 2.5–3.7× a stored back distance at random. Rules read a
+parent at a point 0.58 times a node at the median and 13.7 at the heaviest, which comes to 0.4–1.7%
+of a rule's CPU (t39 step 9).
 
-The cost of the rule: a repeat whose first occurrence was itself partly a copy has no contiguous
-literal source, so it becomes several copies. And there is no entropy stage, so a literal costs a
-whole byte; zstd's entropy stage is what this gives up to stay parallel and random-access. How much
-that costs in bytes, against what it buys in decode speed and access, is the first tradeoff to
-measure (T1 in "Tradeoffs").
+### 1.4 Positions: gaps, lengths, checkpoints
 
-A block may also be stored raw (no codec). Then every field is fixed-width at a known offset, so
-pure SQL can read it with `substr` arithmetic, as the spike's fallback did. That needed uncompressed
-blobs and was 43× slower, so it stays a fallback (`ast-index-spike-history-index.md`, binary tape +
-TVF row).
+In preorder, starts never decrease. So a start is stored as its gap to the previous node's start,
+and an end as the length `end − start`. The absolute start of every 8th node sits in the
+checkpoints.
 
-## 3. Blocks and placement
+- **A start at random** is its checkpoint plus the sum of at most 7 gaps. The sum is read in place,
+  a word at a time: each word's fields are folded pairwise into their sum, and an exact all-ones
+  test finds escapes.
+- **In order**, a start is a running sum.
+- **Early ends** need nothing special: a length is `end − start` however the node's end relates to
+  its descendants', so format 15's `TAIL_FROM_START` and its re-parse go (t35 19, 27).
+- Gaps and lengths are the same wherever the text is the same. Of the structurally repeated nodes,
+  24–31% keep their gaps and lengths within a file on code, and 3–12% across files: the rest differ
+  in names, literals or spacing (t39 step 8).
 
-### 3.1 Content-defined block boundaries
+### 1.5 Escapes and side lists
 
-The writer cuts a block after a committed node when a rolling hash over the last w open records
-meets a condition, with a minimum and a maximum count (first guess: 1,024 to 16,384 nodes, aiming at
-4,096, to be measured). The cuts depend only on nearby content:
-- **Edits change only nearby blocks.** After an edit, the cuts realign within a block or two, and
-  every other block is byte-identical. A one-line edit re-encodes one or two blocks, not the file
-  (t35 25). Node ordinals after it still shift; see T7.
-- **The store keeps each block once**, by its body hash: across revisions, vendored copies and
-  generated files.
+Every array but the checkpoints is cut, for its exceptions, into blocks of 256 nodes. A block's
+escapes, and its codes past the cutoff, are listed as (offset in the block, value), sorted, behind a
+start index of 4 bytes a block and array.
 
-A block body holds no absolute value: deltas are local, and codes are the grammar's. A close whose
-node opened in an earlier block lives in the block where its event falls. So the body's bytes depend
-only on that span of the tree and its text.
+- **The escape marks itself.** A value equal to all-ones, or a code byte at or past the cutoff, is
+  the only kind of read that looks at the list. Every other read never touches it.
+- **The search** takes at most 8 probes. A rank count (the prefix bytes before the node, a word
+  at a time) reads as fast and drops the offsets, at 1 B less per listed node (t39 step 15).
+- **Measured shares** (E24, data-layer Python): 0.36% of codes past the cutoff, slots 1.8%, gaps
+  0.05%, lengths 3.1%.
 
-### 3.2 Placement: the index structure
+The start index takes 0.016 B a node per array, and can shrink to a 2-byte count a block within a
+larger group. The rest of a list is each entry's offset byte and value.
 
-The tape object is its placement table: one fixed-size entry per block.
+### 1.6 Lines and text
 
-```text
-entry   body id          the block's content id (5)
-        first node       u64 ordinal of its first open
-        base             u64 position of its first event (48 bits used)
-        entry depth      u32 depth before its first open
-        min depth        u32 least depth inside it
-```
+- **Line**: an Elias–Fano index of the newline offsets, 0.19 B a node, part of the tape. A node's
+  line is the rank of its start among them. Every node's line in order is a merge (t39 step 1).
+- **Text**: the names and source streams of section 6. A leaf's text is a span into the source, or
+  its id in the names stream.
 
-- **Absolute position** = the block's base + a scan inside the block.
-- **Depth** = entry depth + a scan of (1 − pops).
-- **A parent in an earlier block** is found from the depths: the nearest earlier block whose min
-  depth is below the node's depth, found by a range-minimum search over the entries. This is the
-  range min-max tree of succinct balanced-parentheses trees (Navarro and Sadakane): the open/close
-  streams are balanced parentheses with labels.
+### 1.7 Each question, in place
 
-A file of one block, which is most files (152k of 179k tapes are under 512 B, t28), is stored as the
-block alone: no placement row, no side table. The spike rejected chunking the tape into a side table
-(+0.41 B/node, D S067). That holds for small files, which stay whole. Large files must be chunked
-anyway (3.3), and repeats and edits gain from it. This is a departure from the spike, and it is
-justified only above one block.
+Every question reads the arrays where they lie, with nothing built beside them. Costs are ns a
+call on the M1 Max at load 3–4 (E24, `tape16 inplace` and `tape16 prim`, the data-layer, rerail and
+`impl/sqlite` captures, one thread).
+Every answer was checked against the tree.
 
-### 3.3 Large files
+| question | how | F16 | XF | format 15 |
+|---|---|---|---|---|
+| kind, field, flags, supertypes | the code byte; a code past the cutoff reads its block's list | 1.0 | 1.2 | 1.0 |
+| a set of codes, 64 nodes at a time | the bytes through a 256-entry set | 0.4–0.5 a node | 0.3 | |
+| subtree end, next sibling | the slot | 3.7–3.9 | 3.0–3.3 | 1.3–1.4 |
+| children of a node, all of them | first child `i + 1`, then siblings by slots | 3.7–4.6 a node | 7.0–8.1 | 3.5–3.9 |
+| parent, at random | at most 7 sibling steps | 5.9–11.7 | 3.9–4.5 | 45–4,100 (a search) |
+| start, at random | a checkpoint and a fold of at most 7 gaps | 4.9–5.0 | 2.0–2.2 | 1.2–1.3 |
+| end, at random | the start and a length | 5.6–6.0 | 4.7–5.4 | 3.1–3.8 |
+| every span, in order | a running sum | 2.5–2.6 a node | 4.4–4.6 | |
+| line, every node / one node | a merge with the newline index / its rank | 2.9–3.3 / 20–40 | 2.7–3.1 / 16–39 | |
+| text | the source span, or the names stream (6) | | | |
 
-Positions and ordinals at block level are u64 (2^48 bytes = 256 TB is the stated bound). Inside a
-block everything is u32, block-relative, so per-node decoded records stay 32-bit. A cross-block
-reference is (block, local) or a u64 ordinal. A stored block is far below SQLite's 2^31−1-byte blob
-limit (1 GB by default), which no single-frame format could meet for such files (t35 U5).
+Format 15 reads absolute columns at byte widths, so its point reads are the fastest, at twice the
+memory, and it has no parent: each is a search. XF is the explicit tape with per-block widths, about
+half format 15's size (t39 steps 1–6). The point parent and the point start are what the relative
+forms cost. Reading in order through cursors, which E17 assumed of the engine, is as fast as XF or
+faster.
 
-## 4. Decoding and the resident form (withdrawn, 2026-11-14)
+### 1.8 What it costs, together (E24)
 
-This section proposed decoding each block into a resident per-node form of about 26 B a node,
-which every reader would use. That breaks the fixed requirement above: readers read the tape
-itself. What it was for still holds, in the tape: parent, next sibling, span and line must be
-answerable in place (T9), and validation and hashing happen once at admission.
+Measured files only: the numbering, widths and dictionaries were learned on the other half
+(E24, `tape16 f16`). Bytes a node:
+
+| | data-layer Python | data-layer JSON | rerail Rust | rerail TypeScript | rerail `.rr` | rerail JSON |
+|---|---|---|---|---|---|---|
+| codes | 1.03 | 1.02 | 1.04 | 1.04 | 1.02 | 1.02 |
+| slots | 1.08 | 1.10 | 1.09 | 1.10 | 1.07 | 1.25 |
+| gaps | 1.04 | 1.02 | 1.03 | 1.04 | 1.05 | 1.02 |
+| lengths | 1.13 | 1.07 | 1.10 | 1.11 | 1.06 | 1.15 |
+| checkpoints | 0.30 | 0.35 | 0.29 | 0.27 | 0.28 | 0.36 |
+| **in memory** | **4.57** | **4.55** | **4.54** | **4.56** | **4.47** | **4.80** |
+| format 15, in memory | 8.63 | 9.21 | 8.57 | 8.80 | 8.50 | 9.91 |
+| zstd 3 + dictionary, whole arrays | 1.90 | 0.95 | 2.07 | 2.08 | 1.44 | 0.92 |
+| format 15, zstd 3 + dictionary | 2.34 | 1.14 | 2.52 | 2.55 | 1.82 | 0.93 |
+| fixed blocks of 1,024, LZ4 HC + dictionary, with the index | 2.27 | 1.23 | 2.42 | 2.29 | 1.57 | 1.43 |
+| escaped: codes past the cutoff / slots / gaps / lengths, % | 0.36 / 1.8 / 0.05 / 3.1 | 0 / 2.4 / 0 / 1.4 | 1.1 / 2.2 / 0.01 / 2.5 | 1.1 / 2.6 / 0.06 / 2.6 | 0 / 1.0 / 0.02 / 0.4 | 0 / 6.3 / 0.1 / 3.8 |
+
+- **About half of format 15's memory, on every language** (4.5–4.8 B a node against 8.5–9.9). Every
+  array is close to its one byte. The rest is the escapes' lists (2–25% of an array) and the
+  checkpoints, which are absolute starts and the largest part after the four arrays.
+- **Against the other in-place forms:** XF takes 4.15–4.59 B a node on the same captures, MF
+  (bit-packed, predicted positions) 3.37–3.97, and BE (balanced parentheses) 2.43–2.86. MF and BE
+  are smaller in memory. But MF's questions cost about XF's (its ends 2×), BE's 3–7× more, and both
+  are larger on disk (zstd of the in-memory bytes, data-layer: MF 2.04, BE 1.36, F16 1.31 B a
+  node).
+- **On disk, the smallest form measured**: 17–21% under format 15 with zstd on code and data-layer
+  JSON, level on rerail's JSON. In fixed blocks with random access, 6–12% over LZ4 on whole arrays on
+  code (19% over zstd on Python), and 24–38% on JSON. The index costs 0.02–0.03 B a node.
+- **Loading** costs 4.6–5.6 ns a node from fixed blocks (LZ4) and 9–14 from whole arrays (zstd) on
+  code. Both include the lab's allocation for each array and, for zstd, a dictionary context per
+  call, so they are upper bounds. One block of 1,024 codes decodes in 0.25–0.9 µs.
+- **The E7 rule mixes** cost 2.5 ns a node at the median rule (XF 3.0, format 15 2.2), 17.4–18.5
+  for all 121 rules (XF 18.2–20.2), and 181–192 for the heaviest (XF 186–208). Only the tree walk,
+  which climbs 5 parents a node, costs more than XF (83–113 against 73–80).
+
+## 2. At rest
+
+Loading inflates the stored bytes to exactly the in-memory arrays. Nothing is rebuilt and nothing
+is transformed.
+
+### 2.1 Fixed blocks, for random access while compressed
+
+Each array of a file is cut into fixed blocks of N nodes (N = 1,024 proposed). So node i's block is
+`i / N`, at a fixed offset in the decoded array. A 4-byte index entry per block says how the block
+is stored:
+
+- **LZ4**: one block in LZ4's format (HC level 9), whose matches reach only the block itself and the
+  language's dictionary for that array;
+- **raw**: the bytes as they are, read in place. The checkpoints are always raw, since absolute
+  starts do not compress, and so is any block LZ4 does not shrink by a tenth;
+- **repeat**: a pointer to an identical block stored earlier, in the file (4 bytes) or in a pool the
+  store shares (8 bytes). This pays only on JSON (2–15% of blocks); code repeats are found by
+  matches into the dictionary instead.
+
+The side lists are one LZ4 block per file and array. A read decodes one block: 0.2–0.7 µs for 1,024
+nodes on the M3. Against the same arrays compressed whole, random access costs 4–11% at N = 1,024
+and 1–5% at 4,096 on code (t39 step 11). A reference to one earlier block of the file takes back a
+quarter of that, for a second decode.
+
+LZ4 is the block format GPU decoders read, and a block's matches never leave it or the dictionary,
+so a threadgroup can decode one block with no other block's output (requirement 1). The device
+decode is not yet measured.
+
+### 2.2 Whole files, for cold storage
+
+A file kept only for loading may be stored as its arrays under zstd (level 3) with the language's
+dictionaries. That is the smallest form measured: on data-layer Python, 1.90 B a node against format
+15's 2.34 (E24). It has no random access.
+
+### 2.3 Dictionaries
+
+One dictionary per (language, format version, array), 64 KiB, trained on a corpus and stored once
+by content id. A new dictionary is a new id, and old blocks keep naming theirs. A 64 KiB dictionary
+takes most of what files share: compressing every file end to end with a 128 MiB window saves only
+3–12% more (t39 step 10).
+
+## 3. Large files
+
+Files have no limit but 2^48 bytes:
+
+- **Positions**: the checkpoints' width is the file's, in whole bytes, so a start past 2^32 widens
+  only the checkpoints.
+- **Gaps, lengths and slots** wider than their array escape. A subtree of more than 127 nodes
+  escapes its 8-bit slot, as 1.8% of Python's do.
+- **Node ordinals** past 2^32 are u64.
+- **At rest**, the block index's offsets are u64, and a stored block is far below SQLite's
+  2^31 − 1-byte blob limit.
+
+## 4. Edits
+
+A tape is rewritten from the edit on: node ordinals shift, and so do the fixed blocks after the
+edit, at rest. Identity D (an ordinal plus each edit's shift map) changes 3% of downstream rows per
+edit, against 71% for plain ordinals (T7, E4). The content-defined blocks first proposed here would
+have kept the blocks away from the edit byte-identical, but they give up the fixed offset that
+random access needs (t39 step 11).
 
 ## 5. Hashes and identity
 
@@ -298,13 +367,13 @@ The tape holds no digest (as since format 12). Identity lives in the store:
 
 ## 6. Text: a stream of pieces
 
-Each event's delta covers one *piece* of the source: a leaf's text (`trail` of a leaf), or a gap
-(`lead`, or `trail` of an inner node). A gap is whitespace plus the tokens the grammar implies:
-`(`, `, `, `)\n    `. The text stream holds one piece id per event, in event order:
+The node boundaries (every start and end) cut the source into *pieces*: a leaf's text, or a gap
+between two boundaries. A gap is whitespace plus the tokens the grammar implies: `(`, `, `,
+`)\n    `. The text stream holds one piece id per piece, in source order:
 
 ```text
-piece table   per id: length, newline count, the bytes (in the block's pool or the dictionary's)
-text stream   per event: a piece id                         compressed as in 2, in its own planes
+piece table   per id: length, newline count, the bytes (in the file's pool or the dictionary's)
+text stream   per piece: a piece id                      an array like those of 1, blocked as in 2
 ```
 
 There are three levels, each loading without the source:
@@ -330,67 +399,93 @@ level costs to load.
 One writer, in the format crate, with the same calls everywhere:
 
 ```text
-open(kind, field, flags, memb, start)   append an open record: lead and pops from the last event
-close(end)                              append a close record: trail from the last event
-commit()                                the window from here back is final; a block may be cut
+open(code, start)   append the node: its code byte (or the prefix, and a side-list entry), its gap
+                    (start − the previous start), every 8th node a checkpoint; and the slot of the
+                    leaf before it, which describes this node
+close(end)          write the node's length, and for an inner node its slot (size << 1)
+commit()            the window from here back is final
 ```
 
-There is no `finish` that moves columns, no header written last (the placement table is appended),
-no code table, no width guess and no re-parse. The work a node is what decision 0140 measured as
-the floor, keys and starts only (354.2M instructions on the `.rr` corpus against 425.6M with
-`Narrow`, doc 35), plus splitting planes at a block cut. E6 measures it.
+The language's numbering and widths are fixed before the file starts, so nothing moves at the end:
+there is no `finish` that moves columns, no code table, no width guess and no re-parse.
 
-- **The tree-sitter path** writes events from its cursor walk. `Pending`, `pack`, the size fold and
-  the code fold go (t35 43). The per-node cursor status call stays, for the membership mask.
-- **On the GPU,** a writer needs no serial step. Each thread writes fixed-width records at an
-  index from a prefix sum; `pops` is a difference of depths; and block cuts are candidates from a
-  parallel rolling hash, chosen with a scan under the min/max spacing. The format no longer blocks a
-  GPU tape writer (t35 50).
+- **Every cell is written once, at a fixed place.** An inner node's slot and every node's length are
+  known only at its close, so they are written then, at the node's own index. That is not a
+  back-patch of a value already written, but the arrays are not written strictly left to right.
+- **A block's side list is final** when every node in its 256 has closed. The root's block closes
+  last.
+- **Wraps** (an operator found after its left operand) insert a node before the operand: within
+  the uncommitted window, a move of the window's later entries by one.
+- **The tree-sitter path** writes from its cursor walk. `Pending`, `pack`, the size fold and the
+  code fold go (t35 43). The per-node cursor status call stays, for the membership mask.
+- **On the GPU,** gaps and lengths are differences, sizes come from a scan of the depths, and every
+  array is written at an index from a prefix sum. The format no longer blocks a GPU tape writer
+  (t35 50).
 - **One definition.** simdjson, the lean parser and tier 2's Cranelift, AOT and Metal backends call
   or generate from the crate's constants. There are no copies (t35 46–47).
 
+E6 measures the writer's cost a node against decision 0140's floor.
+
 ## 8. SQL
 
-Tapes are read through native table functions that take a `sqlite3_blob` handle, never a value (the
-spike, D S062–S064), and decode only the blocks a query touches: no whole-frame decode and no
-8-entry LRU of whole tapes (t35 30). A raw block (2) can be read by pure SQL.
+Tapes are read through native table functions over the in-memory arrays. At rest they are read
+through `sqlite3_blob` handles, never a value (the spike, D S062–S064), and only the fixed blocks a
+query touches are decoded: no whole-frame decode, and no 8-entry LRU of whole tapes (t35 30). A raw
+block can be read by pure SQL with `substr` arithmetic.
 
 ## What this removes, and what it does not
 
 Removed or made unnecessary, by t35 number:
-- **1–5:** whole-file buffering, the moves at the end, back-patching and quadratic wraps.
+- **1–5:** whole-file buffering, the moves at the end, and quadratic wraps. Widths and numbering are
+  fixed per language. Slots and lengths are written at a node's close into its own cells.
 - **6–9 and 11–13:** per-tape numbering and code tables, the 1,024 and 64 limits, the 8-membership
   limit.
-- **14–21:** widths, re-parses, width branches, `TAIL_FROM_START`, the marks slow path, and ends
-  read through the last descendant.
-- **22:** line tables built by scanning the source.
-- **25, partly:** edits touch one or two blocks.
-- **29–31, 33:** random access at rest, small tapes' fixed overhead, and identity over a whole
-  file's bytes.
+- **14–21:** per-document widths, re-parses, width branches, `TAIL_FROM_START`, the marks slow path,
+  and ends read through the last descendant.
+- **22:** line tables built by scanning the source at read time. The newline index is part of the
+  tape.
+- **29–30:** random access at rest, and whole-frame decodes.
 - **43–50:** intermediate forms in writers, copies after writing, four implementations, and the
   obstacles to a GPU writer.
 - **52:** the alias table.
 
 Not removed by a format:
 - **Sections 8 and 9 of t35** (conversions per phase, repeated hashing and validation, copies) are
-  the code's. Format 16 gives them one complete resident form to converge on.
-- **Preorder ordinals as identity** (t35 25): they still shift after an edit (T7).
+  the code's. Format 16 gives them one form, read in place, to converge on.
+- **Edits** (t35 25): an edit shifts ordinals and the fixed blocks after it (4, T7).
 - **The named-only rule's effects on rule meaning** (t35 28) are untouched.
 
 ## Departures
 
+- **From this draft's first version (2026-11-13):**
+  - **The event stream** (an open and a close record per node, with `lead`, `pops` and `trail`
+    deltas, and positions, depths, parents and sizes derived by scans) gives way to per-node arrays
+    that answer every question in place. The events made every delta small and every repeat equal,
+    but no question could be answered without a scan, which the fixed requirement rules out. The
+    arrays keep the equal repeats (1.1).
+  - **The literal-pool LZ over byte planes** gives way to LZ4 in fixed blocks at rest (2.1). It
+    decoded at 4.6–5.4 GB/s on Metal, but took 1.4–2.4× format 15's bytes at rest, and its output
+    still had to be decoded before a read.
+  - **Content-defined blocks and a placement table** give way to fixed blocks. Random access needs a
+    node's block at a fixed offset, and fixed blocks on code do not repeat anyway (t39 step 11).
+  - **The resident decoded form** (old section 4, withdrawn on 2026-11-14).
+  - **Codes overloaded by the previous byte** (E20) give way to frequency numbering (E21): no
+    128 KiB table a language, and no faster reads to give up for it.
 - **From 0025:**
-  - per-tape folded codes give way to grammar ids plus a mask;
-  - v9np's base/off/tail columns give way to events;
+  - per-tape folded codes give way to one table a language (grammar ids plus a mask), numbered by
+    frequency;
+  - v9np's base/off/tail columns give way to gaps, lengths and checkpoints;
   - per-document widths go.
-- **From 0140:** the writer's columns-at-their-place design goes.
-- **From 0026:** a single zstd frame per tape gives way to blocks under the literal-pool codec.
+- **Kept from 0140:** the writer's columns at their place, now from the first node, since the widths
+  are fixed per language.
+- **From 0026:** a single zstd frame per tape gives way to fixed LZ4 blocks per array, or zstd
+  over whole arrays for cold storage.
 - **From the spike:**
-  - chunking, only above one block (3.2);
-  - `kf` widened past 10 + 6 bits (1.3).
+  - chunking at rest into fixed blocks (2.1);
+  - codes as one byte numbered per language, in place of `kf`'s 10 + 6 bits (1.2).
 - **Kept from the spike:**
   - one per-file structure, no row per node (DI Top 1);
-  - preorder records with derived navigation;
+  - preorder entries, with navigation from the slot;
   - native table functions by address;
   - kind codes local, global in indexes.
 - **Kept from 0026 and 0032:**
@@ -399,11 +494,14 @@ Not removed by a format:
 
 ## Tradeoffs
 
-None of these is decided. Each is a choice whose cost on one side and gain on the other have to be
-measured before it is made. Each lists the options, what moves between them, and the experiment that
+Each is a choice whose cost on one side and gain on the other is measured before it is made. T1–T3
+and T9 are answered by sections 1–2 (2026-11-15); the rest are open. Each lists the options, what moves between them, and the experiment that
 measures it.
 
 ### T1. The codec: how much compression to give for parallel decode and random access
+
+**Answered (2026-11-15):** fixed blocks of LZ4 over a dictionary for random access, zstd whole
+for cold storage (2; t39 steps 10–11). The literal-pool codec is in Departures.
 
 ```text
 option                          bytes at rest   GPU decode            random access      sync between copies
@@ -423,6 +521,9 @@ zstd + dictionary (today)       fewest          host only, today      whole fram
 
 ### T2. What the codec sees: byte planes, field planes or records
 
+**Answered (2026-11-15):** the in-memory arrays themselves, at whole-byte widths. At byte widths
+a repeat's runs line up as bytes, and zstd's matches cover 75–86% of them (t39 step 10).
+
 - **Byte planes** make zero high bytes one run each. But a repeated subtree becomes one copy per
   plane (18 copies).
 - **Whole records (16–18 B)** make a repeated subtree one long copy. But their zero bytes are
@@ -432,6 +533,9 @@ zstd + dictionary (today)       fewest          host only, today      whole fram
 - **Measured by:** E1, all three layouts, on the same blocks.
 
 ### T3. Block size and checkpoint interval
+
+**Answered (2026-11-15):** 1,024 nodes a block at rest (4–11% over whole arrays on code), and a
+checkpoint every 8 nodes (t39 steps 8, 9, 11).
 
 - **Larger blocks:** fewer placement entries, fewer parents found across blocks, and better
   compression within a block.
@@ -526,6 +630,9 @@ node. The choice is whether those boundaries keep the tape and rebuild what a re
 
 ### T9. Each question, answered in place
 
+**Answered (2026-11-15):** the choices below are made in section 1 (t39 steps 7–16). What
+each option cost when it was chosen is kept here.
+
 Every question must be answered on the tape where it lies. The tradeoff is how each field is
 stored: what it costs in bytes, what it costs to read in place, and whether a repeated subtree
 keeps the same bits.
@@ -546,39 +653,15 @@ keeps the same bits.
   and a mask (E8 gives the widths each field needs).
 - **Repetition.** A repeated subtree stored once and referenced, or LZ references into earlier
   records with an index from node to location. A read through a reference must stay a direct read.
-  Same bits, measured (E15, [t39](../notes/t39-tape-primitives.md) step 7): XF's per-block PFOR
-  widths keep only 16–89% of repeated nodes' bits within a file; one width a language, with
-  escapes that name nothing, keeps all of them, within and across files, for 2–3.5% more memory on
-  code. JSON's leaf slots are the exception. With the leaf slot by sibling (E16, step 8) one width
-  a language costs under 0.05 B a node, JSON included; a point parent costs 1.6–3.7× more. Start
-  and end as a gap to the previous start, plus a length, with a start every 8 or 16 nodes in a
-  side array, take 16–24% less memory and a third less on disk on code, at 2–4.5× a point span's
-  cost. Weighed by today's engine (E17, step 9): rules read a span at a point 0.47 times a
-  node at the median and 17.6 at the heaviest, a parent 0.58 and 13.7, mostly through the facts
-  arrays. At K = 8 both forms add 0.4–1.7% to a rule's CPU, provided the engine reads in order
-  through cursors (as points, 1.5–4.3%). **Proposed: the leaf slot by sibling and positions by gap,
-  both with K = 8**: about 4.19 B a node for codes, slots and positions on data-layer Python,
-  against XF's 4.60. On disk (E18, step 10), same bits take 18–46% off XF's zstd size, but only where
-  they are also the same bytes: at byte widths matches cover 75–86% of the bytes, bit-packed
-  41–78%. Codes bit-packed with slots, gaps and lengths at byte widths cost 4.63 B a node in memory
-  and 2.04 on disk with a dictionary on Python (XF 4.59 and 3.37, format 15 8.63 and 2.34); LZ4 HC
-  with a dictionary is within 7% of zstd there. The absolute checkpoints do not compress (0.25 B a
-  node at K = 8). Codes fit in 8 bits for every language measured (E20, E21, t39 steps 12–13):
-  each language numbers its codes by frequency, and a byte below its cutoff (255) is the code
-  itself, with no table; a code past it is the prefix 255 with its low byte in the block's side
-  list (0.36–1.12% of nodes on files the numbering never saw). A language with 256 codes or fewer
-  has no cutoff. Every repeat keeps its bytes. The numbering is fixed a language and format
-  version. With them the all-byte form takes about 4.57 B a node in memory and 1.88 on disk on
-  Python. (E20's overloading by the previous byte, through a 128 KiB table a language, took fewer
-  escapes but sent 1–3% of reads to the table, for no faster reads.) The field stays in the code
-  (E22, step 14): without it the base fits in 8 bits, but the field then needs the parent and the
-  child's index, a table of 5–20 KiB, and 3–6× the read, for 7–12% less disk.
-- **At rest, with random access.** Fixed blocks of N nodes, each a 4-byte index entry naming a
-  repeat (in the file, or a pool), raw bytes, or one LZ4 block over the language's dictionary (E19,
-  step 11): one decode a read, 1–5% over whole arrays at N = 4,096, 4–11% at 1,024, 14–23% at 256
-  on code; 0.2–0.7 µs a 1,024-node block on the M3. A reference to one earlier block of the file
-  takes back a quarter of the overhead for a second decode. Fixed blocks repeat only on JSON
-  (2–15%).
+  Same bits, measured (E15–E16, t39 steps 7–8): XF's per-block PFOR widths keep only 16–89% of
+  repeated nodes' bits within a file; one width a language, with escapes that name nothing, keeps
+  all of them, and with the leaf slot by sibling it costs under 0.05 B a node. Gap positions take
+  16–24% less memory and a third less disk on code, at 2–3× a point span's cost. Weighed by today's
+  engine (E17, step 9), both add 0.4–1.7% to a rule's CPU at K = 8 if the engine reads in order
+  through cursors. Codes in one byte (E20–E23, steps 12–15) and the field kept in the code (E22)
+  are in 1.2. **Chosen:** 1.1–1.5.
+- **At rest, with random access.** Fixed blocks of N nodes, each raw, a repeat, or one LZ4 block over
+  the language's dictionary (E19, step 11). **Chosen:** 2.1, at N = 1,024.
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.
@@ -648,6 +731,8 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   about X's time a question, and BE 2–3.5× that. Loading from the events (shape 2) costs 27–48 ns a
   node from 0.7–1.6 B a node of disk. Loading the tape's own bytes under zstd (shape 1) costs 1.3–4.2
   ns a node from 1.4–4× that disk.
+- E24 (2026-11-15, t39 step 16): the chosen form as one tape (1.8): 4.5–4.8 B a node in memory,
+  0.9–2.1 on disk, every question in place and checked.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not
