@@ -3924,6 +3924,15 @@ fn css_tapes_from_the_lean_parser_are_tree_sitters() {
         "@keyframes k { from { opacity: 0; } 50% { opacity: .5; } to { opacity: 1; } }\n",
         "li:nth-child(2n + 1):not(.a, .b)::after { content: '\\201C'; }\n",
         "a[href^=\"http\"], input[type=text] { b: c }\n.n { &:hover { d: e; } }\n",
+        // An+B's `\s*` is the token's without a `+` after it; `of` is stored.
+        ":nth-child(2n of a.b) {}\n:nth-child(odd of .a) {}\n:nth-child(2n ) {}\n:nth-child(2n + 1 of a) {}\n",
+        // A pseudo-element's or a pseudo-class's argument: a `plain_value` where it is longer
+        // than a selector's name, else a selector (`:not` takes selectors alone).
+        "::slotted(cr-button:hover) {}\n::slotted(hr:not([hidden])) {}\n:foo(a.b) {}\n::slotted(button) {}\n:not(a.b) {}\n",
+        // A comment where a string's token starts, when it ends past the content: in the string;
+        // the closing quote then stored, as in an empty string.
+        "a{content:\"/* \"}b{content:\" */\"}\n",
+        "a{content:\"\\a/* \"}b{content:\"*/\"}\na{content:\"/* x */ y\"}\na{content:\"/* */\"}\na{content:\"\n\"}\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Css).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3941,7 +3950,16 @@ fn css_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["a {\n", "a { b: c; \n", "a b {} }\n", "@keyframes k { 1.5% { a: b; } }\n", "a { b: 'c }\n"] {
+    for invalid in [
+        "a {\n",
+        "a { b: c; \n",
+        "a b {} }\n",
+        "@keyframes k { 1.5% { a: b; } }\n",
+        "a { b: 'c }\n",
+        // In a block an at-keyword may start a postcss statement: `(min-width:` is its value.
+        "a{@container (min-width: 1px){}}\n",
+        "::slotted(button:not(:first-child, .a)) {}\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(css_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
