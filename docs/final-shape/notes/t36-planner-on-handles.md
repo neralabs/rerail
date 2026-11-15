@@ -789,3 +789,21 @@ ported, over the targeted tests and dl1.
   - Not ported: the run's other readers of the parts' trees (the joined text tests, the chunks' programs, the
     cross-file part's readers), which read the shared trees; they go with their own steps of item 7.
   - Guard: `a_maintained_run_decodes_and_copies_no_tree` (a maintained run, with the outputs of an empty store's).
+
+- **The run reads its versions: the parts' other readers ported** (2026-11-15).
+  - Each read of a version's tree is counted per thread with its last place (`version_trees_read`), a tree held
+    beside its version (`Tree::beside`, the split's parts) as one decoded; profiling names every place.
+  - Read from the version (`Placed`, its `Fields` and rule handles): the kept part's frames, cut, load, admission,
+    inputs and identities (`retain`, `kept_strata`; `Leaves::of_placed`, `identities_by_heads`), the session's
+    outputs, strata (`Placed::components`), column copies (`rule_by_head`, `projection_of` on handles), widths
+    and `inline` declarations, the maintained part's (`maintained.rs`, its qualifiers by `qualify`), the run's
+    `returns`, rules and hops. A cone's round program makes its image once (`RoundProgram::placed`).
+  - The hops are read from the version (`cross_rounds::hops`); the bounded tree (`bound`) is made only for a program
+    that runs rounds (`.pragma "cross-rounds"`), its hops checked against the version's in a debug build and in
+    each of `cross_rounds`' tests.
+  - A debug build's check of a version against its tree reads it through `Tree::for_check`, not counted.
+  - What still reads a version's tree, once for a prepared program: the supports (`supports::supports`) and the cone
+    (`cone_of`), each a rewrite on the tree beside the version it makes, and the split's `locate`
+    (`file_local`). Making them rewrites of the version is their own step.
+  - dl1 (44 policies, profiling build): 171.0 G instructions, from 192.0 G; the findings unchanged.
+  - Guard: `a_maintained_run_decodes_and_copies_no_tree` now asserts the maintained run reads no version's tree.

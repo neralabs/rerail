@@ -7537,17 +7537,39 @@ pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
 /// `leaf_identity` of the relations of a program a caller holds as a tree, read from its version, made at the first
 /// ask (`Placed::of_program`); `None` for a program with no image.
 pub struct Leaves<'p> {
-    prog: &'p Program,
+    /// The tree, where the caller holds the program as one (`of`); `None` for one held as its version (`of_placed`).
+    prog: Option<&'p Program>,
     placed: std::cell::OnceCell<std::result::Result<body::Placed, String>>,
 }
 
 impl<'p> Leaves<'p> {
     pub fn of(prog: &'p Program) -> Leaves<'p> {
-        Leaves { prog, placed: std::cell::OnceCell::new() }
+        Leaves { prog: Some(prog), placed: std::cell::OnceCell::new() }
+    }
+    /// The leaves of a program the caller holds as its version: none is made.
+    pub fn of_placed(placed: body::Placed) -> Leaves<'static> {
+        let cell = std::cell::OnceCell::new();
+        let _ = cell.set(Ok(placed));
+        Leaves { prog: None, placed: cell }
     }
     /// The program's version, made at the first ask and shared by every identity read after it.
     fn placed(&self) -> Result<&body::Placed> {
-        self.placed.get_or_init(|| body::Placed::of_program(self.prog).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+        self.placed.get_or_init(|| body::Placed::of_program(self.prog.expect("a tree or its version")).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+    }
+    /// `identities` of the program, each stratum's rules found by their heads in the version (`front::rules_by_stratum`'s
+    /// order, the program's): for a caller that holds no tree.
+    pub fn identities_by_heads(&self, sccs: &[BTreeSet<String>]) -> Result<HashMap<String, [u8; 32]>> {
+        let p = self.placed()?;
+        let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+        let mut keys: Vec<Vec<body::RuleKey>> = vec![Vec::new(); sccs.len()];
+        for k in 0..p.len() {
+            if let Some(&i) = at.get(p.v.rel_name(p.rule(k).head().rel())) {
+                keys[i].push(body::RuleKey::new(0, k));
+            }
+        }
+        let vs = body::Versions::of_placed(p.clone());
+        let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
+        Ok(identities(f, &vs, sccs, &keys))
     }
     pub fn identity(&self, rel: &str) -> Option<[u8; 32]> {
         Some(leaf_identity(self.placed().ok()?.fields().ok()?, rel))
@@ -7555,7 +7577,7 @@ impl<'p> Leaves<'p> {
     /// `identities` of the program, read from the same version as its leaves. Its strata's rules are trees the caller
     /// holds, the program's: their keys are found once, here.
     pub fn identities(&self, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-        let vs = body::Versions::with(self.prog, self.placed()?.clone());
+        let vs = body::Versions::with(self.prog.ok_or_else(|| Error::Plan("the program's rules are its version's: `identities_by_heads`".into()))?, self.placed()?.clone());
         let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
         let keys = by_stratum.iter().map(|rules| vs.keys_of(rules)).collect::<Result<Vec<_>>>()?;
         Ok(identities(f, &vs, sccs, &keys))

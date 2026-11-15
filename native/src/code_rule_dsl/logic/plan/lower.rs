@@ -121,11 +121,10 @@ pub(in crate::code_rule_dsl) type Domains = BTreeMap<String, Vec<Domain>>;
 /// its `sym` columns whose values are names, not a grammar's kind or field ids (`Domain::Kind`, `Domain::Field`:
 /// `field_atom`'s `tag << 16 | code`, which no store numbers). A relation `domains` does not cover keeps every `sym`
 /// column.
-pub(in crate::code_rule_dsl) fn atom_columns(prog: &Program, domains: &Domains, rel: &str) -> Vec<bool> {
+/// `types`: the relation's declared column types, in order (none where it is not declared).
+pub(in crate::code_rule_dsl) fn atom_columns(types: &[&str], domains: &Domains, rel: &str) -> Vec<bool> {
     let ds = domains.get(rel);
-    prog.decls.get(rel).map_or_else(Vec::new, |cols| {
-        cols.iter().enumerate().map(|(c, (_, t))| t == "sym" && ds.and_then(|d| d.get(c)).is_none_or(|d| *d == Domain::Name)).collect()
-    })
+    types.iter().enumerate().map(|(c, t)| *t == "sym" && ds.and_then(|d| d.get(c)).is_none_or(|d| *d == Domain::Name)).collect()
 }
 
 /// A base relation's symbol column that is not a name.
@@ -333,9 +332,10 @@ pub struct Tree {
 type Reads = std::cell::Cell<(usize, Option<&'static std::panic::Location<'static>>)>;
 
 thread_local! {
-    /// The trees this thread decoded from their versions, and the shared trees it copied to edit them (`Tree`): a
-    /// count and the last place each, beside the profile's decision naming every place.
-    static TREE_READS: [Reads; 2] = const { [std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None))] };
+    /// The trees this thread decoded from their versions, the shared trees it copied to edit them, and its reads of
+    /// a version's tree, decoded or held beside it (`Tree`): a count and the last place each, beside the profile's
+    /// decision naming every place.
+    static TREE_READS: [Reads; 3] = const { [std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None))] };
 }
 
 /// How many trees this thread decoded from their versions so far, and where the last was (`file:line`): a run reads
@@ -349,7 +349,14 @@ pub fn trees_copied() -> (usize, Option<String>) {
     tree_reads(1)
 }
 
-/// Forgets this thread's tree reads (`trees_decoded`, `trees_copied`): a check counts a run's alone.
+/// How many times this thread read a version's tree (decoded, or held beside the version) so far, and where the
+/// last was (`trees_decoded`): a run that reads its versions alone reads none.
+pub fn version_trees_read() -> (usize, Option<String>) {
+    tree_reads(2)
+}
+
+/// Forgets this thread's tree reads (`trees_decoded`, `trees_copied`, `version_trees_read`): a check counts a run's
+/// alone.
 pub fn forget_tree_reads() {
     TREE_READS.with(|t| t.iter().for_each(|c| c.set((0, None))));
 }
@@ -374,20 +381,55 @@ impl Tree {
     pub fn of(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         Tree { tree: Default::default(), of: Some((v, None)) }
     }
+    /// The tree of version `v`, held as `program` where the caller made it beside the version (a split's part, made of
+    /// the tree it splits): decoded by no reader, and each reader named as one of a version's tree.
+    pub fn beside(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, program: Program) -> Self {
+        let tree = std::sync::OnceLock::new();
+        let _ = tree.set(program);
+        Tree { tree: std::sync::Arc::new(tree), of: Some((v, None)) }
+    }
     /// The tree of version `v` with maintained parts `m` (`again`, `together`), decoded only where a reader asks.
     pub(in crate::code_rule_dsl) fn maintained(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, m: Option<std::sync::Arc<super::body::Maint>>) -> Self {
         Tree { tree: Default::default(), of: Some((v, m)) }
+    }
+    /// The version a run reads: this one's, with its maintained parts, without decoding its tree; else an image made
+    /// of the tree given.
+    pub fn placed(&self) -> super::Result<super::body::Placed> {
+        match &self.of {
+            Some((v, m)) => {
+                // A tree held beside its version is of the version's rules and fields; maintained parts are in `m`.
+                debug_assert!(self.tree.get().is_none_or(|p| m.is_some() || (p.again.is_empty() && p.together.is_empty())), "a tree beside its version has maintained parts the version does not state");
+                Ok(match m {
+                    Some(_) => super::body::Placed::derived(v.clone(), m.clone()),
+                    None => super::body::Placed::whole(v.clone()),
+                })
+            }
+            None => super::body::Placed::of_program(self.get()),
+        }
     }
     /// The tree, where it was given rather than decoded from a version: what a check against the version reads.
     pub fn given_tree(&self) -> Option<&Program> {
         if self.of.is_some() { None } else { self.tree.get() }
     }
+    /// The tree, for a debug build's check of a version against it (`debug_assertions`): not counted as the run's
+    /// read (`version_trees_read`), as the release run makes no such check; a decode is counted still.
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn for_check(&self) -> &Program {
+        self.read(std::panic::Location::caller(), false)
+    }
     #[track_caller]
     fn get(&self) -> &Program {
+        self.read(std::panic::Location::caller(), true)
+    }
+    fn read(&self, at: &'static std::panic::Location<'static>, counted: bool) -> &Program {
+        if self.of.is_some() && counted {
+            tree_read(2, at);
+            crate::code_rule_dsl::logic::profile::decision("a version's tree read", || format!("{}:{}", at.file(), at.line()));
+        }
         if let Some(p) = self.tree.get() {
             return p;
         }
-        let at = std::panic::Location::caller();
         self.tree.get_or_init(|| {
             let (v, m) = self.of.as_ref().expect("a tree neither given nor of a version");
             tree_read(0, at);

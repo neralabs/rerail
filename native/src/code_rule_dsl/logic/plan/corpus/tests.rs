@@ -694,12 +694,14 @@ unused(f) :- def(f, _), !used(f).
     write("c.py", "def h():\n    pass\n");
     super::lower::forget_tree_reads();
     let (maintained, rows) = run("kept.sqlite");
-    let (decoded, copied) = (super::lower::trees_decoded(), super::lower::trees_copied());
+    let (decoded, copied, read) = (super::lower::trees_decoded(), super::lower::trees_copied(), super::lower::version_trees_read());
     let (_, fresh) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
     assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
     assert_eq!(copied.0, 0, "the maintained run copied shared trees, the last at {:?}", copied.1);
+    // Nor reads one held beside its version (t36 item 7): it reads the versions.
+    assert_eq!(read.0, 0, "the maintained run read {} versions' trees, the last at {:?}", read.0, read.1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
