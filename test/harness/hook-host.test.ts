@@ -1629,7 +1629,7 @@ const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYS
  */
 const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void; startedAt?: number }> = [
   { what: "the answer kept does not parse", change: app => writeFileSync(keptAnswerFile(join(app, "src")), "{") },
-  { what: "the answer kept is older than 5 minutes", change: app => keptAt(join(app, "src"), Date.now() - 5 * 60_000 - 1_000) },
+  { what: "the answer kept is older than 30 minutes", change: app => keptAt(join(app, "src"), Date.now() - 30 * 60_000 - 1_000) },
   { what: "the answer kept is dated after now, as once the clock is set back", change: app => keptAt(join(app, "src"), Date.now() + 60_000) },
   {
     what: "the folder is made again", change: app => {
@@ -1761,6 +1761,22 @@ describe("the hook start check", () => {
       const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", join(app, "src")));
       expect({ started, git: host.git.slice(gitBefore), proofs: host.proofs.found, ...await endedStartChecks(daemon) })
         .toEqual({ started: false, git: [], proofs: [false, true], asked: 1, ended: 1 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("repeats the daemon's answer kept 25 minutes ago, as a busy daemon that last answered then leaves it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    keptAt(app, Date.now() - 25 * 60_000);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+    try {
+      host.proofs.nextCheck();
+      const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      expect({ started, checked: host.proofs.found.at(-1), ...await endedStartChecks(daemon) }).toEqual({ started: false, checked: true, asked: 1, ended: 1 });
     } finally {
       await daemon.close();
     }
