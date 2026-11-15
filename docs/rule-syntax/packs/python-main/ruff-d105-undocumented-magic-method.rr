@@ -30,8 +30,8 @@ d105_dunder_all(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
 
 // public_class(n): the JSON util `public-class`, used where the JSON says `matches: "public-class"`
 .decl d105_public_class(n: node)
-d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition"), !d105_tok_has_2(n),
-    d105_alt_6(n).
+d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition"),
+    count : { field(n, "name", c1), prefix("_", c1) } = 0, d105_alt_6(n).
 
 // exempt_decorator(n): the JSON util `exempt-decorator`, used where the JSON says `matches: "exempt-decorator"`
 //   NAME: metavariable this relation binds for the calling rule
@@ -39,7 +39,7 @@ d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition")
 // NAME: not bound by this rule, so empty (unset) here, as in ast-grep.
 d105_exempt_decorator(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), d105_set_11(q1), unset(NAME).
-d105_exempt_decorator(n, NAME) :- kind(n, "attribute"), d105_tok_has_3(n),
+d105_exempt_decorator(n, NAME) :- kind(n, "attribute"), d105_tok_has_2(n),
     field(n, "object", c10), d105_alt_13(c10, NAME).
 d105_exempt_decorator(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c13, _),
     d105_exempt_decorator(c13, NAME).
@@ -76,28 +76,16 @@ d105_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
     match("(?s)^(?:.*(?:,).*)$", g8).
 d105_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
 
-// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^_": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl d105_tok_has_2(n: node)
 .stored d105_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-d105_tok_has_2(n) :- field(n, "name", c1), prefix("_", c1).
-d105_tok_has_2(n) :- op(n, t2), match("_.*", t2).
-d105_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
-    match("(?s)^(?:.*\\S*?(?:^_)\\S*.*)$", g3).
-d105_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
-    match("(?s)^(?:.*\\S*?(?:^_)\\S*.*)$", g3).
-d105_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
-    match("(?s)^(?:.*\\S*?(?:^_)\\S*.*)$", g3).
-
-// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(?:setter|deleter)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl d105_tok_has_3(n: node)
-.stored d105_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-d105_tok_has_3(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
-d105_tok_has_3(n) :- op(n, t3), match("(?:setter|deleter)", t3).
-d105_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+d105_tok_has_2(n) :- field(n, "attribute", c2), glob("{setter,deleter}", c2).
+d105_tok_has_2(n) :- op(n, t3), match("(?:setter|deleter)", t3).
+d105_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
-d105_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+d105_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
-d105_tok_has_3(n) :- node_text(n, g4), !child(n, _, _),
+d105_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)

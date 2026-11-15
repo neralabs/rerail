@@ -7,6 +7,11 @@ use std::hash::BuildHasher;
 use std::io::Write;
 use std::path::Path;
 
+/// Whether the trace is on: a caller that holds versions decodes them for `note` only then.
+pub fn on() -> bool {
+    std::env::var_os("RERAIL_VERSION_TRACE").is_some()
+}
+
 pub fn note(site: &str, from: &Program, to: &Program) {
     let Some(dir) = std::env::var_os("RERAIL_VERSION_TRACE") else { return };
     let dir = Path::new(&dir);

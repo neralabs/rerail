@@ -2,24 +2,34 @@
 """Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
 is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--dir native] [--remote-only] -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
 
 e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
 
 The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
 with a free test slot, most cores first; with none free, the first usable one, once its run ends.
-What changed of this checkout is sent through the farm's mirror, after the host is asked again
-what it holds (it may have been cleaned). COMMAND runs there at `nice -n 10`, from the checkout's
-`native/` (or `--dir`), in a warm target directory of the host's own
-(`~/Library/Caches/rerail-test-remote/<checkout>`: the mirror owns `<checkout>/target` there), and
-its output is printed here.
+What changed of this checkout is sent through the farm's mirror into the host's farm root, after
+the host is asked again what it holds (it may have been cleaned). COMMAND runs there at `nice -n
+10`, from the checkout's `native/` (or `--dir`), with this machine's open-file limit, and builds in
+a target directory of its own on the host (one per checkout, kept warm, removed after 14 unused
+days or when the host's disk runs short), never the checkout's `target/`. Its output is printed
+here.
 
 With no usable host, or when the host is lost during the run (asleep, off the network: ssh exits
 255), COMMAND runs here instead, at `nice -n 19`; `--remote-only` exits 69 instead. The exit
 status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host too.
+
+`--tree DIR` also sends DIR whole (untracked files too, at the same path under the host's farm
+root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
+benchmark run on the host.
+
+It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
+worktree's compiles use, whatever version this checkout has.
 """
 import os
+import resource
+import json
 import shlex
 import signal
 import subprocess
@@ -27,9 +37,8 @@ import sys
 import time
 
 CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
-sys.path.insert(0, os.path.join(CHECKOUT, "scripts/build/farm"))
-import farm  # noqa: E402
-import mirror  # noqa: E402
+SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+USAGE = __doc__.split("\n\n")[1]
 
 UNAVAILABLE = 69
 
@@ -82,29 +91,69 @@ def choose(named):
     return candidates[0], farm.Lock(farm.state("tests", candidates[0]["name"] + ".lock")), None
 
 
-def main(argv):
-    named, directory, remote_only = None, "native", False
-    while argv and argv[0] in ("--host", "--dir", "--remote-only"):
-        if argv[0] == "--remote-only":
+def usage(why):
+    sys.exit(f"test-remote: {why}\nusage:{USAGE}\n(scripts/dev/test-remote --help for more)")
+
+
+def parse(argv):
+    """The options and COMMAND, checked before anything is sent: an unknown option or a missing
+    COMMAND is refused here, never run on a host."""
+    named, directory, remote_only, trees = None, "native", False, []
+    while argv and argv[0] != "--":
+        a = argv[0]
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        if a == "--remote-only":
             remote_only, argv = True, argv[1:]
-            continue
-        if argv[0] == "--host":
-            named = argv[1]
+        elif a == "--tree":
+            if len(argv) < 2 or not os.path.isdir(argv[1]):
+                usage("--tree needs a directory")
+            trees.append(os.path.realpath(argv[1]))
+            argv = argv[2:]
+        elif a in ("--host", "--dir"):
+            if len(argv) < 2 or argv[1].startswith("-"):
+                usage(f"{a} needs a value")
+            if a == "--host":
+                named = argv[1]
+            else:
+                directory = argv[1]
+            argv = argv[2:]
+        elif a.startswith("-"):
+            usage(f"unknown option {a}")
         else:
-            directory = argv[1]
-        argv = argv[2:]
-    if argv[:1] == ["--"]:
-        argv = argv[1:]
+            usage(f"COMMAND goes after --: {a}")
+    argv = argv[1:]
     if not argv:
-        sys.exit(__doc__)
+        usage("no COMMAND")
+    if not os.path.isdir(os.path.join(CHECKOUT, directory)):
+        usage(f"--dir {directory}: no such directory in {CHECKOUT}")
+    return named, directory, remote_only, trees, argv
+
+
+def main(argv):
+    named, directory, remote_only, trees, argv = parse(argv)
     stop_on_signals()
+    if not os.path.exists(os.path.join(SHARE, "farm.py")):
+        here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)
+    sys.path.insert(0, SHARE)
+    global farm, mirror
+    import farm
+    import mirror
+    try:
+        tree = int(open(os.path.join(CHECKOUT, "scripts/build/farm/farm.py")).read().split("\nVERSION = ", 1)[1].split()[0])
+    except (OSError, IndexError, ValueError):
+        tree = 0
+    if tree > farm.VERSION:
+        say(f"this checkout's farm (version {tree}) is newer than the installed one ({farm.VERSION}): "
+            "scripts/build/farm/setup installs it; running the installed one")
 
     started = time.time()
     host, slot, why = choose(named)
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
-    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]], "files": [], "verify": True,
+    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
         slot.release()
@@ -112,20 +161,13 @@ def main(argv):
     t = reply.get("times", {})
     say(f"{name}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
 
-    # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target directory
-    # outside the mirrored tree. The mirror writes this machine's files at this machine's paths, and a compile sent
-    # from here brings its dependencies' `.rmeta` files into `<checkout>/target` on the host. In a target the host's
-    # cargo built, such an `.rmeta` sits beside the host's own `.rlib` of the same name with another SVH, and rustc
-    # takes neither (E0463 "can't find crate"). Each checkout keeps its own directory, warm from run to run.
-    target = "$HOME/Library/Caches/rerail-test-remote/" + shlex.quote(os.path.basename(CHECKOUT))
-    command = f"RUSTC_WRAPPER= CARGO_TARGET_DIR={target} exec nice -n 10 " + " ".join(shlex.quote(a) for a in argv)
-    # Without a terminal the host's sshd does not stop a command whose connection closed: the
-    # command stops when its input (this connection) ends.
-    # An ssh command starts with macOS's 256 open files: a `cargo test` process whose tests each open a store runs
-    # out (EMFILE), where a terminal's shell has more.
-    remote = f"cd {shlex.quote(os.path.join(CHECKOUT, directory))} && export PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH && " \
-             f"ulimit -n 10240 2>/dev/null; " \
-             f"( {command} ) & p=$!; ( cat >/dev/null; kill $p 2>/dev/null ) & wait $p"
+    # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target
+    # directory of its own (farm-agent's `exec`).
+    job = {"cwd": os.path.join(CHECKOUT, directory), "argv": argv, "map": [CHECKOUT] + [t for t in trees if not t.startswith(CHECKOUT + os.sep)],
+           "env": {"RUSTC_WRAPPER": ""}, "target": farm.key(CHECKOUT), "nice": 10,
+           "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
+           "min_free_gb": farm.config().get("min_free_gb", 40)}
+    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
     proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
     try:
         code = proc.wait()

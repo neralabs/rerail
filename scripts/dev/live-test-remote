@@ -3,14 +3,14 @@
 
     scripts/dev/live-test-remote [--host NAME] [--verbose] PACKAGE [--lib | --test NAME] [-- FILTER...]
 
-Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: a host with
-`"mirror": true` in the farm's configuration, the first one by default) in this checkout's copy there, and
+Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: the first usable one by default) in this
+checkout's copy there (under the host's farm root), and
 prints its verdicts here. Each file saved in this checkout is sent to the host through the farm's
 live mirror, where Relax's own watcher sees it written and patches the running tests: the JIT,
 the live process and Relax's store are the host's, and this machine spends only the send.
 
 Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
-PATH; its std is `$RELAX_STD` if set. Both are sent to the same paths on the host. Ctrl-C stops the session on the host too.
+PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. Ctrl-C stops the session on the host too.
 """
 import ctypes
 import ctypes.util
@@ -24,7 +24,11 @@ import threading
 import time
 
 CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
-sys.path.insert(0, os.path.join(CHECKOUT, "scripts/build/farm"))
+# The installed farm, the one every worktree's compiles use (scripts/build/farm/setup).
+SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+if not os.path.exists(os.path.join(SHARE, "farm.py")):
+    sys.exit("live-test-remote: the farm is not installed (scripts/build/farm/setup); run `relax test --live` here instead")
+sys.path.insert(0, SHARE)
 import farm  # noqa: E402
 import mirror  # noqa: E402
 
@@ -95,10 +99,10 @@ def main(argv):
     if not argv:
         sys.exit(__doc__)
     if host is None:
-        hosts = farm.usable("mirror")
+        hosts = farm.usable()
         if not hosts:
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
-            sys.exit("live-test-remote: no usable host with \"mirror\": true" + (f" ({'; '.join(reasons)})" if reasons else "")
+            sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")
                      + "; run `relax test --live` here instead")
         host = hosts[0]["name"]
     installed = os.path.expanduser("~/.local/share/rerail-relax")
@@ -117,12 +121,11 @@ def main(argv):
     print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
     env = {"RUSTC_WRAPPER": "", "RELAX_ALLOW_C": "1"} | ({"RELAX_STD": os.path.realpath(std)} if std else {})
-    command = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " exec nice -n 10 " + \
-        " ".join(shlex.quote(a) for a in [relax, "test", "--live"] + argv)
-    # Without a terminal the host's sshd does not stop a command whose connection closed: the
-    # command stops Relax when its input (this connection) ends.
-    remote = f"cd {shlex.quote(os.path.join(CHECKOUT, 'native'))} && export PATH=$HOME/.cargo/bin:$PATH && " \
-             f"( {command} ) & p=$!; cat >/dev/null; kill $p 2>/dev/null; wait $p"
+    # Relax, its std and the checkout are kept under the host's farm root: farm-agent's `exec` maps
+    # their paths there, and stops Relax when this connection's input ends.
+    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
+           "map": [CHECKOUT, relax] + ([os.path.realpath(std)] if std else [])}
+    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
     proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]

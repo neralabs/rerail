@@ -293,7 +293,7 @@ const LEASE_WAIT: Duration = Duration::from_secs(60);
 /// How often a holder looks for a process waiting for its lease.
 const WANT_CHECK: Duration = Duration::from_millis(50);
 
-struct State {
+pub(super) struct State {
     /// The atoms held: what this process read of the database's, and its pending ones (`Interner::base` on).
     atoms: Interner,
     /// When the first pending atom was given out.
@@ -1519,7 +1519,7 @@ impl Atoms {
 
     /// A run's end: the lease is given back with its next commit, as before the run.
     pub fn run_over(&self) {
-        let _ = self.runs.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        let _ = self.runs.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run

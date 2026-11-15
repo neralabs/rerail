@@ -123,9 +123,10 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
     clear();
     let p = parse(".decl a(x: number, y: number)\n.decl b(y: number, z: number)\n.decl h(x: number, z: number)\nh(x, z) :- a(x, y), b(y, z).\n.output h\n").unwrap();
+    let placed = super::super::body::Placed::of_program(&p).unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("a", 50.0), ("b", 100.0)] {
         model.stats.card.insert(rel, rows);
         for c in 0..2 {
@@ -137,23 +138,23 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let v = body::alone(r).unwrap();
     let b = body::nth(&v, 0);
     let lead = |order: &[Step]| r.body[order[0].at].atom().map(|a| a.rel.to_string()).unwrap();
-    let ((order, work, _), _) = model.plan_inner(&p, &b, None, None, false).unwrap();
+    let ((order, work, _), _) = model.plan_inner(placed.fields().unwrap(), &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "a", "{work}");
     let bound: BTreeSet<String> = ["x", "y"].map(String::from).into();
     let atom_b = r.body[1].atom().unwrap();
     put_exact(1, b.observed_key(), vec![(atom_sig(atom_b, &bound), [50, 50_000])]);
-    let ((order, work, _), _) = model.plan_inner(&p, &b, None, None, false).unwrap();
+    let ((order, work, _), _) = model.plan_inner(placed.fields().unwrap(), &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");
     clear();
 
     // The memo: the line's best order ran 10,000 times its price; its next plan takes the other.
     let _plans = KeepPlans::start(None);
     let key = model.reused_key(&b, None);
-    let ((best, _, _), _) = model.plan_rule_reused(&p, &b, None).unwrap();
+    let ((best, _, _), _) = model.plan_rule_reused(placed.fields().unwrap(), &b, None).unwrap();
     assert_eq!(lead(&best), "a");
     critical(&["h".into()], &[vec![]], &[LineRun { stratum: "h".into(), key, rule: b.observed_key(), order: steps(&best), work: 1e6, est: 100.0, ..Default::default() }]);
     assert!(pending(&key), "a wider search is wanted");
-    let ((order, _, _), _) = model.plan_rule_reused(&p, &b, None).unwrap();
+    let ((order, _, _), _) = model.plan_rule_reused(placed.fields().unwrap(), &b, None).unwrap();
     assert_eq!(lead(&order), "b", "corrected by what `a` first measured");
     let n = note(&key).unwrap();
     assert!(!n.wants_search && !n.proposals.is_empty(), "the line's work paid for a wider search, made inline: {n:?}");
@@ -231,9 +232,10 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
 #[test]
 fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let p = parse(".decl r(f: number, x: number)\n.decl h(a: number, b: number)\nh(a, b) :- r(f, a), r(f, b), r(f, c).\n.output h\n").unwrap();
+    let placed = super::super::body::Placed::of_program(&p).unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
     let h = crate::code_rule_dsl::logic::plan::table::HeavyCol::of_counts(counts);
     model.stats.card.insert("r", h.rows);
@@ -244,7 +246,7 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let r = &p.rules[0];
     let v = body::alone(r).unwrap();
     let b = body::nth(&v, 0);
-    let last = |m: &Model| *m.plan_rule_step_rows(&p, &b, None).unwrap().1.last().unwrap();
+    let last = |m: &Model| *m.plan_rule_step_rows(placed.fields().unwrap(), &b, None).unwrap().1.last().unwrap();
     let by_fan = last(&model);
     assert!((by_fan / (h.sq * h.sq / h.rows) - 1.0).abs() < 0.01, "{by_fan}");
     let cube = h.cube;

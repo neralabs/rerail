@@ -15,7 +15,7 @@
     suppress nosec "B113"
 B113(n) :- kind(n, "call"),
     ( child(n, c1_1, _), (kind(c1_1, "identifier") ; kind(c1_1, "attribute")), sym_of(c1_1, q2_1), b113_set_1(q2_1), kind(n, "call"), b113_arg_no_timeout_1(n), unset(T)
-    ; child(n, c3_2, _), ((kind(c3_2, "identifier") ; kind(c3_2, "attribute")), sym_of(c3_2, q1_2), b113_set_1(q1_2) ; (kind(c3_2, "identifier") ; kind(c3_2, "attribute")), sym_of(c3_2, q2_2), b113_set_10(q2_2)), kind(n, "call"), b113_arg_timeout_1(n, a6_2), T = a6_2
+    ; child(n, c3_2, _), ((kind(c3_2, "identifier") ; kind(c3_2, "attribute")), sym_of(c3_2, q1_2), b113_set_1(q1_2) ; (kind(c3_2, "identifier") ; kind(c3_2, "attribute")), sym_of(c3_2, q2_2), b113_set_10(q2_2)), kind(n, "call"), b113_arg_timeout_1(n, a6_2), T = a6_2, count : { child(n, c1_1_e0, _),(kind(c1_1_e0, "identifier") ; kind(c1_1_e0, "attribute")),sym_of(c1_1_e0, q2_1_e0),b113_set_1(q2_1_e0),kind(n, "call"),b113_arg_no_timeout_1(n) } = 0
     ),
     kind(T, "none").
 
