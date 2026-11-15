@@ -7380,7 +7380,7 @@ impl<'a> Run<'a, '_> {
                     for (o, run) in &measured {
                         let est = self.model.price_for_delta(prog, &b, Some(lead), o, run.rows as f64);
                         if let Some(est) = est {
-                            joins::put_tried(key, rule, o, run.work as f64 / est.max(1.0));
+                            joins::put_trial(key, rule, o, run.work as f64, est, run.cut);
                         }
                         prices.push(est.unwrap_or(f64::NAN));
                     }

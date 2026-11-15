@@ -98,10 +98,19 @@ Now:
   pack. The writer runs only the manifest's timestamp, a write a warm run may make. The run takes 3.2 s wall and
   29 B instructions, and finds the same 7,080.
 - Open, found while measuring §4:
-  - On `posthog/`, `attr_of` sometimes takes a cross product: `text($at, $a)` scanned before
-    `field($n, 65541, $at)`, whose postings estimate is 0.1 rows a binding. That is 1.17 B rows and 56 s, against
-    0.1 s. The build without §4 does it too (1,432 B instructions), so it came with the merges of
-    de9122137/4779eb6dc. Not every run does it: one run of the §4 build took 652 B instructions, one 1,384 B.
+  - On `posthog/`, `attr_of` sometimes took a cross product: `text($at, $a)` scanned before
+    `field($n, 65541, $at)`. That is 1.17 B rows and 56 s, against 0.1 s, and it happened in 3 runs of 4. The build
+    without §4 did it too (1,432 B instructions), so it came with the merges of de9122137/4779eb6dc, and with
+    them the join trials (decision 0207).
+    - The cause: a trial cut at its budget kept its cut work over its price as the order's measured ratio. The
+      cross product was cut at 3,581 rows of a price of 9.4 M, a ratio of 0.0004. The orders that ran to their
+      end measured about 3.5 times their price. So a later choice ("corrected by what its orders measured") priced
+      the cross product below them.
+    - The fix: a cut trial's ratio is a floor, at least 1 (`joins::put_trial`).
+    - After the fix, two runs, each with that trial cut again: 551 B and 546 B instructions, `attr_of` 0.2 s, the
+      same 7,080 findings. Before the merges it was 547 B.
+    - Test: `plan::joins::tests::a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced` (it
+      failed before the fix), and the other `plan::joins` tests (11 in all).
   - `RERAIL_WARM` faults on the observer's journal when the run's roots are under a busy directory: the phase-0
     root in `$TMPDIR`, and the run's own outputs under the work tree. The memo writes nothing there.
 - Tests:
