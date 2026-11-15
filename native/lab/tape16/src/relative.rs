@@ -114,7 +114,8 @@ impl Gap<'_> {
     }
 }
 
-fn gaps(c: &Cols) -> (Vec<u64>, Vec<u64>) {
+/// Each node's gap to the previous start (0 for the root), and its length.
+pub fn gaps(c: &Cols) -> (Vec<u64>, Vec<u64>) {
     let n = c.len();
     let gap = (0..n).map(|i| if i == 0 { 0 } else { c.start[i] - c.start[i - 1] }).collect();
     let len = (0..n).map(|i| c.end[i] - c.start[i]).collect();

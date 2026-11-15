@@ -12,6 +12,7 @@
 //! tape16 base  <cap> [--dump <dir>]                   E9: base relations as rows against the tape
 //! tape16 textrel <cap>                                  E9: text and token as rows with atoms, against the tape
 //! tape16 inplace <cap>                                E10: in-memory tapes read in place, every question costed
+//! tape16 disk  <cap>                                   E18: the forms on disk, zstd and LZ4: bytes, decode, matches
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
@@ -1633,6 +1634,20 @@ fn cmd_relative(path: &str) {
     }
 }
 
+/// E18 (t39 step 10): the forms on disk under zstd and LZ4: bytes, decode time, match coverage (`disk.rs`).
+fn cmd_disk(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::disk::run(fs);
+        rerail_tape_lab::disk::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
 /// E15 (t39 step 7): repeated structure as repeated bits, per slot encoding (`repeat.rs`).
 fn cmd_repeat(path: &str) {
     use rerail_tape_lab::inplace::Codes;
@@ -1683,6 +1698,7 @@ fn main() {
         "prim" => cmd_prim(path),
         "repeat" => cmd_repeat(path),
         "relative" => cmd_relative(path),
+        "disk" => cmd_disk(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

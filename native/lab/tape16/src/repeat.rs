@@ -63,12 +63,38 @@ impl Image for Esc {
 /// The width costing least (every slot at `w` bits, plus each escape's offset byte and value) among those
 /// escaping at most `share` of the values.
 pub fn esc_width(vals: impl Iterator<Item = u64>, share: f64) -> u32 {
-    let mut hist = [0u64; 66];
-    let mut n = 0u64;
-    for v in vals {
-        hist[bits_for(v) as usize] += 1;
-        n += 1;
+    let mut hist = Hist::default();
+    hist.add(vals);
+    hist.width(share)
+}
+
+/// The values' bit lengths, gathered over many files (`esc_width` without holding the values).
+#[derive(Clone, Copy)]
+pub struct Hist {
+    hist: [u64; 66],
+    n: u64,
+}
+
+impl Default for Hist {
+    fn default() -> Self {
+        Hist { hist: [0; 66], n: 0 }
     }
+}
+
+impl Hist {
+    pub fn add(&mut self, vals: impl Iterator<Item = u64>) {
+        for v in vals {
+            self.hist[bits_for(v) as usize] += 1;
+            self.n += 1;
+        }
+    }
+    /// `esc_width`'s choice over the values added.
+    pub fn width(&self, share: f64) -> u32 {
+        width_of(&self.hist, self.n, share)
+    }
+}
+
+fn width_of(hist: &[u64; 66], n: u64, share: f64) -> u32 {
     let top = (0..=64).rev().find(|&b| hist[b] > 0).unwrap_or(0) as u32;
     // A value of exactly 2^w − 1 escapes too; counted as above w here, a small overestimate.
     let (mut best, mut above) = ((u64::MAX, top.max(1)), 0u64);

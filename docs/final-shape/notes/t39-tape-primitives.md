@@ -626,6 +626,86 @@ through a point API instead of a cursor.
   pack run (`run-policies`) fails under strict mode on its first stratum ("a native fact operator
   over input relations"), so each rule ran alone.
 
+### Step 10: what the same bits buy on disk, under zstd and LZ4 (E18)
+
+Same bits only help a compressor that finds them. zstd and LZ4 both replace a byte run seen
+before by a copy of it, so a repeated subtree must also be the same *bytes*. A field of w bits
+starts at bit `i * w`; at a width that is not a multiple of 8, two copies of a run line up as bytes
+only when they start at the same bit phase. `tape16 disk <capture>` (`src/disk.rs`) prices that.
+Four forms, each kept as the arrays it reads in place, one stream an array:
+
+- **F15**: format 15's image (explicit columns at byte widths, its own code table).
+- **XF**: codes at the file's width, slots in per-block PFOR, starts by FOR, lengths.
+- **new, bit-packed**: codes and sibling slots (K = 8) at one width a language, starts by gap with
+  a start every 8, lengths; escapes that name nothing (step 8's form).
+- **new, byte-aligned**: the same, every width rounded up to a multiple of 8.
+
+Each stream is compressed alone, file by file, with zstd level 3 and with LZ4 (the reference
+library, the block format GPU decoders read) fast and HC level 9. Each is run with and without a
+64 KiB dictionary, trained per stream on the even files and measured on the odd ones. A second run
+compresses the measured files end to end: zstd with a 128 MiB window and long-distance matching,
+and LZ4 HC, whose window is 64 KiB. Every stream is decoded and checked equal (none wrong).
+Match coverage is the share of input bytes the compressor's matches produce (zstd's sequences,
+LZ4's parsed off its blocks).
+
+Bytes a node (measured files):
+
+| | memory | zstd 3 | zstd 3, dict | zstd long, end to end | lz4 | lz4 HC, dict |
+|---|---|---|---|---|---|---|
+| **data-layer Python** (656 files, 1.32M nodes) | | | | | | |
+| F15 | 8.63 | 2.48 | 2.34 | 2.23 | 3.76 | 2.58 |
+| XF | 4.59 | 3.70 | 3.37 | 3.17 | 3.98 | 3.24 |
+| new, bit-packed | 4.18 | 3.04 | 2.68 | 2.48 | 3.39 | 2.71 |
+| new, byte-aligned | 5.55 | 2.15 | 1.94 | 1.82 | 2.85 | 2.05 |
+| **data-layer JSON** (730 files, 3.15M nodes) | | | | | | |
+| F15 | 9.21 | 1.26 | 1.23 | 0.99 | 1.86 | 1.36 |
+| XF | 4.00 | 2.52 | 2.24 | 2.07 | 2.80 | 2.24 |
+| new, bit-packed | 3.76 | 1.45 | 1.21 | 1.09 | 1.71 | 1.20 |
+| new, byte-aligned | 4.54 | 1.06 | 0.94 | 0.83 | 1.40 | 0.98 |
+| **rerail Rust** (193 files, 0.71M nodes) | | | | | | |
+| F15 | 8.57 | 2.60 | 2.52 | 2.44 | 3.96 | 2.80 |
+| XF | 4.53 | 3.76 | 3.44 | 3.27 | 4.07 | 3.32 |
+| new, bit-packed | 4.11 | 3.11 | 2.81 | 2.66 | 3.52 | 2.82 |
+| new, byte-aligned | 5.50 | 2.28 | 2.09 | 2.00 | 3.11 | 2.23 |
+| **rerail `.rr`** (198 files, 0.25M nodes) | | | | | | |
+| F15 | 8.50 | 2.10 | 1.82 | 1.66 | 3.19 | 1.96 |
+| XF | 4.20 | 3.31 | 2.93 | 2.65 | 3.57 | 2.76 |
+| new, bit-packed | 3.75 | 2.43 | 1.96 | 1.76 | 2.78 | 1.88 |
+| new, byte-aligned | 4.46 | 1.67 | 1.43 | 1.27 | 2.26 | 1.44 |
+
+Rerail TypeScript and JSON follow the same pattern (`tape16 disk` prints every language, LZ4 HC
+without a dictionary, and the sizes per stream).
+
+Bytes the matches cover, zstd 3 with a dictionary: XF 34–53%, new bit-packed 41–78%, new
+byte-aligned 75–86%, F15 90–95%. F15's share is high because most of its bytes are the zero high
+bytes of wide fields, which match trivially; it still ends larger.
+
+- **Same bits alone take a fifth off the disk on code, and nearly half on JSON.** New
+  bit-packed against XF, zstd with a dictionary: 3.37 → 2.68 B a node on data-layer Python (−20%),
+  3.44 → 2.81 on Rust (−18%), 2.24 → 1.21 on data-layer JSON (−46%). LZ4 HC with a dictionary gains
+  about as much (−15 to −46%). Matches cover 7–25 points more of the bytes.
+- **Byte alignment buys as much again.** At byte widths the same runs line up as bytes, and
+  matches cover 75–86% of them. Python 2.68 → 1.94 (−28%), Rust 2.81 → 2.09, `.rr` 1.96 → 1.43,
+  JSON 1.21 → 0.94. The new form byte-aligned is the smallest form measured, 17% under F15 on
+  Python and 24% under it on JSON. The price is memory: 4.18 → 5.55 B a node on Python, most of it
+  codes at 16 bits instead of 9.
+- **A mixed form keeps most of both.** Each stream is compressed alone, so the per-stream sizes
+  add: codes bit-packed, slots, gaps and lengths at byte widths. That costs 4.63 B a node in memory
+  on Python (+0.45 over bit-packed), 2.04 on disk (+0.10 over byte-aligned); Rust 4.59 and 2.24;
+  JSON 4.11 and 0.92. Codes compress well at either width (0.43 against 0.30 B a node); the narrow
+  fields gain most from alignment (slots 0.57 → 0.35, gaps 0.53 → 0.38, lengths 0.89 → 0.62).
+- **The checkpoints do not compress.** They are absolute starts: 0.25–0.32 B a node on disk at
+  K = 8, an eighth of the mixed form's total. K = 16 halves them.
+- **A 64 KiB dictionary takes most of what crosses files.** Compressing every measured file end to
+  end, with a 128 MiB window, saves only 3–12% more than a dictionary does (Python 1.94 → 1.82).
+  For LZ4, whose window is 64 KiB, end to end and dictionary are the same within 5%.
+- **LZ4 HC with a dictionary is within 1–7% of zstd on the aligned form on code** (13% on
+  rerail's JSON), and plain LZ4 is 36–58% larger. LZ4 decodes at 0.2–0.9 ns a node without a
+  dictionary and 0.5–3 with one; zstd at 1.3–6 ns. These timings are from the M5 Max at load 38–50, so they are rough. The sizes are exact.
+- **So the case for the new form on disk:** against XF, same bits and alignment together take
+  35–59% off (Python 3.37 → 2.04 mixed). Against format 15 the mixed form is 11–25% smaller on
+  disk (equal on rerail's JSON) and about half the memory.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -780,3 +860,6 @@ In order. Each step is measured on all three corpora, every answer checked.
    0.4–1.7% of a rule's CPU at K = 8, if the engine reads in order through cursors. Chosen: sibling
    slots and gap positions at K = 8. The repeated parent reads were one call site, fixed. Open: on a
    cold store, phase 1 and the outer run each build every document.
+10. **What the same bits buy on disk (E18).** Done: same bits take 18–46% off XF's zstd size, and
+    byte widths as much again; a mixed form (codes bit-packed, the rest at byte widths) costs 4.3–4.6
+    B a node in memory and 1.5–2.2 on disk on code. Next: write the widths into 0156.

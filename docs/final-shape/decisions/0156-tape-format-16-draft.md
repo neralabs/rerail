@@ -558,7 +558,12 @@ keeps the same bits.
   arrays. At K = 8 both forms add 0.4–1.7% to a rule's CPU, provided the engine reads in order
   through cursors (as points, 1.5–4.3%). **Proposed: the leaf slot by sibling and positions by gap,
   both with K = 8**: about 4.19 B a node for codes, slots and positions on data-layer Python,
-  against XF's 4.60.
+  against XF's 4.60. On disk (E18, step 10), same bits take 18–46% off XF's zstd size, but only where
+  they are also the same bytes: at byte widths matches cover 75–86% of the bytes, bit-packed
+  41–78%. Codes bit-packed with slots, gaps and lengths at byte widths cost 4.63 B a node in memory
+  and 2.04 on disk with a dictionary on Python (XF 4.59 and 3.37, format 15 8.63 and 2.34); LZ4 HC
+  with a dictionary is within 7% of zstd there. The absolute checkpoints do not compress (0.25 B a
+  node at K = 8).
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.
