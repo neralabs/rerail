@@ -81,8 +81,8 @@ type RecordedDaemon = z.infer<typeof daemonSchema>;
  * removes the kept one. A failure costs only a later hook's wait.
  */
 export async function keepStartAnswer(answer: StartAnswer, now = Date.now()): Promise<void> {
-  if (onServer(answer.workspace)) return;
   const file = keptFile(answer.daemon, answer.workspace);
+  if (onServer(answer.workspace) || !inFoldersOfItsOwn(file)) return;
   const kept = answer.state === "stopped" ? keptOf(answer, now) : undefined;
   await (kept === undefined ? rm(file, { force: true }) : rewritten(file, kept, now)).catch(() => undefined);
 }
@@ -97,7 +97,8 @@ export function repeatsStoppedAnswer(workspace: string, now = Date.now()): boole
   const daemon = recordedDaemon();
   const folder = daemon === undefined ? undefined : localRealPath(workspace);
   if (daemon === undefined || folder === undefined) return false;
-  const kept = readKept(keptFile(daemon, folder));
+  const file = keptFile(daemon, folder);
+  const kept = inFoldersOfItsOwn(file) ? readKept(file) : undefined;
   return kept !== undefined && stillHolds(kept, folder, daemon, now);
 }
 
@@ -163,6 +164,24 @@ function madeForThisDaemon(folder: string): void {
   for (const name of earlier) rmSync(join(dirname(folder), name), { recursive: true, force: true });
 }
 
+/**
+ * Whether the two folders that hold the kept answer `file` in the Rerail home are each a folder of its own or not there
+ * yet: Rerail makes them, so a link in their place, which can reach a server that does not answer, is never followed.
+ */
+function inFoldersOfItsOwn(file: string): boolean {
+  return [dirname(dirname(file)), dirname(file)].every(folder => entryKind(folder) !== "other");
+}
+
+/** What is at `path`, not followed through a link: nothing, a folder, or anything else, a look that fails included. */
+function entryKind(path: string): "none" | "folder" | "other" {
+  try {
+    const stats = lstatSync(path, { throwIfNoEntry: false });
+    return stats === undefined ? "none" : stats.isDirectory() ? "folder" : "other";
+  } catch {
+    return "other";
+  }
+}
+
 /** The file of the answer `daemon` gave for `folder`, a real path. */
 function keptFile(daemon: DaemonIdentity, folder: string, home = defaultRerailHome()): string {
   const name = createHash("sha256").update(folder).digest("hex").slice(0, 32);
@@ -208,18 +227,9 @@ function folderUp(folder: string, depth: number): string {
 function noGitBetween(folder: string, depth: number): boolean {
   let at = folder;
   for (let up = 0; up < depth; up += 1, at = dirname(at)) {
-    if (entryAt(join(at, ".git")) !== "none") return false;
+    if (entryKind(join(at, ".git")) !== "none") return false;
   }
   return true;
-}
-
-/** Whether something is at `path`, not followed through a link: "none" only where the filesystem says nothing is. */
-function entryAt(path: string): "none" | "some" {
-  try {
-    return lstatSync(path, { throwIfNoEntry: false }) === undefined ? "none" : "some";
-  } catch {
-    return "some";
-  }
 }
 
 /** `<device>:<inode>` of `path` as `look` gives it; undefined where it fails or the filesystem gives no inode. */
