@@ -7,6 +7,7 @@ See README.md beside this file. Two entry points use this module:
 - `farm-rustc`, the compiler that sccache runs on a miss, compiles here or on another Mac.
 - `farm-cc` and `farm-c++`, build scripts' C compilers (`CC`, `CXX`), go through the same sccache.
 """
+import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -326,6 +327,9 @@ DEFAULTS = {
 # not (doubled each time it is still not, up to the last).
 HEALTHY_SECONDS = 30
 DOWN_SECONDS = (30, 1800)
+# A host that answers, but over another link than its own (it fell back to WiFi), is tried again
+# this often, not backed off: its own link may be back at any time (`recover`).
+OFF_LINK_SECONDS = 60
 # The throughput probe's size, and how often it is sent (it is the slowest part of the probe).
 PROBE_BYTES = 4 << 20
 PROBE_SECONDS = 600
@@ -380,7 +384,19 @@ def mark_down(name, why):
     log(f"{name}: down for {wait} s: {why}")
 
 
-def probe(host, cfg):
+# Prints the host's interface an ssh connection came in on: the one holding the address it was
+# reached at (the third word of $SSH_CONNECTION; a link-local one carries its zone).
+ARRIVAL = ("s=$(echo $SSH_CONNECTION | cut -d' ' -f3); ifconfig | awk -v s=\"$s\" "
+           "'/^[a-z]/ {i=$1; sub(\":$\", \"\", i)} $2==s || index($2, s \"%\")==1 {print i; exit}'")
+
+
+def link_of(host):
+    """The interface of `host` its farm traffic must arrive on (`link`; `link_match`, with a leading
+    `%`, in older configurations), or None: any."""
+    return (host.get("link") or host.get("link_match") or "").lstrip("%") or None
+
+
+def probe(host, cfg, fell_back=False, recovered=False):
     """Asks `host` how it is, over ssh: its idle time, free disk, NFS mounts, the address it sees this
     machine connect from, then the round trip and (every PROBE_SECONDS) the link's throughput.
     Returns the health record, `ok` with `why` when not."""
@@ -388,14 +404,21 @@ def probe(host, cfg):
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
+    if previous.get("route") != route(name):
+        h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
     script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
-              " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}';"
+              " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
         out = None
-    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 3:
+    if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 4:
+        if route(name) and not fell_back:
+            # The address that reached it over its link is gone (it was renumbered, or the link
+            # is down): back to what its name resolves to.
+            set_route(name, None)
+            return probe(host, cfg, fell_back=True, recovered=recovered)
         h["why"] = "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
@@ -406,14 +429,15 @@ def probe(host, cfg):
     except (ValueError, IndexError):
         h["why"] = "its answer could not be read"
         return h
-    h["mounts"] = [m for m in lines[3:] if m]
+    arrival = h["arrival"] = lines[3].strip()
+    h["mounts"] = [m for m in lines[4:] if m]
     started = time.time()
     try:
         subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
         h["rtt_ms"] = round((time.time() - started) * 1000)
     except subprocess.TimeoutExpired:
         h["rtt_ms"] = 5000
-    link = host.get("link_match")
+    link = link_of(host)
     if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
         started = time.time()
         try:
@@ -422,8 +446,11 @@ def probe(host, cfg):
         except subprocess.TimeoutExpired:
             h["mbps"] = 0
         h["mbps_at"] = time.time()
-    if link and link not in client:
-        h["why"] = f"not on its link: it sees this machine as {client or '?'}, without {link!r}"
+    if link and arrival != link and not recovered and recover(host, arrival):
+        return probe(host, cfg, fell_back=fell_back, recovered=True)
+    h["route"] = route(name)
+    if link and arrival != link:
+        h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["min_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}"
     elif h["rtt_ms"] > cfg["max_rtt_ms"]:
@@ -454,7 +481,9 @@ def health(host, fresh=False):
         return h or {"ok": False, "why": "not probed yet"}
     try:
         h = probe(host, config())
-        if not h["ok"]:
+        if not h["ok"] and h["why"].startswith("not on its link"):
+            h["down_until"] = now + OFF_LINK_SECONDS
+        elif not h["ok"]:
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
         write_json(path, h)
@@ -496,11 +525,98 @@ def capacity(host):
 CHANNEL = ["load"]
 
 
-def ssh(host, command, channel=None):
-    control = state("ssh", f"{host}.{channel or CHANNEL[0]}")
+def route(host):
+    """The address `recover` found reaching `host` over its own link, or None: its name, as ssh
+    resolves it (over mDNS, whichever interface answers first)."""
+    return read_json(state("route", host), {}).get("address")
+
+
+def set_route(host, address, alias=None):
+    """Records the address every ssh to `host` uses from now on (None: its name again), and closes
+    the connections that went the other way, so nothing keeps using the slow link."""
+    if address == route(host):
+        return
+    if address:
+        write_json(state("route", host), {"address": address, "alias": alias})
+    else:
+        try:
+            os.remove(state("route", host))
+        except FileNotFoundError:
+            pass
+    close_masters(host)
+    log(f"{host}: route {'over ' + address if address else 'by name'}")
+
+
+def close_masters(host):
+    """Ends every shared ssh connection to `host` (each channel's master); the next ssh connects
+    anew. A command running over one keeps it until it ends."""
+    directory = state("ssh", "x")[:-1]
+    for f in os.listdir(directory):
+        if f.startswith(host + "."):
+            subprocess.run(["ssh", "-o", f"ControlPath={directory}{f}", "-O", "exit", host],
+                           capture_output=True, timeout=5)
+
+
+def ssh_alias(host):
+    """What `host`'s key is recorded under (`HostKeyAlias`, else the address its name gives), so an
+    ssh to another of its addresses checks the same key."""
+    g = dict(line.split(" ", 1) for line in subprocess.run(["ssh", "-G", host], capture_output=True, text=True)
+             .stdout.splitlines() if " " in line)
+    return g.get("hostkeyalias") or g.get("hostname") or host
+
+
+def ssh(host, command, channel=None, address=None, alias=None):
+    """The ssh command running `command` on `host`, over the channel's shared connection: to its
+    route when it has one (or to `address`, unshared, to try one; its key checked as `alias`'s)."""
+    r = read_json(state("route", host), {}) if address is None else {"address": address, "alias": alias}
+    via = []
+    if r.get("address"):
+        via = ["-o", "HostName=" + r["address"].replace("%", "%%"), "-o", f"HostKeyAlias={r.get('alias') or ssh_alias(host)}"]
+    if address is not None:
+        shared = ["-o", "ControlPath=none"]
+    else:
+        # Each route has its own masters: one made over another link is never reused.
+        control = state("ssh", f"{host}.{key(r.get('address') or '')[:6]}.{channel or CHANNEL[0]}")
+        shared = ["-o", "ControlMaster=auto", "-o", f"ControlPath={control}", "-o", "ControlPersist=10m"]
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=5",
-            "-o", "ServerAliveCountMax=3", "-o", "ControlMaster=auto", "-o", f"ControlPath={control}",
-            "-o", "ControlPersist=10m", host, command]
+            "-o", "ServerAliveCountMax=3"] + via + shared + [host, command]
+
+
+def recover(host, arrival):
+    """Finds a way back to `host` over its own link (`link_of`), when it answers over another (its
+    `arrival` interface: it fell back to WiFi). Over the connection that works it lists its
+    addresses on that link; each is tried (in parallel, 3 s to connect), and the first that arrives
+    there becomes its route. False when none does: the link is down, and the next probe
+    (OFF_LINK_SECONDS) tries again."""
+    name, link = host["name"], link_of(host)
+    try:
+        out = subprocess.run(ssh(name, f"ifconfig {shlex.quote(link)}", "health"), capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        return False
+    v4, v6 = [], []
+    for words in (line.split() for line in out.stdout.splitlines()):
+        if len(words) > 1 and words[0] == "inet":
+            v4.append(words[1])
+        elif len(words) > 1 and words[0] == "inet6" and words[1].startswith("fe80"):
+            # This machine's end of the link is most often named as the host's is.
+            v6.append(words[1].split("%")[0] + "%" + link)
+    candidates = v4 + v6
+    if not candidates:
+        return False
+    alias = ssh_alias(name)
+
+    def attempt(address):
+        try:
+            r = subprocess.run(ssh(name, ARRIVAL, address=address, alias=alias), capture_output=True, text=True, timeout=6)
+        except subprocess.TimeoutExpired:
+            return None
+        return address if r.returncode == 0 and r.stdout.strip() == link else None
+
+    with concurrent.futures.ThreadPoolExecutor(len(candidates)) as pool:
+        found = next((a for a in pool.map(attempt, candidates) if a), None)
+    if found:
+        set_route(name, found, alias)
+    return bool(found)
 
 
 def on_host(script):

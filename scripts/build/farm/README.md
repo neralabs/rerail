@@ -101,12 +101,12 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "mirror", "tests", "shared", "link_match"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "mirror", "tests", "shared", "link"}` |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `mirror`, `shared` | how its compiles get their inputs (Live mirror, Shared volume; else copied) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default: `mirror`) |
-| `link_match` | text the address the host sees this Mac connect from must contain (e.g. an interface's zone); when the link drops to WiFi the address changes and the host is not used |
+| `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150) |
 | `min_mbps` | the least throughput to it, MB/s (default 8) |
@@ -121,12 +121,21 @@ Hosts come and go: they sleep, leave the network, fall back to WiFi, fill their 
 copies cleaned. Nothing waits on one for long, and anything a host cannot do runs here.
 
 - **Probe.** Before a host is used its health is read: one ssh command (3 s to connect) reports the
-  address it sees this Mac at, its free disk, its idle time and its mounts; the round trip is
-  timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the throughput. A
-  host off its `link_match`, short of disk, or past the limits is not used.
+  interface the connection arrived on, its free disk, its idle time and its mounts; the round
+  trip is timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the
+  throughput. A host short of disk or past the limits is not used.
+- **Off its link: recovered.** A host's name (often an mDNS `.local` name) resolves to whichever
+  of its addresses answers first, so ssh can reach it over WiFi while its fast link is up. When
+  a probe arrives on another interface than `link`, the farm asks the host, over the connection
+  that works, for its addresses on `link`, tries each (3 s), and the first that arrives there
+  becomes the host's route: every later ssh goes to that address, the shared connections made
+  the other way are closed, and each route has its own. While no address works (the link is
+  down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
+  answering is dropped, and the host is reached by name, then recovered again.
 - **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
-  the others read). A host found down is not probed again for 30 s, doubling to 30 minutes, so a
-  sleeping host costs nothing.
+  the others read). A host that does not answer is not probed again for 30 s, doubling to 30
+  minutes, so a sleeping host costs nothing; `status` probes every host now, whatever its
+  back-off.
 - **Lost mid-job.** A compile whose copy or run fails there runs here, and the host is marked down
   when its connection or agent is gone, or its disk is full (agent code 70). A test run whose ssh
   connection drops (exit 255) runs again here.

@@ -4,8 +4,8 @@ and whether this machine's side is installed.
 
     scripts/build/farm/status [--json]
 
-A host is usable when it answers over ssh, sees this machine connect from its configured link
-(`link_match`), and has the free disk, round trip and throughput the configuration asks.
+A host is usable when it answers over ssh, is reached over its configured interface (`link`;
+when it is not, the farm looks for an address of it that is, `farm.recover`), and has the free disk, round trip and throughput the configuration asks.
 Exits 0 when at least one host is usable, 1 when none is (everything then runs here).
 """
 import json
@@ -45,8 +45,10 @@ def main(argv):
                                                             (h.get("free_gb"), "GB free")) if v is not None)
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
             print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
-            if h.get("client") and not host.get("link_match"):
-                print(f"    no link_match: it sees this machine as {h['client']}; a fall back to WiFi is not caught")
+            if h.get("arrival") and not farm.link_of(host):
+                print(f"    no link: it is reached over its {h['arrival']}; a fall back to WiFi is not caught")
+            if h.get("route"):
+                print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
     sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)
 
 
