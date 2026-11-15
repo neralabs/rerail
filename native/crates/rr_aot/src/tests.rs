@@ -85,6 +85,38 @@ fn the_word_multiplier_is_a_literal() {
     assert!(t.second, "rr's words fit in two words each");
 }
 
+/// The token loop's innermost loop, the fused rules' (a word's hash in it), calls nothing: as
+/// the lean lexer's `while run != 0`, it runs over the starts before the block's first rare one
+/// (its strings', comments', numbers'), whose rules' calls are in the loop around it (`mid`).
+#[test]
+fn the_run_loop_calls_nothing() {
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    // The values that are the multiplier, then each hash's multiply by one.
+    let vars: Vec<&str> = f0.match_indices(&format!(" = {mult}i64 as u64;")).map(|(at, _)| &f0[f0[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).expect("its name") + 1..at]).collect();
+    let hashes: Vec<usize> = vars.iter().flat_map(|v| {
+        let at: Vec<usize> = f0.match_indices(&format!(".wrapping_mul({v})")).map(|(at, _)| at).collect();
+        at
+    }).collect();
+    assert!(!hashes.is_empty(), "no word hash");
+    // Each hash's innermost loop: a label before it whose last `continue` is after it.
+    let calls: Vec<usize> = hashes.iter().map(|&h| {
+        let mut inner: Option<(usize, usize)> = None;
+        for (at, _) in f0.match_indices(": loop {") {
+            let label = &f0[f0[..at].rfind('\'').expect("a label")..at];
+            let Some(end) = f0.rfind(&format!("continue {label};")) else { continue };
+            if at < h && h < end && inner.is_none_or(|(a, _)| at > a) {
+                inner = Some((at, end));
+            }
+        }
+        let (a, b) = inner.expect("a loop around the hash");
+        f0[a..b].matches("(pin, ").count()
+    }).collect();
+    assert!(calls.contains(&0), "every word hash's loop has calls: {calls:?}");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.

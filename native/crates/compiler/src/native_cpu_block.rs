@@ -1687,6 +1687,11 @@ pub struct RecordTables {
     /// slot's, straight-line in the loop, as the lean lexer its ninth byte (`word_code`). Else
     /// a hit on a long word calls the tail compare (`tail_fn`).
     pub second: bool,
+    /// The first bytes whose tokens take no fused rule (`rule_last`), as nibble tables (a bit
+    /// where the lookups' `and` is not zero, `set_nibbles`): the lean lexer's `rare`. A
+    /// block's rare starts split its starts into runs (`record_tokens`); none where the loop's
+    /// starts are not the lean lexer's.
+    pub rare: Option<[[u8; 16]; 2]>,
     pub table: crate::records::WordTable,
     /// The extracts of the first and last bytes.
     pub starts: u16,
@@ -1900,9 +1905,18 @@ impl RecordTables {
             }
         }
         words.extend(entries);
+        // The rare first bytes: those of no fused rule (neither entry bit), as the lean
+        // lexer's `rare` (its strings', comments', numbers' first bytes).
+        let rare = lean.and(fused).and_then(|_| {
+            let mut set = [false; 256];
+            for (b, x) in set.iter_mut().enumerate() {
+                *x = entries[b] & (1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN) == 0;
+            }
+            set_nibbles(&set)
+        });
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, second, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, second, rare, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -3293,6 +3307,63 @@ fn pair_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, 
     f.ins().bnot(none)
 }
 
+/// A set of bytes as nibble tables: byte `x` is in it where `lo[x & 15] & hi[x >> 4]` is not
+/// zero. Each distinct set of low nibbles a high nibble has is a bit (eight at most); none
+/// past eight.
+pub fn set_nibbles(set: &[bool; 256]) -> Option<[[u8; 16]; 2]> {
+    let mut groups: Vec<u16> = Vec::new();
+    let mut n = [[0u8; 16]; 2];
+    for h in 0..16 {
+        let lows = (0..16).filter(|&l| set[h << 4 | l]).fold(0u16, |a, l| a | 1 << l);
+        if lows == 0 {
+            continue;
+        }
+        let g = match groups.iter().position(|&x| x == lows) {
+            Some(g) => g,
+            None => {
+                groups.push(lows);
+                groups.len() - 1
+            }
+        };
+        if g >= 8 {
+            return None;
+        }
+        n[1][h] = 1 << g;
+    }
+    for (g, &lows) in groups.iter().enumerate() {
+        for l in 0..16 {
+            if lows >> l & 1 == 1 {
+                n[0][l] |= 1 << g;
+            }
+        }
+    }
+    Some(n)
+}
+
+/// The block at byte `p`'s word of a byte set (`set_nibbles`): each 16 bytes' nibbles looked
+/// up and `and`ed, a bit where not zero, as the lean lexer's window makes its `rare`.
+fn set_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, n: &[[u8; 16]; 2], p: Value) -> Value {
+    use cranelift_codegen::ir::ConstantData;
+    let at = f.ins().iadd(file.bytes, p);
+    let tables: Vec<Value> = n.iter().map(|t| {
+        let k = f.func.dfg.constants.insert(ConstantData::from(&t[..]));
+        f.ins().vconst(types::I8X16, k)
+    }).collect();
+    let zero = f.ins().iconst(types::I8, 0);
+    let zero = f.ins().splat(types::I8X16, zero);
+    let parts: Vec<Value> = (0..4).map(|k| {
+        let x = f.ins().load(types::I8X16, MemFlags::trusted(), at, 16 * k);
+        let xl = f.ins().band(x, file.nibble);
+        let xh = f.ins().ushr_imm(x, 4);
+        let l = f.ins().swizzle(tables[0], xl);
+        let h = f.ins().swizzle(tables[1], xh);
+        let both = f.ins().band(l, h);
+        f.ins().icmp(IntCC::Equal, both, zero)
+    }).collect();
+    let none = bitmask(f, &parts, file.weights);
+    f.ins().bnot(none)
+}
+
 /// A pair's last (`EndRule::Next`, table `i`): the first byte's row (its entry's), then the
 /// next byte's bit in the row's set, if inside the file (`PairTable`): the next byte from the
 /// token's bytes, one load of the set.
@@ -4109,6 +4180,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut skips = false;
     // The inner loop's header (`from_word`), where the loop has one.
     let mut inner: Option<cranelift_codegen::ir::Block> = None;
+    // The loop over a block's runs (`mid`, its header) and the starts after the run (`rest`),
+    // where the rare starts split them, as the lean lexer's.
+    let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value)> = None;
     match walked {
         Some(o) => {
             // The next start, the first of the block's left (`cand`); none left, the cursor's
@@ -4244,6 +4318,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let seconds = f.ins().ishl_imm(p, 1);
                 x = f.ins().band_not(x, seconds);
             }
+            // The block's rare starts' word (`RecordTables::rare`), as the lean lexer's `rare`.
+            let rare_w = match (t.rare, rd.bytes) {
+                (Some(n), Some((_, file))) if lean.is_some() => Some(set_word(f, &file, &n, q64)),
+                _ => None,
+            };
             let tz = f.ins().ctz(x);
             let s1 = f.ins().iadd(q64, tz);
             // Whether the block has a gap mark's bit (`GAP_FLAG`), in the marks so far.
@@ -4263,8 +4342,23 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The carried `from` goes on as it came where the loop reads it from the records
             // (`after_last_start`): a value no token changes.
             let state = [h[0], h[1], h[2], if folded { pend_q } else { h[3] }, h[4], h[5]];
-            let args: Vec<BlockArg> = [s1, x].iter().chain(&state).map(|&v| v.into()).collect();
-            f.ins().brif(x, from_word, &args, next, &[]);
+            let mid = rare_w.map(|_| {
+                let mid = f.create_block();
+                for _ in 0..1 + STATE_WORDS {
+                    f.append_block_param(mid, types::I64);
+                }
+                mid
+            });
+            match mid {
+                Some(mid) => {
+                    let args: Vec<BlockArg> = std::iter::once(&x).chain(&state).map(|&v| v.into()).collect();
+                    f.ins().brif(x, mid, &args, next, &[]);
+                }
+                None => {
+                    let args: Vec<BlockArg> = [s1, x].iter().chain(&state).map(|&v| v.into()).collect();
+                    f.ins().brif(x, from_word, &args, next, &[]);
+                }
+            }
             f.switch_to_block(next);
             let q1 = f.ins().iadd_imm(q, 1);
             // A block with no start: its gap marks' bits from `from_q`, into `acc`.
@@ -4285,6 +4379,37 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 acc
             };
             f.ins().jump(more, &[q1.into(), ones.into(), acc1.into()]);
+            // The block's runs, as the lean lexer's loop inside its window's: the starts before
+            // the first rare one (`run`), in the inner loop, which then has only the fused
+            // rules' tokens and no rule's call; else the rare start, a token of the rules'
+            // general tail, which comes back here; none left, the refill.
+            if let (Some(mid), Some(rw)) = (mid, rare_w) {
+                f.switch_to_block(mid);
+                heads.push((mid, Step::Token));
+                let mp = f.block_params(mid).to_vec();
+                let (cand, st) = (mp[0], &mp[1..]);
+                let rare = f.ins().band(cand, rw);
+                let below = f.ins().iadd_imm(rare, -1);
+                let below = f.ins().band_not(below, rare);
+                let run = f.ins().band(cand, below);
+                let rest = f.ins().bxor(cand, run);
+                let (go_run, not_run, go_rare) = (f.create_block(), f.create_block(), f.create_block());
+                f.ins().brif(run, go_run, &[], not_run, &[]);
+                f.switch_to_block(go_run);
+                let tz = f.ins().ctz(run);
+                let s0 = f.ins().iadd(q64, tz);
+                let args: Vec<BlockArg> = [s0, run].iter().chain(st).map(|&v| v.into()).collect();
+                f.ins().jump(from_word, &args);
+                f.switch_to_block(not_run);
+                let refill_args: Vec<BlockArg> = st.iter().copied().chain(std::iter::once(zero)).chain(runs.iter().map(|_| zero)).map(BlockArg::from).collect();
+                f.ins().brif(rare, go_rare, &[], head, &refill_args);
+                f.switch_to_block(go_rare);
+                let tz = f.ins().ctz(rare);
+                let s0 = f.ins().iadd(q64, tz);
+                let args: Vec<BlockArg> = [s0, cand].iter().chain(st).map(|&v| v.into()).collect();
+                f.ins().jump(from_word, &args);
+                runs_loop = Some((mid, rest));
+            }
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
             heads.push((from_word, Step::Token));
@@ -4698,7 +4823,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let ones = f.ins().iconst(types::I64, -1);
             let sh = f.ins().band_imm(cv[1], 63);
             let m = f.ins().ishl(ones, sh);
-            let mut left = f.ins().band(g.cand, m);
+            // With the runs (`runs_loop`), the starts left are the run's and those after it.
+            let cand = match runs_loop {
+                Some((_, rest)) => f.ins().bor(g.cand, rest),
+                None => g.cand,
+            };
+            let mut left = f.ins().band(cand, m);
             if let Some((wi, pi, chained)) = lean {
                 // Another rule's token may end where the starts left out the byte after it (a
                 // run's byte after a run's, a pair's second): the byte put back, a start.
@@ -4732,7 +4862,21 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(p) = reread {
             back[3] = p.into();
         }
-        if let Some(inner) = inner {
+        if let (Some(inner), Some((mid, rest))) = (inner, runs_loop) {
+            // A fused token: the run's next start, in the inner loop, as the lean lexer's
+            // `while run != 0`; the run done, the starts after it (`mid`). Another rule's token:
+            // the starts left, by `mid`, out of the inner loop.
+            let after: Vec<BlockArg> = std::iter::once(BlockArg::from(if common && lean.is_some() { rest } else { left })).chain(back.iter().cloned()).collect();
+            if common && lean.is_some() {
+                let base = f.ins().band_imm(cv[1], !63);
+                let tz = f.ins().ctz(left);
+                let s0 = f.ins().iadd(base, tz);
+                let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
+                f.ins().brif(left, inner, &on, mid, &after);
+            } else {
+                f.ins().jump(mid, &after);
+            }
+        } else if let Some(inner) = inner {
             // Starts left in the block: the next, in the inner loop, as the lean lexer's
             // `while run != 0`; none, the refill (the head, its words unread).
             let base = f.ins().band_imm(cv[1], !63);

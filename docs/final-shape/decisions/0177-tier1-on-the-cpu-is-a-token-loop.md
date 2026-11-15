@@ -1679,3 +1679,61 @@ Counts, reported (before, after; lean):
 | Strings | 293.2 | 282.9 | 240.6 |
 | Numbers | 172.0 | 162.8 | 107.3 |
 | Comments | 270.6 | 261.2 | 193.2 |
+
+## A block's starts are runs, split at its rare ones
+
+**Intro.** The lean lexer's loop inside a window is two loops. The
+outer one splits the window's starts at the first rare one (a
+string's, a comment's, a number's first byte: `w.rare`); the inner
+one, `while run != 0`, takes the starts before it. Only words and
+punctuation are in the inner loop, and it calls nothing but the
+rare `word_of`. The rare token's calls are in the outer loop.
+
+Ours had one loop over a block's starts. Every token went through
+the same body, which branched to every rule, so the body held the
+rules' calls (five rule functions and the word across a block).
+What a call must keep was kept on every token's path: the hash
+multiplier, the pair mask and the bytes' address had no register.
+
+**The change.** The rare first bytes are those of no fused rule (no
+`TOKEN_FUSED_*` bit), as nibble tables (`set_nibbles`); the refill
+makes the block's rare word from its bytes (`set_word`), as the
+lean lexer's window its `rare`. A loop over the block's runs
+(`mid`) takes `rare = cand & rare_w` and
+`run = cand & (rare - 1) & !rare`:
+
+- a run: its first start, in the inner loop, with the run alone;
+- else a rare start: a token of the rules' general tail;
+- else the refill.
+
+A fused token goes on in the run; the run done, back to `mid` with
+the starts after it. Every other token goes back to `mid`, with the
+starts left of the run and after it (a word across its block, too).
+
+The inner loop calls nothing (`the_run_loop_calls_nothing`).
+The token path, stepped by instruction (lean's in brackets):
+
+- A plain word: 42 [67]. No stack access (lean: two loads). The
+  pair and word masks, the tables and the bytes are registers.
+- A word that may be a keyword: 78. The multiplier is a register
+  (`x19`), as lean's. One load is left: the pair mask's register is
+  taken by the constant 8 in the second word's cut.
+- A string: 185, of which 104 are its rule's function. After the
+  call, `mid` reloads the block's words (ten stack accesses), as
+  the lean lexer's outer loop reads its window's. The token after a
+  rare one goes through `mid`: 65 for a comma.
+
+Counts, reported (before, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 107.7 | 107.8 | 97.9 |
+| Punctuation | 57.5 | 54.5 | 53.5 |
+| Mixed | 59.9 | 57.6 | 63.1 |
+| Strings | 282.9 | 321.5 | 240.6 |
+| Numbers | 162.8 | 187.8 | 107.3 |
+| Comments | 261.2 | 301.3 | 193.2 |
+
+The rare kinds rose by about 40 a token: `mid`'s split and the
+reloads after each call. Open: their paths against lean's, and the
+second word's compare (12 instructions; lean's ninth byte, 3).
