@@ -5,17 +5,19 @@
     scripts/build/farm/host-privacy --spotlight  # also Spotlight's privacy list: asks each host's
                                                  # sudo password, so run it in a terminal
 
-A host keeps the checkouts and their target directories at this machine's paths (under `~/orca`),
-Relax and its store, and the farm's caches. Indexing them costs a host CPU on every send, and
-backing them up fills its backup disks with copies of what lives here.
+A host keeps everything of the farm's under `~/Library/Caches/rerail-farm`: the mirrored checkouts
+in `root.noindex`, the test target directories in `targets.noindex`. Relax keeps its store in
+`~/Library/Caches/rerail-relax`. Indexing them costs a host CPU on every send, and backing them up
+fills its backup disks with copies of what lives here.
 
 - Time Machine: `tmutil addexclusion` on each path (a sticky exclusion, kept if the path moves;
   no root needed). `setup` runs this part.
-- Spotlight: a folder's `.metadata_never_index` is ignored (tried on macOS 15), and the paths cannot
-  take the `.noindex` suffix Spotlight skips (they must be this machine's). So each path goes into
-  Spotlight's privacy list (`Exclusions` of the data volume's VolumeConfiguration.plist, which
-  is what System Settings > Spotlight > Search Privacy writes), with sudo, and Spotlight is
-  restarted; it then drops what it had indexed there.
+- Spotlight skips a folder whose name ends in `.noindex` (a folder's `.metadata_never_index` is
+  ignored on macOS 15): the root and the targets need nothing more. `--spotlight` also puts the
+  paths into Spotlight's privacy list (`Exclusions` of the data volume's
+  VolumeConfiguration.plist, which System Settings > Spotlight > Search Privacy writes), with
+  sudo, and restarts Spotlight; it then drops what it had indexed there (a host that held the
+  farm's files elsewhere before).
 
 The report counts what Spotlight still has indexed under each path.
 """
@@ -27,9 +29,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import farm  # noqa: E402
 
-# What the farm writes on a host, relative to its home. `orca` holds the mirrored checkouts:
-# this machine's checkouts are under ~/orca (the mirror refuses nothing else; README.md).
-PATHS = ["orca", ".local/share/rerail-relax", "Library/Caches/rerail-farm", "Library/Caches/rerail-relax"]
+# What the farm writes on a host, relative to its home (farm-agent: ROOT, TARGETS).
+PATHS = ["Library/Caches/rerail-farm", "Library/Caches/rerail-relax"]
 PLIST = "/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist"
 
 TIME_MACHINE = """

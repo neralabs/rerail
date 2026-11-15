@@ -1,6 +1,6 @@
 {
   "hosts": [
-    {"name": "builder-a", "cores": 16, "mirror": true, "tests": true, "link": "IFNAME"},
+    {"name": "builder-a", "cores": 16, "tests": true, "link": "IFNAME"},
     {"name": "builder-b", "cores": 8, "enabled": false}
   ],
   "min_free_gb": 40,

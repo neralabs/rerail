@@ -138,9 +138,8 @@ test by name.
 
 `scripts/dev/test-remote` sends this checkout to a farm host through the mirror and runs a command
 there (`scripts/dev/test-remote -- cargo nextest run --lib --profile gate`). The host builds in
-its own warm target directory (outside the mirrored checkout: the mirror writes this machine's
-`.rmeta` files into `<checkout>/target`, and a host build there found an `.rmeta` and `.rlib` of
-one name with different SVHs, E0463), so the suite spends the host's CPU, not this machine's. On an M3 Max at
+a warm target directory of its own (one per checkout, under the farm's root there; §4, "What
+broke"), so the suite spends the host's CPU, not this machine's. On an M3 Max at
 `-j 16`:
 
 | Run | Tests | Wall |
@@ -368,8 +367,8 @@ which runs every other compile.
   connection serves only sshd's MaxSessions (10) and stalls the rest, so each slot has its own.
   A host's load average counts the farm's own compiles. rustc bundles `-l static` libraries into
   the rlib, so `-L native=` directories must be copied.
-- Not yet done: the farm is set up for this worktree only. Turning it on for every worktree is one
-  line in a `.cargo/config.toml` above them (README).
+- The farm is on for every worktree: `setup` writes the machine's `~/.cargo/config.toml` (README,
+  "One configuration").
 
 #### Getting a compile's inputs to the host
 
@@ -412,6 +411,70 @@ remote in each.
   fresh host sends the whole checkout (346 MB, 13 s). Its daemon used 5 s of CPU.
 - In both copy modes the CPU here is about the same: cargo's own work (build scripts, proc macros,
   the binaries) and sccache dominate it, not the transfers.
+
+- **End to end (2026-11-15).** The same `-p rerail-lang` build, every compile forced to miss, a
+  fresh target directory each run, at a load of 30–70 here:
+
+  | Mode | Wall | A remote compile | Fell back here |
+  |---|---|---|---|
+  | live mirror (over TCP) | 91 s | 0.55–0.73 s | 0 |
+  | NFS, file attributes uncached, directories 1 s | 105–140 s | 1–3 s | 1–17 (E0463, E0460, E0432) |
+  | NFS, nothing cached | 185 s | 4.3 s, mostly in rustc | 9 |
+
+  A file created over the mount took 21 ms against 0.07 ms on the host's disk, a `.rmeta` written
+  as rustc writes it 178 ms against 0.7 ms: the server commits each operation before it answers.
+  So the shared volume was removed, with copy mode, and the mirror is the only way (README, "No
+  shared volume, no copy mode"). The server's `async` setting, which answers first, was not tried.
+
+#### What broke, and what fixed it (2026-11-15)
+
+- **The hosts' own directories.** The mirror kept each file at this machine's path, and the
+  shared volume's client moved a host's own `~/orca` aside to mount there: every session and
+  workspace on both hosts lost its directory for a day. The mirror also wrote registry crates into
+  the host's own `~/.cargo/registry/src`. Now everything the farm writes on a host is under one
+  root of its own (`~/Library/Caches/rerail-farm/root.noindex`); the agent maps the paths in each
+  compile and remaps them out of its outputs, and an output that still names the root (an
+  `env!` path) compiles here (README, "The farm's root on a host").
+- **Remote bytes are not local bytes under another path.** With the root, every remote output
+  differed from the same compile here in about 226 bytes of hashes: rustc hashes each source
+  file's real path into its output even when a remap hides it (shlex 1.3.0 compiled from two
+  directories, both remapped to the same path: other bytes; another output directory: the same).
+  A remote compile's output is cached and keyed on by every crate above it, so a crate compiled
+  remotely in one worktree and here in another would split the cache. Now only crates of cargo's
+  registry go remote, read in place from the host's own registry after a file-for-file check:
+  the toy build's four remote crates (two hosts) were the same bytes as here.
+- **Two writers in one target directory.** `test-remote`'s cargo built in the checkout's `target/`
+  on the host, where the mirror also writes the `.rmeta` files of the compiles it runs. Two
+  writers in one dependency directory gave E0463 and "failed to move dependency graph" in
+  incremental builds. A fix in another worktree moved the target to a directory keyed by the
+  checkout's name; its note said the crash was the mirror's copy being stale, which it was not, and
+  two checkouts with one name would have shared a directory. Now each checkout gets a
+  directory keyed by a hash of its path, outside the mirrored files.
+- **Rebuilds skipped on the host.** The mirror gave each file this machine's mtime. A file that
+  arrived after the host had built (an earlier send failed, or the host was cleaned) could be
+  older than the host's build, and cargo there skipped it: a merge's 56 files had to be touched by
+  hand. Now a written file's mtime there is the time of the write; this machine's mtime and size
+  travel in an extended attribute, which is what the mirror compares.
+- **A stale record of what a host holds.** After a host's directory was swapped under a running
+  daemon (the restore above), the daemon still believed the old files were there, and
+  `accel/src/lanes.rs` stayed at a two-day-old copy. Nothing but the farm writes under the
+  root now, so nothing else can make the record wrong, and a failed write drops the agent and
+  the record with it.
+- **Two farm versions.** Scripts in an older checkout (`test-remote`) imported that checkout's
+  farm while the daemon ran the installed one. Now every entry point runs the installed farm, a
+  version number ties them together, and the daemon restarts when another version is installed
+  (README, "One version").
+- **Rebuilds when an environment differed.** A build script that exported `CC`, `CXX` and
+  `JEMALLOC_OVERRIDE` made every other build of that worktree rerun the build scripts and rebuild
+  the engine's tree (612 s). The machine's cargo configuration now forces the shared values, the
+  wrapper refuses a build whose values differ, and the engine's build script refuses another
+  `RUSTC_WRAPPER` (README, "One configuration"). Before, the farm's wrapper was opt-in, and
+  every build without it used plain sccache, whose keys hold the checkout's path: no worktree
+  reused another's compiles.
+- **`test-remote --help` sent the checkout** (11,564 files) and ran `nice --help` on a host. Its
+  options are now checked before anything is sent. It also sets the host's open-file limit to
+  this machine's, which cargo nextest needs (EMFILE at the limit an ssh command gets by default), not a fixed
+  value.
 
 What else the idle machines can do:
 

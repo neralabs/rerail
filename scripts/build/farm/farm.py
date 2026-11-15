@@ -15,9 +15,11 @@ import os
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 
+# The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
+# (mirror.py). `setup` installs only a version at least as new as the installed one.
+VERSION = 5
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -36,6 +38,8 @@ COPY_SECONDS = 120
 COMPILE_SECONDS = 900
 # What a crate's build reads as a path must be hashed as it is, not with its checkout stripped.
 VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_FIXTURES_DIR,RERAIL_ORACLES_DIR"
+# Where cargo keeps the crates it downloads: the same files at the same paths on every machine.
+IN_PLACE = (os.path.join(HOME, ".cargo/registry/src"), os.path.join(HOME, ".cargo/git/checkouts"))
 # Variables a remote compile must not see: this machine's jobserver, terminal and farm plumbing.
 LOCAL_ONLY = ("MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS", "TMPDIR", "PWD", "OLDPWD", "SSH_AUTH_SOCK",
               "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TERM_SESSION_ID", "__CF_USER_TEXT_ENCODING")
@@ -124,6 +128,22 @@ def checkout_of(path):
             return path
         path = os.path.dirname(path)
     return None
+
+
+def stamp(path):
+    try:
+        st = os.stat(path)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
+def is_rerail(checkout):
+    """Whether `checkout` is one of Rerail's: other projects keep plain sccache and their own C compiler."""
+    try:
+        return checkout is not None and 'members = ["native"' in open(os.path.join(checkout, "Cargo.toml")).read()
+    except OSError:
+        return False
 
 
 def key(text):
@@ -264,6 +284,48 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
+TIDY_SECONDS = 3600
+
+
+def tidy(out_dir):
+    """Starts `clean-target --wait` on the target directory `out_dir` is in, at most once an hour
+    per directory: Rerail's worktrees together write terabytes of builds a day, and what the next
+    build cannot use goes after the build ends (it waits for cargo's lock). Detached, at nice 19."""
+    if not out_dir or os.environ.get("RERAIL_FARM_NO_TIDY"):
+        return
+    target, d = None, os.path.realpath(out_dir)
+    for _ in range(4):
+        if os.path.isfile(os.path.join(d, "CACHEDIR.TAG")):
+            target = d
+            break
+        d = os.path.dirname(d)
+    script = os.path.join(SHARE, "clean-target")
+    if target is None or not os.path.exists(script):
+        return
+    stamp = state("tidy", key(target))
+    try:
+        if time.time() - os.stat(stamp).st_mtime < TIDY_SECONDS:
+            return
+    except OSError:
+        pass
+    # One starter per hour: whoever creates the claim starts it.
+    claim = stamp + f".{int(time.time() // TIDY_SECONDS)}"
+    try:
+        os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return
+    open(stamp, "w").close()
+    for old in os.listdir(os.path.dirname(stamp)):
+        if old.startswith(os.path.basename(stamp) + ".") and old != os.path.basename(claim):
+            try:
+                os.unlink(os.path.join(os.path.dirname(stamp), old))
+            except OSError:
+                pass
+    with open(stamp + ".log", "a") as out:
+        subprocess.Popen(["nice", "-n", "19", script, "--wait", target], stdin=subprocess.DEVNULL,
+                         stdout=out, stderr=out, start_new_session=True, close_fds=True)
+
+
 def wrapper(rustc, args):
     """cargo's RUSTC_WRAPPER."""
     env = dict(os.environ)
@@ -272,8 +334,19 @@ def wrapper(rustc, args):
         os.execv(rustc, [rustc] + args)
     out_dir = value(args, "--out-dir")
     checkout = checkout_of(out_dir or os.getcwd()) or checkout_of(os.getcwd())
-    if checkout:
-        join(checkout)
+    if not is_rerail(checkout):
+        # Not Rerail's (another project, or a registry crate built outside any checkout): plain
+        # sccache, as before the farm.
+        plain = os.path.join(HOME, ".cargo/bin/sccache")
+        if os.path.exists(plain):
+            os.execv(plain, [plain, rustc] + args)
+        os.execv(rustc, [rustc] + args)
+    # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
+    # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
+    if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
+        canonical(crate)
+    join(checkout)
+    tidy(out_dir)
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -295,6 +368,33 @@ def wrapper(rustc, args):
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
 
 
+# What every Rerail build on this machine has in its environment (`setup` writes it into
+# ~/.cargo/config.toml, forced): a build that differs would rerun build scripts and key its crates
+# apart from every other worktree's (README.md, "One configuration").
+CANONICAL = {"CC": os.path.join(SHARE, "farm-cc"), "CXX": os.path.join(SHARE, "farm-c++"), "SOURCE_DATE_EPOCH": "0"}
+# What none has: each changes what a build script builds, so a build with it rebuilds them and every
+# crate above them, and its outputs are cached apart. (JEMALLOC_OVERRIDE links another jemalloc
+# than the one Cargo.lock names, which a version bump would not notice.)
+FORBIDDEN = ("JEMALLOC_OVERRIDE", "AARCH64_APPLE_DARWIN_JEMALLOC_OVERRIDE")
+
+
+def canonical(crate):
+    """Refuses a Rerail compile whose environment is not the canonical one (CANONICAL, FORBIDDEN): it
+    would not reuse what every other worktree compiled. `RERAIL_FARM_ANY_ENV=1` allows it, for an
+    experiment that must differ."""
+    if os.environ.get("RERAIL_FARM_ANY_ENV") == "1":
+        return
+    wrong = [f"{k}={os.environ.get(k)!r} (should be {v!r})" for k, v in CANONICAL.items() if os.environ.get(k) != v]
+    wrong += [f"{k} is set" for k in FORBIDDEN if k in os.environ]
+    if wrong:
+        sys.stderr.write(
+            f"error: rerail-farm: {crate}: this build's environment is not the machine's canonical one, so it would not "
+            f"reuse what the other worktrees compiled: {'; '.join(wrong)}. The values come from ~/.cargo/config.toml "
+            "(scripts/build/farm/setup writes it); do not export them in a script. RERAIL_FARM_ANY_ENV=1 allows a build "
+            "that must differ (scripts/build/farm/README.md, \"One configuration\").\n")
+        sys.exit(1)
+
+
 def cc(argv0, args):
     """`farm-cc` and `farm-c++`, the C and C++ compilers of build scripts (`CC`, `CXX`): clang through
     the farm's sccache, so a build script's C (SQLite, tree-sitter's grammars, simdjson) is compiled
@@ -302,9 +402,10 @@ def cc(argv0, args):
     compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
     if not os.path.exists(SCCACHE):
         os.execv(compiler, [compiler] + args)
-    checkout = checkout_of(os.getcwd()) or checkout_of(os.environ.get("OUT_DIR", ""))
-    if checkout:
-        join(checkout)
+    checkout = checkout_of(os.environ.get("OUT_DIR") or os.getcwd()) or checkout_of(os.getcwd())
+    if not is_rerail(checkout):
+        os.execv(compiler, [compiler] + args)
+    join(checkout)
     env = sccache_env(dict(os.environ))
     for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
         env.pop(k, None)
@@ -492,10 +593,6 @@ def health(host, fresh=False):
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
         write_json(path, h)
-        # `ship` reads what the host mounts (never copy under its NFS mounts); unknown stays unknown.
-        if "mounts" in h:
-            open(state("mounts", name) + ".tmp", "w").write("\n".join(h["mounts"]))
-            os.replace(state("mounts", name) + ".tmp", state("mounts", name))
         log(f"{name}: {'usable' if h['ok'] else 'not usable: ' + h['why']} ({h.get('rtt_ms')} ms, {h.get('mbps')} MB/s, {h.get('free_gb')} GB free)")
         return h
     finally:
@@ -507,7 +604,7 @@ def usable(kind=None):
     the configuration names for it."""
     out = []
     for host in hosts():
-        if not host.get("enabled", True) or (kind and not host.get(kind, kind == "tests" and host.get("mirror"))):
+        if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
         if health(host).get("ok"):
             out.append(host)
@@ -660,75 +757,6 @@ def local_slot():
         time.sleep(0.05)
 
 
-def ship(host, root, names):
-    """Copies `names` (relative to `root`) to the same paths on `host`. Never under a path the host
-    mounts over NFS: that may be this machine's own directory, and the copy would write over it."""
-    if not names:
-        return True
-    try:
-        mounted = [m for m in open(state("mounts", host)).read().splitlines() if m]
-    except OSError:
-        mounted = None
-    if mounted is None or any(root == m or root.startswith(m.rstrip("/") + "/") for m in mounted):
-        log(f"copy to {host} {root} refused: the host mounts it, or its mounts are unknown")
-        return False
-    with tempfile.NamedTemporaryFile("w", delete=False) as f:
-        f.write("\n".join(names) + "\n")
-    try:
-        tar = subprocess.Popen(["tar", "-cf", "-", "--no-xattrs", "--no-mac-metadata", "-C", root, "-T", f.name],
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        try:
-            put = subprocess.run(ssh(host, f"mkdir -p '{root}' && tar -xf - -C '{root}'"), stdin=tar.stdout,
-                                 capture_output=True, timeout=COPY_SECONDS)
-        except subprocess.TimeoutExpired:
-            tar.kill()
-            log(f"copy to {host} {root} timed out")
-            return False
-        finally:
-            tar.stdout.close()
-        ok = tar.wait() == 0 and put.returncode == 0
-        if not ok:
-            log(f"copy to {host} {root} failed: tar {tar.returncode}, {put.stderr[-300:]!r}")
-        return ok
-    finally:
-        os.unlink(f.name)
-
-
-def sync(host, root, names, since):
-    """Brings `host`'s copy of `names` under `root` up to date: only those changed since they were last
-    sent. A sync that began after `since` (the compile's start) already has everything it needs."""
-    base = state("sync", host, key(root))
-    lock = Lock(base + ".lock")
-    try:
-        try:
-            sent = json.load(open(base + ".json"))
-        except (OSError, ValueError):
-            sent = {"began": 0, "files": {}}
-        if sent["began"] >= since and all(n in sent["files"] for n in names):
-            return True
-        began = time.time()
-        changed, now = [], {}
-        for n in names:
-            try:
-                st = os.stat(os.path.join(root, n))
-            except OSError:
-                continue
-            now[n] = [st.st_mtime_ns, st.st_size]
-            if sent["files"].get(n) != now[n]:
-                changed.append(n)
-        if not ship(host, root, changed):
-            return False
-        sent["files"].update(now)
-        sent["began"] = began
-        tmp = base + ".json.tmp"
-        json.dump(sent, open(tmp, "w"))
-        os.replace(tmp, base + ".json")
-        log(f"sync {host} {root}: {len(changed)} of {len(names)} sent")
-        return True
-    finally:
-        lock.release()
-
-
 def tracked(checkout):
     out = subprocess.run(["git", "-C", checkout, "ls-files", "--cached", "--others", "--exclude-standard"],
                          capture_output=True, text=True)
@@ -736,13 +764,13 @@ def tracked(checkout):
 
 
 def remote(host, rustc, args, env, since):
-    """Compiles on `host`. False when anything failed, the compile included: the caller compiles here
-    then, and only that run's output is shown. Logs why, and where the time went."""
+    """Compiles on `host`, through the live mirror (README.md). False when anything failed, the
+    compile included: the caller compiles here then, and only that run's output is shown. Logs why,
+    and where the time went."""
     name = host["name"]
     cwd = os.getcwd()
     out_dir = os.path.abspath(value(args, "--out-dir"))
     crate, extra = value(args, "--crate-name"), codegen(args, "extra-filename") or ""
-    checkout = checkout_of(cwd)
     times, mark = [], [time.time()]
 
     def lap(label):
@@ -754,134 +782,36 @@ def remote(host, rustc, args, env, since):
         log(f"{crate}: not on {name}: {why} ({', '.join(times)})")
         return False
 
-    if host.get("shared"):
-        return run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
-    if host.get("mirror"):
-        return run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up)
-    # The crate's sources: its checkout's files, or (a dependency's) its own directory.
-    if checkout and not sync(name, checkout, tracked(checkout), since):
-        return give_up("its checkout was not copied")
-    if not checkout and not sync(name, cwd, list(walk(cwd)), since):
-        return give_up("its sources were not copied")
-    lap("sources")
-    deps = [f for f in os.listdir(out_dir) if f.endswith(".rmeta") or (f.startswith("lib") and f.endswith(".dylib"))]
-    externs = [e.split("=", 1)[1] for e in values(args, "--extern") if "=" in e]
-    deps += [os.path.basename(e) for e in externs if os.path.dirname(os.path.abspath(e)) == out_dir]
-    if not sync(name, out_dir, sorted(set(deps)), since):
-        return give_up("its dependencies were not copied")
-    for e in externs:
-        d = os.path.dirname(os.path.abspath(e))
-        if d != out_dir and not sync(name, d, [os.path.basename(e)], since):
-            return give_up(f"{e} was not copied")
-    if env.get("OUT_DIR") and not sync(name, env["OUT_DIR"], list(walk(env["OUT_DIR"])), since):
-        return give_up("its OUT_DIR was not copied")
-    # The native libraries it names (`-L native=dir`, from build scripts): rustc bundles a static one
-    # into the rlib.
-    # A system directory (Xcode's clang runtime) is the host's own.
-    for d in values(args, "-L"):
-        d = os.path.abspath(d.split("=", 1)[-1])
-        if d != out_dir and d.startswith(HOME + "/") and os.path.isdir(d) and not sync(name, d, [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))], since):
-            return give_up(f"{d} was not copied")
-    lap("deps")
-    request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
-               "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
-    try:
-        run = subprocess.run(ssh(name, on_host("remote-rustc")), input=json.dumps(request).encode(),
-                             capture_output=True, timeout=COMPILE_SECONDS)
-    except subprocess.TimeoutExpired:
-        return give_up("the compile timed out")
-    lap("compile")
-    if run.returncode != 0:
-        return give_up(f"the compile failed ({run.returncode}): {run.stderr[-400:]!r}")
-    kinds = emits(args)
-    outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
-        + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
-    get = subprocess.Popen(ssh(name, f"tar -cf - --no-xattrs -C '{out_dir}' " + " ".join(outputs)),
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        put = subprocess.run(["tar", "-xmf", "-", "-C", out_dir], stdin=get.stdout, capture_output=True,
-                             timeout=COPY_SECONDS)
-    except subprocess.TimeoutExpired:
-        get.kill()
-        return give_up("its outputs timed out")
-    finally:
-        get.stdout.close()
-    if get.wait() != 0 or put.returncode != 0:
-        return give_up(f"its outputs were not copied: {get.stderr.read()[-300:]!r} {put.stderr[-300:]!r}")
-    lap("outputs")
-    sys.stdout.buffer.write(run.stdout)
-    sys.stderr.buffer.write(run.stderr)
-    log(f"{crate}: compiled on {name} ({', '.join(times)})")
-    return True
+    leak = leak_marker(crate, extra, args)
+    if os.path.exists(leak):
+        return give_up("its outputs name the host's farm root (an earlier compile there)")
+    return run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up, leak)
 
 
-READ_MARK = b"\0rerail-farm-read "
+def leak_marker(crate, extra, args):
+    """Marks a crate whose remote outputs named the host's farm root (farm-agent's code 71): it
+    compiles here from then on. Keyed on its arguments, so another version of it is tried again."""
+    return state("leaks", key(crate + extra + "\0" + "\0".join(args)))
 
 
-def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up):
-    """Compiles on a host that mounts this machine's checkouts and target directories at the same
-    paths (`"shared": true`, README): nothing is copied either way. rustc reads its inputs and writes
-    its outputs through the mount. What the host sees may lag what is here by its attribute cache: it
-    waits until it sees each dependency and the dependency directory as they are here, and reports
-    what it read (the dep-info's files), which must be what is here; else this compile runs here."""
-    def here(path):
-        try:
-            st = os.stat(path)
-            return [st.st_mtime_ns, st.st_size]
-        except OSError:
-            return None
-    fresh = {}
-    for e in values(args, "--extern"):
-        if "=" in e:
-            path = os.path.abspath(e.split("=", 1)[1])
-            if here(path):
-                fresh[path] = here(path)
-    # rustc finds the dependencies of dependencies by listing this directory.
-    for d in {out_dir} | {os.path.abspath(v.split("=", 1)[-1]) for v in values(args, "-L") if v.startswith("dependency=")}:
-        if here(d):
-            fresh[d] = [here(d)[0], None]
-    crate_extra = f"{crate}{codegen(args, 'extra-filename') or ''}"
-    request = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "fresh": fresh,
-               "depinfo": os.path.join(out_dir, crate_extra + ".d") if "dep-info" in emits(args) else None,
-               "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
-    try:
-        run = subprocess.run(ssh(host["name"], on_host("remote-rustc")), input=json.dumps(request).encode(),
-                             capture_output=True, timeout=COMPILE_SECONDS)
-    except subprocess.TimeoutExpired:
-        return give_up("the compile timed out")
-    lap("compile")
-    if run.returncode == 75:
-        return give_up(f"the host's view stayed stale: {run.stderr[-300:]!r}")
-    if run.returncode != 0:
-        return give_up(f"the compile failed ({run.returncode}): {run.stderr[-400:]!r}")
-    stderr, _, report = run.stderr.rpartition(READ_MARK)
-    if not _:
-        stderr, report = run.stderr, b"{}"
-    try:
-        read = json.loads(report)
-    except ValueError:
-        read = {"?": None}
-    waited, ran = read.pop("\0times", [None, None])
-    stale = [p for p, seen in read.items() if seen != here(p)]
-    if stale:
-        return give_up(f"it read files that are not as they are here: {stale[:3]}")
-    sys.stdout.buffer.write(run.stdout)
-    sys.stderr.buffer.write(stderr)
-    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)}, waited {waited}, rustc {ran}, {len(fresh)} fresh, {len(read)} read)")
-    return True
-
-
-def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up):
+def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up, leak):
     """Compiles on a host through the live mirror (`"mirror": true`, README; mirror.py): the daemon
     here sends what changed of what the compile may read, then the compile, over one connection
     to the host; its outputs come back on it. What it read (the dep-info's files) must be what is
     here; else this compile runs here."""
     import mirror
-    checkout = checkout_of(cwd)
-    roots = [[checkout, "checkout"]] if checkout else [[cwd, "tree"]]
-    roots.append([out_dir, "deps"])
-    if env.get("OUT_DIR"):
-        roots.append([os.path.abspath(env["OUT_DIR"]), "tree"])
+    # rustc hashes each source file's real path into its output, remapped or not: a crate compiled
+    # from another path is other bytes, and every crate above it would key apart from the same
+    # crate compiled here. So only a crate whose sources the host has at the same path compiles
+    # there: one of cargo's registry or git checkouts, whose files are the same on every machine,
+    # read in place from the host's own copy (checked file for file first: farm-agent, `same`).
+    # A crate whose build script generated sources (OUT_DIR) would read them from the farm's root.
+    if not any(cwd.startswith(p + "/") for p in IN_PLACE):
+        return give_up("its sources are not cargo's registry's (a path of this machine's only)")
+    out = env.get("OUT_DIR")
+    if out and os.path.isdir(out) and os.listdir(out):
+        return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
+    roots = [[out_dir, "deps"]]
     for d in values(args, "-L"):
         d = os.path.abspath(d.split("=", 1)[-1])
         if d != out_dir and d.startswith(HOME + "/") and os.path.isdir(d):
@@ -891,15 +821,19 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up)
     kinds = emits(args)
     outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
         + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
-    run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir],
+    run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "inplace": [cwd],
            "outputs": [os.path.join(out_dir, o) for o in outputs],
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
-           "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))}}
+           "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))},
+           # What the host keeps under its farm root, and maps there in the arguments and environment.
+           "map": [r for r, _ in roots] + files}
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
     t = reply.get("times", {})
     lap(f"sync {t.get('sync')} ({t.get('files')} files), compile {t.get('compile')}, mirror")
+    if reply["code"] == 71:
+        open(leak, "w").close()
     if reply["code"] != 0:
         return give_up(f"the compile failed ({reply['code']}): {reply.get('why', '')} {reply['stderr'][-400:]!r}")
 
@@ -909,19 +843,13 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up)
             return [st.st_mtime_ns, st.st_size]
         except OSError:
             return None
-    stale = [p for p, seen in reply["read"].items() if seen != here(p)]
+    stale = [p for p, seen in reply["read"].items() if seen != "inplace" and seen != here(p)]
     if stale:
         return give_up(f"it read files that are not as they are here: {stale[:3]}")
     sys.stdout.buffer.write(reply["stdout"].encode("latin-1"))
     sys.stderr.buffer.write(reply["stderr"].encode("latin-1"))
     log(f"{crate}: compiled on {host['name']}, mirror ({t.get('sync')} s sync, {t.get('compile')} s compile, {len(reply['read'])} read)")
     return True
-
-
-def walk(root):
-    for d, _, files in os.walk(root):
-        for f in files:
-            yield os.path.relpath(os.path.join(d, f), root)
 
 
 def farm_rustc(argv0, args):
@@ -931,6 +859,10 @@ def farm_rustc(argv0, args):
         rustc = open(os.path.join(os.path.dirname(argv0), "real")).read().strip()
     except OSError:
         rustc = os.path.join(HOME, ".cargo/bin/rustc")
+    # The farm's sccache server runs this, not cargo: cargo's jobserver descriptors are not open
+    # here, and rustc would warn on every crate ("failed to connect to jobserver").
+    for k in ("MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS"):
+        os.environ.pop(k, None)
     env = dict(os.environ)
     crate = value(args, "--crate-name")
     # sccache's own calls (`--print file-names`, `--emit=dep-info` to list the sources) are not the
@@ -965,11 +897,8 @@ def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
     survive an exec."""
     lock = local_slot()
-    # The farm's sccache server runs this, not cargo: cargo's jobserver descriptors are not open
-    # here, and rustc would warn on every crate ("failed to connect to jobserver").
-    env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS")}
     try:
-        code = subprocess.run([rustc] + args, env=env).returncode
+        code = subprocess.run([rustc] + args).returncode
     finally:
         lock.release()
     sys.exit(code)

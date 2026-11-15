@@ -24,6 +24,10 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+builds no current build was made from, debug objects no binary names, and stale incremental state.
+Never run a full `cargo clean`.
+
 ### Test tiers (cargo-nextest)
 
 `.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2).
@@ -51,24 +55,30 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
-`native/` (or `--dir`), in that host's own warm target directory. A host can be asleep, gone,
+`native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,
 on a slow link, or short of disk, or its copy can have been cleaned. The scripts check for this
 themselves: a host reached over the wrong link is moved back to its fast one when it can
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
 `status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
-command.
+command. Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
+this checkout has.
 
-The farm's compiler wrapper is opt-in: the global cargo configuration uses plain sccache.
-`RUSTC_WRAPPER=~/.local/share/rerail-farm/rustc-wrapper` (an absolute path) sends a build's
-dependency misses to the hosts. `RERAIL_FARM_LOCAL=1` keeps every compile here, and
-`RERAIL_FARM_LOG=FILE` logs where each compile ran.
+On a machine with the farm, every build already goes through it: `~/.cargo/config.toml` (written
+by `scripts/build/farm/setup`) sets the farm's wrapper and the environment every build shares, and
+then a crate one worktree compiled is a cache hit in every other one. So don't export
+`RUSTC_WRAPPER`, `CC`, `CXX`, `SOURCE_DATE_EPOCH` or `JEMALLOC_OVERRIDE` in a script or command: a
+build whose environment differs would rebuild and cache apart, and the farm stops it with an
+error that names the variable (`RERAIL_FARM_ANY_ENV=1` allows one that must differ).
+`RERAIL_FARM_LOCAL=1` keeps every compile here, and `RERAIL_FARM_LOG=FILE` logs where each
+compile ran.
 
 ### Relax: the live test loop
 

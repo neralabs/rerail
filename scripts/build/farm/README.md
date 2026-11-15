@@ -12,10 +12,14 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   so a crate's key holds paths relative to its checkout, and `--remap-path-prefix` makes its outputs
   the same in every checkout. A crate compiled in one worktree is a hit in all the others.
   This needs the engine not to write its checkout's path into its build (decision 0224).
-- **Spreading.** On a miss, a dependency's library crate compiles on another Mac when one has a free core
-  (the hosts of the local configuration, reached by ssh; see Configuration). The sources, the crate's dependencies' `.rmeta` files and
-  its `OUT_DIR` are copied to the same absolute paths there, only what changed since the last copy,
-  and the outputs are copied back.
+- **Spreading.** On a miss, a library crate from cargo's registry compiles on another Mac when one
+  has a free core (the hosts of the local configuration, reached by ssh; see Configuration). It
+  reads its sources from the host's own registry, in place, after a check that they are the same
+  files; the live mirror sends its dependencies' `.rmeta` files into the host's farm root, only
+  what changed since the last send, and the outputs come back, the same bytes as a compile here.
+- **One configuration, one version.** Every Rerail build on this Mac has the same wrapper and the
+  same environment, from `~/.cargo/config.toml`, and a build that differs is stopped, not quietly
+  compiled apart. Every worktree runs the one installed farm.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
   this Mac, never on another, so its next edit starts from that state. For the next 2 hours it
   skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
@@ -24,12 +28,15 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
 ```
 cargo ──▶ rustc-wrapper ──┬─ hot crate ───────────────▶ rustc -C incremental (here)
                           └─ else ─▶ sccache :4227 ──┬─ hit ─▶ outputs from the shared cache
-                                                     └─ miss ─▶ farm-rustc ─┬─ lib ─▶ ssh a host     
+                                                     └─ miss ─▶ farm-rustc ─┬─ lib ─▶ mirror ─▶ a host
                                                                             └─ else ─▶ rustc (here)
 ```
 
-What is never remote: build scripts, proc macros, binaries and tests (they link), and any compile
-whose copy or run failed there: it runs here instead, and only that run's output is shown.
+What is never remote: build scripts, proc macros, binaries and tests (they link), the workspace's
+own crates and any crate whose build script wrote sources (they are this machine's paths only:
+see "The farm's root on a host"), a registry crate the host lacks or has otherwise, and any
+compile whose send or run failed there, or whose outputs named the host's root: it runs here
+instead, and only that run's output is shown.
 
 ## Files
 
@@ -39,13 +46,12 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `farm-rustc` | the compiler the farm's sccache runs on a miss |
 | `farm-cc` | build scripts' C and C++ compiler (`CC`; `farm-c++` for `CXX`): clang through the farm's sccache |
 | `farm.py` | all of them |
-| `remote-rustc` | runs one compile on a remote Mac (copy and shared modes) |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
-| `farm-agent` | the live mirror's end on each host |
+| `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
-| `setup` | installs all of it here, a configuration to fill in, and the toolchain on each host |
-| `shared-volume` | the NFS export here and the mount on each host |
+| `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
+| `cargo-config` | writes the farm's part of `~/.cargo/config.toml` (`--check` reports) |
 | `build-sccache` | builds the patched sccache from upstream and runs `setup` with it |
 | `sccache-patches/` | the patches on upstream sccache: `0000` PRs #3021 and #3022, `0001` the farm's own |
 | `farm.example.json` | a configuration to start from (generic names), copied to `~/.config/rerail-farm/farm.json` |
@@ -66,33 +72,77 @@ the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build
 engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
 file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
-`remote-rustc` and `farm-agent` are sent with each command and run by the host's `/usr/bin/python3`.
+`farm-agent` is sent with each command and run by the host's `/usr/bin/python3`.
 Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
-entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it),
-`cargo-nextest` for `scripts/dev/test-remote`, and, for copy mode only, a copy of
-`~/.cargo/registry/src` at the same path:
+entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it) and
+`cargo-nextest` for `scripts/dev/test-remote`.
 
-```
-rsync -a ~/.cargo/registry/src/ HOST:.cargo/registry/src/
-```
+## One configuration
 
-Then point cargo at the wrapper, in a `.cargo/config.toml` in a directory above the worktrees
-(an absolute path: cargo does not expand `~`):
+A compile is reused across worktrees only when it is the same compile: the same wrapper (the
+farm's, whose sccache keys a crate by its paths relative to its checkout), and the same
+environment for its build scripts. A build script reruns, and every crate above it rebuilds and
+keys apart, when a variable it reads changes: `CC` set by one script and not by another, or
+`JEMALLOC_OVERRIDE` (a 612 s rebuild of the engine's tree, 2026-11-15). So there is one place for
+them, the machine's `~/.cargo/config.toml`, which every checkout reads wherever it is (`setup` runs
+`cargo-config`, which writes it and keeps the file's other keys):
 
 ```toml
 [build]
 rustc-wrapper = "<home>/.local/share/rerail-farm/rustc-wrapper"
 
 [env]
-CC = "<home>/.local/share/rerail-farm/farm-cc"
-CXX = "<home>/.local/share/rerail-farm/farm-c++"
+CC = { value = "<home>/.local/share/rerail-farm/farm-cc", force = true }
+CXX = { value = "<home>/.local/share/rerail-farm/farm-c++", force = true }
+SOURCE_DATE_EPOCH = { value = "0", force = true }
 ```
+
+`force` makes cargo's value win over one a script exports. Other projects read the same file: the
+wrapper sends their compiles to plain sccache and `farm-cc` to clang, as before. A Rerail build
+that still differs is stopped with an error that names the difference:
+
+- The wrapper refuses a compile whose environment is not `farm.CANONICAL` (`CC`, `CXX`,
+  `SOURCE_DATE_EPOCH`), or that has one of `farm.FORBIDDEN` set (`JEMALLOC_OVERRIDE`: it links a
+  prebuilt jemalloc that a version bump in Cargo.lock would not notice). A forced value cannot
+  differ at all. `SOURCE_DATE_EPOCH` is not forced: Rerail's own `.cargo/config.toml` sets it as a
+  plain string, and cargo cannot merge that with a forced one, so every build there would fail.
+  A forbidden variable has no value to force (an empty `JEMALLOC_OVERRIDE` is a missing file to
+  its build script). The refusal comes at the build's first compile, but cargo reruns a build
+  script whose binary is built without calling rustc, so that build script has run once with
+  the variable: one rebuild follows, and the build fails, rather than every later build quietly
+  rebuilding. cargo's own probes (`--print`) are never refused: cargo keeps their output, a
+  failure included, in `target/.rustc_info.json`, and would repeat the refusal after its cause
+  was gone.
+- The engine's build script refuses a build whose `RUSTC_WRAPPER` is not the farm's, on a machine
+  with the farm's configuration: an exported `RUSTC_WRAPPER` overrides the configuration's, and
+  then the farm's wrapper never runs to check. Relax (`RELAX_STD` set) builds without one.
+- `RERAIL_FARM_ANY_ENV=1` allows a build that must differ (a measurement of the compiler).
 
 Without `CC` and `CXX` every new target directory compiles the build scripts' C again (SQLite's
 alone takes 90 s at a load of 80).
 
-`JEMALLOC_OVERRIDE` set to a prebuilt `libjemalloc_pic.a` saves `tikv-jemalloc-sys`'s 3-minute
-configure-and-make in every new target directory; its build script is never cached.
+## One version
+
+The daemon, the wrapper and the agents on the hosts are the installed farm
+(`~/.local/share/rerail-farm`), one version for every worktree; `test-remote` and
+`live-test-remote` run it too, not their checkout's copy, and say when their checkout's is newer.
+`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one (`--force`
+does), the daemon refuses a caller of another version, and stops taking compiles once `setup`
+installs another (it finishes the ones it has; the next compile starts the new one). A change to
+the farm's protocol or to what a host keeps raises `VERSION`.
+
+## Old builds
+
+Rerail's worktrees together write terabytes of builds a day: each edit of a workspace crate leaves
+the previous build, its debug objects and its incremental state behind, and cargo never removes
+them. So the wrapper starts `scripts/dev/clean-target --wait` (installed beside it) on a build's
+target directory, at most once an hour per directory, detached and at nice 19. It waits for that
+build to end (cargo's lock on the profile directory), then removes what no build can use any more:
+another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
+over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
+state of crates no longer built or untouched for a day. Each target
+directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
+`RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
 ## Configuration
 
@@ -102,11 +152,10 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "mirror", "tests", "shared", "link"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link"}` |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
-| `mirror`, `shared` | how its compiles get their inputs (Live mirror, Shared volume; else copied) |
-| `tests` | whether `scripts/dev/test-remote` runs there (default: `mirror`) |
+| `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
@@ -118,14 +167,45 @@ half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the h
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 
+### The farm's root on a host
+
+A host is someone's own Mac, with its own work. The farm writes only under
+`~/Library/Caches/rerail-farm` there, never anywhere else: the mirrored files in `root.noindex`,
+where this machine's path P is kept at `root.noindex` + P, and `test-remote`'s target directories
+in `targets.noindex`. Nothing of the host's own is moved, renamed, written or mounted over. (An
+earlier version kept the files at this machine's own paths, and moved a host's own `~/orca`
+aside to make room: everything on that host that used its `~/orca` broke until it was put back.)
+
+A compile must give the same bytes there as here: its output goes into the shared cache, and every
+crate above it keys on those bytes. rustc hashes each source file's real path into its output,
+remapped or not (measured: the same crate compiled from two directories, each remapped to the same
+path, gives other bytes; the output directory makes no difference). So a remote compile reads its
+sources at the path they have here, which only cargo's own downloads allow: a crate of
+`~/.cargo/registry/src` (or `git/checkouts`) is the same files at the same path on every machine.
+The daemon checks the host's copy file for file (sha256, once a crate per connection) and the
+compile reads it in place; nothing is written there. A crate the host lacks, or has otherwise,
+compiles here, as do the workspace's own crates and a crate whose build script wrote `OUT_DIR`.
+
+What it does need from here, its dependencies' `.rmeta` files and native libraries, is kept under
+the root, and the agent maps those paths (`farm-agent`, `run`): each is replaced by where the host
+keeps it, in rustc's arguments, its environment and its working
+directory, and `--remap-path-prefix <root>=/` goes first among the arguments: rustc applies the last
+remap that matches, so every remap the compile had keeps its meaning, and paths that none
+reached lose the root. The dep-info and rustc's messages have the root taken out. An output that
+still names the root (a path that no remap reaches: `env!("CARGO_MANIFEST_DIR")` written into the
+crate) is not used: the compile runs here, and that crate compiles here from then on.
+
+A file the mirror writes there has the time of the write as its mtime, not this machine's: a
+cargo on the host (`test-remote`) then rebuilds what a file changed, however late the file
+arrived and however old its mtime here. The file keeps this machine's mtime and size in an
+extended attribute, and the mirror compares those.
+
 ### The hosts' backups and indexing
 
-A host holds the farm's copies (`~/orca`, at this machine's paths), Relax and the caches. Left
-alone, Time Machine backs them up and Spotlight indexes every file the mirror writes (over 200,000
-on one host). `host-privacy` (run by `setup`) excludes them from Time Machine, which needs no
-root. Spotlight ignores a folder's `.metadata_never_index` (macOS 15), and the paths cannot take the
-`.noindex` suffix, so `host-privacy --spotlight` puts them in Spotlight's privacy list with sudo,
-once per host, from a terminal. Its report counts what Spotlight still has indexed.
+`~/Library/Caches` is not backed up by default; `host-privacy` (run by `setup`) excludes the farm's
+directories from Time Machine explicitly too. Spotlight skips folders whose names end in
+`.noindex`: the root and the target directories. `host-privacy --spotlight` (sudo, from a terminal)
+also puts them in Spotlight's privacy list. Its report counts what Spotlight still has indexed.
 
 ## Health
 
@@ -148,46 +228,38 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   the others read). A host that does not answer is not probed again for 30 s, doubling to 30
   minutes, so a sleeping host costs nothing; `status` probes every host now, whatever its
   back-off.
-- **Lost mid-job.** A compile whose copy or run fails there runs here, and the host is marked down
-  when its connection or agent is gone, or its disk is full (agent code 70). A test run whose ssh
+- **Lost mid-job.** A compile whose send or run fails there runs here, and the host is marked down
+  when its connection or agent is gone, or a file could not be written there (its disk full:
+  agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
   connection drops (exit 255) runs again here.
 - **Cleaned copies.** The mirror remembers what it sent each host, and a host restarted or cleaned
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
+  Nothing but the farm writes under the root, so nothing else makes what the mirror remembers wrong.
+- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) go after
+  14 unused days, and the least recently used go while the host has less than `min_free_gb` free.
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
 
-## Shared volume
+## No shared volume, no copy mode
 
-Without one, each remote compile copies what changed: the checkout's files (by size and mtime),
-the dependencies' `.rmeta` files and `OUT_DIR`, then the outputs back. That costs about as much as
-the compile itself (0.8 s a job: 0.5 s for the dependencies, 0.25 s for the outputs). With
-`"shared": true` a host mounts this machine's `~/orca` (the checkouts and their target
-directories) at the same path over NFS, and nothing is copied: rustc reads its inputs and writes
-its outputs in place.
-
-```
-scripts/build/farm/shared-volume server ADDRESS PREFIX     # here
-scripts/build/farm/shared-volume client ADDRESS SERVER     # on each host
-```
-
-Each gives the link between the machines (the network service `FARM_NETWORK_SERVICE` names) a static address on a
-private subnet of its own, and the export reaches only that subnet. The hosts mount with attribute
-caching off, so a dependency's `.rmeta` written here is seen there at once. cargo's registry
-sources stay copied (`setup`); a host's own `~/.cargo` is its own.
-
-A crate that links a host's system library that the host lacks (Xcode 26's `clang_rt` on an older
-macOS) fails there and compiles here.
+Two other ways were measured and removed (docs/final-shape/notes/t37, §4). Copy mode (tar over ssh
+per compile) cost as much as the compile itself. A shared volume (this machine's checkouts over
+NFS) was slower than the mirror on every run (105–185 s against 91 s for the same crates, every
+compile forced to miss), and lost compiles to stale views (E0463, E0460), since the NFS server
+commits each write before it answers; and it needed the hosts' system configuration changed
+(an automount over the host's own path). A setting that answers before committing
+(`vfs.generic.nfs.server.async`) was not measured.
 
 ## Live mirror
 
-With `"mirror": true` a host keeps a copy of what its compiles read on its own disk, at this
-machine's paths, and is sent only what changed, over one connection that stays open. A daemon here
+A host keeps a copy of what its compiles read on its own disk, under its farm root, and is sent
+only what changed, over one connection that stays open. A daemon here
 (`mirror.py`, started by the first compile, gone after 15 idle minutes) holds a `farm-agent` per
-host over ssh. For each compile it scans what the compile may read (the checkout's files, the
-dependency directory, `OUT_DIR`, native library directories; one scan serves every compile that
-started before it), sends each file whose size or mtime differs from what it last sent, then the
+host over ssh. For each compile it scans what the compile may read from here (the dependency
+directory and native library directories; `test-remote` and `live-test-remote` send a checkout's
+files the same way; one scan serves every compile that started before it), sends each file whose size or mtime differs from what it last sent, then the
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
 come back on the stream.
 
@@ -200,8 +272,8 @@ own disk writes included. ssh stays open as the lifeline: the agent ends when it
 dead TCP connection is noticed in about 10 s (keepalive). If the agent cannot connect back
 within 8 s, the stream stays on ssh. The data on the link is not encrypted: `tcp: false` keeps it
 on ssh. Every file the compile read (its dep-info) must have the size and mtime
-it has here, or the compile runs here. The agent refuses to write under an NFS mount or automount:
-a host with the shared volume runs `shared-volume client-off` first.
+it has here, or the compile runs here. The agent refuses to write when its root is under a network
+mount.
 
 `RERAIL_FARM_LOG=file` logs each decision (hot, hit: nothing logged, here, or which host) with
 where a remote compile's time went, and why a compile did not go remote. `RERAIL_FARM_LOCAL=1`
