@@ -38,7 +38,7 @@ import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
-import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
+import { pathKey, programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -700,11 +700,34 @@ function holdsHookEntry(settings: JsonObject, entry: JsonObject): boolean {
 
 /**
  * Whether `node` on this process's PATH is the file at `nodePath`, found as a spawn without a shell finds it
- * (`programOnPath`) and compared by the hook launcher's own test (`sameFile`).
+ * (`programOnPath`) and compared by the hook launcher's own test (`sameFile`). The search ends at the first PATH entry on
+ * a server (`pathBeforeServer`), so where one comes before node's folder the answer is no and the cmd.exe entry is
+ * written.
  */
 function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
-  const found = programOnPath("node", { platform });
+  const found = programOnPath("node", { platform, env: pathBeforeServer(process.env) });
   return found !== undefined && sameFile(found, nodePath);
+}
+
+/**
+ * `env` with its PATH cut at the first entry on a server (`isServerPath`), unquoted as Windows reads PATH. Windows waits
+ * about 21 s on a share that does not answer, as on a laptop off its VPN, and set-up would wait as long only to choose
+ * a hook entry's form. Past such an entry the cmd.exe entry is the one to write: it starts the recorded node by its
+ * path, so a hook event never asks the share either, where Claude Code's start of `node` would ask it on every event.
+ */
+function pathBeforeServer(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const key = pathKey(env);
+  const entries = (env[key] ?? "").split(";");
+  const server = entries.findIndex(entry => isServerPath(entry.replace(/^"(.*)"$/u, "$1")));
+  return server < 0 ? env : { ...env, [key]: entries.slice(0, server).join(";") };
+}
+
+/**
+ * Whether a Windows path names a folder on a server: `\\server\share`, or the long forms `\\?\UNC\server\share` and
+ * `\\.\UNC\server\share`, with either slash. `\\?\C:\` and `\\.\C:\` name a local drive.
+ */
+function isServerPath(path: string): boolean {
+  return /^[\\/]{2}(?:[^\\/?.]|[?.][\\/]unc[\\/])/iu.test(path);
 }
 
 

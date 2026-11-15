@@ -563,6 +563,27 @@ describe("Claude Code settings.json", () => {
     expect(await command()).toBe("node");
   });
 
+  it.each([
+    [String.raw`\\server\share\bin`, "cmd.exe"],
+    [`"${String.raw`\\server\share\bin`}"`, "cmd.exe"],
+    ["//server/share/bin", "cmd.exe"],
+    [String.raw`\\?\UNC\server\share\bin`, "cmd.exe"],
+    [String.raw`\\?\C:\rerail-test-no-tools`, "node"],
+  ])("writes the Windows hooks with %j before the recorded node's folder on PATH as %s, never looking on a server", async (entry, form) => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const nodePath = await windowsPathNode(home, "recorded-node");
+    // Windows holds a look into a share that does not answer, as on a laptop off its VPN, for about 21 s. The cmd.exe
+    // entry starts the recorded node by its path, where Claude Code's start of `node` would look there on every event.
+    vi.stubEnv("PATH", `${entry};${dirname(nodePath)}`);
+
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"], fileExists: cmdThere });
+    const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
+    const expected = form === "node" ? viaPath : cmdEntry(launcherPath, nodePath, hookPath);
+    expect(((await readJson(join(home, ".claude", "settings.json"))).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [expected] }]);
+  });
+
   it("writes node for the Windows hooks where PATH reaches the recorded node through a link to its folder", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
