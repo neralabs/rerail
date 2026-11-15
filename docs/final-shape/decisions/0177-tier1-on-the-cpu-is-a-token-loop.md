@@ -1191,3 +1191,37 @@ passes the named tests.
 | Strings | 360 | 344 | 241 |
 | Numbers | 226 | 222 | 107 |
 | Comments | 338 | 312 | 193 |
+
+## A bitmask's pairwise adds kept (2026-11-15)
+
+**Intro.** A 16-lane compare becomes a 16-bit mask by weighting
+each lane and adding pairs three times (simdjson's arm64
+`to_bitmask`, five instructions). The CLIF says
+`iadd_pairwise(a, a)`. `clif_rust` wrote it `vpaddq_u8(a, a)`, and
+LLVM turned each one into three instructions:
+
+```
+// Before (rustc from vpaddq_u8(a, a)), each step:
+uzp1.16b v1, v0, v0
+uzp2.16b v0, v0, v0
+orr.16b  v0, v1, v0
+// After (vpadd_u8 of the halves, recombined):
+addp.16b v0, v0, v0
+addp.8b  v0, v0, v0
+addp.8b  v0, v0, v0
+```
+
+**The change.** A pairwise add of a vector with itself is written
+as the 64-bit `addp` of its two halves, recombined
+(`vcombine_u8(d, d)`). The lanes are the same, and LLVM keeps one
+`addp` a step. `a_bitmask_is_pairwise_adds` checks the generated
+source.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 98.5 | 97.4 | 97.9 |
+| Punctuation | 54.4 | 54.3 | 53.5 |
+| Mixed | 59.0 | 58.6 | 63.1 |
+| Strings | 344 | 337 | 241 |
+| Numbers | 222 | 215 | 107 |
+| Comments | 312 | 306 | 193 |

@@ -91,6 +91,21 @@ fn the_word_multiplier_is_kept() {
     }
 }
 
+/// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
+/// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
+/// five instructions, where it made each `vpaddq_u8(a, a)` three.
+#[test]
+fn a_bitmask_is_pairwise_adds() {
+    let src = include_str!("tier1_aot.rs");
+    let same = src.match_indices("vpaddq_u8(").filter(|(i, _)| {
+        let rest = &src[i + "vpaddq_u8(".len()..];
+        let args = &rest[..rest.find(')').unwrap_or(0)];
+        args.split_once(", ").is_some_and(|(a, b)| a == b)
+    });
+    assert_eq!(same.count(), 0, "a vector's pairwise add with itself");
+    assert!(src.contains("vcombine_u8(d, d)"), "no bitmask reduced by halves");
+}
+
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU
 /// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
 /// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a

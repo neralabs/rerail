@@ -819,6 +819,12 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
                 IntCC::SignedLessThanOrEqual => format!("vcleq_s8({}, {})", sg(a), sg(b)),
             })
         }
+        // A vector's pairs with themselves (a bitmask's reduction): both halves the same, so
+        // written as the 64-bit `addp` of its halves, which LLVM keeps one `addp` (it turns a
+        // `vpaddq_u8(a, a)` into `uzp1`, `uzp2`, `orr`).
+        Opcode::IaddPairwise if is(rt, types::I8X16) && args[0] == args[1] => {
+            u(format!("{{ let d = vpadd_u8(vget_low_u8({a}), vget_high_u8({a})); vcombine_u8(d, d) }}", a = args[0]))
+        }
         Opcode::IaddPairwise if is(rt, types::I8X16) => u(format!("vpaddq_u8({}, {})", args[0], args[1])),
         Opcode::Swizzle if is(rt, types::I8X16) => u(format!("vqtbl1q_u8({}, {})", args[0], args[1])),
         Opcode::Shuffle if is(rt, types::I8X16) => {
