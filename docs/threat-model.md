@@ -657,8 +657,9 @@ capability.
      cannot be read (`Get-Acl` failing on Windows). A `--tls-cert` that cannot be read, holds no certificate or is
      not the key's stops it too, with the message it gets beside a private key, a folder's naming the folder; a held
      one, a FIFO or one over 1 MiB gets the key's refusal. On Windows a Node process opens both files first, so that
-     an oplock keeps it waiting and not the daemon; when that process cannot start, ends before it opens them, or has
-     not begun within 10 s, the start stops with the key's refusal and a line saying why.
+     an oplock keeps it waiting and not the daemon. It says that it began and that it opened them on a pipe of its
+     own, which nothing a NODE_OPTIONS preload prints reaches; when that process cannot start, ends before it opens
+     them, or has not begun within 10 s, the start stops with the key's refusal and a line saying why.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
