@@ -38,12 +38,12 @@ use crate::content_store::{ContentStore, EncodedFrame, FramePut, FrameRel, Frame
 pub(in crate::code_rule_dsl) struct Kept {
     pub(in crate::code_rule_dsl) rel: Arc<InRel>,
     pub(in crate::code_rule_dsl) width: usize,
-    pub(in crate::code_rule_dsl) output: Option<(Vec<String>, Vec<usize>)>,
+    pub(in crate::code_rule_dsl) output: Option<(std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)>,
 }
 
 impl Kept {
     fn bytes(&self) -> usize {
-        self.rel.bytes() + self.output.as_ref().map_or(0, |(lines, _)| lines.iter().map(String::len).sum())
+        self.rel.bytes() + self.output.as_ref().map_or(0, |(rows, _)| rows.bytes())
     }
     /// Its rows as a source named as the planner reads relation `name` (`sql_col`).
     fn source(&self, name: &str) -> Arc<dyn Source> {
@@ -380,7 +380,7 @@ impl Cut {
     }
 
     /// The clean outputs' decoded rows and node columns, as the last run gave them.
-    pub(in crate::code_rule_dsl) fn outputs(&self, kept: &Retained, outputs: &[String]) -> Vec<(String, Vec<String>, Vec<usize>)> {
+    pub(in crate::code_rule_dsl) fn outputs(&self, kept: &Retained, outputs: &[String]) -> Vec<(String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> {
         outputs
             .iter()
             .filter(|o| self.clean.contains(*o))
@@ -411,7 +411,7 @@ pub(in crate::code_rule_dsl) fn after(
     inputs: HashMap<String, u64>,
     cut: &Cut,
     derived: Vec<(String, usize, Arc<InRel>)>,
-    outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
+    outputs: &BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
     input_stats: HashMap<String, InputStats>,

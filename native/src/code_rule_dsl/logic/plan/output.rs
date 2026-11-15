@@ -187,6 +187,53 @@ impl Builder {
         }
         self.rows(name, &types, rows);
     }
+    /// A relation from the parts a run handed of it (`Rows`), their values as they are: a column is text where any
+    /// part holds it as text. A node column (`nodes`) held as text is held as the writer showed each value (`shown`),
+    /// as `lines` holds one; parts of differing widths are put by their lines.
+    pub fn put(&mut self, name: &str, parts: &[&Rows], nodes: &[usize], shown: &dyn Fn(usize, &str) -> String) {
+        let width = parts.iter().find(|p| !p.is_empty()).map_or_else(|| parts.first().map_or(0, |p| p.width()), |p| p.width());
+        if parts.iter().any(|p| p.ragged() || (!p.is_empty() && p.width() != width)) {
+            let mut lines: Vec<String> = parts.iter().flat_map(|p| p.lines()).collect();
+            lines.sort_unstable();
+            lines.dedup();
+            self.lines(name, nodes, &[], &lines, shown);
+            return;
+        }
+        let types: Vec<u8> = (0..width)
+            .map(|c| {
+                let of = |t: u8| parts.iter().filter(|p| !p.is_empty()).any(|p| p.types()[c] == t);
+                if of(col::TEXT) {
+                    col::TEXT
+                } else if nodes.contains(&c) || parts.iter().find(|p| !p.is_empty()).is_some_and(|p| p.types()[c] == col::NODE) {
+                    col::NODE
+                } else {
+                    col::INT
+                }
+            })
+            .collect();
+        if width == 0 {
+            let any = parts.iter().any(|p| !p.is_empty());
+            self.rows(name, &[], if any { vec![0] } else { Vec::new() });
+            return;
+        }
+        let mut rows = Vec::with_capacity(parts.iter().map(|p| p.len()).sum::<usize>() * width);
+        // Per part, its texts' indexes here: each text held once in the image.
+        for p in parts.iter().filter(|p| !p.is_empty()) {
+            let mut here: Vec<Option<i64>> = vec![None; p.texts.len()];
+            for i in 0..p.len() {
+                for (c, &v) in p.row(i).iter().enumerate() {
+                    rows.push(match (p.types()[c], types[c]) {
+                        (col::TEXT, _) if nodes.contains(&c) => i64::from(self.text(&shown(c, p.text(v)))),
+                        (col::TEXT, _) => *here[v as usize].get_or_insert_with(|| i64::from(self.text(p.text(v)))),
+                        (_, col::TEXT) if nodes.contains(&c) => i64::from(self.text(&shown(c, &v.to_string()))),
+                        (_, col::TEXT) => i64::from(self.text(&v.to_string())),
+                        _ => v,
+                    });
+                }
+            }
+        }
+        self.rows(name, &types, rows);
+    }
     /// Relation `rel` of another image, copied: its strings held again here, its documents and places with them (a
     /// stack folded into one base).
     pub fn take(&mut self, name: &str, rel: Rel<'_>) {
@@ -262,6 +309,206 @@ impl Builder {
             out.push(0);
         }
         out
+    }
+}
+
+/// A value of a row as a run hands it: an integer (an int or a node column's), or a text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cell<'a> {
+    Int(i64),
+    Text(&'a str),
+}
+
+/// A relation's rows as a run hands them (decision 0239, stage 2): typed columns (`col`), the values flat and by row,
+/// each text held once by its content. No row is text until a reader asks (`lines`); the writer puts the values in an
+/// image as they are (`Builder::put`). Shared (`Arc`) by the run's outcome, a session's kept outputs and the writer:
+/// never copied.
+#[derive(Clone, Debug, Default)]
+pub struct Rows {
+    types: Vec<u8>,
+    vals: Vec<i64>,
+    texts: Vec<Box<str>>,
+    ids: HashMap<Box<str>, u32>,
+    /// Rows of no columns.
+    bare: usize,
+    /// Rows of differing widths: one text column, each row its line.
+    ragged: bool,
+}
+
+impl Rows {
+    /// No rows, of columns typed `types` (a text arriving in an int or node column makes it a text column).
+    pub fn new(types: Vec<u8>) -> Self {
+        Rows { types, ..Default::default() }
+    }
+    pub fn types(&self) -> &[u8] {
+        &self.types
+    }
+    pub fn width(&self) -> usize {
+        self.types.len()
+    }
+    /// How many rows (each as handed: not yet each once).
+    pub fn len(&self) -> usize {
+        if self.types.is_empty() { self.bare } else { self.vals.len() / self.types.len() }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// The bytes it holds, about: its values and its texts.
+    pub fn bytes(&self) -> usize {
+        self.vals.len() * 8 + self.texts.iter().map(|t| t.len() * 2 + 32).sum::<usize>()
+    }
+    /// Whether its rows were of differing widths, held as their lines (`lines` gives them; `put` does not take it).
+    pub fn ragged(&self) -> bool {
+        self.ragged
+    }
+    fn text_id(&mut self, s: &str) -> i64 {
+        if let Some(&id) = self.ids.get(s) {
+            return i64::from(id);
+        }
+        let id = self.texts.len() as u32;
+        self.texts.push(s.into());
+        self.ids.insert(s.into(), id);
+        i64::from(id)
+    }
+    /// Row `i`'s value in column `c`.
+    pub fn cell(&self, i: usize, c: usize) -> Cell<'_> {
+        let v = self.vals[i * self.types.len() + c];
+        if self.types[c] == col::TEXT { Cell::Text(&self.texts[v as usize]) } else { Cell::Int(v) }
+    }
+    /// Row `i`'s values, as held (a text column's: its texts' indexes, `text`).
+    pub fn row(&self, i: usize) -> &[i64] {
+        let k = self.types.len();
+        &self.vals[i * k..i * k + k]
+    }
+    /// The text a text column's value names.
+    pub fn text(&self, v: i64) -> &str {
+        &self.texts[v as usize]
+    }
+    /// Column `c` held as text from now on: its integers as they are shown.
+    fn to_text(&mut self, c: usize) {
+        let k = self.types.len();
+        self.types[c] = col::TEXT;
+        for i in 0..self.len() {
+            let v = self.vals[i * k + c];
+            self.vals[i * k + c] = self.text_id(&v.to_string());
+        }
+    }
+    /// Every row held as its line, in one text column: a row of another width arrived.
+    fn to_ragged(&mut self) {
+        let lines: Vec<String> = (0..self.len()).map(|i| self.line(i)).collect();
+        let bare = if self.types.is_empty() { self.bare } else { 0 };
+        *self = Rows { types: vec![col::TEXT], ragged: true, ..Default::default() };
+        for l in lines.into_iter().chain(std::iter::repeat_n(String::new(), bare)) {
+            let v = self.text_id(&l);
+            self.vals.push(v);
+        }
+    }
+    /// A row appended.
+    pub fn push(&mut self, row: &[Cell<'_>]) {
+        if self.ragged || (row.len() != self.types.len() && !self.is_empty_shape()) {
+            if !self.ragged {
+                self.to_ragged();
+            }
+            let line = row.iter().map(|c| match c { Cell::Int(v) => v.to_string(), Cell::Text(s) => (*s).to_owned() }).collect::<Vec<_>>().join("\t");
+            let v = self.text_id(&line);
+            self.vals.push(v);
+            return;
+        }
+        if self.types.len() != row.len() {
+            // The first row of a relation typed with no columns: its columns are this row's, ints until a text.
+            self.types = row.iter().map(|c| if matches!(c, Cell::Int(_)) { col::INT } else { col::TEXT }).collect();
+        }
+        if row.is_empty() {
+            self.bare += 1;
+            return;
+        }
+        for (c, cell) in row.iter().enumerate() {
+            if matches!(cell, Cell::Text(_)) && self.types[c] != col::TEXT {
+                self.to_text(c);
+            }
+        }
+        for (c, cell) in row.iter().enumerate() {
+            let v = match (*cell, self.types[c]) {
+                (Cell::Text(s), _) => self.text_id(s),
+                (Cell::Int(v), col::TEXT) => self.text_id(&v.to_string()),
+                (Cell::Int(v), _) => v,
+            };
+            self.vals.push(v);
+        }
+    }
+    /// Whether no row has fixed its width yet (a relation typed with no columns, no rows).
+    fn is_empty_shape(&self) -> bool {
+        self.types.is_empty() && self.bare == 0
+    }
+    /// The rows of `lines` (tab-separated, as a run's text outputs were): a node column (`nodes`) or any other whose
+    /// every value is an integer as written is held as integers, the others as text.
+    pub fn from_lines(lines: &[String], nodes: &[usize]) -> Rows {
+        let width = lines.first().map_or(0, |l| l.split('\t').count());
+        let int = |v: &str| v.parse::<i64>().ok().filter(|n| n.to_string() == v);
+        let mut rows = Rows::new((0..width).map(|c| if nodes.contains(&c) { col::NODE } else { col::INT }).collect());
+        let mut cells: Vec<Cell<'_>> = Vec::with_capacity(width);
+        for l in lines {
+            cells.clear();
+            cells.extend(l.split('\t').map(|v| int(v).map_or(Cell::Text(v), Cell::Int)));
+            rows.push(&cells);
+        }
+        rows
+    }
+    /// The rows of `other` appended.
+    pub fn append(&mut self, other: &Rows) {
+        let mut cells: Vec<Cell<'_>> = Vec::with_capacity(other.width());
+        for i in 0..other.len() {
+            cells.clear();
+            cells.extend((0..other.width()).map(|c| other.cell(i, c)));
+            self.push(&cells);
+        }
+    }
+    /// The rows `keep` holds to (given each row's index and values), the others dropped.
+    pub fn retain(&mut self, mut keep: impl FnMut(usize, &[i64]) -> bool) {
+        let k = self.types.len();
+        if k == 0 {
+            return;
+        }
+        let mut at = 0;
+        for i in 0..self.len() {
+            if keep(i, &self.vals[i * k..i * k + k]) {
+                self.vals.copy_within(i * k..i * k + k, at * k);
+                at += 1;
+            }
+        }
+        self.vals.truncate(at * k);
+    }
+    /// Its rows without their first column (a sentinel's).
+    pub fn without_first(&self) -> Rows {
+        let mut out = Rows::new(self.types.get(1..).unwrap_or_default().to_vec());
+        if self.ragged {
+            for i in 0..self.len() {
+                let line = self.line(i);
+                out.push(&line.split_once('\t').map_or("", |(_, rest)| rest).split('\t').map(Cell::Text).collect::<Vec<_>>());
+            }
+            return out;
+        }
+        let mut cells = Vec::new();
+        for i in 0..self.len() {
+            cells.clear();
+            cells.extend((1..self.width()).map(|c| self.cell(i, c)));
+            out.push(&cells);
+        }
+        out
+    }
+    /// Row `i` as a line: tab-separated, each value as it is (a node as its number).
+    fn line(&self, i: usize) -> String {
+        if self.types.is_empty() {
+            return String::new();
+        }
+        (0..self.width()).map(|c| match self.cell(i, c) { Cell::Int(v) => v.to_string(), Cell::Text(s) => s.to_owned() }).collect::<Vec<_>>().join("\t")
+    }
+    /// Its rows as the run's text outputs were: each a line, sorted, each once.
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines: Vec<String> = (0..self.len()).map(|i| self.line(i)).collect();
+        lines.sort_unstable();
+        lines.dedup();
+        lines
     }
 }
 

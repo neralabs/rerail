@@ -197,3 +197,93 @@ fn a_damaged_image_is_refused() {
     let o = Builder::new(0, true).finish();
     assert!(Image::stack(&o).is_err());
 }
+
+/// A run's rows (`Rows`) are its text outputs as they were (`lines`: each value as it is, a node as its number), and an
+/// image made from them (`Builder::put`) shows what the writer showed of those lines.
+#[test]
+fn rows_are_the_runs_lines_and_put_shows_what_the_writer_showed() {
+    let paths: HashMap<i64, String> = [(1, "a.py".to_owned()), (2, "pkg/b.py".to_owned())].into();
+    let first: HashMap<i64, i64> = [(1, 100), (3, 5_000)].into();
+    let place = -2 - (7i64 << 32 | 4);
+    let places: HashMap<i64, String> = [(place, "@place(\"c.py\", 4)".to_owned())].into();
+    // As `decoded_outputs` hands them: a node column, a text column, an int column; a text in the int column.
+    let mut a = Rows::new(vec![col::NODE, col::TEXT, col::INT]);
+    a.push(&[Cell::Int(1 << 32 | 9), Cell::Text("call"), Cell::Int(3)]);
+    a.push(&[Cell::Int(3 << 32 | 2), Cell::Text("x\ty"), Cell::Int(-4)]);
+    a.push(&[Cell::Int(place), Cell::Text("z"), Cell::Int(0)]);
+    a.push(&[Cell::Int(1 << 32 | 9), Cell::Text("call"), Cell::Int(3)]);
+    let mut b = Rows::new(vec![col::NODE, col::TEXT, col::INT]);
+    b.push(&[Cell::Int(2 << 32 | 1), Cell::Text("name"), Cell::Text("007")]);
+    b.push(&[Cell::Int(-1), Cell::Text("12"), Cell::Int(8)]);
+    assert_eq!(b.types(), [col::NODE, col::TEXT, col::TEXT], "a text makes the int column text");
+    let want_a = vec![format!("{}\tcall\t3", 1i64 << 32 | 9), format!("{}\tx\ty\t-4", 3i64 << 32 | 2), format!("{place}\tz\t0")];
+    let mut sorted = want_a.clone();
+    sorted.sort();
+    assert_eq!(a.lines(), sorted);
+    // Lines read back as rows are the same rows.
+    assert_eq!(Rows::from_lines(&a.lines(), &[0]).lines(), a.lines());
+    let mut all = a.clone();
+    all.append(&b);
+    let lines = all.lines();
+    assert_eq!(lines.len(), 5);
+    for f in [0, flags::OWN, flags::DEFINITION_IDS, flags::OWN | flags::DEFINITION_IDS] {
+        let (own, by_definition) = (f & flags::OWN != 0, f & flags::DEFINITION_IDS != 0);
+        let mut image = Builder::new(f, false);
+        for v in [1i64 << 32 | 9, 3 << 32 | 2, 2 << 32 | 1] {
+            let d = v >> 32;
+            if paths.contains_key(&d) || first.contains_key(&d) {
+                image.doc(d, &Doc { path: paths.get(&d).cloned(), first: first.get(&d).copied() });
+            }
+        }
+        image.place(place, &places[&place]);
+        let shown = |_: usize, v: &str| writer_lines(&[v.to_owned()], &[0], &paths, &first, &places, own, by_definition).pop().unwrap_or_default();
+        image.put("r", &[&a, &b], &[0], &shown);
+        let stack = Image::stack(&image.finish()).unwrap();
+        // A value holding a tab (`x\ty`) is one value here; the writer split it, but showed only the node column.
+        let r = find(&stack, "r").unwrap();
+        assert_eq!(r.types(), [col::NODE, col::TEXT, col::TEXT], "flags {f}");
+        assert_eq!(r.lines(), writer_lines(&lines, &[0], &paths, &first, &places, own, by_definition), "flags {f}");
+    }
+}
+
+/// A node column holding a text, rows of differing widths, no columns, and the edits a run makes of its rows.
+#[test]
+fn rows_of_every_shape() {
+    // `None` in a node column: the column is text, each value shown by the writer.
+    let mut r = Rows::from_lines(&["4294967298\t1".into(), "None\t2".into()], &[0]);
+    assert_eq!(r.types(), [col::TEXT, col::INT]);
+    assert_eq!(r.lines(), ["4294967298\t1", "None\t2"]);
+    let mut image = Builder::new(flags::OWN, false);
+    image.put("r", &[&r], &[0], &|_, v| if v == "None" { v.to_owned() } else { format!("shown {v}") });
+    assert_eq!(find(&Image::stack(&image.finish()).unwrap(), "r").unwrap().lines(), ["None\t2", "shown 4294967298\t1"]);
+    // A row of another width: every row held as its line.
+    r.push(&[Cell::Text("odd")]);
+    assert!(r.ragged());
+    assert_eq!(r.lines(), ["4294967298\t1", "None\t2", "odd"]);
+    let mut image = Builder::new(0, false);
+    image.put("r", &[&r], &[], &|_, v| v.to_owned());
+    assert_eq!(find(&Image::stack(&image.finish()).unwrap(), "r").unwrap().lines(), ["4294967298\t1", "None\t2", "odd"]);
+    // No columns: one row, shown as an empty line.
+    let mut bare = Rows::new(Vec::new());
+    bare.push(&[]);
+    bare.push(&[]);
+    assert_eq!((bare.len(), bare.lines()), (2, vec![String::new()]));
+    let mut image = Builder::new(0, false);
+    image.put("b", &[&bare], &[], &|_, v| v.to_owned());
+    image.put("e", &[&Rows::new(Vec::new())], &[], &|_, v| v.to_owned());
+    let stack = Image::stack(&image.finish()).unwrap();
+    assert_eq!(find(&stack, "b").unwrap().lines(), [""]);
+    assert!(find(&stack, "e").unwrap().lines().is_empty());
+    // Untyped rows take their first row's shape.
+    let mut u = Rows::default();
+    u.push(&[Cell::Int(5), Cell::Text("t")]);
+    assert_eq!(u.types(), [col::INT, col::TEXT]);
+    // `retain` and `without_first`.
+    let mut s = Rows::new(vec![col::INT, col::INT]);
+    for i in 0..6 {
+        s.push(&[Cell::Int(i), Cell::Int(i * 10)]);
+    }
+    s.retain(|_, row| row[0] % 2 == 0);
+    assert_eq!(s.lines(), ["0\t0", "2\t20", "4\t40"]);
+    assert_eq!(s.without_first().lines(), ["0", "20", "40"]);
+}

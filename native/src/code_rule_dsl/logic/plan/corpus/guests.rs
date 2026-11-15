@@ -63,10 +63,12 @@ pub(super) enum Request {
 
 /// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
 /// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
-pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> {
+pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> Vec<Request> {
     let mut out = Vec::new();
     let int = |s: &str| s.parse::<i64>().ok();
-    let rows = |rel: &str, n: usize| outputs.get(rel).into_iter().flatten().map(move |line| line.splitn(n, '\t').collect::<Vec<&str>>());
+    // The request relations alone, as their lines (decision 0239: the run hands rows).
+    let lines: BTreeMap<&str, Vec<String>> = outputs.iter().filter(|(r, _)| REQUESTS.contains(&r.as_str())).map(|(r, rows)| (r.as_str(), rows.lines())).collect();
+    let rows = |rel: &str, n: usize| lines.get(rel).into_iter().flatten().map(move |line| line.splitn(n, '\t').collect::<Vec<&str>>());
     for c in rows("embed", 4) {
         if let [_, at, g, r] = c.as_slice()
             && let Some(at) = int(at)

@@ -4151,7 +4151,8 @@ pub struct Chosen {
 #[derive(Debug, Default)]
 pub struct Outcome {
     pub chosen: Vec<Chosen>,
-    pub outputs: BTreeMap<String, Vec<String>>,
+    /// Each output's rows, as the run holds them (decision 0239; `text` gives them as lines).
+    pub outputs: BTreeMap<String, std::sync::Arc<output::Rows>>,
     pub iterations: BTreeMap<String, usize>,
     /// The components a native mode ran (T's `iterations` value `"native"`).
     pub native: BTreeSet<String>,
@@ -4180,6 +4181,13 @@ pub struct Outcome {
     /// `RERAIL_SPIKE_DELTA`: each maintained stratum reached, whether its own relations changed, and its changed
     /// reads with their deltas' rows (gone + new; `usize::MAX` where not held). Read by the session's report.
     pub spike_reached: Vec<(String, bool, Vec<(String, usize)>)>,
+}
+
+impl Outcome {
+    /// Each output's rows as text lines (`Rows::lines`): sorted, each once, a node as its number.
+    pub fn text(&self) -> BTreeMap<String, Vec<String>> {
+        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.lines())).collect()
+    }
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -8741,7 +8749,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
         if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         for rel in &sentinels {
-            if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}
+            if let Some(rows)=out.outputs.get_mut(rel){*rows=std::sync::Arc::new(rows.without_first());}
             if let Some(cols)=out.nodes.get_mut(rel){*cols=cols.iter().filter_map(|i|i.checked_sub(1)).collect();}
         }
         return Ok(out);
@@ -10454,7 +10462,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
     for rel in &sentinels {
-        if let Some(rows)=outputs.get_mut(rel){for row in rows { *row=row.split_once('\t').map_or(String::new(),|(_,rest)|rest.into()); }}
+        if let Some(rows)=outputs.get_mut(rel){*rows=std::sync::Arc::new(rows.without_first());}
         if let Some(cols)=nodes.get_mut(rel){*cols=cols.iter().filter_map(|i|i.checked_sub(1)).collect();}
     }
     outcome.outputs = outputs;
@@ -10659,7 +10667,7 @@ pub fn decode_kept(
     db: &Connection,
     lowered: &lower::Lowered,
     rels: Vec<(String, std::sync::Arc<super::native::component::InRel>)>,
-) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vec<usize>>)> {
     let names: BTreeSet<String> = rels.iter().map(|(r, _)| r.clone()).filter(|r| r != "finding").collect();
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
@@ -10669,8 +10677,8 @@ pub fn decode_kept(
     decoded_outputs(&prog, db, Some(lowered), "", true, &BTreeSet::new(), &names)
 }
 
-/// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
-/// output the columns that hold nodes.
+/// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
+/// is; no row printed), and per output the columns that hold nodes.
 #[allow(clippy::type_complexity)]
 fn decoded_outputs(
     prog: &Program,
@@ -10680,7 +10688,7 @@ fn decoded_outputs(
     atoms: bool,
     kept: &BTreeSet<String>,
     native: &BTreeSet<String>,
-) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vec<usize>>)> {
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for rel in prog.outputs.iter().filter(|r| !kept.contains(*r)) {
@@ -10724,12 +10732,15 @@ fn decoded_outputs(
                 _ => None,
             }
         };
-        let show = |i: usize, v: SqlValue| match v {
-            SqlValue::Integer(v) => decode(i, v).unwrap_or_else(|| v.to_string()),
-            SqlValue::Real(f) => format!("{f:?}"),
-            SqlValue::Text(s) => s,
-            SqlValue::Null => "None".to_owned(),
-            SqlValue::Blob(b) => format!("{b:?}"),
+        // A value as the row holds it: an integer as it is; a kind or a field by its name; any other as its text.
+        let cell = |i: usize, v: SqlValue| -> Shown {
+            match v {
+                SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
+                SqlValue::Real(f) => Shown::Text(format!("{f:?}")),
+                SqlValue::Text(s) => Shown::Text(s),
+                SqlValue::Null => Shown::Text("None".to_owned()),
+                SqlValue::Blob(b) => Shown::Text(format!("{b:?}")),
+            }
         };
         let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
         let held = if native.contains(rel) && rel == "finding" {
@@ -10742,24 +10753,65 @@ fn decoded_outputs(
         } else {
             None
         };
-        let mut rows: Vec<String> = match held {
-            Some(held) => held.into_iter().map(|r| r.into_iter().enumerate().map(|(i, v)| show(i, v)).collect::<Vec<_>>().join("\t")).collect(),
+        // Each column typed by its domain: a node, a text (a name, a kind, a field), else an integer until a text
+        // arrives in it. A table's rows are a set; a row seeded from SQL may also be one the engine derived: each row
+        // is once where it is read (`Rows::lines`, the image).
+        let types: Vec<u8> = if findings_form {
+            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
+        } else {
+            domains
+                .iter()
+                .map(|d| match d {
+                    lower::Domain::Node => output::col::NODE,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    _ => output::col::INT,
+                })
+                .collect()
+        };
+        let mut rows = output::Rows::new(types);
+        let mut row: Vec<Shown> = Vec::new();
+        let push = |rows: &mut output::Rows, row: &[Shown]| rows.push(&row.iter().map(Shown::cell).collect::<Vec<_>>());
+        match held {
+            Some(held) => {
+                for r in held {
+                    row.clear();
+                    row.extend(r.into_iter().enumerate().map(|(i, v)| cell(i, v)));
+                    push(&mut rows, &row);
+                }
+            }
             None => {
                 let mut st = db.prepare(&sql)?;
                 let width = st.column_count();
-                st.query_map([], |r| (0..width).map(|i| Ok(show(i, r.get::<_, SqlValue>(i)?))).collect::<rusqlite::Result<Vec<_>>>().map(|v| v.join("\t")))?
-                    .collect::<rusqlite::Result<_>>()?
+                let mut q = st.query([])?;
+                while let Some(r) = q.next()? {
+                    row.clear();
+                    for i in 0..width {
+                        row.push(cell(i, r.get::<_, SqlValue>(i)?));
+                    }
+                    push(&mut rows, &row);
+                }
             }
-        };
-
-        rows.sort();
-        // A table's rows are a set. The engine's are too, but a row seeded from SQL may also be one it derived.
-        rows.dedup();
+        }
         let nodes = domains.iter().enumerate().filter(|(_, d)| **d == lower::Domain::Node).map(|(i, _)| i).collect();
         all_nodes.insert(name.clone(), nodes);
-        outputs.insert(name, rows);
+        outputs.insert(name, std::sync::Arc::new(rows));
     }
     Ok((outputs, all_nodes))
+}
+
+/// A value of a decoded row before it is held (`decoded_outputs`).
+enum Shown {
+    Int(i64),
+    Text(String),
+}
+
+impl Shown {
+    fn cell(&self) -> output::Cell<'_> {
+        match self {
+            Shown::Int(v) => output::Cell::Int(*v),
+            Shown::Text(s) => output::Cell::Text(s),
+        }
+    }
 }
 
 pub mod emit;

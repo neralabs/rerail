@@ -379,5 +379,6 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
+    let (outputs, nodes) = decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.lines())).collect(), nodes))
 }

@@ -1,6 +1,6 @@
 # 0239: A program's output is a flat image, written by delta
 
-Status: draft (2026-11-14); stage 1 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
+Status: draft (2026-11-14); stages 1 and 2 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
 0140 (the tape is the engine's bytes, read in place), 0209 (statistics are one flat table) and 0212 (kept frames
 are of content). Follows 0230, whose "still open" list it replaces at its top.
 
@@ -105,12 +105,32 @@ typing rounds, `typing::outputs`) read the columns.
 1. **The image, its writer and its readers** (`plan::output`, built): the format, a writer from rows or from the
    gathered lines, `Rel::col`/`row`/`lines`, whole-relation overlays and the fold. The corpus run writes the image,
    then makes each `.csv` file it wrote from it, so every reader and test reads the same bytes as before.
-2. **Rows through the run:** the memo's entries and `decoded_outputs` hand rows, and the writer writes the image
-   from them with no text. The `.csv` files are written only for readers that still read them.
+2. **Rows through the run** (built): `decoded_outputs` and the composed path hand each output as `Rows` (typed
+   columns, values by row, each text once by content), shared (`Arc`) by the outcome, a session's kept outputs
+   (`retain::Kept::output`) and the writer, never copied. The writer gathers each output's parts and puts them in
+   the image as they are (`Builder::put`). `Rows::lines` gives the old text for the readers that still want it
+   (memo entries, guests' requests, `typing::outputs`, tests through `Outcome::text`). Still text: a memo entry's
+   file-local output (`memo::Entry::lines`), read as one part per output (`Rows::from_lines`), and the `.csv`
+   files.
 3. **The readers on the image:** phases, phase 0, the bridge, constants, reuse, `test-rr`, typing rounds and the
    tests (about 350 reads in 21 files) read it, through rows or `lines`. The `.csv` files are no longer written.
    The records that kept the text (constants, reuse) take a new format.
 4. **Overlays of rows** (§3).
+
+## Measured
+
+Stage 2 against the merged build before stage 1 (33fac9107), O125 replay steps 12–16, two rounds each, instructions
+(profiling build, unprofiled run; both "same as full"):
+
+| step | 12 | 13 | 14 | 15 | 16 | process |
+|---|---|---|---|---|---|---|
+| before, cross G | 11.73 | 6.35 | 3.51 | 4.16 | 4.53 | 142.6 |
+| stage 2, cross G | 11.40 | 6.00 | 3.18 | 3.85 | 4.23 | 138.6 |
+
+The baseline still had the `mentions` fault fixed in b62a05bc7 (some typing derivations differed). Sampled over the
+whole replay (cold run included), the output code is now 260 of 4,912 samples: `decoded_outputs` 52 (117 before),
+rendering the `.csv` lines from the image (`Rel::lines`) 149, putting the rows in the image 23. The `.csv` lines are
+what is left: stage 3 moves the readers onto the image, and stage 4 writes only what changed.
 
 ## Tests
 
@@ -122,5 +142,10 @@ typing rounds, `typing::outputs`) read the columns.
 - `an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through`; a base written again starts the stack
   over.
 - `a_folded_stack_shows_what_the_stack_showed`: its strings, documents and places copied.
+- `rows_are_the_runs_lines_and_put_shows_what_the_writer_showed`: rows as `decoded_outputs` hands them (a text in
+  an int column, a value holding a tab), their lines, lines read back, and the image `put` makes from two parts,
+  against the writer's own rendering for every combination of the show flags.
+- `rows_of_every_shape`: a node column holding `None`, a row of another width, no columns, untyped rows, `retain`
+  and `without_first`.
 - `a_damaged_image_is_refused`: magic, a region out of bounds, a text value naming no string, a stack that starts
   with an overlay.
