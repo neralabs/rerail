@@ -26,7 +26,7 @@ use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
-    DocumentMapSpan, HardPartition, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
+    DocumentMapSpan, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
     register_module,
 };
 use rusqlite::{Connection, Row};
@@ -162,25 +162,6 @@ impl SqlViolationRow {
         })
     }
 
-    pub(super) fn publication_key(&self) -> (&str, &str, &str) {
-        (&self.rule_id, &self.clause_id, &self.path)
-    }
-
-    pub(super) fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
-        let sql_violation = Some(self.to_value());
-        crate::code_rule_dsl::violations::Witness {
-            path: self.path,
-            span: Some(self.span),
-            captures: crate::code_rule_dsl::violations::Captures::from_spans(self.captures),
-            message: Some(self.message),
-            fix: self.fix.map(|fix| {
-                serde_json::to_value(fix).expect("a typed SQL fix serializes as a witness fix")
-            }),
-            sql_violation,
-            ignored: false,
-        }
-    }
-
     pub(super) fn to_value(&self) -> Value {
         let mut id = crate::code_rule_dsl::eval::violation_id(
             &self.rule_id,
@@ -233,31 +214,6 @@ pub(super) struct QueryOutcome {
     pub(super) rows: Vec<PackedRow>,
     pub(super) violations: Vec<SqlViolationRow>,
     pub(super) failures: Vec<SqlFailureRow>,
-    pub(super) counters: QueryCounters,
-}
-
-/// Profile counters for one SQL-demanded workspace batch.
-pub(super) struct QueryCounters {
-    pub(super) statements: usize,
-    pub(super) rows: usize,
-    pub(super) scalar_callbacks: usize,
-    pub(super) node_rows: usize,
-    pub(super) environments: usize,
-    pub(super) fact_builds: usize,
-    pub(super) fact_hits: usize,
-    pub(super) terminal_executions: usize,
-    pub(super) virtual_table_filters: usize,
-    pub(super) registrations: usize,
-    pub(super) backend_invocations: usize,
-    pub(super) hard_partitions: usize,
-    pub(super) partitions: Vec<HardPartition>,
-    pub(super) demanded_producers: usize,
-    pub(super) terminal_tasks: usize,
-    pub(super) command_buffers: usize,
-    pub(super) packed_dispatches: usize,
-    pub(super) anchor_dispatches: usize,
-    pub(super) matcher_calls: usize,
-    pub(super) host_callbacks: usize,
 }
 
 /// The immutable SQL route for one catalog. Lowering failures are retained in source order and
@@ -265,8 +221,6 @@ pub(super) struct QueryCounters {
 pub(super) struct SqlPlans {
     plan: Result<relational::SqlCatalogPlan, String>,
     clause_keys: BTreeMap<ClauseId, (String, String)>,
-    #[cfg(test)]
-    failure_injection: std::sync::Mutex<Option<(usize, String)>>,
 }
 
 impl SqlPlans {
@@ -294,18 +248,7 @@ impl SqlPlans {
                 )
             }),
             clause_keys,
-            #[cfg(test)]
-            failure_injection: std::sync::Mutex::new(None),
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn inject_failure(&self, producer: usize, code: &str) {
-        *self.failure_injection.lock().unwrap() = Some((producer, code.to_owned()));
-    }
-
-    pub(super) fn verify_lowered(&self) -> Result<(), String> {
-        self.plan.as_ref().map_err(Clone::clone)?.verify()
     }
 
     /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet
@@ -555,13 +498,6 @@ impl SqlPlans {
         .and_then(|demand| demand.with_file_facts(file_facts, file_paths))
         .and_then(|demand| demand.with_document_maps(document_maps, plan.requires_document_maps()))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
-        #[cfg(test)]
-        let demand = match self.failure_injection.lock().unwrap().take() {
-            Some((producer, code)) => demand
-                .with_failure_injection(producer, code)
-                .map_err(|error| format!("packed failure injection failed: {error:?}"))?,
-            None => demand,
-        };
         let mut outcome = drive_sql(
             demand,
             &statements,
@@ -637,19 +573,6 @@ fn production_backend() -> ExecutionBackend {
     {
         ExecutionBackend::CpuJit
     }
-}
-
-#[cfg(test)]
-fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
-    drive_sql(
-        demand,
-        &[ExecutionStatement {
-            sql: plan::legacy_test_scan_sql().to_owned(),
-            clauses: "[]".to_owned(),
-            materialization: None,
-        }],
-        "[]",
-    )
 }
 
 fn drive_sql(
@@ -776,34 +699,7 @@ impl QueryConnection {
                     );
                 }
             }
-            let row_count = rows.len() + violations.len() + failures.len();
-            let packed = self
-                .registry
-                .query_execution_report(token)
-                .expect("the registered batch remains available until publication");
             Ok(QueryOutcome {
-                counters: QueryCounters {
-                    statements: statements.len(),
-                    rows: row_count,
-                    scalar_callbacks: 0,
-                    node_rows: 0,
-                    environments: 0,
-                    fact_builds: 0,
-                    fact_hits: 0,
-                    terminal_executions: packed.demand_executions,
-                    virtual_table_filters: packed.filters,
-                    registrations: packed.registrations,
-                    backend_invocations: packed.backend_invocations,
-                    hard_partitions: packed.hard_partitions,
-                    partitions: packed.partitions,
-                    demanded_producers: packed.demanded_producers,
-                    terminal_tasks: packed.terminal_tasks,
-                    command_buffers: packed.command_buffers,
-                    packed_dispatches: packed.packed_dispatches,
-                    anchor_dispatches: packed.anchor_dispatches,
-                    matcher_calls: packed.matcher_calls,
-                    host_callbacks: packed.host_callbacks,
-                },
                 rows,
                 violations,
                 failures,
@@ -836,35 +732,6 @@ thread_local! {
             .push(Arc::downgrade(&slot));
         slot
     };
-}
-
-pub(super) fn release_connections() {
-    let mut slots = SLOTS.lock().expect("query connection registry poisoned");
-    slots.retain(|slot| {
-        let Some(slot) = slot.upgrade() else {
-            return false;
-        };
-        if let Ok(mut connection) = slot.try_lock() {
-            connection.take();
-        }
-        true
-    });
-}
-
-/// A regex clause's ordered byte ranges, bounded by `limit` and the active deadline.
-pub(in crate::code_rule_dsl) fn regex_matches(
-    regex: &regex::Regex,
-    haystack: &str,
-    limit: usize,
-) -> (Vec<std::ops::Range<usize>>, bool) {
-    let mut matches = Vec::new();
-    for found in regex.find_iter(haystack) {
-        if crate::code_rule_dsl::budget::matcher_budget_exhausted() || matches.len() >= limit {
-            return (matches, false);
-        }
-        matches.push(found.range());
-    }
-    (matches, true)
 }
 
 #[cfg(test)]

@@ -96,10 +96,8 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
-    #[path = "compile"]
     pub mod compile {
         pub use rerail_w::code_rule_dsl::compile::*;
-        #[path = "binds"]
         pub mod binds {
             pub use rerail_w::code_rule_dsl::compile::binds::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -130,7 +128,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
-        #[path = "format_args"]
         pub mod format_args {
             pub use rerail_w::code_rule_dsl::compile::format_args::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -161,7 +158,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
-        #[path = "parse"]
         pub mod parse {
             pub use rerail_w::code_rule_dsl::compile::parse::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -330,7 +326,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
-    #[path = "findings"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "findings")]
     pub mod findings {
         pub use rerail_w::code_rule_dsl::findings::*;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -539,7 +535,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -585,9 +580,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::atomic::{AtomicUsize, Ordering};
     }
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -602,7 +595,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -952,7 +944,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
     }
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -990,7 +981,6 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[path = "transducer"]
     pub mod transducer {
         pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
         #[allow(unused_imports)]
@@ -1046,7 +1036,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_w::code_rule_dsl::waves::relational;

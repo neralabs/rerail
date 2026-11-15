@@ -16,13 +16,11 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
     pub use rerail_lang::code_rule_dsl::embed;
-    #[path = "facts"]
+    
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
-        #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
-            #[path = "syntax"]
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
                 pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
@@ -83,13 +81,11 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::language;
     pub use rerail_lang::code_rule_dsl::lines;
-    #[path = "logic"]
+    
     pub mod logic {
         pub use rerail_logic::code_rule_dsl::logic::*;
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
-            #[path = "."]
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
@@ -97,7 +93,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::BTreeSet;
             }
-            #[path = "yaml"]
             pub mod yaml {
                 pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
                 #[allow(unused_imports)]
@@ -116,7 +111,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "magic"]
         pub mod magic {
             pub use rerail_rr::code_rule_dsl::logic::magic::*;
             #[allow(unused_imports)]
@@ -126,7 +120,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
         }
-        #[path = "profile"]
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
             pub use rerail_logic::code_rule_dsl::logic::profile::report;
@@ -144,10 +137,8 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
-        #[path = "rr"]
         pub mod rr {
             pub use rerail_logic::code_rule_dsl::logic::rr::*;
-            #[path = "aggregate_demand"]
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -155,7 +146,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            #[path = "."]
             pub mod tape_type {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
@@ -195,7 +185,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;
         }
-        #[path = "strings"]
         pub mod strings {
             pub use rerail_facts::code_rule_dsl::logic::strings::*;
             #[allow(unused_imports)]
@@ -219,11 +208,9 @@ pub mod code_rule_dsl {
     pub mod sql_executor;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
-    #[path = "suppress"]
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
         #[allow(unused_imports)]
@@ -235,7 +222,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub use rerail_logic::code_rule_dsl::typing;
-    #[path = "value"]
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]
@@ -257,7 +243,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
-    #[path = "waves"]
     pub mod waves {
         pub use rerail_logic::code_rule_dsl::waves::owner;
         pub use rerail_logic::code_rule_dsl::waves::schedule;

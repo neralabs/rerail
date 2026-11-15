@@ -338,7 +338,7 @@ pub(super) struct ProgramBuffers {
     string_bytes: MappedBuffer,
 }
 
-pub(super) struct CachedProgramBuffers {
+pub struct CachedProgramBuffers {
     key: ProgramBufferKey,
     buffers: Arc<ProgramBuffers>,
 }

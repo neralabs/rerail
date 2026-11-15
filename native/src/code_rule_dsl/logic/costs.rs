@@ -254,6 +254,9 @@ fn read() {
     })();
     match r {
         Ok((samples, saved)) => {
+            // The saved model is placed by the macOS training below.
+            #[cfg(not(target_os = "macos"))]
+            let _ = saved;
             let fitted = rerail_accel::price::learn_from(&samples);
             *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
@@ -538,6 +541,7 @@ pub fn ready() {
 /// retraining, which counts the samples written since the saved model (none saved: due at once).
 pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
     let Some(path) = path() else { return Vec::new() };
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut jobs = vec![rerail_accel::upkeep::register(Box::new(crate::content_store::upkeep::SqliteFile::new(&path, crate::content_store::upkeep::Tables::All)))];
     #[cfg(target_os = "macos")]
     {

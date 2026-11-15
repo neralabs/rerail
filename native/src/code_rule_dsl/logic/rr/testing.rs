@@ -283,6 +283,7 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
+#[cfg(test)]
 impl Outcome {
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
@@ -372,7 +373,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             program.outputs.push(relation.clone());
         }
     }
-    let report = crate::code_rule_dsl::tools::run_program(path, program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
+    let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()
         .into_iter()
@@ -463,6 +464,7 @@ fn sample(rows: &[Vec<String>]) -> String {
 
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
+#[cfg(test)]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);

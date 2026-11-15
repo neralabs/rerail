@@ -26,23 +26,19 @@ pub(super) struct Native<'a> {
     parsed: &'a [AstGrep<TapeDoc>],
     compiled: &'a CompiledCodeRuleDsl,
     paths: &'a [String],
+    // No index is built up front: W's anchor index is built per file while matching
+    // (`FileAnchorIndex::build`), so `run`'s `prepare_ns` counts it.
     modules: &'a BTreeMap<u32, ModulePath>,
-    /// CPU time publishing the input tapes into one reusable production index. W's anchor index
-    /// is built per file while matching (`FileAnchorIndex::build`), so this is zero and `run`'s
-    /// `prepare_ns` counts the index.
-    pub index_ns: u64,
-    pub index_wall_ns: u64,
 }
 
 pub(super) struct NativeRun {
     pub keys: BTreeSet<(String, u32, usize)>,
-    /// Selection + matching CPU, excluding the separately reported SQL compilation.
+    /// Selection + matching CPU, excluding the run's SQL compilation.
     pub cpu_ns: u64,
     /// Actual elapsed run time, including any SQL compilation in this run.
     pub wall_ns: u64,
     /// Candidate preparation CPU excluding its nested SQL compilation; part of cpu_ns.
     pub prepare_ns: u64,
-    pub compile_ns: u64,
     pub roots_matched: usize,
 }
 
@@ -75,14 +71,11 @@ impl<'a> Native<'a> {
                 "native oracle supports Python tapes only"
             );
         }
-        let (index_ns, index_wall_ns) = (0, 0);
         Self {
             parsed,
             compiled,
             paths,
             modules,
-            index_ns,
-            index_wall_ns,
         }
     }
 
@@ -91,9 +84,6 @@ impl<'a> Native<'a> {
         let started = super::cpu_ns();
         let roots_before = matcher::roots_matched();
         let compile_before = phase_clock::ANCHOR_COMPILE.load(Ordering::Relaxed);
-        let compile_ns = phase_clock::ANCHOR_COMPILE
-            .load(Ordering::Relaxed)
-            .saturating_sub(compile_before);
         let mut prepare_ns = 0;
         let file_plans: Vec<_> = self
             .compiled
@@ -227,6 +217,10 @@ impl<'a> Native<'a> {
                 }
             });
         }
+        // The SQL compiled during this run (measured at its end: at the start it is always zero).
+        let compile_ns = phase_clock::ANCHOR_COMPILE
+            .load(Ordering::Relaxed)
+            .saturating_sub(compile_before);
         NativeRun {
             keys,
             cpu_ns: super::cpu_ns()
@@ -234,7 +228,6 @@ impl<'a> Native<'a> {
                 .saturating_sub(compile_ns),
             wall_ns: wall.elapsed().as_nanos() as u64,
             prepare_ns,
-            compile_ns,
             roots_matched: matcher::roots_matched().saturating_sub(roots_before),
         }
     }

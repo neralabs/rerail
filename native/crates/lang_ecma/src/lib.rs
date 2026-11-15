@@ -347,7 +347,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -386,9 +385,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::atomic::{AtomicUsize, Ordering};
     }
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -403,7 +400,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -440,7 +436,6 @@ pub mod code_rule_dsl {
     #[cfg(feature="code-rule-profile")]
     pub use rerail_w::code_rule_dsl::profile;
     pub use rerail_w::code_rule_dsl::query;
-    #[path = "residency"]
     pub mod residency {
         pub use rerail_w::code_rule_dsl::residency::admission;
         #[allow(unused_imports)]
@@ -523,7 +518,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
     }
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -561,7 +555,6 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[path = "transducer"]
     pub mod transducer {
         pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
         #[allow(unused_imports)]
@@ -618,7 +611,6 @@ pub mod code_rule_dsl {
     pub mod vue;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_w::code_rule_dsl::waves::relational;

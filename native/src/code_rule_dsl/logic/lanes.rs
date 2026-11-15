@@ -27,6 +27,7 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
     super::costs::start();
     super::costs::ready();
     let all = Executor::new();
+    #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if all.lanes().contains(&rerail_accel::Lane::Sme) {

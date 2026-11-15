@@ -1273,7 +1273,7 @@ type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
 /// decision 0116 step 2), taken into `kept` when a rule is first planned.
 #[derive(Default)]
-struct RunPlans {
+pub struct RunPlans {
     kept: rustc_hash::FxHashMap<PlanKey, Kept>,
     stored: Arc<StoredPlans>,
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
@@ -1539,7 +1539,7 @@ pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
 /// A kept plan's last price: the corpus's nodes and the rows of each relation its body reads when priced, and the
 /// price. A price reads statistics only; while no size moved over `PRICE_DRIFT` times it is taken as it is, not
 /// worked out again (decision 0090 step 5: a session's run re-priced 7,400 kept plans, two thirds of its CPU).
-struct Priced {
+pub struct Priced {
     sizes: Vec<f64>,
     got: (Plan, Option<super::profile::RulePlan>),
 }
@@ -4322,7 +4322,7 @@ struct Driving {
     wholes: HashMap<usize, Vec<Step>>,
 }
 
-struct Run<'a, 'b> {
+pub struct Run<'a, 'b> {
     prog: &'a Program,
     /// The run's connection; only its scope in a stratum run off the run's thread (`strand`, decision 0113).
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,

@@ -1,8 +1,6 @@
 //! Vue template expressions and regions, matching compiler-dom 3.5.43.
 
-#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::language::GrammarDialect;
-#[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 use crate::code_rule_dsl::embed::{self, host::{Host, HostNode}};
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};

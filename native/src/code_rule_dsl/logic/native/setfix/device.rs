@@ -116,8 +116,6 @@ enum TextOp {
     Replace { pattern: i64, with: i64, literal: bool },
 }
 
-/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
-/// the constants, into `d`'s keys `0..` as slots or constants.
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -147,6 +145,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
     })
 }
 
+/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
+/// the constants, into `d`'s keys `0..` as slots or constants.
 fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>, what: &str) -> Result<Kind, String> {
     let (mut cols, mut consts): (Vec<(Arc<InRel>, usize)>, Vec<i64>) = (Vec::new(), Vec::new());
     for (k, a) in keys.iter().enumerate() {

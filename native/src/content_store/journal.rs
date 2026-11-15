@@ -57,6 +57,8 @@ fn on_path(name: &str) -> Option<PathBuf> {
 /// The identity a cursor is of: an FSEvents id is of its volume; a Watchman clock names its own instance, so one
 /// identity serves (and keeps its cursors apart from FSEvents').
 pub fn volume(path: &Path) -> Option<[u8; 16]> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = path;
     match backend() {
         #[cfg(target_os = "macos")]
         Backend::FsEvents => fsevents::volume(path),
@@ -282,8 +284,8 @@ mod fsevents {
     const UTF8: u32 = 0x0800_0100;
     const NO_DEFER: u32 = 0x2;
     const FILE_EVENTS: u32 = 0x10;
-    // Events that say the journal lost track: rescan, dropped, ids wrapped, the root moved, a volume came or went.
-    const MUST_SCAN: u32 = 0x1;
+    // Events that say the journal lost track: dropped, ids wrapped, the root moved, a volume came or went. A rescan
+    // (`MustScanSubDirs`, 0x1) names its directory, which `since` reports changed as a whole.
     const LOST: u32 = 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
     const HISTORY_DONE: u32 = 0x10;
     /// How long a replay may wait for its cookie.
@@ -562,8 +564,7 @@ mod fsevents {
         let mut out: Vec<PathBuf> = Vec::new();
         {
             let seen = all[at].shared.seen.lock().unwrap_or_else(|e| e.into_inner());
-            for (id, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
-                let _ = id;
+            for (_, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
                 let path = Path::new(path.trim_end_matches('/'));
                 let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
                 let under = path.strip_prefix(real_root).map(|rest| if rest.as_os_str().is_empty() { root.clone() } else { root.join(rest) }).unwrap_or_else(|_| path.to_path_buf());
@@ -581,7 +582,6 @@ mod tests {
     use super::Since;
     use super::fsevents::next_epoch;
     use super::fsevents::since;
-    use std::path::PathBuf;
 
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):

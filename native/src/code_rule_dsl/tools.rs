@@ -263,20 +263,16 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
+    use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    run_program(path, program, &files, root, out, options)
+    run_program(program, &files, root, out, options)
 }
 
-/// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
+/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    path: &std::path::Path,
     program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
@@ -744,6 +740,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+    // Done as the library loaded, except where nothing runs then (the browser's build).
+    crate::install_store_functions();
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).

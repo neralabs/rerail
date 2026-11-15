@@ -643,20 +643,6 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
 }
 
-/// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
-/// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
-///
-/// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
-/// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
-/// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
-/// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
-/// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
-///
-/// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
-/// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
-/// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
-///
-/// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
 thread_local! {
     /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
     /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
@@ -675,6 +661,21 @@ pub fn pieces_together() -> usize {
     TOGETHER.with(std::cell::Cell::get)
 }
 
+/// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
+/// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
+///
+/// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
+/// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
+/// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
+/// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
+/// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
+///
+/// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
+/// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
+/// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
+///
+/// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
+///
 /// The sets of pieces it made into one component each.
 fn together(prog: &mut front::Program) -> usize {
     if std::env::var_os("RERAIL_PIECES_APART").is_some() {

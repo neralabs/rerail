@@ -21,9 +21,7 @@ pub mod code_rule_dsl {
     pub mod json;
     pub mod language;
     pub mod lines;
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;

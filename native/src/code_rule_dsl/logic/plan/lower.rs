@@ -89,7 +89,7 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
     let cols = columns_of(&domains);
     let mut out = prog.clone();
     out.rules.clear();
-    for (i, rule) in prog.rules.iter().enumerate() {
+    for rule in &prog.rules {
         if !rule.body.iter().any(|l| membership(l).is_some()) {
             out.rules.push(rule.clone());
             continue;

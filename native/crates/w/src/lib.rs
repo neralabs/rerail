@@ -24,7 +24,7 @@ pub mod code_rule_dsl {
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub mod facts_a;
-        #[path = "vtab"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "vtab")]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -89,7 +89,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         // eslint: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -101,9 +100,7 @@ pub mod code_rule_dsl {
         use serde::{Deserialize, Serialize};
     }
     pub mod literal;
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -118,7 +115,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -168,7 +164,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub mod suppress;
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[cfg(test)]
@@ -238,7 +233,7 @@ pub mod code_rule_dsl {
     pub mod violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod walks;
-    #[path = "waves"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "waves")]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod relational;

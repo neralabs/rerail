@@ -94,11 +94,9 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
-    #[path = "suppress"]
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
         #[allow(unused_imports)]
@@ -110,7 +108,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub mod typing;
-    #[path = "value"]
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]

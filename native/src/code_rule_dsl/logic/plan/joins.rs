@@ -379,7 +379,7 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>) {
 /// A search's context (decision 0203), handed down to it and read back by its caller: whether it is wide (exact up
 /// to `WIDE_GREEDY` joins, never the greedy order first), and its runners-up, best first.
 #[derive(Default)]
-pub(super) struct SearchCx {
+pub(in crate::code_rule_dsl) struct SearchCx {
     pub wide: bool,
     pub runners_up: Vec<(Vec<Step>, f64)>,
 }

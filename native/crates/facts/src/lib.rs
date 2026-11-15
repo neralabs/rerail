@@ -24,7 +24,6 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::lines;
     #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
@@ -76,7 +75,6 @@ pub mod code_rule_dsl {
     pub mod stats {
         pub mod identity;
     }
-    #[path = "suppress"]
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
         #[allow(unused_imports)]
@@ -87,7 +85,6 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tape;
     pub mod text;
     pub use rerail_lang::code_rule_dsl::tree;
-    #[path = "value"]
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]

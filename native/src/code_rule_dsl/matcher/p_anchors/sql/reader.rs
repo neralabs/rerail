@@ -5,7 +5,7 @@ use rusqlite::{Connection, Result, ffi};
 use std::{ffi::CStr, sync::Arc};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(super) enum Column {
+pub enum Column {
     Rec,
     Parent,
     Size,
