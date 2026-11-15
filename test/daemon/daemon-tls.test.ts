@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { promisify } from "node:util";
@@ -84,12 +84,17 @@ describe("TLS daemon", () => {
   const daemons: RerailDaemon[] = [];
   const fileHolders: ChildProcess[] = [];
   const originalRerailHome = process.env.RERAIL_HOME;
+  const originalNodeOptions = process.env.NODE_OPTIONS;
+  const originalExecPath = process.execPath;
 
   afterEach(async () => {
     await endHolders();
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
+    if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = originalNodeOptions;
+    process.execPath = originalExecPath;
     await removeFolder(root);
   });
 
@@ -181,6 +186,24 @@ Start-Sleep 60`;
     const held = once(holder.stdout!, "data").then(([chunk]) => String(chunk).trim());
     const ended = once(holder, "close").then(() => `it ended: ${said.trim()}`, (error: Error) => `it did not start: ${error.message}`);
     return await Promise.race([held, ended]);
+  }
+
+  /**
+   * Makes each Node process started from here on run `code` before its own script, as a busy machine, or a NODE_OPTIONS
+   * of the person's, delays its start; `afterEach` takes it away.
+   */
+  async function beforeEachNodeStart(code: string): Promise<void> {
+    const preload = join(root, "preload.cjs");
+    await writeFile(preload, code);
+    // In quotes NODE_OPTIONS reads a backslash as an escape; Node takes a Windows path with forward slashes.
+    process.env.NODE_OPTIONS = `${originalNodeOptions ?? ""} --require "${preload.replaceAll("\\", "/")}"`.trim();
+  }
+
+  /** What a start of `files` threw, and how long it took to throw it. */
+  async function refusal(files: { certFile: string; keyFile: string }, access: Parameters<typeof loadDaemonTls>[1]): Promise<{ error: unknown; ms: number }> {
+    const started = performance.now();
+    const error = await loadDaemonTls(files, access).then(() => undefined, (thrown: unknown) => thrown);
+    return { error, ms: performance.now() - started };
   }
 
   it.skipIf(process.platform === "win32")("refuses a private key other users may read, and reads one only its owner can", async () => {
@@ -320,6 +343,79 @@ Start-Sleep 60`;
       expect(performance.now() - started).toBeLessThan(5_000);
       await endHolders();
     }
+  }, 30_000);
+
+  it.skipIf(process.platform !== "win32")("serves this computer alone, as on a quiet machine, when the Node process that opens a key others can read first is slow to start", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // A Node start of 3 s, as a laptop busy with coding agents measured; the files themselves open at once.
+    await beforeEachNodeStart("Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);");
+    await expect(loadDaemonTls(files, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+  }, 30_000);
+
+  it.skipIf(process.platform !== "win32")("gives the open of a held key its whole wait from the moment a slow Node process begins it, then refuses as main does", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await beforeEachNodeStart("Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);");
+    const oplock = await holdOplock(files.keyFile);
+    if (oplock !== "held") skip(`PowerShell could not hold an oplock here: ${oplock}`);
+    const { error, ms } = await refusal(files, shared);
+    expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+    // Main's refusal and nothing more: the process began, and its open, not its start, ran out of time.
+    expect((error as Error).message).toBe(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only: icacls "${files.keyFile}" /inheritance:r /grant:r "${userInfo().username}:R"`);
+    // 3 s to start, then the 2 s an open gets; within the start's own bounds (10 s to start, 2 s to open), never the holder's 60 s.
+    expect(ms).toBeGreaterThanOrEqual(3_000 + 2_000);
+    expect(ms).toBeLessThan(10_000 + 2_000 + 1_000);
+  }, 30_000);
+
+  it.skipIf(process.platform !== "win32")("refuses as main does, saying why, and never opens a held key itself, when the Node process that would open it first cannot start or ends first", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    const oplock = await holdOplock(files.keyFile);
+    if (oplock !== "held") skip(`PowerShell could not hold an oplock here: ${oplock}`);
+    // A Node that is gone (spawn fails), and one that ends before its script runs. An open of the held key in the
+    // daemon itself would wait as long as the holder lives, and keep the daemon's process from exiting.
+    const cannotStart: [string, () => Promise<void>][] = [
+      ["could not start", async () => { process.execPath = join(root, "gone", "node.exe"); }],
+      ["ended (exit code 3) before it opened them", async () => { await beforeEachNodeStart("process.exit(3);"); }],
+    ];
+    for (const [why, prepare] of cannotStart) {
+      await prepare();
+      const { error, ms } = await refusal(files, shared);
+      process.execPath = originalExecPath;
+      expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+      expect((error as Error).message).toContain(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+      expect((error as Error).message).toContain(why);
+      expect(ms).toBeLessThan(5_000);
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform !== "win32")("refuses as main does, saying why, once the Node process that would open the key first has not begun within 10 s", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await beforeEachNodeStart("Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);");
+    const { error, ms } = await refusal(files, shared);
+    expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+    expect((error as Error).message).toContain(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+    expect((error as Error).message).toContain("did not start within 10 s");
+    expect(ms).toBeGreaterThanOrEqual(10_000);
+    expect(ms).toBeLessThan(10_000 + 2_000);
   }, 30_000);
 
   it("reads at most a mebibyte of a key others can read and of its certificate, so a huge file gets main's refusal at once", async () => {
