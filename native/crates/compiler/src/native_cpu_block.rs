@@ -3231,18 +3231,18 @@ fn needs_some(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, b
         });
     }
     let any = any.expect("a range");
+    // The lanes of the span alone, by their index: one compare, not each half's shifts.
+    let span8 = f.ins().ireduce(types::I8, span);
+    let span16 = f.ins().splat(types::I8X16, span8);
+    let index: Vec<u8> = (0..16).collect();
+    let index = f.func.dfg.constants.insert(index.into());
+    let index = f.ins().vconst(types::I8X16, index);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, span16);
+    let any = f.ins().band_not(any, past);
     let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), any);
     let w0 = f.ins().extractlane(wide, 0);
     let w1 = f.ins().extractlane(wide, 1);
-    // The lanes of the span alone.
-    let w0 = cut_to(f, w0, span);
-    let rest = f.ins().iadd_imm(span, -8);
-    let zero = f.ins().iconst(types::I64, 0);
-    let rest = f.ins().smax(rest, zero);
-    let w1 = cut_to(f, w1, rest);
-    let w1 = f.ins().select(rest, w1, zero);
-    let some = f.ins().bor(w0, w1);
-    some
+    f.ins().bor(w0, w1)
 }
 
 /// Whether the bytes `s + n.lo` on, `span` of them (64 at most), have one of `n`'s

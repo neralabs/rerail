@@ -1067,3 +1067,11 @@ tests: rr's guards are all ones the zeros make.
 |---|---|---|---|
 | Numbers | 272 | 246 | 107 |
 | Comments | 591 | 498 | 193 |
+
+## A short gate's span by lane (2026-11-15)
+
+`needs_some` cut a short token's vector of hits to its span by each
+64-bit half's shifts (about 12 instructions). It now compares the
+lanes' indexes with the span once, as `needs_wide` does. Numbers
+246→233 a token. A one-lane span fails
+`a_numbers_checks_are_at_its_token` and the engine's tapes.
