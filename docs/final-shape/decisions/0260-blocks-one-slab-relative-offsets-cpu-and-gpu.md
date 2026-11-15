@@ -1,6 +1,9 @@
-# 0260: Every structure is a block: one slab, relative offsets, the same bytes on CPU, GPU and disk
+# 0260: Everything lives in blocks: linear, relative offsets, the same bytes on CPU, GPU and disk
 
-Status: draft (2026-11-15), the target shape. Takes over decision 0259's stage 2: the journal is the first block
+Status: draft (2026-11-15), the target shape. §1–§6 are revised by decision 0266: a block is one of the
+engine's few big things (a program, a batch, a phase's facts, a run's outputs), with every structure nested
+inside it; a delta refers to its full version only; no checksums.
+Takes over decision 0259's stage 2: the journal is the first block
 written to a file. Generalises spec §20 (tape residency slabs) from tapes to every structure. Answers 0246's open
 question (one layer of regions and strings for program, module and output images): yes, and this is that layer.
 
@@ -60,40 +63,35 @@ first bit-compressed table is needed.
 
 ### 1. A block
 
-A block is one contiguous region whose length is a multiple of the page size and whose start is page-aligned. It
+A block is one contiguous, page-aligned region that holds one of the engine's big things whole (0266 §1). It
 holds:
 
-- a header: magic, format, kind, length, a state, a checksum, and the table of its regions (item width, item
-  count, offset), as the images' headers already hold;
-- regions of fixed-width items at aligned offsets;
-- no pointers: a reference inside a block is an offset or an index; a reference to another block is a block id
-  plus an offset.
+- a header: magic, format, kind, length, a state, and the base a delta refers to;
+- a description of its layout, and a root structure, below which every structure it holds is nested (0266 §2);
+- no pointers: a reference is relative to its own address, and only descriptors hold one; bulk data holds
+  indices (0266 §3).
 
-The images (tape, program, module, output) are blocks: they share one header and region layer
-(`blocks::Layout`), one strings form (bytes, ends, an optional linear hash table of 64-byte buckets) and one
-checked reader. That layer lives in the lowest crate both the store and logic use (`rerail-store`'s dependency,
+The images (program, module, output) become blocks, and tapes become structures nested in a batch's block. They
+share one layer (`rerail-blocks`, 0266 §4). That layer lives in the lowest crate both the store and logic use (`rerail-store`'s dependency,
 or a new `rerail-blocks`), so the store can write blocks too.
 
 ### 2. A pool
 
-Blocks are allocated from a pool of slabs (spec §20.2: page-sized, 64 MiB by default, an object past a slab gets a
-page-rounded mapping of its own). A slab is anonymous or file-backed. Small blocks are bump-allocated inside a
-slab at page alignment when they may go to a device, and at 16 bytes when they never will.
-
-On a device with shared memory, a slab is pinned by one no-copy buffer kept for its life (spec §20.4). Pinning is
-per slab, never per block, so it is rare. On a device with its own memory, a slab is transferred ahead of the
-kernels that read it, or demand-paged. The scheduler decides which, from the kernels' declared inputs.
+A run holds a handful of blocks, so each is a mapping of its own, anonymous or file-backed, reserved large and
+sparse until written (0266 §5). On a device with shared memory, a block is pinned by one no-copy buffer kept for
+its life (spec §20.4). On a device with its own memory, the subtrees a kernel reads are transferred ahead of it,
+or demand-paged. The scheduler decides which, from the kernels' declared inputs.
 
 ### 3. Mutable, then frozen
 
-A block is mutable while one writer fills it, then frozen: read-only, checksummed, and shareable by any number of
+A block is mutable while one writer fills it, then frozen: read-only and shareable by any number of
 readers and devices (MLDB's region states). A frozen block's length may shrink to what was written (truncation)
 before it freezes. Only a frozen block may be handed to another device or written to disk as a durable form.
 
 ### 4. References between blocks
 
-A block id is resolved to an address separately on each device: each device keeps a block table (id → its base on
-that device: a host address, a `gpuAddress`, or a buffer binding index). A kernel takes the table as an input. A
+A block refers to no other block, except that a delta names its full version (0266 §5). A kernel is given each
+block's base on its device, and the addresses of the structures it starts from, resolved at launch (0266 §6). A
 block never stores an address.
 
 ### 5. Structures
@@ -111,11 +109,11 @@ All of them are regions of fixed-width items:
 
 ### 6. Versions
 
-A structure with versions is a base block plus a chain of delta blocks. A delta holds what was added, and what was
-removed by id or hash. Ids are global to a chain, so a delta never renumbers its base.
+A block with versions is a full block plus at most one delta block, which names it. A delta holds what was added,
+and what was removed by row. Ids are numbered across the pair, so a delta never renumbers its base.
 
-Mutation costs O(delta). A chain is rolled up into a new base when its deltas reach a fraction of the base (the
-program image: half), or a depth (the output image: 8). The rolled-up base is a new block, and the old one is
+Mutation costs O(delta). A delta is rolled up into a new full block when it reaches a fraction of the base (the
+program image: half). The rolled-up base is a new block, and the old one is
 freed when its last reader goes.
 
 ### 7. Evaluation as kernels over blocks
@@ -134,11 +132,11 @@ tape's compressed frame.
 1. At a wave's start, the run allocates a file-backed mapped region (`MAP_SHARED`) in the store's journal
    directory, sized from the wave's estimate (sparse: unwritten pages cost nothing).
 2. The wave's writers, on CPU or GPU, write their rows into it at offsets they claim from the block's bump counter.
-3. At the wave's end, the block is truncated to its length, its header and checksum are written last, and it is
+3. At the wave's end, the block is truncated to its length, its header (state and length) is written last, and it is
    frozen. The OS writes the pages back to disk. There is no `fsync`: durability is not required, because the work
    can be redone (0024 §5).
 4. The store's writer maps the frozen block and applies it to SQLite in one transaction. A block whose header,
-   length or checksum does not check (partly written, or written back only in part before a crash) aborts that
+   or length does not check (partly written, or written back only in part before a crash) aborts that
    transaction. The wave is not applied and a later run makes its work again. A block left by a process that ended
    is applied or removed; it is never trusted unchecked.
 5. Memory ahead of the store reads the frozen block in place. The frames' snapshot and a queued write's `pending`
@@ -152,12 +150,12 @@ to rows one kind at a time into a spool file of its own design).
 
 Each step leaves the engine working and measured:
 
-1. **One block layer.** `blocks::Layout` (header, regions, strings, checksum, freeze), in a crate below the store.
+1. **One block layer.** `rerail-blocks` (0266: header, description, nested structures, freeze), in a crate below the store.
    The output image (0239) and the program image (0173) are ported onto it, with no format change beyond the
    shared header. The module image follows when 0246 is merged. Reading maps or views the bytes in place: the
    program image's copy into a `Vec<u128>` goes.
-2. **The pool.** Slabs from spec §20.2 for every block (anonymous and file-backed), MLDB's region states (the
-   forest's port, placed in the engine), a block table per device. Tapes' residency slabs become the pool's.
+2. **The pool.** A mapping per block (anonymous and file-backed), and MLDB's region states (the forest's port,
+   placed in the engine). Tapes' residency slabs become `Batch` blocks (0266 §1).
 3. **The journal block** (§8): first the frames (the largest writes; the snapshot reads the block), then memo
    entries, then tapes and sources, each removing its closure. Then the guard: no `write_back` queues a closure.
 4. **Facts as blocks.** The relations a wave hands to the next (today `Vec`-based `Rel`s and `Rows`) become blocks

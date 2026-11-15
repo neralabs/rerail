@@ -1,121 +1,132 @@
 # The engine's data structures
 
-A living catalogue: every structure the engine keeps, its form today, who reads it, and the block it becomes.
-Keep it current when a structure is added, changed, or moved onto a block.
+A living catalogue: every structure the engine keeps, its form today, and where it goes. Keep it current when a
+structure is added, changed, or moved into its block.
 
 ## Intro
 
-Decision 0260 says every structure becomes a block. A block is one page-aligned slab that uses relative offsets
-and no pointers, so the same bytes serve the CPU, a GPU and a file. Decision 0266 says how a block's layout is
-written down once, and how CPU code and GPU kernels then reach into it the same way.
+Decision 0266 puts the engine's data in a few big blocks, each one of the engine's meaningful things:
 
-This page lists what has to move. For each structure it gives:
+- a program;
+- a batch of documents;
+- a phase's facts;
+- a run's outputs;
+- a store's atoms;
+- a wave's journal.
 
-- **Today:** its current form, and where it lives;
-- **Readers:** who reads it: host threads, device kernels, the store on disk;
-- **Block:** its part kind and regions (0266 §4 names the region forms), or why it stays a Rust structure. A
-  part is one structure inside a block. Small parts with one lifetime share a block (0266 §2): a chunk's tapes,
-  a wave's writes, a run's outputs. Integer columns written below as `records<i64>` are `packed` per column
-  (0266 §6).
+Everything that belongs to a thing is nested inside its block, under one root, with a description of the layout
+in the block. For example, a relation's rows, its hash indexes and its statistics sit side by side in its phase's
+`Facts` block.
 
-A structure stays an ordinary Rust structure only when all three of these hold:
+This page lists, block by block, today's structures and where each one sits in its block. Each table has three
+columns:
 
-- no device reads it;
-- no file holds it;
-- no other run reads it.
+- **Today:** the structure, and where it lives;
+- **Readers:** who reads it: host threads, device kernels, the store;
+- **Place in the block:** its path from the root, in 0266 §2's notation.
 
-That covers plans while they are compiled, schedulers, sessions' bookkeeping, and tallies of a few numbers. It
-does not cover anything a kernel, a wave or the store reads.
+Then come the structures that stay Rust, and the gaps the survey found.
 
-Region forms used below (0266 §4): `items<T>` (a fixed-width array), `records<R>` (rows or columns, chosen by the
-writer), `strings` (bytes, ends and an optional hash), `csr` (offsets and ids), `hash<K,V>` (open-addressed
-buckets), `sorted<K>` (a sorted key array), `bits` (a bitset), `packed(w)` (integers at a width chosen at write),
-`links` (other blocks, by digest).
+Notation:
 
-## 1. Inputs: sources and syntax
+- `Vec<T>`, `Ptr<T>` and `Opt<T>` are references relative to their own address (0266 §3).
+- `IntTable` is MLDB's 16-byte inline integer table: bit-compressed, run-length or factored.
+- `StringTable` is MLDB's: an `IntTable` of offsets, and the text.
+- `HashTable<K,V>` is open-addressed buckets.
+- `Bits` is a bitset.
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| Source text | bytes read from the file, held per document; on Metal, copied into a residency slab | host lexers, Metal lexing passes | `Source`: `items<u8>`, the digest in the header. It is read in place, never copied into a second form. |
-| Tape | `crates/tape_format`: a header of offsets, aligned columns; held as `Vec<u8>`, or as zstd frames on disk | host matchers, native facts, Metal tape kernels (`metal_tape.metal`) | `Tape`: already in block form. Its header becomes the shared one: `code: items<u16>`, `size`/`off`/`tail: packed(w)`, `parent: items<u32>`, `strings`. Read in place, with no decoding (zstd on disk only). |
-| Tape residency view | `crates/metal/src/slabs.rs` `DocView` (96 bytes, `#[repr(C)]`), copied by hand as `DocView` in `metal_tape.metal`; `DocTable` per batch | Metal tape kernels | Gone as a hand-kept mirror: it is the tape block's header read through its `PartRef` (0266 §3). The batch's `DocTable` becomes `items<PartRef>`. |
-| Residency slabs | `crates/metal` `MappedBuffer::slab`: 64 MiB anonymous mappings, one no-copy `MTLBuffer` each, bump-allocated at 16 bytes | the Metal path | The pool's slabs (0260 §2). `Slabs { s0..s3 }` (four bindings) becomes the block table (0266 §3). |
-| Long texts | `syntax::LongTexts`: bound per run, an index by document key | the `text` functions in `setfix` | `strings` of the run's batch, reached by document key through `sorted<i64>` → index. |
-| Python batch, documents | `syntax::Batch`, `value/python_ast::Document`, `matcher/python_facts::Batch` (`BTreeMap<NodeRange, Vec<NodeFacts>>`) | host matchers, vtab `Source::python_batch` | `PyFacts`: `records<NodeFacts>` sorted by range, `strings`. The `BTreeMap` goes, replaced by `sorted<(u32,u32)>` over ranges. |
-| File digests | `[u8; 32]` per path, computed on the pool | the store, memo keys | `items<[u8;32]>` beside a `strings` of paths, in the run's manifest block. |
+## `Program`: a version of the program a run evaluates
 
-## 2. Strings and atoms
+| Today | Readers | Place in the block |
+|---|---|---|
+| Program image (`logic/program_image.rs`, 0173): 40 regions under a 16 + 24·R byte header; SQLite blobs copied into a `Vec<u128>` on open | planner, lowering, setfix | the root: `rules`, `declarations`, `facts`, `strata`: each a `Vec` of its structure, with `names: StringTable`. Read in place; the copy goes. |
+| Program versions (`program_image/version.rs`, 0241, 0244): base, view, overlay; folded at half | the same | a `Program` delta block naming its full block. An overlay's parent is always a base. |
+| Module image, linked library (`logic/rr/module_image.rs`, 0246) | lowering, the linker | `modules: Vec<Module>`: each module nested whole, with its `.about` relations. |
+| Packed transducer program: `ProgramRow`, `BlockStep` (MSL in `block_program.metal`), its encoders, struct text printed from Rust strings | interpreter, Cranelift, Metal | `transducers: Vec<Transducer>`, each with `programs: Vec<ProgramRow>`, `steps: Vec<BlockStep>` and `outs: IntTable`. The structs come from `structure!`. |
+| Compiled sets, prefilters, anchor postings (`compile/sets.rs`, `text/canon.rs`, `waves/relational/syntax/packed.rs`) | host and device matchers | `matchers: Vec<Matcher>`: DFA tables, set `Bits`, postings as an `IntTable` grouped by an `IntTable` of starts. |
+| Plan for a kernel: stratum specs, steps, slots | `setfix::open`, Metal strata | `strata[s].plan`: its steps and slots. `Placed` and `Fields` stay Rust while being planned. |
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| Atoms | `content_store/atoms.rs` `Interner`: stored segments read from SQLite (0111 §2), pending atoms back to back above `base`; `hash_str` the one hash | every run, the store's writer | A chain (0266 §6) of `Atoms` blocks: `strings` with the hash table. Each stored segment is a frozen block, and the pending tail is the open one. An id is global to the chain, so a delta never renumbers. |
-| Image strings | each image's own strings region (program, module, output) | host readers | The one `strings` form, shared by every kind (0260 §1). |
-| Output texts | `output::Rows.texts: Vec<Box<str>>` and `ids: HashMap<Box<str>, u32>` | the writer, findings | `strings` with its hash: the `HashMap` and the boxed strings go. |
+## `Batch`: a chunk of documents in flight
 
-## 3. Programs
+| Today | Readers | Place in the block |
+|---|---|---|
+| Source text, per document; copied into a residency slab on Metal | lexers, Metal lexing | `docs[d].source: Vec<u8>` |
+| Tape (`crates/tape_format`): a header of offsets, aligned columns | matchers, native facts, Metal tape kernels | `docs[d].tape: Tape`: `code: IntTable`, `size`, `off`, `tail`, `parent` (each an `IntTable`), `text: StringTable`. A tape is a structure, not a block. |
+| `DocView` (`crates/metal/src/slabs.rs`, 96 bytes) and its MSL copy; `DocTable`; `Slabs { s0..s3 }` | Metal tape kernels | Gone. The batch root's `docs: Vec<Doc>` is the table; a document's place is its index, and its tape is a nested structure. |
+| Long texts (`syntax::LongTexts`, an index by document key) | the `text` functions | `long: StringTable` and `long_by_key: HashTable<i64, u32>` |
+| Python facts (`matcher/python_facts::Batch`: `BTreeMap<NodeRange, Vec<NodeFacts>>`) | matchers, vtab | `docs[d].python: Vec<NodeFacts>`, sorted by range |
+| File digests | the store, memo keys | `docs[d].digest: [u8; 32]`, `paths: StringTable` |
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| Program image, versions | `logic/program_image.rs`, `program_image/version.rs` (0173, 0241, 0244): 40 regions, a 16 + 24·R byte header, a stack of base, view and overlay; SQLite blobs copied into a `Vec<u128>` on open | the planner, lowering, setfix | `Program`: the same regions under the shared header, mapped in place (the copy goes). Versions are a chain (base + overlays, folded at half). |
-| Module image, linked library | `logic/rr/module_image.rs` (0246): the program image format | lowering, the linker | `Program` blocks; the library is `links` to its modules. |
-| Plan structures | `Placed`, `Fields`, stratum specs: Rust trees | the planner, then `setfix::open` | They stay Rust while planned. What a kernel runs from them is a `Plan` block: `records<Step>`, `items<u32>` of slots, `links` to the programs. |
-| Packed transducer program | `crates/metal/src/block_program.metal` `ProgramRow`, `BlockStep` (MSL structs), the Rust encoders in `transducer/packed`; some structs printed from Rust strings (`metal_program_backend.rs`, `metal_register_codegen.rs`, `metal_label_patterns.rs`) | the interpreter, Cranelift, Metal | `Transducer`: `records<ProgramRow>`, `records<BlockStep>`, `items<u32>` outs. The structs are `item!`s (0266 §2), so the MSL is generated, not hand-copied or hand-printed. |
-| Compiled sets, prefilters, anchor postings | `transducer/packed/compile/sets.rs`, `text/canon.rs`, `waves/relational/syntax/packed.rs` | host and device matchers | `Matcher`: DFA tables `items<u16>`, set bitsets `bits`, postings `csr`. |
-| Generated tiers | `rerail-rr-aot`, Cranelift and MSL code | — | Code, not data. Its constants (tables) are `Matcher` blocks. |
-| Cost model | mldb bagged boosted trees on Metal | the planner (off its path) | `Forest`: trees in preorder with subtree sizes, `records<Node>`. Already flat in MLDB's form; it takes the shared header. |
+## `Facts`: a phase's relations, as a run derives them
 
-## 4. Facts inside a run
+| Today | Readers | Place in the block |
+|---|---|---|
+| `setfix::Rel`: `Rows` (segments `Arc<Vec<i64>>` plus a tail), `idx: Vec<Index>`, `pending: HashTable<u32>`, `sketches`, `dead: Vec<u64>`, `level: Vec<u32>`, `sorted`, `Lat`, `KeptStats` | setfix's joins, Metal strata | `relations[r]`: `columns: Vec<Column>` (each an `IntTable`; chunked while the block is open, contiguous once frozen), `indexes`, `pending: HashTable`, `dead: Opt<Bits>`, `levels: Opt<IntTable>`, `sorted: Vec<Run>`, `stats: Vec<ColumnStats>` (sketches and kept stats included), `lattice: Opt<Lattice>` |
+| `setfix::InRel`: rows, `idx: Mutex<HashMap<u64, Arc<Csr>>>`, `chains`, `view` | probes, Metal joins | a relation of the full `Facts` block (a kept or lower-stratum relation). Each index is in its `indexes`, built once per key. The `Mutex<HashMap>` goes. |
+| `setfix::Csr`: `table: HashTable<(u32,u32,u32)>`, `ids: Vec<u32>`, `order` | probes | `relations[r].indexes[i]`: `key: Vec<u16>`, `table: HashTable<u64, u32>`, `rows: IntTable` |
+| The extension's `InRel` (`native/extension/setfix.rs`) | the extension path | a relation, as above |
+| Metal join state: `metal_join::Batch`, `Resident`; `SortJob` (`accel/src/gpu/join.rs`, device pointers mirrored by hand) | Metal | The relations are read in place from the pinned block. `SortJob` becomes a `structure!`, and its pointers are paths resolved at launch (0266 §6). |
+| `accel`: `table.metal` codes and offsets, `closure.metal` CSR and bitsets, as positional buffers | `accel` kernels | relation columns and indexes, read in place through `kernel!` arguments |
+| Maintained runs: kept relations plus this run's changes (0077, 0083) | setfix, the session | a `Facts` delta block naming the kept full block: added rows, dead rows |
+| Kept statistics, sketches | the planner | `relations[r].stats` |
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| A relation being derived | `setfix::Rel`: `Rows` (frozen segments `Arc<Vec<i64>>` plus a tail), `idx: Vec<Index>`, `pending: HashTable<u32>`, `sketches`, `dead: Vec<u64>`, levels `Vec<u32>`, `Lat`, `KeptStats` | setfix's joins, the Metal strata (0095) | `Relation`: a chain. Each frozen segment is a block of `records<i64>` (columns or rows, 0266 §4); the tail is the open block. Beside them, `dead: bits` and `level: items<u32>` (when `leveled`), and `pending: hash<u32>`. `Sketch` and `KeptStats` stay Rust (a few numbers per column). |
-| An input relation | `setfix::InRel`: `rows`, `idx: Mutex<HashMap<u64, Arc<Csr>>>`, `chains: Vec<Index>`, `view` | setfix's probes, Metal joins | The same `Relation` block. Each index is a block of its own: `Index` (`csr` of ids by key, `hash<(u32,u32,u32)>`), linked from the relation by `links`. The `Mutex<HashMap>` becomes a block table entry, made once per key set. |
-| `Csr` index | `setfix::Csr`: `cols`, `table: HashTable<(u32,u32,u32)>`, `ids: Vec<u32>`, `order: OnceLock<Index>` | probes | `Index` (above). |
-| Native extension relations | `native/extension/setfix.rs` `InRel` (rows `Vec<i64>`) | the extension path | `Relation`. |
-| Vtab sources | `facts/vtab.rs` `Source`, `RowCells`, `RowStream`: an access interface over many producers | SQLite's virtual tables | It stays an interface. Its producers read blocks: `Source::row_at` over a `Relation` block is a slice read. |
-| Column maps, plan tables | `plan/table.rs` `ColMap<T>`, `Stats` | the planner | They stay Rust. |
-| Metal join state | `metal_join::Batch`, `Resident` (relations uploaded once per chunk); `accel/src/gpu/join.rs` `SortJob` (a struct of device pointers, mirrored by hand in MSL) | Metal | The relations are `Relation` blocks, resident by the pool. `SortJob` is an `item!` whose pointers are `PartRef`s (0266 §3). |
-| accel table and closure inputs | `table.metal` (`ushort` codes, `uint` offsets, `uint2` pairs), `closure.metal` (CSR `off`/`dst`, `R` bitsets) passed as positional buffers | accel kernels | `Codes`: `csr` over `items<u16>`; `Closure`: `csr` plus `bits`. Their kernels are declared with `kernel!` (0266 §5). |
-| SQL executor arenas | `sql_executor/component_loop/arena.rs` `Rows`/`Batch`, `temporal/cold_loop` `Rows<A>`/`Batch`, `work_graph/worker.rs` `Rows`, `reductions` `Batch` | the SQL executor | Not yet surveyed field by field. They take `Relation` when their path is ported. |
+## `Outputs`: a run's outputs
 
-## 5. Handed between runs and waves
+| Today | Readers | Place in the block |
+|---|---|---|
+| `plan/output.rs` `Rows`: `types`, `vals`, `texts`, `ids: HashMap`, `bare` | the outcome, sessions, the writer | `relations[r]`: the same `Relation` structure as `Facts`, plus `texts: StringTable` |
+| The output image stack (`outputs.rro`, overlays folded at depth 8) | sessions, findings | an `Outputs` full block and at most one delta |
+| Findings: rows of a `.violation`'s relation | the report | `relations[r]` of the violation relations |
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| A run's output rows | `plan/output.rs` `Rows`: `types`, `vals`, `texts`, `ids: HashMap`, `bare` (0239), shared by `Arc` | the outcome, a session's kept outputs, the writer | `Rows`: `items<u8>` types, `records<i64>` values, `strings`. It is the same kind as a frame's rows (below): one relation-rows block, not four types. |
-| Output image stack | `outputs.rro`: regions, strings, overlays folded at depth 8 | sessions, findings | A chain of `Output` blocks (already regions; takes the shared header). |
-| Memo entry | `corpus/memo.rs` `Entry`: `BTreeMap<String, (usize, Vec<i64>)>` and outputs `BTreeMap<String, (Vec<usize>, output::Rows)>`; stored as a `MemoBlob` image, decoded on a hit | the corpus run | `Memo`: `links` to `Rows` blocks by relation, named in a `strings`. A hit maps the blocks and decodes nothing. |
-| Frames | `content_store/frames.rs` `Rows { types, rows: Vec<i64>, n }`, `Rel`, `Stored`, `Retag`; stored as varint deltas (`Arc<Vec<u8>>`) | the store, maintained runs | `Rows` in memory. On disk, `packed(w)` columns (bit-compressed per column, MLDB's form) replace the varints, so a frame is read in place. |
-| Cross rows | `cross_rows` | the cross part | `Rows`. |
-| Quiet tally, report counts | `QuietTally`, `Report` | the report | They stay Rust. |
-| Wave writes | `write_back` closures per wave (0259 stage 1) | the store's writer | The journal block (0260 §8): a file-backed delta block, one region per kind of write. |
+## `Atoms`: a store's atoms
 
-## 6. The store
+| Today | Readers | Place in the block |
+|---|---|---|
+| `content_store/atoms.rs` `Interner`: stored segments read from SQLite, pending atoms above `base` | every run, the writer | full block: `text: StringTable`, `hash: HashTable<u64, u32>`. The pending atoms are its delta block. |
 
-| Structure | Today | Readers | Block |
-|---|---|---|---|
-| SQLite tables | the source of truth (writes may lag; memory may be ahead) | every run | They stay SQLite. Blobs in them are frozen blocks, byte for byte, so reading a blob maps or views it. |
-| Journal | 0260 §8 (planned) | the writer | `Journal`: a delta block in a file. |
+## `Journal`: a wave's writes (0260 §8)
 
-## 7. Device memory managers
+| Today | Readers | Place in the block |
+|---|---|---|
+| `write_back` closures per wave (0259 stage 1) | the store's writer | the block itself, in a file |
+| Frames (`content_store/frames.rs`: `Rows`, `Rel`, `Stored`, `Retag`; varint deltas in `Arc<Vec<u8>>`) | the store, maintained runs | `frames: Vec<Frame>`: each a relation subtree copied whole from `Facts`, plus its reads and digest |
+| Memo entries (`corpus/memo.rs` `Entry`: `BTreeMap`s of rows and outputs; a `MemoBlob` image, decoded on a hit) | the corpus run | `memo: Vec<MemoEntry>`: per document, its relation subtrees. A stored entry is this subtree's bytes, so a hit is one copy into `Facts`. |
+| Tapes, sources to store | the store | `tapes`: subtrees copied from the `Batch` |
 
-| Today | Block |
+## What stays Rust
+
+These stay ordinary Rust structures, because nothing but the host's control flow reads them: no kernel, no
+other run, and no file.
+
+- **Planning:** plans while being planned (`Placed`, `Fields`, `ColMap`, `Stats`), and the scheduler's and the
+  scoreboard's own state.
+- **Bookkeeping:** sessions' bookkeeping, tallies (`QuietTally`, `Report`), and options.
+- **Interfaces:** the vtab traits (`Source`, `RowCells`, `RowStream`). They are interfaces, and the sources
+  behind them read the blocks.
+- **SQLite:** its tables stay SQLite. A blob that holds a block's subtree holds its bytes as they are.
+
+Not yet surveyed field by field: the SQL executor's arenas (`sql_executor/component_loop/arena.rs`,
+`temporal/cold_loop`, `work_graph`, `reductions`).
+
+## Device memory
+
+| Today | In the block model |
 |---|---|
-| `accel/src/gpu/shared.rs`: a pool of power-of-two classes from 16 KiB; inputs copied when not page-aligned | One pool (0260 §2). Every block is page-aligned, so no input is copied. |
-| `crates/metal` `MappedBuffer`, `slabs.rs` (64 MiB slabs) | The same pool. |
-| MLDB's `memory_region.rs` (the forest's port): New/Allocated/Frozen/Zombie/Deleted, versioned handles | The pool's states (0266 §7). |
+| `accel/src/gpu/shared.rs`: power-of-two classes from 16 KiB; inputs copied when not page-aligned | Each block is a page-aligned mapping, pinned once, so no input is copied. Kernel scratch is a `Scratch` block per device, reused. |
+| `crates/metal` `MappedBuffer`, `slabs.rs` (64 MiB slabs) | The same: residency slabs become `Batch` blocks. |
+| MLDB's `memory_region.rs` (the forest's port): region states | The blocks' states: open, frozen, retired. |
 
-## Gaps this catalogue found
+## Gaps the survey found
 
-- **Hand-kept mirrors.** `DocView` is kept twice by hand (`slabs.rs` and `metal_tape.metal`), as are `SortJob`,
-  `ProgramRow` and `BlockStep`. Only 9 `static_assert(sizeof)` checks exist, and none checks a field's offset.
-- **Positional buffers.** Most kernels take positional `[[buffer(n)]]` arguments, up to 19 (`block_program.metal`
-  `block_batch_*`), and their Rust callers bind by index. Nothing checks the two sides against each other.
+- **Hand-kept mirrors.** `DocView` is kept by hand on both sides (`slabs.rs` and `metal_tape.metal`), as are
+  `SortJob`, `ProgramRow` and `BlockStep`. Only 9 `static_assert(sizeof)` checks exist, and none checks a field's
+  offset.
+- **Positional buffers.** Kernels take positional `[[buffer(n)]]` arguments, up to 19 (`block_batch_*`). Their
+  Rust callers bind by index, and nothing checks the two sides against each other.
 - **Duplicated accessors.** Each accessor is written twice, in MSL (`tape_size`, …) and in Rust
   (`tape/resident.rs`).
-- **Struct text printed from Rust strings.** `metal_program_backend.rs`, `metal_register_codegen.rs` and
-  `metal_label_patterns.rs` print MSL struct text from Rust strings.
-- **Four relation-rows types.** `frames::Rows`, `output::Rows`, `setfix::rows::Rows` and the memo entry's
-  `(usize, Vec<i64>)` all hold rows of typed `i64` columns. The `sql_executor` adds several more.
-- **Two device pools.** `accel` and `crates/metal` each manage device memory, with different classes.
-- **144 `#[repr(C)]` structs.** Those that cross to a device or a file become `item!`s. Host-only FFI ones stay.
+- **Struct text printed from Rust strings,** by three code generators.
+- **Four relation-rows types.** `frames::Rows`, `output::Rows`, `setfix::rows::Rows` and the memo entry's rows
+  all hold rows of typed `i64` columns. They become one `Relation` structure.
+- **Two device pools,** in `accel` and in `crates/metal`.
+- **144 `#[repr(C)]` structs.** Those that cross to a device or a file become `structure!`s.
