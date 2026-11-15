@@ -208,6 +208,11 @@ impl<'s> Lexer<'s> {
         Lexer { src, blocks: Blocks::of(src) }
     }
 
+    /// The text's first NUL, if it holds one: tree-sitter reads none, in a token or between them.
+    pub fn first_nul(&self) -> Option<usize> {
+        self.blocks.first_nul()
+    }
+
     #[inline(always)]
     fn at(&self, i: usize) -> u8 {
         self.src.get(i).copied().unwrap_or(0)
@@ -549,7 +554,6 @@ impl<'s> Lexer<'s> {
             match self.at(i) {
                 _ if i >= self.src.len() => return Err(Refusal::Lex(s as u32)),
                 c if c == q => return Ok(i + 1),
-                0 => return Err(Refusal::Lex(i as u32)),
                 b'\\' => i += if self.at(i + 1) == b'\r' && self.at(i + 2) == b'\n' { 3 } else { 2 },
                 b'\n' | b'\r' => return Err(Refusal::Lex(i as u32)),
                 _ => i += 1,
@@ -632,7 +636,6 @@ impl<'s> Lexer<'s> {
                     match self.at(i) {
                         _ if i >= self.src.len() => return Err(Refusal::Lex(at as u32)),
                         b'`' | b'\\' => return Ok((Piece::Chars, i)),
-                        0 => return Err(Refusal::Lex(i as u32)),
                         b'$' if self.at(i + 1) == b'{' => return Ok((Piece::Chars, i)),
                         _ => i += 1,
                     }
@@ -651,7 +654,7 @@ impl<'s> Lexer<'s> {
             i = self.blocks.regex_stop(i);
             match self.at(i) {
                 _ if i >= self.src.len() => return refuse,
-                b'\n' | 0 => return refuse,
+                b'\n' => return refuse,
                 b'\r' => i += 1,
                 b'\\' => {
                     if matches!(self.at(i + 1), b'\n') || i + 1 >= self.src.len() {

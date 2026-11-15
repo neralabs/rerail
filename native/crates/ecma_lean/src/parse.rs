@@ -300,6 +300,9 @@ struct P<'a> {
 /// `src` parsed in `dialect`.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
     let lx = Lexer::new(src);
+    if let Some(at) = lx.first_nul() {
+        return Err(Refusal::Lex(at as u32));
+    }
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -1198,7 +1201,8 @@ impl<'a> P<'a> {
         let n = self.peek_at(1);
         match n.kind {
             T::LBrace | T::LBracket => !n.nl || true,
-            T::Name => !matches!(n.word, w::IN | w::INSTANCEOF) || n.nl,
+            // `let` then an operator is a name's (`let in x`); TypeScript's `as` and `satisfies` too.
+            T::Name => !(matches!(n.word, w::IN | w::INSTANCEOF) || (self.ts && matches!(n.word, w::AS | w::SATISFIES))) || n.nl,
             _ => false,
         }
     }
@@ -1673,6 +1677,15 @@ impl<'a> P<'a> {
     /// A parameter's target: a pattern's, or the name `yield`, whose `identifier` in tree-sitter's
     /// tape holds the `yield` token.
     fn parameter_target(&mut self, s: Slot) -> R<K> {
+        // tree-sitter-typescript reads a word that may start an expression as that expression's,
+        // not a parameter's name (JavaScript's are its reserved words, `reserves`).
+        let t = self.tok();
+        if self.ts
+            && t.kind == T::Name
+            && matches!(t.word, w::FALSE | w::TRUE | w::NULL | w::SUPER | w::CLASS | w::FUNCTION | w::TYPEOF | w::IMPORT | w::VOID | w::DELETE | w::AWAIT)
+        {
+            return self.refuse();
+        }
         if self.is_word(w::YIELD) && matches!(self.peek_at(1).kind, T::Comma | T::RParen | T::Eq | T::Colon | T::Question) {
             let n = self.open_in(K::Identifier, s);
             self.leaf(K::TYield, f::NONE, C_NONE)?;
@@ -2180,6 +2193,10 @@ impl<'a> P<'a> {
     /// `import A = B.C;` (`import_alias`) and `import A = require("b");` (an `import_statement`).
     fn import_alias(&mut self, s: Slot) -> R<()> {
         if self.is_word_at(3, w::REQUIRE) && self.peek_at(4).kind == T::LParen {
+            // `export import A = require("b")` is no grammar's: an export's is `import_alias`.
+            if s.field == f::DECLARATION {
+                return self.refuse();
+            }
             let n = self.open_in(K::ImportStatement, s);
             self.tk(K::ImportStatement, K::TImport, f::NONE)?;
             let c = self.open(K::ImportRequireClause, f::NONE, C_NONE);

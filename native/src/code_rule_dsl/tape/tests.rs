@@ -2952,6 +2952,12 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         // A modifier at its line's end names the member, but `static` before a name and `get`.
         "class A {\n  public\n  m() {}\n  static\n  *g() {}\n  readonly\n  r: string\n}\n",
         "class B {\n  static\n  m() {}\n  get\n  n() {}\n  static\n  x = 1\n}\n",
+        // Modifiers in the grammar's order.
+        "abstract class A {\n  private static override readonly async m() {}\n  protected abstract override n(): void;\n  declare public static override readonly p: number;\n  private readonly abstract q: string;\n  accessor r = 1\n  constructor(public override readonly s: T) { super() }\n}\n",
+        // A `(` or `<` on a new line starts an object type's call signature.
+        "interface I {\n  a\n  (): T\n  b?\n  <U>(): U\n}\n",
+        // A reserved identifier before `in` is a computed name's expression, not a mapped type's.
+        "type M = { [type in K]: B; [string in K]?: C };\nlet b: bigint.A;\nfunction f(a?: number = 1) {}\n",
     ];
     let tsx = [
         "const C = <T,>(p: T) => <Table<T> rows={p} />;\n",
@@ -3008,12 +3014,46 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
         // has one behavior: tree-sitter's tape, or a refusal.
         let mut invalid = vec!["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2", "import {b} from"];
-        // A NUL in a string.
-        invalid.push("x = 'a\0b'\n");
+        // A NUL anywhere: tree-sitter reads none, in a token or between them.
+        invalid.extend(["x = 'a\0b'\n", "x = 1 // a\0b\n", "x = 1;\0\n"]);
         if dialect == Dialect::JavaScript {
             // tree-sitter-javascript's reserved words are no names; `yield` is no arrow's parameter
             // and takes no `/` after it.
             invalid.extend(["var var = 1;\n", "import { default } from 'a'\n", "x = yield => 1\n", "function* g() { yield / 2 }\n"]);
+        }
+        if dialect != Dialect::JavaScript {
+            invalid.extend([
+                // Modifiers out of the grammar's order, or twice.
+                "class A { public public a; }\n",
+                "class A { static public m() {} }\n",
+                "class A { override static m() {} }\n",
+                "abstract class A { abstract async m(); }\n",
+                "class A { static declare p: T; }\n",
+                "class A { declare m() {} }\n",
+                "class A { constructor(readonly public a: T) {} }\n",
+                "class A { a?!: T }\n",
+                // A `(` or `<` on a new line after a class member's name.
+                "class A {\n  a\n  () {}\n}\n",
+                "class A {\n  a\n  <T>() {}\n}\n",
+                // Words tree-sitter-typescript reads as their expressions' or operators'.
+                "function f(null: T) {}\n",
+                "x = (class) => 1\n",
+                "x = async (await) => 1\n",
+                "let as = 1;\n",
+                "let satisfies = 1;\n",
+                // No member of a predefined type, a literal's or `this`; `asserts` takes its name.
+                "let v: void.x;\n",
+                "let v: this.x;\n",
+                "function f(v: unknown): asserts {}\n",
+                "type M = { [type in keyof A]: B };\n",
+                // A pattern a function type's `(` reads as an object type.
+                "type F = ({ a: string }: O) => any;\n",
+                "type F = ([{ a: b }]: O) => any;\n",
+                // A default after `?` with no type; a rest parameter's default.
+                "function f(a? = 1) {}\n",
+                "class A { m(...a = 0) {} }\n",
+                "export import a = require('a');\n",
+            ]);
         }
         for invalid in invalid {
             assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
