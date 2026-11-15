@@ -3297,6 +3297,15 @@ fn java_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { String s = \"a\\n\\u0041\" + \"\" + \"\"\"\n  block \\\"\"\"\"; char c = '\\''; long n = 0x1FL + 017 + 0b1 + 1_000; double d = .5e-3 + 0x1.8p1; }\n",
         "module m.n { requires transitive a.b; exports c to d, e; opens f; uses g.H; provides i.J with k.L, m.N; }\n",
         "sealed interface S permits A {} non-sealed class A implements S { void f(A this) { a = b & c += 4; } }\n",
+
+        "\n",
+        "\u{feff}class A { void f(int i, A this) {} void g(A A.this) {} }\n",
+        "x = (byte) i++; y = (T)(Q) v++; z = (short)+ v--; w = (A & B) + c; v = (A & B) (c); u = -(byte) v++;\n",
+        "x = (a.b) + c; y = d + (a.b) + c; z = d * (a.b) + c; w = (a) + b + c; v = -(a.b) + c;\n",
+        "String @A [] @B [] x;\nObject c = new @J String [1] @B(5) [];\nvoid f(String [] @B [] a) {}\n",
+        "s = \"\"\"\n  /* \"c\" */ x\n  // \"d\"\n  /* e */ y\n\"\"\";\n",
+        "switch (x) { case A -> r -> r.m; case B, C -> (r) -> s -> t; case D -> r -> { }; };\n",
+        "x = switch (t) { case A -> r -> { f(); }; default -> 1; };\nclass _ {}\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Java).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3315,7 +3324,10 @@ fn java_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
     // one behavior: tree-sitter's tape, or a refusal.
-    for invalid in ["class A { void f( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void f() { a(b,); } }\n", "class A { char c = 'ab; }\n", "class A { void f() { x = 1 }\n"] {
+    for invalid in ["class A { void f( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void f() { a(b,); } }\n", "class A { char c = 'ab; }\n", "class A { void f() { x = 1 }\n",
+        "class A {\u{3000}}\n", "class A { // a\0b\n}\n", "class A { String s = \"a\0b\"; }\n", "class A { void f(int i, A A.this) {} }\n",
+        "class A { void _() {} }\n", "x = (A & B) ~c;\n", "switch (x) { default -> a; }.f();\n",
+    ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(java_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
