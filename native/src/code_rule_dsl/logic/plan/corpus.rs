@@ -7611,8 +7611,8 @@ fn run_observed(
     if durable.is_some() {
         let waited = crate::code_rule_dsl::logic::profile::span(|| "the store's writer, the run's last writes".into());
         // The run's atoms still pending, appended by the writer with its last writes: none pending, no job (a warm
-        // run makes no atom, decision 0211).
-        if store.atoms_handle().pending() {
+        // run makes no atom, decision 0211). Forked, none is wanted (`flush_wanted`).
+        if store.atoms_handle().flush_wanted() {
             store.queue_atoms_flush();
         }
         let drain = std::time::Instant::now();

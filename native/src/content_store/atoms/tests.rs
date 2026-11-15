@@ -694,3 +694,26 @@ fn a_run_mapped_from_its_end_keeps_one_id_a_string_and_stores_none_twice() {
     assert_eq!(segments(&path), [(0, 1), (1, 3), (4, 1)]);
     assert_eq!(handle.stored(&[5, 4, 1]).unwrap(), [Some(4), Some(3), Some(1)]);
 }
+
+/// A run mapped from its end (decision 0170) holds strings under ids of its own: one the store has but this process
+/// did not read, and one the store lacks. Both are pending until a write's rows name them, and that write maps them
+/// (`to_store`). So nothing queues a write for them: not the run's end, not the store's close. The close stored the
+/// new string, and the run's end queued a writer job that found the other already stored.
+#[test]
+fn a_forked_processs_unnamed_atoms_queue_no_write() {
+    let path = path("forked-unnamed");
+    let store = ContentStore::open(&path).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO atom_segment(first, ends, bytes) VALUES (1, x'010000000200000003000000', CAST('abc' AS BLOB))", [])
+        .unwrap();
+    let handle = store.atoms_handle();
+    handle.read_stored().unwrap();
+    handle.map_from_end();
+    store.intern_atoms(&["c", "d"]).unwrap();
+    assert!(handle.pending(), "neither has a store id");
+    assert!(!handle.flush_wanted(), "and no write needs one");
+    drop(store);
+    drop(handle);
+    assert_eq!(segments(&path), [(0, 1), (1, 3)], "nothing stored at the close");
+}
