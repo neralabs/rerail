@@ -691,3 +691,22 @@ ported, over the targeted tests and dl1.
     the engine's pre-commit filters and the corpus tests, then removed; logic `plan::`; dl1 (alternately with the
     baseline engine, load about 50 to 110): the same 48 findings cold and warm; cold 46.2 and 49.0 G instructions
     against 49.1 and 50.1 G, warm 2.7 G on both.
+
+- **Item 7, step 9, E2 and E3 in part: done** (2026-11-15). The run's edits that keep a part's rules by relation are
+  parts of its version (`file_local::part_as`: a view and its fields overlaid, decision 0244), and so is the session's
+  cut; the edits of fields alone are overlays of those fields.
+  - The cross memo's split (the cross part less the components' rules and natives, its outputs less theirs), the
+    run's constants (each part less their rules, with them as inputs; their own program the file-local part's cone),
+    and the session's cut (`Cut::program`: the clean strata's rules and natives out, gates when nothing runs, the
+    inputs and outputs) are made by `part_as` of the part's version.
+  - The deltas' inputs of the cut (their declarations, nullary relations and the inputs) and the session's
+    qualifiers (`levels`, `no_inline`: `requalified`, `Builder::set_qualifiers`) are overlays of those fields.
+  - Still trees, their runs making the image of the tree, as before: the cone of requests (`answers::split` and
+    `gate` rewrite rules), the cross memo's `keep_copies` and `drop_guards` (rules rewritten), `supports` and
+    `maintained_cross` (every rule rewritten through a support), and `maintain::rewrite`'s maintained program. Each
+    rewrites rules, which a part (a view and its fields) does not hold: they are derivations of the part's version
+    (decision 0241's form), not edits of it, and are the rest of step 9.
+  - Checked: the temporary oracle again (each part's version the image of its tree), its path taken 152 times in the
+    `edit` filter, 823 in `session`, 3 in `cross_memo`, 23 in `constants`, over the same filters and the corpus tests,
+    then removed; dl1: the same 48 findings cold and warm; cold 44.0 and 42.9 G against the baseline's 45.2 and
+    45.4 G, warm 2.7 G on both (load about 60).

@@ -466,6 +466,16 @@ impl Builder<'_> {
         let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
         self.set_about_rows("qualifier", rows);
     }
+    /// States the qualifiers (`Program::qualifiers`): each (relation, word), in order of relation then word, each once,
+    /// as the tree's map of sets. Replaces the program's.
+    pub fn set_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+        let p = program_cell(self);
+        let mut pairs: Vec<(&str, &str)> = words.iter().map(|(r, w)| (r.as_ref(), w.as_ref())).collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
+        self.set_about_rows("qualifier", rows);
+    }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.
     pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {

@@ -792,6 +792,24 @@ pub struct Programs {
     pub versions: Option<Parts>,
 }
 
+/// `tree`, an edit of `v`'s program that keeps its rules by head relation (in order), its natives, lattices and gates
+/// by relation (gates by key), and states its inputs and outputs, as a part of `v` (`Version::part`, decision 0244):
+/// a view of `v`, its fields overlaid. Its declarations, facts and other fields must be `v`'s. `None` where the rules
+/// `tree` holds are not those `v` has of its heads (another edit).
+pub fn part_as(
+    v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    tree: &crate::code_rule_dsl::logic::front::Program,
+) -> Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::program_image::PartFields;
+    let heads: std::collections::BTreeSet<&str> = tree.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let natives = |rel: &str| tree.natives.contains_key(rel);
+    let lattice = |rel: &str| tree.lattice.contains_key(rel);
+    let gates = |key: &str| tree.gates.iter().any(|(k, _)| k == key);
+    let rules = |rel: &str| heads.contains(rel);
+    let part = v.part(rules, &tree.inputs, &tree.outputs, PartFields { natives: &natives, lattice: &lattice, gates: &gates }).ok()?;
+    (part.size() == tree.rules.len()).then_some(part)
+}
+
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
 #[derive(Clone)]
 pub struct Parts {

@@ -2925,8 +2925,10 @@ fn run_observed(
     let (mut local_version, mut cross_version) = split.versions.take().map_or((None, None), |p| (Some(p.local), Some(p.cross)));
     let cross_plan = match &cross_declared {
         Some(declared) => {
-            cross_version = None;
-            cross_memo::split(&mut split.cross, declared, &cross_digest, &split.same_doc)?
+            let plan = cross_memo::split(&mut split.cross, declared, &cross_digest, &split.same_doc)?;
+            // The split keeps the cross part's rules and natives by relation, and its outputs less the components'.
+            cross_version = cross_version.and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(&v, &split.cross));
+            plan
         }
         None => None,
     };
@@ -3086,19 +3088,21 @@ fn run_observed(
             p.gates.retain(|(rel, _)| cone.contains(rel));
             p.lattice.retain(|rel, _| cone.contains(rel));
             p.outputs = once.iter().cloned().collect();
-            (local.version, cross.version) = (None, None);
-            for part in [&mut local.program, &mut cross.program] {
-                part.rules.retain(|r| !once.contains(r.head.rel.as_str()));
+            // Each a part of the file-local part's version: rules, gates and lattices kept by relation (decision 0244).
+            let p_version = local.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &p));
+            for part in [&mut local, &mut cross] {
+                part.program.rules.retain(|r| !once.contains(r.head.rel.as_str()));
                 for rel in &once {
-                    if !part.inputs.contains(rel) {
-                        part.inputs.push(rel.clone());
+                    if !part.program.inputs.contains(rel) {
+                        part.program.inputs.push(rel.clone());
                     }
                 }
+                part.version = part.version.take().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(&v, &part.program));
             }
             crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
                 format!("{} relations derived once, before the chunks, and bound beside the exports: {}", once.len(), once.iter().cloned().collect::<Vec<_>>().join(", "))
             });
-            (part(p, None), once.into_iter().collect())
+            (part(p, p_version), once.into_iter().collect())
         })
     };
     crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.local, &local.program);
@@ -6631,6 +6635,24 @@ fn run_observed(
                             }
                             given_rels.insert(rel.clone());
                         }
+                        // The deltas' inputs over the cut's version (decision 0244): their declarations, the relations
+                        // of no columns among them, and the inputs, an overlay of fields.
+                        part.version = part.version.take().and_then(|v| {
+                            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
+                            let mut nullary = Vec::new();
+                            for (name, ..) in &sources {
+                                if let Some(d) = part.program.decls.get(name.as_str()) {
+                                    let cols: Vec<(&str, &str)> = d.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                                    b.declare(name, &cols);
+                                }
+                                if part.program.nullary.contains(name.as_str()) {
+                                    nullary.push(name.as_str());
+                                }
+                            }
+                            b.add_nullary(&nullary);
+                            b.set_inputs(&part.program.inputs);
+                            b.finish_overlay().ok()
+                        });
                         maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
                     } else {
                         maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
@@ -6640,6 +6662,7 @@ fn run_observed(
                         for rel in program.rules.iter().map(|r| r.head.rel.clone()).collect::<BTreeSet<_>>() {
                             program.qualifiers.entry(rel.to_string()).or_default().insert("levels".to_owned());
                         }
+                        requalified(&mut maintained.program);
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_owners} inputs' deltas kept beside them; {from_entries} read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
@@ -6667,6 +6690,7 @@ fn run_observed(
                             q.remove("inline");
                             q.insert("no_inline".to_owned());
                         }
+                        requalified(&mut maintained.program);
                     }
                     // RERAIL_DUMP_MAINTAINED=<file>: the maintained program's rules, appended each run (a debugging aid).
                     if let Ok(path) = std::env::var("RERAIL_DUMP_MAINTAINED") {
@@ -9311,6 +9335,17 @@ impl super::Asking for Posting<'_> {
 /// The queued write of a root's stats: the next run of this process reads them once they are written.
 fn stats_key(root: &str) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
+}
+
+/// `part`'s version, its qualifiers stated as its tree's (an overlay of that field, decision 0244), after the run
+/// edits the tree's qualifiers.
+fn requalified(part: &mut lower::Lowered) {
+    part.version = part.version.take().and_then(|v| {
+        let words: Vec<(&str, &str)> = part.program.qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
+        b.set_qualifiers(&words);
+        b.finish_overlay().ok()
+    });
 }
 
 /// The cross-file part as a run that keeps it maintains it (decision 0077): each derived relation stored, not

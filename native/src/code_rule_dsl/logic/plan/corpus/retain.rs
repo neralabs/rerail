@@ -347,7 +347,9 @@ impl Cut {
         }
         program.outputs.retain(|o| !self.clean.contains(o));
         crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        lower::Lowered { program, version: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
+        // A part of the cross part's version, where it has one (decision 0244): rules and natives kept by relation.
+        let version = cross.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &program));
+        lower::Lowered { program, version, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
