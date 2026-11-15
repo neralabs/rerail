@@ -5189,7 +5189,14 @@ depends on its own document alone.
 
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
-Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
+Status: closed by 0267 (2026-11-15). There were two causes. First, every climb (`inside`, `has`, a nearest
+over a derived set) was cross-file, because the tape's parent column had no location. So `PSE_AUDIT_010`'s
+clause was one join over every file, on one worker. Second, a trial cut at its budget was kept as a measure:
+an order priced at 12.7 M rows of work and cut at 7,601 got a ratio of 0.0006, and as the corrected least it
+ran `pre_570` for 22 s. Over 50 files cold the pack now takes 21.9 s of CPU (it took 100), with the same 75
+rows as `RERAIL_JOINS=off`.
+
+Was open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
 against 8.6 s over 10 (15.6× the lines), and the run's last part is a single `run_seed` →
 `run_join_in_each` on one stream worker while the others wait. Warm, the same evaluation's joins are 5.8 s
 in all. Next: one cold run with `RERAIL_STRATA_TRACE` to name the stratum, then its plan cold against warm

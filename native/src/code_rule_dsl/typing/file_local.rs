@@ -491,8 +491,14 @@ fn base_locations(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str)
     if rel == "docof" && !columns.contains(&1) {
         columns.push(1);
     }
-    if rel == "docof" {
-        columns.push(1);
+    // The tape's `tape(n, par, size, depth)` (the climbs' parent column, lower.rs `need_tape`) is declared over
+    // numbers, but a node's parent is a node of its document: both are locations (O-cold-seed-join).
+    if rel == "tape" {
+        for column in [0, 1] {
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
     }
     columns
 }

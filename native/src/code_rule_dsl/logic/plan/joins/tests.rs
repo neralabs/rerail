@@ -192,11 +192,37 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     flag_slow(500, 1, 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
     let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
-    put_tried(500, 1, &order, 4.0);
-    put_tried(500, 1, &order, 16.0);
+    put_tried(500, 1, &order, 4.0, false);
+    put_tried(500, 1, &order, 16.0, false);
     let n = note(&500).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&order)).expect("tried");
     assert!((t.ratio - 8.0).abs() < 1e-9 && t.runs == 2, "a geometric mean over trials: {t:?}");
+    clear();
+}
+
+/// A trial cut at its budget measured a floor of its work (O-cold-seed-join): under its price it says nothing, and
+/// the order keeps its price; over it, it raises the order's ratio, never lowers it.
+#[test]
+fn a_cut_trial_is_a_floor_of_its_ratio() {
+    let _serial = SERIAL.lock();
+    clear();
+    let cheap = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let dear = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
+    // The trials over a sample (pre_570's at 35 files): the running order 3,736 rows of work against its price of
+    // 1,718; the dear one cut at 7,601 against 12.7 M.
+    put_tried(501, 1, &cheap, 3_736.0 / 1_718.0, false);
+    put_tried(501, 1, &dear, 7_601.0 / 12_723_043.0, true);
+    let n = note(&501).unwrap();
+    assert!(n.tried.iter().all(|t| t.order != steps(&dear)), "a floor under the price is not a measure: {:?}", n.tried);
+    // The line's choice over its rows left, priced a hundred times apart.
+    let mut round = vec![Choice { key: 501, candidates: vec![Candidate { order: cheap.clone(), est: 10_000.0 }, Candidate { order: dear.clone(), est: 1_000_000.0 }], chosen: 0, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 0, "the dear order is not made the least by its cut trial");
+    put_tried(501, 1, &cheap, 3.0, true);
+    put_tried(501, 1, &cheap, 2.0, true);
+    let n = note(&501).unwrap();
+    let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
+    assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
     clear();
 }
 

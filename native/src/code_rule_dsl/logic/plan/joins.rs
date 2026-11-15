@@ -82,11 +82,24 @@ pub(super) fn take_trial(key: PlanKey) -> bool {
 }
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
-pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
+///
+/// A trial `cut` at its budget measured a floor of its work, not its work: the order costs that ratio or more. A
+/// floor over 1 raises the order's ratio to it, and one under 1 says nothing, so it is not kept. Kept as a measure,
+/// an order priced at 12.7 M rows and cut at 7,601 had a ratio of 0.0006, which made it the corrected least, and it
+/// ran a 35-file data-layer stratum for 22 s that the planner's own order ran in 6 ms (O-cold-seed-join).
+pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64, cut: bool) {
     COUNTS[TRIALS].fetch_add(1, Relaxed);
+    let ratio = ratio.clamp(1e-6, 1e9);
+    if cut && ratio <= 1.0 {
+        return;
+    }
     let mut m = MEMO.write();
     let n = noted_mut(&mut m, key, rule);
-    merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9));
+    let order = steps(order);
+    match n.tried.iter_mut().find(|t| t.order == order) {
+        Some(t) if cut => t.ratio = t.ratio.max(ratio),
+        _ => merge_tried(n, order, ratio),
+    }
 }
 
 fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64) {

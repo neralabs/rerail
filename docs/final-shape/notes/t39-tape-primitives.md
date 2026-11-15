@@ -1379,6 +1379,8 @@ data-layer pack's cold cost is 4–6 ms of CPU a line, the python pack's 1.3. At
 part of the cold run is one seed join on one worker while the others wait (`sample`; the stack
 does not name the stratum), and no join stands out at 10 files: a stratum that grows faster than
 linearly cold, likely planned without the statistics a warm run has (O-cold-seed-join).
+That guess was wrong (0267): every climb ran cross-file, and a cut trial was kept as a measure.
+With both fixed, the data-layer 50 files take 21.9 s of CPU cold, and the python 50 take 16.8.
 
 **Static composition** (`static.py`: per rule, with the library files it includes).
 

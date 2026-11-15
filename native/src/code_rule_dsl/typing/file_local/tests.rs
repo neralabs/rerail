@@ -326,6 +326,22 @@ hit(n, l) :- pick(n), line(n, l).
     }
 }
 
+/// A climb up the tree (`inside`, `has`, a nearest over a derived set: lower.rs `climb`) reads the tape's parent
+/// column, which `need_tape` declares over numbers. A node's parent is in its document, so the climb is file-local:
+/// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).
+#[test]
+fn a_climb_over_the_tapes_parent_column_is_file_local() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl kind(n: node, k: number)\n.input kind\n.decl tape(n: int, par: int, size: int, depth: int)\n.input tape\n\
+        .decl stop(n: node)\nstop(n) :- kind(n, 7).\n\
+        .decl up(n: node, a: int)\nup(n, p) :- kind(n, 3), tape(n, p, _, _), p >= 0.\nup(n, q) :- up(n, p), !stop(p), tape(p, q, _, _), q >= 0.\n\
+        .decl under(n: node)\nunder(n) :- up(n, a), stop(a).\n.output under\n";
+    let program = parse(text).unwrap();
+    let (local, locations, _) = split_located(&program);
+    assert!(local.contains("up") && local.contains("under"), "{local:?}");
+    assert!(locations["up"].contains(&0), "{locations:?}");
+}
+
 /// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
