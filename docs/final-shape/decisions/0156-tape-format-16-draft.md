@@ -570,7 +570,9 @@ keeps the same bits.
   has no cutoff. Every repeat keeps its bytes. The numbering is fixed a language and format
   version. With them the all-byte form takes about 4.57 B a node in memory and 1.88 on disk on
   Python. (E20's overloading by the previous byte, through a 128 KiB table a language, took fewer
-  escapes but sent 1–3% of reads to the table, for no faster reads.)
+  escapes but sent 1–3% of reads to the table, for no faster reads.) The field stays in the code
+  (E22, step 14): without it the base fits in 8 bits, but the field then needs the parent and the
+  child's index, a table of 5–20 KiB, and 3–6× the read, for 7–12% less disk.
 - **At rest, with random access.** Fixed blocks of N nodes, each a 4-byte index entry naming a
   repeat (in the file, or a pool), raw bytes, or one LZ4 block over the language's dictionary (E19,
   step 11): one decode a read, 1–5% over whole arrays at N = 4,096, 4–11% at 1,024, 14–23% at 256

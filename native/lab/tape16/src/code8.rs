@@ -589,6 +589,12 @@ pub fn rank_numbers(ncodes: usize, train: &[&Cols]) -> Vec<u32> {
             freq[k as usize] += 1;
         }
     }
+    numbers_by(&freq)
+}
+
+/// Ids numbered by `freq`, most frequent first (ties in id order).
+pub fn numbers_by(freq: &[u64]) -> Vec<u32> {
+    let ncodes = freq.len();
     let mut order: Vec<usize> = (0..ncodes).collect();
     order.sort_by_key(|&k| (std::cmp::Reverse(freq[k]), k));
     let mut num = vec![0u32; ncodes];
@@ -601,17 +607,22 @@ pub fn rank_numbers(ncodes: usize, train: &[&Cols]) -> Vec<u32> {
 impl Rank8 {
     /// `cut` bytes stand for themselves; the rest (256 - cut) are prefixes sharing the remaining numbers.
     pub fn new(c: &Cols, num: &[u32], cut: u32) -> Rank8 {
+        let ids: Vec<u32> = c.code.iter().map(|&k| k as u32).collect();
+        Rank8::of_ids(&ids, num, cut)
+    }
+    /// The same over any id column (`num` numbers the ids).
+    pub fn of_ids(ids: &[u32], num: &[u32], cut: u32) -> Rank8 {
         let ncodes = num.len() as u32;
         let cut = if ncodes <= 256 { 256 } else { cut };
         let per = if cut >= 256 { 1 } else { (ncodes - cut).div_ceil(256 - cut) };
         assert!(per <= 256, "{ncodes} codes do not fit a cutoff of {cut}");
-        let n = c.len();
+        let n = ids.len();
         let blocks = n.div_ceil(BLOCK);
         let mut bytes = vec![0u8; n];
         let mut start = vec![0u32; blocks + 1];
         let (mut off, mut low) = (Vec::new(), Vec::new());
         for i in 0..n {
-            let r = num[c.code[i] as usize];
+            let r = num[ids[i] as usize];
             if r < cut {
                 bytes[i] = r as u8;
             } else {

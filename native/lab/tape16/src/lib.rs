@@ -18,6 +18,7 @@ pub mod base;
 pub mod blocks;
 pub mod capture;
 pub mod code8;
+pub mod nofield;
 pub mod codec;
 pub mod disk;
 pub mod edits;

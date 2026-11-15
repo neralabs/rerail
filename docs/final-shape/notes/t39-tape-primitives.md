@@ -876,6 +876,64 @@ Every node decodes right, on every corpus and cutoff. Timings from one run on th
   values (step 12), so all but Rust would fit below 255 with no side list. That needs the field
   stored or derived elsewhere; not measured.
 
+### Step 14: the field taken out of the code (E22)
+
+Step 13 left a tail because the field multiplies the codes (391–494 with it). Without the field, a
+node's base (kind, flags, supertypes) takes 183–268 values. E22 (`tape16 nofield`,
+`src/nofield.rs`) stores the base as step 13 stores the code, numbered by frequency with the
+cutoff 255. It then predicts the field from a context, and lists each node the prediction gets
+wrong in its block's side list (offset, field).
+
+- The contexts, each with the node's own base: none; the previous byte (free to read); the
+  parent's base; the parent's and the previous sibling's bases; the parent's base and the child's
+  index; and the parent's base and the index without the node's own base (a direct 4 KiB table).
+- Each prediction is the most frequent field its context had on the even files. Misses are counted
+  on the odd ones.
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript |
+|---|---|---|---|---|
+| bases (codes) | 199 (440) | 183 (391) | 268 (494) | 254 (469) |
+| nodes with a field; nodes on a base seen with two fields or more | 45%; 66% | 43%; 61% | 54%; 62% | 44%; 51% |
+| nodes past the cutoff: bases / codes (step 13) | 0.00% / 0.36% | 0.00% / 0.73% | 0.00% / 1.10% | 0.00% / 1.12% |
+| field missed, by the base alone | 27.3% | 21.9% | 23.7% | 16.0% |
+| by the previous byte | 2.76% | 3.19% | 2.21% | 1.72% |
+| by the parent's base | 1.11% | 1.71% | 2.39% | 0.60% |
+| by the parent's and previous sibling's bases | 0.05% | 0.72% | 0.09% | 0.22% |
+| by the parent's base and the child's index | 0.03% | 0.41% | 0.09% | 0.10% |
+| by the parent's base and the index alone (4 KiB direct) | 1.29% | 0.76% | 2.68% | 1.68% |
+| (parent, index, base) table, KiB (hash, at most half full) | 10.2 | 5.2 | 20.3 | 5.2 |
+| memory, B a node: parent and index / step 13 | 1.038 / 1.026 | 1.051 / 1.036 | 1.036 / 1.039 | 1.040 / 1.041 |
+| on disk, zstd + dictionary: parent and sibling / step 13 | 0.226 / 0.243 | 0.330 / 0.364 | 0.285 / 0.323 | 0.263 / 0.293 |
+| read at random, ns (M3): the base / step 13's code | 0.49 / 0.59 | 0.50 / 0.57 | 0.50 / 0.61 | 0.49 / 0.58 |
+| a child's field from its parent, at random, ns (M3): step 13 / hash table / direct | 1.45 / 4.5 / 8.7 | (noisy) | 1.59 / 6.7 / 8.7 | 1.61 / 4.6 / 5.7 |
+
+Every node decodes right. The M3 ran at load 28 (another session's engine run); the rerail Python
+reads were too noisy to use, and the field timings vary by ±30%.
+
+- **The base fits in 8 bits for every language, with no tail**, and reads 12–18% faster than step
+  13's code (one compare that never fails).
+- **The field needs the parent.** The base alone misses 16–27% of fields: half or more of the
+  nodes sit on a base seen with several fields. The previous byte, which is free, still misses
+  1.7–3.2%. The parent's base and the child's index miss 0.03–0.41%, but a read must have both.
+  Going down from a parent it has them. Going up (a node's own field) it pays a parent read
+  (4–13 ns, step 9) and a sibling count.
+- **The field then costs 3–6× step 13's**, even going down: 4–9 ns at random against 1.5. Step
+  13 reads the field from the code by a 512-byte table.
+  - **The hash table:** 5–20 KiB, the L1 footprint step 13 removed, plus collisions the first probe
+    cannot decide without a branch.
+  - **The direct [parent][index] table:** 4 KiB, but it misses 0.8–2.7%.
+- **Unmarked misses tax every read.** Step 13's tail is marked by its prefix byte, so no other read
+  looks at the side list. A field miss is not marked. Once a context misses more than about one
+  node in 256, most blocks list one, and every read in them pays the search: the check alone takes
+  1.4–6.7 ns at 0.8–2.7% misses.
+- **Disk is 7–12% smaller and memory level.** The misses of the parent-and-sibling context
+  compress better than the field held in every code.
+- **A rule's (kind, field) test** is one byte compare in step 13. Here it compares the base, then
+  derives the field for every candidate.
+- **The field stays in the code.** Taking it out ends a 0.4–1.1% tail that step 13 already reads
+  without a table. In exchange the field needs the parent, a table in L1, and a search the tail
+  never paid. Only disk gains.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1044,3 +1102,6 @@ In order. Each step is measured on all three corpora, every answer checked.
     below it, a prefix and the block's side list past it; 0.36–1.12% of nodes past it, no table,
     reads level with step 12 or faster, memory and disk within a few percent. Replaces step 12's
     tables in 0156.
+14. **The field out of the code (E22).** Done: the base fits in 8 bits with no tail, but the field then
+    needs the parent's base and the child's index (0.03–0.41% misses), a 5–20 KiB table, and 3–6×
+    step 13's read; disk 7–12% smaller. The field stays in the code.
