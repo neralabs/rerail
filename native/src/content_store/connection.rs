@@ -555,19 +555,50 @@ impl ContentStore {
         &self,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
+        self.immediate_transaction_stopping(None, operation)
+    }
+
+    /// `immediate_transaction`, interrupted once `stop` says so (upkeep yielding to a run, decision 0190 §8): a
+    /// progress handler's `SQLITE_INTERRUPT`, the transaction rolled back. The handler is the connection's for
+    /// this transaction only.
+    pub(super) fn immediate_transaction_until<T>(
+        &self,
+        stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            self.immediate_transaction_stopping(Some(&stop), &mut operation)
+        })
+    }
+
+    fn immediate_transaction_stopping<T>(
+        &self,
+        stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
         self.yield_writer();
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
+        if let Some(stop) = stop {
+            let stop = std::sync::Arc::clone(stop);
+            connection.progress_handler(1000, Some(move || stop()))?;
+        }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
         let outer = IN_RETRY.replace(true);
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate);
         IN_RETRY.set(outer);
-        let transaction = transaction?;
-        let value = operation(&transaction)?;
-        self.commit(transaction)?;
-        Ok(value)
+        let value = transaction.and_then(|transaction| {
+            let value = operation(&transaction)?;
+            self.commit(transaction)?;
+            Ok(value)
+        });
+        // A handler left on would stop the connection's later statements: failing to remove it is the result.
+        if stop.is_some() {
+            connection.progress_handler(0, None::<fn() -> bool>)?;
+        }
+        value
     }
 
     /// Runs `operation` in one immediate transaction without waiting: `Busy` if another writer

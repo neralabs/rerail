@@ -63,6 +63,11 @@ pub(super) const M: f64 = 4.0;
 pub(super) const K: usize = 4;
 /// At most this many reader copies made by inlining one relation.
 pub(super) const COPIES: usize = 8;
+/// At most this many copies of one rule of the program, over every pass of the inlining (`inline::inline`): each pass may multiply
+/// a rule's copies (a negated read of a relation of several rules is their product), and a chain of inlined relations
+/// compounds them. `lazy-architecture` (data-layer) took 8 GB in 7 s unfolding, over one file. A rule past it keeps
+/// its read, and the relation read keeps its rules (stored).
+pub(super) const RULE_COPIES: usize = COPIES * 4;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
@@ -73,7 +78,7 @@ pub(super) mod inline;
 pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result<Option<(Program, Vec<String>, Placed)>, String> {
     // The program's fields beside its rules, read from its version; a program of no image (maintenance's parts: a
     // session's maintained program) inlines nothing, its relations each `no_inline` or a session's piece.
-    let Some(f) = Fields::of(base) else {
+    let Some(f) = Fields::of(base).filter(|_| base.maint.is_none()) else {
         super::super::profile::decision("inline or store (decision 0099)", || "a maintained program (maintenance's parts): nothing estimated".to_owned());
         return Ok(None);
     };
@@ -618,7 +623,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
                 continue;
             }
             let Some(&n) = model.stats.card.get(rel) else { continue };
-            let cols = (0..a.arity()).map(|c| model.ndv.at(&rel, c).map_or(n, |d| d.min(n))).collect();
+            let cols = (0..a.arity()).map(|c| model.ndv.get_at(&rel, c).map_or(n, |d| d.min(n))).collect();
             counted.insert(rel, cols);
         }
     }
@@ -1249,7 +1254,7 @@ fn overlay<'a>(prog: &Program, model: &mut Model, rels: impl Iterator<Item = &'a
         let Some(rows) = observed_rows(rel, nodes) else { continue };
         let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let cols = observed_cols(rel, nodes, rows);
-        let before = (0..width).map(|c| (model.ndv.at(&rel, c).copied(), model.stats.fan.at(&rel, c).copied())).collect();
+        let before = (0..width).map(|c| (model.ndv.get_at(&rel, c).copied(), model.stats.fan.get_at(&rel, c).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
         model.stats.card.insert(rel.to_owned(), rows.max(1.0));
         for (c, (ndv, fan)) in cols.into_iter().enumerate().take(width) {
@@ -1361,12 +1366,12 @@ fn estimate(prog: &Program, model: &mut Model, (base, ids_of): (&Placed, &BTreeM
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));
                     if let Some(f) = seen_fan
-                        && model.stats.fan.at(&rel, c).is_none()
+                        && model.stats.fan.get_at(&rel, c).is_none()
                     {
                         model.stats.fan.insert((rel.clone(), c), f);
                         inserted.fan.push((rel.clone(), c));
                     }
-                    if model.ndv.at(&rel, c).is_some() {
+                    if model.ndv.get_at(&rel, c).is_some() {
                         continue;
                     }
                     if let Some(d) = seen_ndv {
@@ -1383,7 +1388,7 @@ fn estimate(prog: &Program, model: &mut Model, (base, ids_of): (&Placed, &BTreeM
                                 && !a.neg()
                                 && let Some(at) = a.args().position(|t| t.var() == Some(x))
                             {
-                                if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
+                                if let Some(&d) = model.ndv.get_at(&v.rel_name(a.rel()), at) {
                                     ndv = ndv.min(d);
                                 }
                             }
@@ -1560,18 +1565,18 @@ pub mod tests {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         let mut stats = Stats::empty(&prog);
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            stats.card.insert(rel.into(), n);
+            stats.card.insert(rel, n);
         }
         let mut inputs = Inputs::file();
         inputs.facts.clear();
         inputs.given = Some(stats);
         let mut model = make_plan(&prog, &db, inputs).unwrap();
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
-            model.stats.card.insert(rel.into(), n);
+            model.stats.card.insert(rel, n);
         }
         for (rel, ndvs) in [("load", vec![200_000.0, 500.0]), ("look", vec![5_000.0, 400.0, 800.0]), ("binding", vec![1_000.0, 700.0, 3_000.0])] {
             for (c, d) in ndvs.into_iter().enumerate() {
-                model.ndv.insert((rel.into(), c), d);
+                model.ndv.insert((rel, c), d);
             }
         }
         let decided = |model: &mut Model| choose(&prog, &Placed::of_program(&prog).unwrap(), model).unwrap().map(|(_, done, _)| done).unwrap_or_default();
@@ -1672,6 +1677,21 @@ pub mod tests {
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let first = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists).rule(got.v.rule(got.rules[0].0).unwrap());
         assert_eq!(first.to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
+    }
+
+    /// A rule's copies over every pass stay within `RULE_COPIES`: each read of a two-rule inlined relation doubles
+    /// them, and six reads would make 64. Past the bound the rule keeps its read, so the relation keeps its rules.
+    #[test]
+    fn unfolding_stops_at_a_rules_copy_bound() {
+        let reader = rule("o(x) :- r(x), r(y1), r(y2), r(y3), r(y4), r(y5).");
+        let base = super::super::body::made(&[reader, rule("r(z) :- a(z)."), rule("r(z) :- b(z).")]).unwrap();
+        let got = super::inline::inline(&base, &base.rules().map(|r| r.id()).collect::<Vec<_>>(), &BTreeSet::from(["r".to_owned()])).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
+        let copies: Vec<Rule> = got.rules.iter().map(|e| tree.rule(got.v.rule(e.0).unwrap())).filter(|r| r.head.rel == "o").collect();
+        assert_eq!(copies.len(), RULE_COPIES);
+        assert!(copies.iter().all(|r| r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "r").count() == 1));
+        assert!(got.unfinished.contains("r"), "the relation keeps its rules");
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.

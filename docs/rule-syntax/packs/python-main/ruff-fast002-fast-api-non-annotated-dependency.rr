@@ -43,9 +43,9 @@ fast002_route_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _
 // route_attr(n): the JSON util `route-attr`, used where the JSON says `matches: "route-attr"`
 .decl fast002_route_attr(n: node)
 fast002_route_attr(n) :- kind(n, "attribute"), field(n, "object", c1), fast002_route_receiver(c1),
-    field(n, "attribute", c2),
-    glob("{get,post,put,delete,patch,options,head,trace}", c2).
-fast002_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fast002_route_attr(c3).
+    fast002_tok_has_2(n).
+fast002_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    fast002_route_attr(c10).
 
 // route_call(n): the JSON util `route-call`, used where the JSON says `matches: "route-call"`
 .decl fast002_route_call(n: node)
@@ -126,6 +126,19 @@ fast002_tok_precedes_1(n) :- structural_after(n, g11),
 fast002_tok_precedes_1(n) :- precedes(n, o13), structural_after(o13, g11),
     match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
 
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(get|post|put|delete|patch|options|head|trace)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast002_tok_has_2(n: node)
+.stored fast002_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast002_tok_has_2(n) :- field(n, "attribute", c2),
+    glob("{get,post,put,delete,patch,options,head,trace}", c2).
+fast002_tok_has_2(n) :- op(n, t3), match("(get|post|put|delete|patch|options|head|trace)", t3).
+fast002_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
+fast002_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
+fast002_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:get)(?:\\W.*)?|(?:.*\\W)?(?:post)(?:\\W.*)?|(?:.*\\W)?(?:put)(?:\\W.*)?|(?:.*\\W)?(?:delete)(?:\\W.*)?|(?:.*\\W)?(?:patch)(?:\\W.*)?|(?:.*\\W)?(?:options)(?:\\W.*)?|(?:.*\\W)?(?:head)(?:\\W.*)?|(?:.*\\W)?(?:trace)(?:\\W.*)?)$", g4).
+
 // set_2: symbols from the JSON `resolves.import`
 .decl fast002_set_2(v: symbol)
 fast002_set_2("fastapi.Query"). fast002_set_2("fastapi.Path"). fast002_set_2("fastapi.Body").
@@ -134,14 +147,13 @@ fast002_set_2("fastapi.Form").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl fast002_alt_1(n: node)
-fast002_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast002_route_init(x2),
-    (st3 = b1 ; within(b1, st3)), count : { child(st3, c4, _), kind(c4, "type") } = 0.
+fast002_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast002_route_init(x2), st3 = b1,
+    count : { child(st3, c4, _), kind(c4, "type") } = 0.
 fast002_alt_1(n) :- ref_site(n, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "as_pattern"),
     child(p7, st6, _), kind(p7, "with_item"), child(st6, c8, _), fast002_route_init(c8),
     fast002_tok_precedes_1(c8), child(st6, c16, _), kind(c16, "as_pattern_target"),
     child(c16, c17, _), fast002_plain_target(c17).
-fast002_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast002_route_ann(o19),
-    (st20 = b18 ; within(b18, st20)),
+fast002_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast002_route_ann(o19), st20 = b18,
     count : { child(st20, c21, _), (kind(c21, "list_splat_pattern") ; kind(c21, "dictionary_splat_pattern")) } = 0.
 fast002_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
     kind(st23, "function_definition"), field(st23, "return_type", c24), fast002_route_ann(c24).

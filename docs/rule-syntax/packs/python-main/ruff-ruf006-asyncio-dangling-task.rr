@@ -36,17 +36,15 @@ ruf006_loop_assign(n) :- kind(n, "assignment"), field(n, "right", c1), ruf006_al
 
 // loop_ref(n): the JSON util `loop-ref`, used where the JSON says `matches: "loop-ref"`
 .decl ruf006_loop_ref(n: node)
-ruf006_loop_ref(n) :- ruf006_demand_loop_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), ruf006_loop_assign(st2).
-ruf006_loop_ref(n) :- ruf006_demand_loop_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c3, _), ruf006_loop_ref(c3).
+ruf006_loop_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, ruf006_loop_assign(st2).
+ruf006_loop_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ruf006_loop_ref(c3).
 
 // loop_create(n): the JSON util `loop-create`, used where the JSON says `matches: "loop-create"`
 .decl ruf006_loop_create(n: node)
-ruf006_loop_create(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("create_task", c1), field(n, "object", c2), ruf006_loop_ref(c2).
-ruf006_loop_create(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    ruf006_loop_create(c3).
+ruf006_loop_create(n) :- kind(n, "attribute"), ruf006_tok_has_1(n), field(n, "object", c9),
+    ruf006_loop_ref(c9).
+ruf006_loop_create(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    ruf006_loop_create(c10).
 
 // task_callee(n): the JSON util `task-callee`, used where the JSON says `matches: "task-callee"`
 .decl ruf006_task_callee(n: node)
@@ -72,17 +70,17 @@ ruf006_live_unused(n, N) :- node(_, n, _, _, _), N = n, within_stop(n, p1, ruf00
 // Each rule below is one way the JSON `rule` can match.
 .violation RUF006(at: node) "Keep a reference to this task: add it to a set and discard it in `add_done_callback`, or await it. Otherwise it can be garbage collected before it finishes."
     suppress noqa "RUF006"
-RUF006(n) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_1(n, p1), !ruf006_tok_has_1(p1).
+RUF006(n) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_1(n, p1), !ruf006_tok_has_2(p1).
 
 // RUF006_unread_task_variable(n): a finding at node n, from clause `unread-task-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF006_unread_task_variable(at: node, n: loc) code "RUF006" "`{n}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
+.violation RUF006_unread_task_variable(at: node, n_mv: loc) code "RUF006" "`{n_mv}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
     suppress noqa "RUF006"
 RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_2(n, p1),
-    field(_, "right", n),
-    count : { field(p2, "right", p1), kind(p2, "assignment") } = 0,
-    field(p1, "left", c3), ruf006_alt_8(c3, N).
+    field(p1, "right", f2), (f2 = n ; within(n, f2)),
+    count : { field(p3, "right", p1), kind(p3, "assignment") } = 0,
+    field(p1, "left", c4), ruf006_alt_8(c4, N).
 
 // RUF006_unused_comprehension_variable(n): a finding at node n, from clause `unused-comprehension-variable`.
 // Each rule below is one way the JSON `rule` can match.
@@ -90,28 +88,34 @@ RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf00
 .violation RUF006_unused_comprehension_variable(at: node, c: loc) code "RUF006" "Keep a reference to this task until it finishes: await it, or add it to a set and discard it in `add_done_callback`. Leave it if the variable it is assigned to is already awaited."
     suppress noqa "RUF006"
 RUF006_unused_comprehension_variable(n, C) :- kind(n, "call"), ruf006_task_call(n),
-    ruf006_up_2(n, p1), field(_, "right", n),
-    count : { field(p2, "right", p1), kind(p2, "assignment") } = 0,
-    has(n, c3, "identifier"), node(_, c3, _, _, _), C = c3, within_stop(c3, p4, ruf006_stop_11),
-    field(_, "left", c3), kind(p4, "for_in_clause"), bind_name(c3, b5), !site_used(b5).
+    ruf006_up_2(n, p1), field(p1, "right", f2), (f2 = n ; within(n, f2)),
+    count : { field(p3, "right", p1), kind(p3, "assignment") } = 0,
+    has(n, c4, "identifier"), node(_, c4, _, _, _), C = c4, within_stop(c4, p5, ruf006_stop_11),
+    field(p5, "left", f6), (f6 = c4 ; within(c4, f6)), kind(p5, "for_in_clause"),
+    bind_name(c4, b7), !site_used(b7).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^create_task$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf006_tok_has_1(n: node)
 .stored ruf006_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf006_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
-ruf006_tok_has_1(n) :- op(n, t3), match(",", t3).
-ruf006_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-ruf006_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
-    match("(?s)^(?:.*(?:,).*)$", g4).
-ruf006_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+ruf006_tok_has_1(n) :- field(n, "attribute", c1), glob("create_task", c1).
+ruf006_tok_has_1(n) :- op(n, t2), match("create_task", t2).
+ruf006_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:create_task)(?:\\W.*)?)$", g3).
+ruf006_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:create_task)(?:\\W.*)?)$", g3).
+ruf006_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:create_task)(?:\\W.*)?)$", g3).
 
-// demand_loop_ref: the nodes loop_ref is asked at (its recursion looks at every descendant)
-.decl ruf006_demand_loop_ref(n: node)
-ruf006_demand_loop_ref(c3) :- ruf006_demand_loop_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c3, _).
-ruf006_demand_loop_ref(c2) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("create_task", c1), field(n, "object", c2).
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf006_tok_has_2(n: node)
+.stored ruf006_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf006_tok_has_2(n) :- child(n, c2, _), glob("\\,", c2).
+ruf006_tok_has_2(n) :- op(n, t3), match(",", t3).
+ruf006_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf006_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf006_tok_has_2(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl ruf006_up_1(n: node, p: node)

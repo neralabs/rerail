@@ -319,7 +319,7 @@ impl ValueProgram {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct LuaProgram {
+pub struct LuaProgram {
     pub(super) anchored: bool,
     pub(super) end_anchored: bool,
     pub(super) capture_count: u32,
@@ -358,7 +358,7 @@ pub enum ValueMatcher {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ValueSetMember {
+pub enum ValueSetMember {
     Byte(u8),
     Range(u8, u8),
     Class { class: u8, negated: bool },

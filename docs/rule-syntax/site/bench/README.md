@@ -10,7 +10,10 @@ session; they live here so they are not lost.
 | `rules-bisect.py <rules> <corpus> <always.rr> <pattern>` | The smallest set of other rules that, with one rule, still gives a finding (ddmin). |
 | `corpus0.sha256` | The 300 Python files of the benchmark corpus, with their hashes. |
 
-The inputs are outside the repo. `SP` (default: the session's scratchpad) holds:
+The inputs are outside the repo, in this Mac's shared data (`SP`, default
+`${RERAIL_SHARED:-~/orca/rerail-shared}/bench/step-vs-main`; never /tmp or a session scratchpad, which macOS wipes:
+the inputs were lost there on 2026-11-14). The scripts only read it; each run's outputs go in `$OUT/run-<shape>`
+(default `./tmp/bench`, beside the caller), which a run empties first. It holds:
 
 - `corpus0`, `corpus1`, `corpus10`, `corpus50`: the 300 files, and the 1, 10 and 50 file subsets. The files are from
   the nera-data-layer repository; `corpus0.sha256` names each one, so a copy can be checked.
@@ -18,7 +21,7 @@ The inputs are outside the repo. `SP` (default: the session's scratchpad) holds:
   `../../packs/python-main/source` is a copy of that pack's `pack.json` and `rules/`.
 - `rules/B-now`, `rules/B-one`: the `.rr` rules the engine runs in the full and one-rule shapes.
 
-`CLI` names main's CLI (`@neralabs/rerail` 0.1.3's `dist/cli/cli.js`).
+`CLI` names main's CLI (`@neralabs/rerail` 0.1.3's `dist/cli/cli.js`), by default the copy in `$SP/main-pkg`.
 
 `../run_main_pack.sh` runs each rule of `packs/python-main` alone over a corpus under the caps, and
 `../capped.sh` is the cap (2 minutes and 2 GB by default) it and these scripts run under.

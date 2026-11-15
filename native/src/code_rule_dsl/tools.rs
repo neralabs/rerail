@@ -263,20 +263,16 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
+    use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    run_program(path, program, &files, root, out, options)
+    run_program(program, &files, root, out, options)
 }
 
-/// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
+/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    path: &std::path::Path,
     program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
@@ -361,6 +357,8 @@ pub fn run_policies(
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
+    // One run for the file observer: each root asked of the journal once for the batch.
+    let _observed = super::logic::plan::corpus::ObservedBatch::begin();
     // Every policy's includes resolved by one run of phase 0 (`bootstrap.rr`) over all of them, each graph kept for
     // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
     let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
@@ -553,6 +551,65 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 /// findings. T's facts reproduce one program's run only.
 /// `settings` are `--env key=value`s ([`settings`]).
 #[allow(clippy::too_many_arguments)]
+/// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
+/// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
+/// its `.language` set to the dialect. The corpus is listed once for all of them.
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
+    use super::language::CodeRuleLanguage;
+    use super::logic::plan::corpus;
+    let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
+    let files = || -> super::logic::plan::Result<corpus::CorpusFiles> {
+        if let Some(f) = listing.get() {
+            return Ok(f.clone());
+        }
+        let f = corpus::corpus_files(root)?;
+        let _ = listing.set(f.clone());
+        Ok(f)
+    };
+    let language_line = |text: &str| text.lines().position(|l| l.trim_start().starts_with(".language "));
+    let mut base: Vec<String> = Vec::new();
+    let mut by: Vec<(&'static str, Vec<String>)> = Vec::new();
+    for text in programs {
+        let line = language_line(text);
+        let named = line.and_then(|i| text.lines().nth(i)).map(|l| l.trim_start()[".language ".len()..].trim().trim_matches('"').to_owned());
+        let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
+        let labels = if several {
+            let prog = super::logic::rr::parse_own(text).map_err(|e| e.to_string())?;
+            corpus::run_dialects_in(&files, &prog, options).map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
+        if labels.is_empty() || labels == [named.as_deref().unwrap_or("")] {
+            base.push((*text).to_owned());
+            continue;
+        }
+        for label in labels {
+            let each = if Some(label) == named.as_deref() {
+                (*text).to_owned()
+            } else {
+                let i = line.expect("a .language line");
+                text.lines().enumerate().map(|(j, l)| if j == i { format!(".language {label}") } else { l.to_owned() }).collect::<Vec<_>>().join("\n") + "\n"
+            };
+            if Some(label) == named.as_deref() {
+                base.push(each);
+            } else if let Some((_, texts)) = by.iter_mut().find(|(l, _)| *l == label) {
+                texts.push(each);
+            } else {
+                by.push((label, vec![each]));
+            }
+        }
+    }
+    let mut runs: Vec<(Option<&'static str>, Vec<String>)> = Vec::new();
+    if !base.is_empty() {
+        runs.push((None, base));
+    }
+    runs.extend(by.into_iter().map(|(l, t)| (Some(l), t)));
+    if runs.is_empty() {
+        runs.push((None, Vec::new()));
+    }
+    Ok(runs)
+}
+
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -561,8 +618,34 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     }
     let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
-    let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
-        .map_err(|error| error.to_string())?;
+    // A program whose language has several dialects with files in its scope (`.language typescript` over `.ts`,
+    // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
+    // `run_program` runs one. The first run writes `out`; each other dialect's writes `out/<dialect>`, and its
+    // findings are added to `out`'s.
+    let runs = if t_facts.is_some() { vec![(None, programs.iter().map(|p| (*p).to_owned()).collect())] } else { dialect_runs(&programs, root, &options)? };
+    let mut report = None;
+    for (i, (label, texts)) in runs.iter().enumerate() {
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let dir = if i == 0 { out.to_path_buf() } else { out.join(label.unwrap_or("other")) };
+        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
+            .map_err(|error| error.to_string())?;
+        match &mut report {
+            None => report = Some(each),
+            Some(first) => {
+                let r: &mut super::logic::plan::corpus::Report = first;
+                r.files += each.files;
+                r.nodes += each.nodes;
+                r.chunks += each.chunks;
+                let found = std::fs::read_to_string(dir.join("violation.csv")).unwrap_or_default();
+                if !found.is_empty() {
+                    use std::io::Write;
+                    let mut all = std::fs::OpenOptions::new().append(true).create(true).open(out.join("violation.csv")).map_err(|e| e.to_string())?;
+                    all.write_all(found.as_bytes()).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    let report = report.ok_or("no programs")?;
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!(
         "{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n",
@@ -645,12 +728,18 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
-/// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063).
+/// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
+/// it keeps.
 pub fn cli(args: &[String]) -> Result<String, String> {
+    cli_in(args, &mut Default::default())
+}
+
+/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
@@ -658,12 +747,12 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     impl Drop for Flush {
         fn drop(&mut self) {
             crate::code_rule_dsl::logic::costs::flush();
+            #[cfg(feature = "tape-reads")]
+            crate::code_rule_dsl::tape::reads::report();
         }
     }
     let _flush = Flush;
-    if let Some(dir) = std::env::var_os("RERAIL_SESSION") {
-        crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
-    }
+    let _session = kept.bind_from_env()?;
     match args.first().map(String::as_str) {
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
@@ -681,6 +770,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             _ => Err("usage: rerail-engine repeat <script>".into()),
         },
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
+        Some("capture-tapes") => capture_tapes_command(&args[1..]),
+        Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
@@ -724,8 +815,10 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         },
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
+        #[cfg(feature = "tape-cache")]
+        Some("upkeep") => upkeep_command(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
-        Some(command @ ("dump" | "gc")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
+        Some(command @ ("dump" | "gc" | "upkeep")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
         _ => Err(USAGE.into()),
     }
 }
@@ -750,6 +843,8 @@ fn repeat_command(script: &str) -> Result<String, String> {
         (time(usage.ru_utime), time(usage.ru_stime))
     };
     let mut out = String::new();
+    // The session the script's commands keep (`RERAIL_SESSION`), from its first command to its last.
+    let mut kept = crate::code_rule_dsl::logic::plan::corpus::session::Kept::default();
     for (n, line) in script.lines().enumerate().map(|(n, l)| (n + 1, l.trim())) {
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -776,7 +871,7 @@ fn repeat_command(script: &str) -> Result<String, String> {
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
                 let (u0, s0) = cpu();
-                let result = cli(&args);
+                let result = cli_in(&args, &mut kept);
                 let (u1, s1) = cpu();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
@@ -1026,6 +1121,77 @@ fn gc_command(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
+/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
+/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
+/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
+/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
+#[cfg(feature = "tape-cache")]
+fn upkeep_command(args: &[String]) -> Result<String, String> {
+    use crate::content_store::ContentStore;
+    use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
+    use rerail_accel::upkeep::{configure, register, run_now, settings};
+    let mut s = settings();
+    let mut stores = Vec::new();
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--cpu" => {
+                let p: f64 = args.next().ok_or("--cpu requires a value")?.parse().map_err(|_| "--cpu takes a percentage")?;
+                s.cpu = (p / 100.0).max(0.01);
+            }
+            "--jobs" => {
+                let list = args.next().ok_or("--jobs requires a value")?;
+                let (out, only): (Vec<&str>, Vec<&str>) = list.split(',').map(str::trim).filter(|j| !j.is_empty()).partition(|j| j.starts_with('-'));
+                s.without = out.iter().map(|j| j[1..].to_owned()).collect();
+                s.only = (!only.is_empty()).then(|| only.iter().map(|j| j.to_string()).collect());
+            }
+            other => stores.push(other.to_owned()),
+        }
+    }
+    configure(s);
+    let e = |e: crate::content_store::StoreError| e.to_string();
+    let mut held = Vec::new();
+    let mut jobs = Vec::new();
+    for path in &stores {
+        if !Path::new(path).exists() {
+            return Err(format!("{path}: no such store"));
+        }
+        let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
+        jobs.push(register(Box::new(Collect::new(&store))));
+        jobs.push(register(Box::new(crate::content_store::upkeep::Frames::new(Path::new(path)))));
+        jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
+        jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
+        held.push(store);
+    }
+    jobs.extend(crate::code_rule_dsl::logic::costs::upkeep_jobs());
+    let started = std::time::Instant::now();
+    let report = run_now();
+    let mut out = String::new();
+    for r in &report {
+        out += &format!(
+            "{:<48} {:>5} steps {:>9.1} ms wall {:>9.1} ms CPU{}\n",
+            r.name,
+            r.steps,
+            r.wall * 1e3,
+            r.cpu * 1e3,
+            r.last_error.as_ref().map_or(String::new(), |e| format!("  error: {e}"))
+        );
+    }
+    out += &format!("{:.2} s\n", started.elapsed().as_secs_f64());
+    let forms = crate::code_rule_dsl::logic::costs::kernel_forms(20);
+    if !forms.is_empty() {
+        out += "\nforms this machine's runs went without (decision 0202), most batches first:\n";
+        for (kind, name, batches, compiled, seconds, failed, missing) in forms {
+            out += &format!(
+                "{kind:<16} {name:<40.40} {batches:>9} batches  {compiled:>5} compiles {seconds:>8.2} s  {failed} failed{}\n",
+                missing.map_or(String::new(), |m| format!("  missing: {m}"))
+            );
+        }
+    }
+    drop(jobs);
+    Ok(out)
+}
+
 #[cfg(feature = "dump-cli")]
 fn dump_command(args: &[String]) -> Result<String, String> {
     let (mut rules, mut clause, mut capabilities) = (Vec::new(), None, None);
@@ -1069,4 +1235,141 @@ fn policy(file: &str) -> Result<(String, String, String), String> {
 
 fn read(file: &str) -> Result<String, String> {
     std::fs::read_to_string(file).map_err(|error| format!("{file}: {error}"))
+}
+
+/// `capture-tapes <root> <out> [--every <k>] [--max <n>]`: every k-th file under `root` with a tape (sorted
+/// paths; `.git`, `node_modules`, `.venv`, `target`, `dist` left out) parsed as the engine parses it, and its
+/// source and primary tape image written to `out`, for the tape-format lab (`native/lab/tape16`, decision 0156).
+///
+/// The file: `T16CAP01`, then per file: path (u16 length, bytes), tape tag (u8), source (u32 length, bytes),
+/// image (u32 length, bytes), all little-endian. A file the parser refuses or stops on is left out.
+/// `kind-names <out>`: every tape language's kinds as `tag<TAB>id<TAB>name<TAB>named`, then its fields as
+/// `tag<TAB>field id<TAB>name`, for the tape lab
+/// (`native/lab/tape16`), whose captures carry kind ids only.
+fn kind_names_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    let mut text = String::new();
+    let mut tags = 0;
+    for &lang in GrammarDialect::all() {
+        let Some(tag) = tape_tag(lang) else { continue };
+        if from_tape_tag(tag) != Some(lang) {
+            continue;
+        }
+        tags += 1;
+        for id in 0..lang.kind_count() {
+            let id = id as u16;
+            if let Some(name) = lang.kind_name(id) {
+                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+            }
+        }
+        for id in 1..=lang.kinds().field_count() {
+            if let Some(name) = lang.kinds().field_name(id as u16) {
+                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+            }
+        }
+    }
+    std::fs::write(out, text).map_err(|e| e.to_string())?;
+    Ok(format!("{tags} languages to {out}"))
+}
+
+fn capture_tapes_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+    use std::io::Write;
+    let usage = || "usage: rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]".to_owned();
+    let (root, out) = match args {
+        [root, out, ..] => (Path::new(root), Path::new(out)),
+        _ => return Err(usage()),
+    };
+    let mut every = 1usize;
+    let mut max = usize::MAX;
+    let all_tokens = args[2..].iter().any(|a| a == "--all-tokens");
+    let mut rest = args[2..].iter().filter(|a| *a != "--all-tokens");
+    while let Some(flag) = rest.next() {
+        let value = rest.next().and_then(|v| v.parse::<usize>().ok()).ok_or_else(usage)?;
+        match flag.as_str() {
+            "--every" => every = value.max(1),
+            "--max" => max = value,
+            _ => return Err(usage()),
+        }
+    }
+    fn walk(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if !matches!(name.as_ref(), ".git" | "node_modules" | ".venv" | "venv" | "target" | "dist" | "build" | "__pycache__" | "tmp" | "working-data") {
+                    walk(&entry.path(), files);
+                }
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(root, &mut all);
+    let dialect = |path: &Path| {
+        label_of_path(&path.to_string_lossy()).and_then(dialect_by_label).filter(|d| tape_tag(*d).is_some())
+    };
+    let files: Vec<_> = all.into_iter().filter(|p| dialect(p).is_some()).step_by(every).take(max).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let writer = std::sync::Mutex::new(std::io::BufWriter::new(std::fs::File::create(out).map_err(|e| e.to_string())?));
+    writer.lock().unwrap().write_all(b"T16CAP01").map_err(|e| e.to_string())?;
+    let (written, refused) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    rerail_accel::exec::scoped(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(path) = files.get(i) else { break };
+                    let lang = dialect(path).expect("filtered");
+                    let Ok(source) = std::fs::read(path) else { continue };
+                    let Ok(source) = String::from_utf8(source) else {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    };
+                    if source.len() > 16 << 20 {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    }
+                    let parse = |grammar: std::sync::Arc<Grammar>| TapeImage::parse(&grammar, &source, &|| false);
+                    let image = Grammar::new(lang)
+                        .ok()
+                        .and_then(|grammar| if all_tokens { crate::code_rule_dsl::tape::with_all_tokens(|| parse(grammar)) } else { parse(grammar) })
+                        .and_then(Result::ok)
+                        .and_then(|file| file.primary.to_bytes().ok());
+                    let Some(image) = image else {
+                        refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    };
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
+                    record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
+                    record.extend_from_slice(rel.as_bytes());
+                    record.push(tape_tag(lang).expect("filtered"));
+                    record.extend_from_slice(&(source.len() as u32).to_le_bytes());
+                    record.extend_from_slice(source.as_bytes());
+                    record.extend_from_slice(&(image.len() as u32).to_le_bytes());
+                    record.extend_from_slice(&image);
+                    if writer.lock().unwrap().write_all(&record).is_ok() {
+                        written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    writer.into_inner().unwrap().flush().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{} files captured, {} refused, of {} with a tape\n",
+        written.into_inner(),
+        refused.into_inner(),
+        files.len()
+    ))
 }

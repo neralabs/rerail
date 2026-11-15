@@ -321,7 +321,6 @@ impl Emitter {
             AstMatcher::Compare(_) => return gap("compare"),
             AstMatcher::Count(_) => return gap("count"),
             AstMatcher::Never => self.never(n),
-            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => return gap("three-valued"),
         })
     }
@@ -998,6 +997,10 @@ fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 #[cfg(test)]
 pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
     let err = |m: String| Err(format!("authored {rule}: {m}"));
+    // Both as their authors wrote them: the node attributes answered on request (decision 0174) are the merged
+    // program's, made once over all its readers below.
+    super::rr::lower::undo_on_request(&mut converted);
+    super::rr::lower::undo_on_request(&mut authored);
     // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
     super::rr::drop_unread_core(&mut authored);
     // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
@@ -1122,6 +1125,9 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
     push_new(&mut converted.demand, demand);
     converted.rules.extend(rules.into_iter().filter(|r| violation_of(r).is_none_or(|(_, c)| keep(c))));
+    for round in super::rr::lower::ON_REQUEST {
+        super::rr::lower::sources_on_request(&mut converted, round);
+    }
     Ok((reachable(converted), authored_clauses))
 }
 

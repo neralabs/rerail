@@ -59,7 +59,6 @@ fn optional_outward_captures(
         AstMatcher::Semantic(semantic) => {
             semantic::optional_outward_captures(semantic, under_any, outward, memo, names)
         }
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) => items.iter().for_each(|item| walk(item, under_any, outward)),
         AstMatcher::Any(items) => items.iter().for_each(|item| walk(item, true, outward)),
@@ -151,7 +150,6 @@ fn sound(
         AstMatcher::Semantic(semantic) => {
             semantic::sound(semantic, negated, outside, optional, memo)
         }
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => true,
         // A position counts the siblings before the node, and an error region among them can hide
         // or add one.
@@ -248,7 +246,6 @@ fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) 
         | AstMatcher::Compare(_)
         | AstMatcher::Never => false,
         AstMatcher::Semantic(semantic) => semantic::leaves_witness(semantic, memo),
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => false,
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().any(|item| leaves_witness(item, memo))

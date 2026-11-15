@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+"""Relax's live test loop on another Mac (docs/final-shape/notes/t37, §3 "On another Mac").
+
+    scripts/dev/live-test-remote [--host NAME] [--verbose] PACKAGE [--lib | --test NAME] [-- FILTER...]
+
+Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: the first usable one by default) in this
+checkout's copy there (under the host's farm root), and
+prints its verdicts here. Each file saved in this checkout is sent to the host through the farm's
+live mirror, where Relax's own watcher sees it written and patches the running tests: the JIT,
+the live process and Relax's store are the host's, and this machine spends only the send.
+
+Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
+PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. Ctrl-C stops the session on the host too.
+"""
+import ctypes
+import ctypes.util
+import json
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# The installed farm, the one every worktree's compiles use (scripts/build/farm/setup).
+SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+if not os.path.exists(os.path.join(SHARE, "farm.py")):
+    sys.exit("live-test-remote: the farm is not installed (scripts/build/farm/setup); run `relax test --live` here instead")
+sys.path.insert(0, SHARE)
+import farm  # noqa: E402
+import mirror  # noqa: E402
+
+# What a save in these is not: build outputs, scratch, git's own files.
+SKIPPED = ("target/", "tmp/", "working-data/", ".git/", "node_modules/", ".claude/")
+
+
+def send(host, files=(), roots=(), verify=False):
+    """Sends what changed of `files` and `roots` to the host, through the farm's mirror daemon;
+    `verify` asks the host again what it holds first (it may have been cleaned)."""
+    reply = mirror.compile({"host": host, "since": time.time(), "roots": [list(r) for r in roots],
+                            "files": list(files), "verify": verify,
+                            "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
+    if reply is None or reply.get("code") != 0:
+        sys.exit(f"live-test-remote: could not send to {host}: {(reply or {}).get('why') or (reply or {}).get('stderr')}")
+    return reply.get("times", {})
+
+
+def watch(root, on_files):
+    """Calls `on_files(paths)` with the files written under `root`, from FSEvents. Runs this
+    thread's run loop: it does not return."""
+    cs = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreServices"))
+    cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+    callback_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
+                                     ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint32),
+                                     ctypes.POINTER(ctypes.c_uint64))
+    cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+    cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+    cf.CFArrayCreate.restype = ctypes.c_void_p
+    cf.CFArrayCreate.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_long, ctypes.c_void_p]
+    cf.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+    cs.FSEventStreamCreate.restype = ctypes.c_void_p
+    cs.FSEventStreamCreate.argtypes = [ctypes.c_void_p, callback_type, ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_uint64, ctypes.c_double, ctypes.c_uint32]
+    cs.FSEventStreamScheduleWithRunLoop.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    cs.FSEventStreamStart.argtypes = [ctypes.c_void_p]
+    item_is_file = 0x10000
+
+    def callback(stream, info, count, paths, flags, ids):
+        changed = []
+        for i in range(count):
+            path = paths[i].decode()
+            rel = os.path.relpath(path, root)
+            if flags[i] & item_is_file and not rel.startswith(SKIPPED) and os.path.isfile(path):
+                changed.append(path)
+        if changed:
+            on_files(sorted(set(changed)))
+
+    handler = callback_type(callback)
+    path = cf.CFStringCreateWithCString(None, root.encode(), 0x08000100)
+    callbacks = ctypes.addressof(ctypes.c_void_p.in_dll(cf, "kCFTypeArrayCallBacks"))
+    paths = cf.CFArrayCreate(None, (ctypes.c_void_p * 1)(path), 1, callbacks)
+    since_now, file_events, no_defer = 0xFFFFFFFFFFFFFFFF, 0x10, 0x2
+    stream = cs.FSEventStreamCreate(None, handler, None, paths, since_now, 0.02, file_events | no_defer)
+    mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+    cs.FSEventStreamScheduleWithRunLoop(stream, cf.CFRunLoopGetCurrent(), mode)
+    cs.FSEventStreamStart(stream)
+    cf.CFRunLoopRun()
+
+
+def main(argv):
+    host, verbose = None, False
+    while argv and argv[0] in ("--host", "--verbose"):
+        if argv[0] == "--host":
+            host, argv = argv[1], argv[2:]
+        else:
+            verbose, argv = True, argv[1:]
+    if not argv:
+        sys.exit(__doc__)
+    if host is None:
+        hosts = farm.usable()
+        if not hosts:
+            reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
+            sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")
+                     + "; run `relax test --live` here instead")
+        host = hosts[0]["name"]
+    installed = os.path.expanduser("~/.local/share/rerail-relax")
+    relax = os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
+                                        else subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip())
+    if not relax:
+        sys.exit("live-test-remote: no Relax: run scripts/dev/relax/build, or set RELAX to Relax's binary")
+    relax = os.path.realpath(relax)
+    std = os.environ.get("RELAX_STD")
+    if std is None and relax == os.path.realpath(os.path.join(installed, "bin/relax")):
+        std = os.path.join(installed, "src/libs/relax/compiler/std")
+
+    started = time.time()
+    roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
+    t = send(host, files=[relax], roots=roots, verify=True)
+    print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
+
+    env = {"RUSTC_WRAPPER": "", "RELAX_ALLOW_C": "1"} | ({"RELAX_STD": os.path.realpath(std)} if std else {})
+    # Relax, its std and the checkout are kept under the host's farm root: farm-agent's `exec` maps
+    # their paths there, and stops Relax when this connection's input ends.
+    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
+           "map": [CHECKOUT, relax] + ([os.path.realpath(std)] if std else [])}
+    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    pushed = [None]
+
+    def show():
+        for line in proc.stdout:
+            if line.startswith("testverdict"):
+                since = f" ({time.time() - pushed[0]:.1f} s after the save)" if pushed[0] else \
+                    f" ({time.time() - started:.0f} s after the start)"
+                print(line.rstrip() + since, flush=True)
+                pushed[0] = None
+            elif verbose or "error" in line.split(":", 1)[0] or line.startswith(("relax: ", "relax live")) or "panicked" in line:
+                print(line.rstrip(), flush=True)
+        print(f"live-test-remote: the session on {host} ended (a lost host ends it: start it again,"
+              " on another host or here)", flush=True)
+        os._exit(proc.wait() or 0)
+
+    threading.Thread(target=show, daemon=True).start()
+
+    def on_files(paths):
+        saved = time.time()
+        t = send(host, files=paths)
+        pushed[0] = pushed[0] or saved
+        names = ", ".join(os.path.relpath(p, CHECKOUT) for p in paths[:3]) + (" …" if len(paths) > 3 else "")
+        print(f"live-test-remote: sent {names} ({t.get('sync')} s)", flush=True)
+
+    # Ctrl-C, a closed terminal and a kill all stop the session on the host (a background start
+    # inherits SIGINT ignored, so it is set here too).
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
+    # The watcher's run loop is a thread's own: Ctrl-C reaches Python only outside it.
+    threading.Thread(target=watch, args=(CHECKOUT, on_files), daemon=True).start()
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        print("live-test-remote: stopping the session on " + host, flush=True)
+    finally:
+        proc.stdin.close()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

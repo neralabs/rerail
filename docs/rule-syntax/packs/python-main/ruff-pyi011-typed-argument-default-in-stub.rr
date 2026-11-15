@@ -54,10 +54,10 @@ pyi011_peeled_imaginary(n) :- kind(n, "parenthesized_expression"), child(n, c1, 
 // signed_real_short(n): the JSON util `signed-real-short`, used where the JSON says `matches: "signed-real-short"`
 .decl pyi011_signed_real_short(n: node)
 pyi011_signed_real_short(n) :- pyi011_peeled_real_short(n).
-pyi011_signed_real_short(n) :- kind(n, "unary_operator"), field(n, "operator", c1),
-    glob("-", c1), field(n, "argument", c2), pyi011_peeled_real_short(c2).
-pyi011_signed_real_short(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    pyi011_signed_real_short(c3).
+pyi011_signed_real_short(n) :- kind(n, "unary_operator"), pyi011_tok_has_1(n),
+    field(n, "argument", c9), pyi011_peeled_real_short(c9).
+pyi011_signed_real_short(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pyi011_signed_real_short(c10).
 
 // negatable_constant(n): the JSON util `negatable-constant`, used where the JSON says `matches: "negatable-constant"`
 .decl pyi011_negatable_constant(n: node)
@@ -84,14 +84,13 @@ pyi011_allowed_constant(n) :- pyi011_later_sys(n).
 
 // negation(n): the JSON util `negation`, used where the JSON says `matches: "negation"`
 .decl pyi011_negation(n: node)
-pyi011_negation(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
-    field(n, "argument", c2), (pyi011_peeled_number(c2) ; pyi011_peeled_negatable_constant(c2)).
+pyi011_negation(n) :- kind(n, "unary_operator"), pyi011_tok_has_1(n), field(n, "argument", c9),
+    (pyi011_peeled_number(c9) ; pyi011_peeled_negatable_constant(c9)).
 
 // complex_sum(n): the JSON util `complex-sum`, used where the JSON says `matches: "complex-sum"`
 .decl pyi011_complex_sum(n: node)
-pyi011_complex_sum(n) :- kind(n, "binary_operator"), field(n, "operator", c1),
-    glob("[+-]", c1), field(n, "right", c2), pyi011_peeled_imaginary(c2),
-    field(n, "left", c3), pyi011_signed_real_short(c3).
+pyi011_complex_sum(n) :- kind(n, "binary_operator"), pyi011_tok_has_2(n), field(n, "right", c9),
+    pyi011_peeled_imaginary(c9), field(n, "left", c10), pyi011_signed_real_short(c10).
 
 // simple_value(n): the JSON util `simple-value`, used where the JSON says `matches: "simple-value"`
 .decl pyi011_simple_value(n: node)
@@ -160,6 +159,30 @@ pyi011_later_sys(n) :- kind(n, "attribute"),
     count : { inside(n, p1, "parameters"), has(p1, c2, "identifier"), glob("sys", c2), count : { field(p3, "object", c2), kind(p3, "attribute") } = 0 } = 0,
     inside(n, p4, "module"), has(p4, c5, "import_statement"), pyi011_module_level(c5),
     child(c5, c6, _), kind(c6, "dotted_name"), match("sys(?:\\.|$).*", c6).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^-$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi011_tok_has_1(n: node)
+.stored pyi011_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi011_tok_has_1(n) :- field(n, "operator", c1), glob("-", c1).
+pyi011_tok_has_1(n) :- op(n, t2), match("-", t2).
+pyi011_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi011_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi011_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi011_tok_has_2(n: node)
+.stored pyi011_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi011_tok_has_2(n) :- field(n, "operator", c1), glob("[+-]", c1).
+pyi011_tok_has_2(n) :- op(n, t2), match("[+-]", t2).
+pyi011_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi011_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi011_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
 //   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))

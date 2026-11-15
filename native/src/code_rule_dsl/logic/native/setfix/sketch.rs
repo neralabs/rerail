@@ -134,10 +134,6 @@ impl Sketch {
         (est.round() as u64).clamp(self.rows, self.rows * self.rows)
     }
 
-    /// Each value's rows, while the column holds at most `SMALL` values.
-    pub(super) fn small(&self) -> Option<&[(i64, u32)]> {
-        self.small.as_deref()
-    }
 
     pub(super) fn exact_counts(&self) -> Option<std::borrow::Cow<'_,[(i64,u32)]>> {
         if let Some(s)=&self.small {return Some(std::borrow::Cow::Borrowed(s));}

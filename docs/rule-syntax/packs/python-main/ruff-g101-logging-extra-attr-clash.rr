@@ -35,7 +35,7 @@ g101_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
 g101_logger_object(n) :-
     ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
-    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g101_name_chain(c2)
+    ; kind(n, "attribute"), g101_tok_has_2(n), field(n, "object", c1), g101_name_chain(c1)
     ),
     !sym_of(n, _).
 
@@ -47,21 +47,19 @@ g101_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g101
 
 // logging_callee(n): the JSON util `logging-callee`, used where the JSON says `matches: "logging-callee"`
 .decl g101_logging_callee(n: node)
-g101_logging_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("{debug,critical,error,exception,info,warn,warning,log}", c1),
-    field(n, "object", c2), g101_logger_object(c2).
-g101_logging_callee(n) :- kind(n, "identifier"), sym_of(n, q3), g101_set_2(q3).
-g101_logging_callee(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    g101_logging_callee(c4).
+g101_logging_callee(n) :- kind(n, "attribute"), g101_tok_has_3(n), field(n, "object", c9),
+    g101_logger_object(c9).
+g101_logging_callee(n) :- kind(n, "identifier"), sym_of(n, q10), g101_set_2(q10).
+g101_logging_callee(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    g101_logging_callee(c11).
 
 // extra_value(n): the JSON util `extra-value`, used where the JSON says `matches: "extra-value"`
 .decl g101_extra_value(n: node)
-g101_extra_value(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
-    field(p1, "name", c2), glob("extra", c2), child(p3, p1, _),
-    kind(p3, "argument_list"), field(p4, "arguments", p3), kind(p4, "call"),
-    field(p4, "function", c5), g101_logging_callee(c5).
-g101_extra_value(n) :- child(p6, n, _), kind(p6, "parenthesized_expression"),
-    g101_extra_value(p6).
+g101_extra_value(n) :- field(p1, "value", n), kind(p1, "keyword_argument"), g101_tok_has_4(p1),
+    child(p10, p1, _), kind(p10, "argument_list"), field(p11, "arguments", p10),
+    kind(p11, "call"), field(p11, "function", c12), g101_logging_callee(c12).
+g101_extra_value(n) :- child(p13, n, _), kind(p13, "parenthesized_expression"),
+    g101_extra_value(p13).
 
 // extra_key(n): the JSON util `extra-key`, used where the JSON says `matches: "extra-key"`
 .decl g101_extra_key(n: node)
@@ -81,6 +79,60 @@ g101_builtin_dict(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, "builtins.dict").
 g101_builtin_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     g101_builtin_dict(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g101_tok_has_1(n: node)
+.stored g101_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g101_tok_has_1(n) :- field(n, "attribute", c3),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c3).
+g101_tok_has_1(n) :- op(n, t4),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t4).
+g101_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g101_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g101_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g101_tok_has_2(n: node)
+.stored g101_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g101_tok_has_2(n) :- field(n, "attribute", c1),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1).
+g101_tok_has_2(n) :- op(n, t2),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t2).
+g101_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g101_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g101_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(debug|critical|error|exception|info|warn|warning|log)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g101_tok_has_3(n: node)
+.stored g101_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g101_tok_has_3(n) :- field(n, "attribute", c1),
+    glob("{debug,critical,error,exception,info,warn,warning,log}", c1).
+g101_tok_has_3(n) :- op(n, t2),
+    match("(debug|critical|error|exception|info|warn|warning|log)", t2).
+g101_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?|(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+g101_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?|(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+g101_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?|(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^extra$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g101_tok_has_4(n: node)
+.stored g101_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g101_tok_has_4(n) :- field(n, "name", c2), glob("extra", c2).
+g101_tok_has_4(n) :- op(n, t3), match("extra", t3).
+g101_tok_has_4(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:extra)(?:\\W.*)?)$", g4).
+g101_tok_has_4(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:extra)(?:\\W.*)?)$", g4).
+g101_tok_has_4(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:extra)(?:\\W.*)?)$", g4).
 
 // set_2: symbols from the JSON `resolves.import`
 .decl g101_set_2(v: symbol)

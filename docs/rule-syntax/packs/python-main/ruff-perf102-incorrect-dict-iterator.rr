@@ -51,17 +51,17 @@ perf102_values_only(n) :- perf102_demand_values_only(n),
 .violation PERF102(at: node, detail: symbol) "The loop never uses the {detail}. Leave it if this object is not a dict."
     suppress noqa "PERF102"
 PERF102(n, "value: iterate `.keys()` and bind only the key") :- kind(n, "attribute"),
-    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
-    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
-    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6), perf102_keys_only(c6).
+    perf102_tok_has_2(n), perf102_up_1(n, p9), field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    count : { child(c11, c12, _), perf102_positional(c12) } = 0, within_stop(p9, p13, perf102_stop_14),
+    field(p13, "right", f14), (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"),
+    field(p13, "left", c15), perf102_keys_only(c15).
 PERF102(n, "key: iterate `.values()` and bind only the value") :- kind(n, "attribute"),
-    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
-    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
-    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6), perf102_values_only(c6).
+    perf102_tok_has_2(n), perf102_up_1(n, p9), field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    count : { child(c11, c12, _), perf102_positional(c12) } = 0, within_stop(p9, p13, perf102_stop_14),
+    field(p13, "right", f14), (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"),
+    field(p13, "left", c15), perf102_values_only(c15).
 
 .decl perf102_alt_6_u0(n: node, n_mv: loc)
 perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
@@ -191,25 +191,37 @@ perf102_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
 perf102_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
 
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^items$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf102_tok_has_2(n: node)
+.stored perf102_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf102_tok_has_2(n) :- field(n, "attribute", c1), glob("items", c1).
+perf102_tok_has_2(n) :- op(n, t2), match("items", t2).
+perf102_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+perf102_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+perf102_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g3).
+
 // demand_keys_only: the rows of keys_only its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_keys_only(n: node)
 perf102_demand_keys_only(c9) :- perf102_demand_keys_only(n), kind(n, "tuple_pattern"), child(n, c9, _),
     kind(c9, "tuple_pattern").
-perf102_demand_keys_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
-    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6).
+perf102_demand_keys_only(c15) :- kind(n, "attribute"), perf102_tok_has_2(n), perf102_up_1(n, p9),
+    field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    within_stop(p9, p13, perf102_stop_14), field(p13, "right", f14),
+    (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"), field(p13, "left", c15).
 
 // demand_values_only: the rows of values_only its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_values_only(n: node)
 perf102_demand_values_only(c9) :- perf102_demand_values_only(n), kind(n, "tuple_pattern"),
     child(n, c9, _), kind(c9, "tuple_pattern").
-perf102_demand_values_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
-    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
-    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
-    field(p5, "left", c6).
+perf102_demand_values_only(c15) :- kind(n, "attribute"), perf102_tok_has_2(n), perf102_up_1(n, p9),
+    field(p9, "function", f10), (f10 = n ; within(n, f10)),
+    field(p9, "arguments", c11), kind(c11, "argument_list"),
+    within_stop(p9, p13, perf102_stop_14), field(p13, "right", f14),
+    (f14 = p9 ; within(p9, f14)), kind(p13, "for_statement"), field(p13, "left", c15).
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
 .decl perf102_demand_alt_6(n: node)
@@ -245,6 +257,10 @@ perf102_demand_alt_5(c3, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), n
     ; kind(p2, "module")
     ),
     within_stop(c3, p2, perf102_stop_4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl perf102_up_1(n: node, p: node)
+perf102_up_1(n, p) :- perf102_tok_has_2(n), within_stop(n, p, perf102_stop_14), kind(p, "call").
 
 // alt_6_u0_empty: level -1 of an unrolled recursion, empty
 .decl perf102_alt_6_u0_empty(n: node, n_mv: loc)

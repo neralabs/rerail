@@ -14,33 +14,27 @@
 //! read has that digest still. That is what lets relations of the same identity be one copy for every program that
 //! has them, in any order of runs.
 //!
-//! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is the
-//! relations its runs use: a relation is collected by the [`RUNS`]th run of its space in a row that does not use it.
-//! A run is the outermost run (its token): the programs of one run that keep frames in one space (a phase's, P3's
-//! cross part, its loading cone) each mark what they used, and the space counts the run once.
+//! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is what the kept
+//! manifests reach (decision 0227, `collect_unreachable_frames`): a memo entry while its plan is live and a kept
+//! manifest names its content, a maintained frame while a live program (a part's key, named by a kept manifest)
+//! derives its relation there. No run marks what it used: a run that changes nothing writes nothing.
 
 use super::{ContentStore, StoreResult};
-use rusqlite::{OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// How many runs of a space in a row may leave a relation unused before it is collected.
-pub const RUNS: i64 = 4;
-
-/// The run each space last counted in this process, by its token: a later program of that run marks what it used and
-/// counts nothing. A new process counts its first run of a space, since its tokens are new.
+/// The run each space last counted in this process, by its token: a later program of that run puts under the same
+/// stamp. A new process counts its first run of a space, since its tokens are new.
 fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
     static COUNTED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], u64>>> = std::sync::OnceLock::new();
     COUNTED.get_or_init(Default::default)
 }
 
-/// What a run used of a space: the relations, the run's token (`0`: a run of its own, counted each time), and the
-/// program that used them (its key): a relation is kept while one of its programs' last [`RUNS`] runs used it.
+/// What a program derives in a space, with what it puts there: the relations, the run's token (`0`: a write of its
+/// own, counted each time) and the program (its key). Its relations are kept while the program is live
+/// (`collect_unreachable_frames`).
 pub type Used = (Vec<Rel>, u64, [u8; 32]);
-
-/// How many runs of a space a program's runs count for (`Used`'s program): one not run again in as many runs of its
-/// space (a policy removed, or edited into another key) keeps its relations no longer.
-pub const ABANDON: i64 = 256;
 
 // The frames' tables (`frames`, `frame_part_used`, `frame_spaces`, `frame_confirmed`, `frame_program_used`) are
 // the store's schema (`schema::SCHEMA`): every store has them, so nothing here checks for them or makes them.
@@ -650,26 +644,28 @@ impl ContentStore {
     /// plan's, `local_space`), each path's newest but those of `looked_up` (paths looked up before the first wave,
     /// from the store), held with the snapshot. Once a process for each space.
     /// `read`: what reads an entry's symbols (`memo::Syms`), held as the entries are admitted.
-    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, read: SymbolReader<'_>) -> StoreResult<(usize, usize)> {
-        let Some(snapshot) = self.snapshot() else { return Ok((0, 0)) };
+    /// Also the paths whose entries it admitted: `None` when this process admitted the space's already (or holds no
+    /// snapshot), and which it is not known.
+    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, read: SymbolReader<'_>) -> StoreResult<(usize, usize, Option<HashSet<String>>)> {
+        let Some(snapshot) = self.snapshot() else { return Ok((0, 0, None)) };
         let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         if !snapshot.lock().expect("the frames' snapshot").admitted.insert(*space) {
             if trace {
                 eprintln!("rerail: memo entries of space {:02x}{:02x}: admitted already in this process", space[0], space[1]);
             }
-            return Ok((0, 0));
+            return Ok((0, 0, None));
         }
         let keys = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             newest_by_path(&connection, space, MEMO_RELS[0])?
         };
         let newest = keys.len();
-        let keys: Vec<(Rel, i64)> = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, _, part)| (rel, part)).collect();
+        let (keys, paths): (Vec<(Rel, i64)>, HashSet<String>) = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, path, part)| ((rel, part), path)).unzip();
         if trace {
             eprintln!("rerail: memo entries of space {:02x}{:02x}: {newest} paths' newest, {} not looked up already ({} looked up)", space[0], space[1], keys.len(), looked_up.len());
         }
         if keys.is_empty() {
-            return Ok((0, 0));
+            return Ok((0, 0, Some(paths)));
         }
         let got = self.read_frame_parts_from(space, &keys, true, false)?;
         hold_symbols(&self.atoms, got.values(), Some(read))?;
@@ -680,7 +676,7 @@ impl ContentStore {
         for (k, f) in got {
             held.entry(k).or_insert(f);
         }
-        Ok((n, bytes))
+        Ok((n, bytes, Some(paths)))
     }
 
     /// Holds the stored atoms `frames` name (`hold_symbols`), the columns their types do not mark read by `read`: a
@@ -708,14 +704,6 @@ impl ContentStore {
         drop(connection);
         hold_symbols(&self.atoms, parts.iter().map(|(_, f)| f), None)?;
         Ok(parts)
-    }
-
-    /// Run `token`'s use of `parts` of `rel` in `space`, queued behind the run: the space counts the run once, the
-    /// parts are marked as used by it, and the parts of `rel` no run used in the last `keep` runs of the space are
-    /// forgotten (an incremental store returns its dead rows).
-    pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
-        let bytes = parts.len() * 8;
-        self.write_back_syms(crate::content_store::write_back::Syms::None, "the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
     }
 
     /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
@@ -761,28 +749,6 @@ impl ContentStore {
         }
         self.write_frames(space, &[], 0, &[], &[], &gone, None)?;
         Ok(n)
-    }
-
-    /// `queue_frame_parts_used`, now.
-    pub fn use_frame_parts(&self, space: &[u8; 32], rel: &Rel, parts: &[i64], token: u64, keep: i64) -> StoreResult<()> {
-        self.immediate_transaction_once(|t| {
-            let run = count_run(t, space, token)?;
-            // Give SQLite the entire key set in one prepared statement. Each run
-            // orders it once, without rebuilding SQL and temporary sets per chunk.
-            if !parts.is_empty() {
-                let parts: rusqlite::vtab::array::Array = std::rc::Rc::new(parts.iter().copied().map(rusqlite::types::Value::from).collect());
-                // Marked in `frame_part_used`: the frames' records, with their rows, are not rewritten.
-                t.prepare_cached("UPDATE frame_part_used SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN rarray(?5)")?
-                    .execute(params![&space[..], rel.name, &rel.ident[..], run, parts])?;
-            }
-            // The parts no run used in the last `keep`, forgotten with their use.
-            let gone = "SELECT part FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4";
-            t.prepare_cached(&format!("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN ({gone})"))?
-                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
-            t.prepare_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4")?
-                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
-            Ok(())
-        })
     }
 
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
@@ -889,6 +855,10 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
+        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
+            return;
+        }
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
             .iter()
             .map(|f| (frame_key(&space, &f.rel, f.part), Some(Arc::new(Some(Arc::clone(&f.frame))) as Arc<dyn std::any::Any + Send + Sync>)))
@@ -944,9 +914,8 @@ impl ContentStore {
         }));
     }
 
-    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, a program of run `token`
-    /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
-    /// the last [`RUNS`] runs did not use.
+    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the program's relations
+    /// in the space are recorded with it (`frame_program_used`), for collection (`collect_unreachable_frames`).
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let mut gone = gone.to_vec();
         gone.extend(self.ended_deltas(space, puts.iter().map(|p| (&p.rel, p.part))));
@@ -1010,9 +979,12 @@ impl ContentStore {
         self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
             let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
-            // A run's first program counts it: what it writes and marks is of the new run.
+            // The space's counter stamps what is put (`frame_part_used`): a run's first program counts it, and a write
+            // of no run's (the memo's entries) counts itself, so a path's contents are ordered by when they were put
+            // (`keep_newest_by_path`). Only a write that puts counts: a use is not marked (decision 0227).
             let run = match used {
                 Some((_, token, _)) => count_run(t, space, token)?,
+                None if !rows.is_empty() => count_run(t, space, 0)?,
                 None => {
                     t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
                     t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
@@ -1103,71 +1075,148 @@ impl ContentStore {
             }
             lap(&format!("{} gone", gone.len()));
             if let Some((used, _, program)) = used {
-                // The run's use of the space, by program (decision 0117 step 5): one row a program a run. Programs over
-                // one root share its space and the relations they derive alike (decision 0103); counted by the space's
-                // runs alone, a policy's frames, its kept inputs above all, went unused for as many runs as the other
-                // policies made, and were collected after [`RUNS`] of them.
-                let runs: Vec<(Vec<u8>, i64, Vec<u64>)> = {
-                    let mut st = t.prepare_cached("SELECT program, run, rels FROM frame_program_used WHERE space = ?1")?;
-                    st.query_map([&space[..]], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, decode_keys(&r.get::<_, Vec<u8>>(2)?))))?.collect::<Result<_, _>>()?
-                };
-                let was = runs.iter().find(|(p, r, _)| p.as_slice() == program.as_slice() && *r == run).map(|(_, _, k)| k);
+                // The relations the program derives in the space (decision 0227, reachability): one row a program,
+                // written when it first puts there or derives more. No run marks its use: collection keeps a
+                // relation's frames while a live program (a plan a kept manifest names) holds it here
+                // (`collect_unreachable_frames`). A warm run, which puts nothing, writes nothing.
+                let was: Option<Vec<u64>> = t
+                    .prepare_cached("SELECT rels FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = 0")?
+                    .query_row(params![&space[..], &program[..]], |r| Ok(decode_keys(&r.get::<_, Vec<u8>>(0)?)))
+                    .optional()?;
                 let mut keys: Vec<u64> = used.iter().map(used_key).collect();
-                keys.extend(was.into_iter().flatten().copied());
+                keys.extend(was.iter().flatten().copied());
                 keys.sort_unstable();
                 keys.dedup();
-                if was != Some(&keys) {
-                    t.prepare_cached("INSERT OR REPLACE INTO frame_program_used(space, program, run, rels) VALUES (?1, ?2, ?3, ?4)")?.execute(params![&space[..], &program[..], run, encode_keys(&keys)])?;
-                }
-                // Each program's last [`RUNS`] runs, this one among them, none [`ABANDON`] runs of the space old.
-                let mut by_program: HashMap<&[u8], Vec<(i64, &Vec<u64>)>> = HashMap::new();
-                for (p, r, k) in &runs {
-                    if !(p.as_slice() == program.as_slice() && *r == run) {
-                        by_program.entry(p.as_slice()).or_default().push((*r, k));
-                    }
-                }
-                by_program.entry(program.as_slice()).or_default().push((run, &keys));
-                let mut live: HashSet<u64> = HashSet::new();
-                let mut stale: Vec<(Vec<u8>, i64)> = Vec::new();
-                for (p, mut rs) in by_program {
-                    rs.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                    for (i, (r, k)) in rs.into_iter().enumerate() {
-                        if i < RUNS as usize && r > run - ABANDON {
-                            live.extend(k.iter().copied());
-                        } else {
-                            stale.push((p.to_vec(), r));
-                        }
-                    }
-                }
-                for (p, r) in &stale {
-                    t.prepare_cached("DELETE FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = ?3")?.execute(params![&space[..], p, r])?;
+                if was.as_ref() != Some(&keys) {
+                    t.prepare_cached("INSERT OR REPLACE INTO frame_program_used(space, program, run, rels) VALUES (?1, ?2, 0, ?3)")?.execute(params![&space[..], &program[..], encode_keys(&keys)])?;
                 }
                 lap(&format!("{} used", used.len()));
-                // Collected: a frame put [`RUNS`] runs ago or before, whose relation none of those runs used.
-                let old: Vec<(String, Vec<u8>)> = {
-                    let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frame_part_used WHERE space = ?1 AND used <= ?2")?;
-                    st.query_map(params![&space[..], run - RUNS], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
-                };
-                let dead: Vec<(String, Vec<u8>)> = old.into_iter().filter(|(name, ident)| {
-                    <[u8; 32]>::try_from(ident.as_slice()).map_or(true, |ident| !live.contains(&used_key(&Rel { name: name.clone(), ident })))
-                }).collect();
-                for batch in dead.chunks(READ_BATCH) {
-                    let values = (0..batch.len()).map(|i| format!("(?{},?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(",");
-                    // The old parts of the dead relations, by their use (`frame_part_used`), forgotten with it.
-                    let old = format!("WITH dead(rel,ident) AS (VALUES {values}) SELECT u.space, u.rel, u.ident, u.part FROM frame_part_used u \
-                        JOIN dead d ON u.rel = d.rel AND u.ident = d.ident WHERE u.space = ?1 AND u.used <= ?2");
-                    let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (run - RUNS).into()];
-                    for (name, ident) in batch {
-                        args.extend([name.clone().into(), ident.clone().into()]);
-                    }
-                    t.prepare_cached(&format!("DELETE FROM frames WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args.clone()))?;
-                    t.prepare_cached(&format!("DELETE FROM frame_part_used WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args))?;
-                }
-                lap(&format!("{} relations' old frames collected", dead.len()));
             }
             Ok(())
         })
     }
+}
+
+/// What reachability collected (`collect_unreachable_frames`): memo entries whose content no kept manifest names,
+/// and maintained frames of relations no live program derives, with the use rows that went with them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Unreachable {
+    pub memo: usize,
+    pub maintained: usize,
+    pub programs: usize,
+    /// Of `programs`, those no manifest ever named (not in `corpus_plans` at all): a part whose key its run does not
+    /// name, whose frames every decision collects and every run derives again. Should stay 0.
+    pub unnamed: usize,
+}
+
+impl Unreachable {
+    pub fn any(&self) -> bool {
+        self.memo + self.maintained + self.programs > 0
+    }
+}
+
+/// Collects the frames nothing live reaches (decision 0227), in `t` (a write transaction). No run marks what it uses;
+/// what is kept follows from the kept manifests (`corpus_runs`'s keep decision):
+///
+/// - **A memo entry** (a live plan's space, `local_space`) is kept while a kept manifest names its content: its reads
+///   hold its document's sha256, and `corpus_live` the kept manifests' sources. A dead plan's whole space goes with
+///   the plan (`collect_corpus_pass`).
+/// - **A maintained frame** (a part's space) is kept while a live program holds its relation there: a program (a part's
+///   key) is live while a kept manifest names it (`corpus_plans`), and the relations it derives in the space are its
+///   `frame_program_used` row. A space no live program holds loses every frame.
+pub(super) fn collect_unreachable_frames(t: &Connection) -> rusqlite::Result<Unreachable> {
+    let mut out = Unreachable::default();
+    let live: HashSet<[u8; 32]> = t
+        .prepare("SELECT plan_digest FROM corpus_plans WHERE live = 1")?
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))?
+        .filter_map(|p| p.ok()?.try_into().ok())
+        .collect();
+    // The kept manifests' contents, by sha256.
+    let contents: HashSet<[u8; 32]> = t
+        .prepare(
+            "SELECT DISTINCT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM corpus_live l \
+             JOIN source_objects s ON s.source_id = l.source_id JOIN hashes h ON h.hash_id = s.canonical_hash_id",
+        )?
+        .query_map([], |r| Ok(super::HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] }))?
+        .filter_map(|k| k.ok()?.sha256_bytes())
+        .collect();
+    let mut gone: Vec<([u8; 32], String, Vec<u8>, i64)> = Vec::new();
+    for plan in &live {
+        let space = local_space(plan);
+        let mut st = t.prepare_cached("SELECT rel, ident, part, reads FROM frames WHERE space = ?1")?;
+        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?, r.get::<_, Vec<u8>>(3)?)))?;
+        for row in rows {
+            let (rel, ident, part, reads) = row?;
+            let reads = decode_reads(&reads);
+            // A memo entry's reads: its path and key, then its content's sha256 in four words.
+            if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
+                continue;
+            }
+            let mut digest = [0u8; 32];
+            for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
+                c.copy_from_slice(&v.to_le_bytes());
+            }
+            if !contents.contains(&digest) {
+                gone.push((space, rel, ident, part));
+            }
+        }
+    }
+    out.memo = gone.len();
+    // The maintained spaces: each one's live programs' relations.
+    let rows: Vec<(Vec<u8>, Vec<u8>, i64, Vec<u8>)> = t
+        .prepare("SELECT space, program, run, rels FROM frame_program_used")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut held: HashMap<Vec<u8>, HashSet<u64>> = HashMap::new();
+    let mut dead_rows: Vec<(Vec<u8>, Vec<u8>, i64)> = Vec::new();
+    for (space, program, run, rels) in rows {
+        let entry = held.entry(space.clone()).or_default();
+        // A row of a run (before decision 0227) or of a dead program holds nothing.
+        if run == 0 && <[u8; 32]>::try_from(program.as_slice()).is_ok_and(|p| live.contains(&p)) {
+            entry.extend(decode_keys(&rels));
+        } else {
+            dead_rows.push((space, program, run));
+        }
+    }
+    out.programs = dead_rows.len();
+    let known: HashSet<Vec<u8>> = t.prepare("SELECT plan_digest FROM corpus_plans")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.collect::<Result<_, _>>()?;
+    out.unnamed = dead_rows.iter().filter(|(_, p, run)| *run == 0 && !known.contains(p)).count();
+    let before = gone.len();
+    for (space, rels) in &held {
+        let Ok(space) = <[u8; 32]>::try_from(space.as_slice()) else { continue };
+        let mut st = t.prepare_cached("SELECT rel, ident, part FROM frame_part_used WHERE space = ?1")?;
+        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?)))?;
+        for row in rows {
+            let (rel, ident, part) = row?;
+            let Ok(id) = <[u8; 32]>::try_from(ident.as_slice()) else { continue };
+            if !rels.contains(&used_key(&Rel { name: rel.clone(), ident: id })) {
+                gone.push((space, rel, ident, part));
+            }
+        }
+    }
+    out.maintained = gone.len() - before;
+    // A dev trace (`RERAIL_FRAMES_TRACE`): each dead program row and each space's collected frames.
+    if std::env::var_os("RERAIL_FRAMES_TRACE").is_some() {
+        let hex = |b: &[u8]| b.iter().take(6).map(|x| format!("{x:02X}")).collect::<String>();
+        for (space, program, run) in &dead_rows {
+            eprintln!("RERAIL_FRAMES_TRACE dead row: space {} program {} run {run} known {}", hex(space), hex(program), known.contains(program));
+        }
+        let mut by: HashMap<String, usize> = HashMap::new();
+        for (space, rel, _, _) in &gone[before..] {
+            *by.entry(format!("{} {rel}", hex(space))).or_default() += 1;
+        }
+        for (k, n) in by {
+            eprintln!("RERAIL_FRAMES_TRACE collected: {k}: {n}");
+        }
+    }
+    for (space, rel, ident, part) in &gone {
+        t.prepare_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?.execute(params![&space[..], rel, ident, part])?;
+        t.prepare_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?.execute(params![&space[..], rel, ident, part])?;
+    }
+    for (space, program, run) in &dead_rows {
+        t.prepare_cached("DELETE FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = ?3")?.execute(params![space, program, run])?;
+    }
+    Ok(out)
 }
 
 /// A frame's key in its space's confirmations: its relation's name and identity, and its part.
@@ -1331,13 +1380,6 @@ fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> r
 /// put whole has none, so deltas a put left behind are not read.
 const CHAIN: &str = "~deltas";
 
-/// How `CHAIN`'s entry starts in stored reads: its name's length and its name.
-fn chain_mark() -> Vec<u8> {
-    let mut out = (CHAIN.len() as u32).to_le_bytes().to_vec();
-    out.extend(CHAIN.as_bytes());
-    out
-}
-
 /// A frame's stored reads, and how many deltas follow it.
 fn decode_reads_chain(bytes: &[u8]) -> (Vec<(String, u64)>, u32) {
     let mut reads = decode_reads_all(bytes);
@@ -1372,92 +1414,7 @@ fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
 mod tests {
     use super::*;
 
-    /// A store made before `frame_part_used` (decision 0138) gets each frame's use from `frames.used` at its next
-    /// open, and its frames are marked and collected by it as any other.
-    #[test]
-    fn a_store_made_before_the_frames_use_table_gets_it_from_its_frames() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("store.sqlite");
-        let relation = rel("local", 1);
-        {
-            let store = ContentStore::open(&path).unwrap();
-            let puts: Vec<_> = (0..3).map(|part| Put { rel: relation.clone(), part, digest: 7, reads: vec![], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
-            store.keep_frames(&[42; 32], &puts, &[], None).unwrap();
-            // As an older binary leaves it: no table of the frames' use.
-            store.connection.lock().unwrap().execute_batch("DROP TABLE frame_part_used").unwrap();
-        }
-        let store = ContentStore::open(&path).unwrap();
-        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
-        assert_eq!(held, 3, "every frame's use, from `frames.used`");
-        // Part 0 is used in two more runs; parts 1 and 2 are not, and go once two runs have passed.
-        store.use_frame_parts(&[42; 32], &relation, &[0], 0, 2).unwrap();
-        store.use_frame_parts(&[42; 32], &relation, &[0], 1, 2).unwrap();
-        store.use_frame_parts(&[42; 32], &relation, &[0], 2, 2).unwrap();
-        assert!(store.frame_rows(&[42; 32], &relation, 0).unwrap().is_some());
-        assert!(store.frame_rows(&[42; 32], &relation, 1).unwrap().is_none(), "an unused part expires");
-        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
-        assert_eq!(held, 1, "a frame forgotten takes its use with it");
-    }
 
-    #[test]
-    fn frame_part_usage_is_one_bulk_update_and_preserves_retention() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let dir = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
-        let relation = rel("local", 1);
-        let puts: Vec<_> = (0..8193).map(|part| Put { rel: relation.clone(), part,
-            digest: 7, reads: vec![("input-source-identity".into(),7);8], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
-        store.keep_frames(&[42;32], &puts, &[], None).unwrap();
-        // These share either the space or the relation, but are outside the requested identity.
-        store.keep_frames(&[43;32], &puts[..1], &[], None).unwrap();
-        let other = Put { rel: rel("local",2), part:8192, digest:7, reads:vec![], rows:puts[0].rows.clone() };
-        store.keep_frames(&[42;32], &[other], &[], None).unwrap();
-        let pages = store.connection.lock().unwrap().query_row("PRAGMA page_count",[],|r|r.get::<_,i64>(0)).unwrap() as usize;
-        let cache_writes = || {
-            let (mut now,mut peak)=(0,0);
-            unsafe { rusqlite::ffi::sqlite3_db_status(store.connection.lock().unwrap().handle(),
-                rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,&mut now,&mut peak,1); }
-            now as usize
-        };
-        cache_writes();
-        let counts = [AtomicUsize::new(0), AtomicUsize::new(0)];
-        unsafe extern "C" fn trace(event:u32, state:*mut std::ffi::c_void, stmt:*mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
-            let c = unsafe { &*state.cast::<[AtomicUsize;2]>() };
-            if event == rusqlite::ffi::SQLITE_TRACE_STMT {
-                c[0].fetch_add(1,Ordering::Relaxed);
-                unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
-            } else {
-                let vm = unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
-                c[1].fetch_add(vm as usize,Ordering::Relaxed);
-            }
-            0
-        }
-        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
-            rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace),
-            (&counts as *const [AtomicUsize;2]).cast_mut().cast()); }
-        // File order and digest-derived partition order are unrelated.
-        let parts: Vec<_> = (0..8192).map(|i| i*4051%8192).chain([7,7,-1]).collect();
-        let result=store.use_frame_parts(&[42;32],&relation,&parts,0,2);
-        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
-        result.unwrap();
-        let statements=counts[0].load(Ordering::Relaxed);
-        let vm=counts[1].load(Ordering::Relaxed);
-        let writes=cache_writes();
-        eprintln!("frame parts used: {statements} statements, {vm} VM instructions, {writes} page writes for {pages} database pages");
-        assert!(statements<=10,"usage must be one bulk update, independent of key count: {statements}");
-        assert!(vm<500_000,"usage must stay linear in keys: {vm}");
-        assert!(writes<2*pages,"bulk usage must not spill the same pages across key chunks: {writes} writes for {pages} pages");
-        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&parts,0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_none(),"an unused part expires after two runs");
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
-        assert!(store.frame_rows(&[43;32],&relation,0).unwrap().is_some());
-        assert!(store.frame_rows(&[42;32],&rel("local",2),8192).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
-        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
-        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_none());
-    }
 
     #[test]
     fn frame_publication_batches_put_delete_and_usage_with_bounded_work() {
@@ -1637,6 +1594,35 @@ mod tests {
         assert!(count.load(Ordering::Relaxed) <= 4, "257 relations must use at most three batches plus schema admission, got {}", count.load(Ordering::Relaxed));
     }
 
+    /// A frame is queued encoded, as the store keeps it: the queue counts its encoded bytes (the raw rows were five
+    /// times that), and it reads the same before and after the writer stores it.
+    #[test]
+    fn frames_are_queued_encoded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let r = rel("span_within", 1);
+        let values: Vec<i64> = (0..20_000i64).flat_map(|i| [(7 << 32) | (i + 1), (7 << 32) | (i / 4)]).collect();
+        let put = || Put { rel: r.clone(), part: 3, digest: 9, reads: vec![], rows: Rows { types: vec![b'i', b'i'], rows: values.clone(), n: 20_000 } };
+        let encoded = super::super::cross_rows::encode(2, &values).len();
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let (release, blocked) = std::sync::mpsc::channel::<()>();
+            store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+            store.queue_frames([1; 32], vec![put()], vec![], None);
+            let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
+            assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
+            assert_eq!(queued[&r].encoded_bytes(), encoded);
+            release.send(()).unwrap();
+            store.written().unwrap();
+            let (by, _, _) = store.written_by_what();
+            let frames = by.iter().find(|w| w.0 == "frames").expect("the frames' job");
+            assert_eq!(frames.2, encoded, "the queue counts the encoded bytes, not {} raw", values.len() * 8);
+            assert!(encoded * 4 < values.len() * 8, "{encoded} encoded of {} raw", values.len() * 8);
+        }
+        let store = ContentStore::open(&path).unwrap();
+        assert_eq!(store.frame_rows(&[1; 32], &r, 3).unwrap().unwrap().rows, values, "stored: the same rows");
+    }
+
     #[test]
     fn queued_frames_are_read_without_waiting_for_the_writer() {
         use std::sync::mpsc;
@@ -1720,6 +1706,52 @@ mod tests {
         assert_eq!(reader.frame_rows(&[1; 32], &r, 0).unwrap().unwrap().rows, [3]);
     }
 
+    /// Decision 0227: what is kept is what the kept manifests reach, with no run's marks. A memo entry stays while its
+    /// plan is live and a kept manifest names its content; a maintained relation while a live program (a plan a
+    /// manifest names) derives it in its space. A program's second write records nothing new.
+    #[test]
+    fn frames_are_kept_while_a_kept_manifest_reaches_them() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let (plan, program, gone_program) = ([5u8; 32], [7u8; 32], [8u8; 32]);
+        let text = b"x = 1\n";
+        let source = store.put_source(text, &[]).unwrap();
+        // A run of root /r, which read `source` and names `program` (a part's key) among its plans.
+        store.record_corpus_run_naming("/r", &[source], 1, 1, plan, &[program], 1).unwrap();
+        let memo = |path: &str, content: &[u8]| {
+            let digest: [u8; 32] = Sha256::digest(content).into();
+            let mut reads = vec![(path.to_owned(), 1u64)];
+            reads.extend(digest.chunks_exact(8).map(|c| ("sha256".to_owned(), u64::from_le_bytes(c.try_into().unwrap()))));
+            Put { rel: rel(MEMO_RELS[0], 1), part: path.len() as i64, digest: 1, reads, rows: Rows { types: vec![0], rows: vec![1], n: 1 } }
+        };
+        let space = local_space(&plan);
+        store.keep_frames(&space, &[memo("a.py", text), memo("old.py", b"y = 2\n")], &[], None).unwrap();
+        let maintained = [9u8; 32];
+        let (kept, dropped) = (rel("kept", 1), rel("dropped", 1));
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        store.keep_frames(&maintained, &[put(&kept)], &[], Some((&[kept.clone()][..], 0, program))).unwrap();
+        store.keep_frames(&maintained, &[put(&dropped)], &[], Some((&[dropped.clone()][..], 0, gone_program))).unwrap();
+        let rows = |sql: &str| -> i64 { store.connection.lock().unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+        let used = rows("SELECT total_changes()");
+        store.keep_frames(&maintained, &[], &[], Some((&[kept.clone()][..], 0, program))).unwrap();
+        assert_eq!(rows("SELECT total_changes()") - used, 1, "a program's relations again: only the space's count moves, nothing of its use");
+        let swept = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert_eq!(swept, Unreachable { memo: 1, maintained: 1, programs: 1, unnamed: 1 }, "the gone program no manifest names");
+        assert!(store.frame_rows(&space, &rel(MEMO_RELS[0], 1), "a.py".len() as i64).unwrap().is_some(), "a kept manifest's content");
+        assert!(store.frame_rows(&space, &rel(MEMO_RELS[0], 1), "old.py".len() as i64).unwrap().is_none(), "content no manifest names");
+        let got = store.frames(&maintained, &[kept.clone(), dropped.clone()], 0).unwrap();
+        assert!(got.contains_key(&kept) && !got.contains_key(&dropped), "a live program's relation stays, a dead one's goes");
+        let again = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert!(!again.any(), "nothing left to collect: {again:?}");
+    }
+
     fn rel(name: &str, i: u8) -> Rel {
         Rel { name: name.into(), ident: [i; 32] }
     }
@@ -1779,78 +1811,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn a_relation_no_run_used_for_four_runs_is_collected() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-gc-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [2u8; 32];
-        let (kept, old) = (rel("kept", 1), rel("old", 1));
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0, [0; 32]))).unwrap();
-        for _ in 0..RUNS {
-            assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
-            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0, [0; 32]))).unwrap();
-        }
-        let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
-        assert!(got.contains_key(&kept) && !got.contains_key(&old));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// The programs of one run that keep frames in one space (a phase's, P3's cross part, its loading cone) count one
-    /// run: however many there are, a relation one of them used is kept for the next [`RUNS`] runs.
-    #[test]
-    fn the_programs_of_one_run_count_one_run_of_their_space() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-runs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [3u8; 32];
-        let (first, other) = (rel("first", 1), rel("other", 1));
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        // Run 7's first program keeps `first`; eight more programs of run 7 keep `other`.
-        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7, [0; 32]))).unwrap();
-        for _ in 0..2 * RUNS {
-            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7, [0; 32]))).unwrap();
-        }
-        assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
-        // RUNS later runs that do not use it collect it.
-        for run in 8..8 + RUNS as u64 {
-            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run, [0; 32]))).unwrap();
-        }
-        assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// Programs over one space each run in turn, one process each (a policy set's over one root): more of them than
-    /// [`RUNS`], each keeps what it used for its own next runs, and loses what its own last [`RUNS`] runs did not use.
-    #[test]
-    fn each_program_keeps_what_it_used_however_many_run_between() {
-        let dir = std::env::temp_dir().join(format!("rerail-frames-programs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let space = [4u8; 32];
-        let n = 2 * RUNS as u8 + 1;
-        let own: Vec<Rel> = (0..n).map(|i| rel(&format!("own{i}"), 1)).collect();
-        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        for round in 0..3 {
-            for i in 0..n {
-                let puts = if round == 0 { vec![put(&own[i as usize])] } else { Vec::new() };
-                store.keep_frames(&space, &puts, &[], Some((&[own[i as usize].clone()][..], 0, [i; 32]))).unwrap();
-            }
-            let got = store.frames(&space, &own, 0).unwrap();
-            assert!(own.iter().all(|r| got.contains_key(r)), "round {round}: a program's frames were collected by the others' runs");
-        }
-        // Program 0 runs on without its relation: its own last RUNS runs collect it; the others keep theirs.
-        let other = rel("other", 1);
-        store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
-        for _ in 1..RUNS {
-            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
-        }
-        let got = store.frames(&space, &own, 0).unwrap();
-        assert!(!got.contains_key(&own[0]), "unused by its program's last runs");
-        assert!(own[1..].iter().all(|r| got.contains_key(r)));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
 
 /// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.

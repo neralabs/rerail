@@ -309,3 +309,27 @@ fn sqlite_functions_as_sqlite_has_them() {
         assert_eq!(eval("sql_char", &[], &[n]), sql("SELECT char(?1)", &[&n]), "char({n})");
     }
 }
+
+/// A native text test (`front::Native::TextTest`) printed as the rule it was made from and read back is the same
+/// native under its own name: preparing the read program again makes no second native under the first.
+#[test]
+fn a_printed_native_text_test_is_read_back_as_itself() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl ask(n: node)
+.input ask
+.decl node_text(n: node, t: symbol)
+node_text(n, t) :- ask(n), t = @rr_node_text_any(n).
+.decl hit(n: node)
+hit(n) :- node_text(n, t), contains("pass", t).
+.output hit
+"##).unwrap();
+    as_relations(&mut program).unwrap();
+    let natives = |p: &Program| p.natives.iter().map(|(k, v)| format!("{k} {v:?}")).collect::<Vec<_>>();
+    let made = natives(&program);
+    assert_eq!(made.len(), 1, "one native text test: {made:?}");
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap();
+    let mut again = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
+    as_relations(&mut again).unwrap();
+    assert_eq!(natives(&again), made, "{text}");
+    assert_eq!(again.rules.len(), program.rules.len(), "{text}");
+}

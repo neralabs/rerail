@@ -47,9 +47,10 @@
 //! ```
 //!
 //! A head row that read an unchanged group read the same value before and after, so the other positions' rules cover
-//! it (with the aggregate over old rows in an overdelete). A stratum with a relation made natively, a lattice, an
-//! `ast` literal, or a changed read whose old rows were not kept, is derived again from its inputs: its rules
-//! unchanged.
+//! it (with the aggregate over old rows in an overdelete). A text test made natively is a filter of its input's
+//! strings: its rows of strings gone are deleted, and only the new strings are tested (`h__ins` over `i__plus`, made
+//! natively as the whole was). A stratum with another relation made natively, a lattice, an `ast` literal, or a
+//! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};
@@ -278,6 +279,42 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
         // none), to find a stratum whose maintenance departs from deriving it again.
         let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
+        // A text test made natively (`front::Native::TextTest`) is a filter of its input's strings: a row is there
+        // while its string is and passes. It is maintained exactly: the rows of strings gone are deleted, and only
+        // the new strings are tested, natively as the whole input was (`h__ins` over `i__plus`).
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(front::Native::TextTest { input, column, op, patterns }) = part.program.natives.get(rel.as_str()).cloned()
+            && changed.contains(&input)
+            && old(rel)
+            && old(&input)
+            && only.as_ref().is_none_or(|o| o.contains(*rel))
+        {
+            maintained += 1;
+            let start = rules.len();
+            let v = row(part.program.decls[rel.as_str()].len());
+            let head = |r: String| Atom { rel: r.into(), args: v.clone().into(), neg: false, gated: false };
+            rules.push(Rule { head: head(named(rel, "del")), body: [atom(named(rel, "old"), v.clone(), false), atom(named(&input, "minus"), v.clone(), false)].into() });
+            // The test in the rule too: a maintained form's pieces are rules (`plan`'s maintained run), which test
+            // the new strings row by row.
+            let test = crate::code_rule_dsl::logic::strings::test_literal(v[column].clone(), &op, &patterns);
+            rules.push(Rule { head: head(named(rel, "ins")), body: [atom(named(&input, "plus"), v.clone(), false), test].into() });
+            part.program.natives.insert(named(rel, "ins"), front::Native::TextTest { input: named(&input, "plus"), column, op, patterns });
+            // Its rules are now its old rows and the new ones, which the run makes as rules (`text_test_defined`):
+            // it stays a native, so a run that derives it again (`Again`) makes it from the vocabulary.
+            rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)].into() });
+            rules.push(Rule { head: head((*rel).clone()), body: [atom(named(rel, "ins"), v.clone(), false)].into() });
+            for piece in ["del", "ins"] {
+                fresh.push(((*rel).clone(), named(rel, piece)));
+            }
+            olds.insert((*rel).clone());
+            olds.insert(input.clone());
+            deltas.insert(input);
+            exact_rels.insert((*rel).clone());
+            maint.insert((*rel).clone());
+            changed.insert((*rel).clone());
+            groups.push((scc.clone(), start, rules.len(), given.iter().map(|r| (*r).clone()).collect()));
+            continue;
+        }
         let why = if only.as_ref().is_some_and(|o| !scc.iter().any(|r| o.contains(r))) { Some("not chosen") } else { unmaintainable(&part.program, scc, &mine, &changed, &old) };
         if std::env::var_os("O125_LIST").is_some() && why.is_none() {
             eprintln!("O125_LIST {}", scc.iter().next().unwrap());
@@ -311,7 +348,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         let lv = is_recursive && levels_wanted() && mine.iter().all(|r| r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })))
             && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
         if lv {
-            BY_LEVELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let not_join = mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
@@ -637,46 +674,52 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         }
     }
     part.program.rules = rules;
-    together(&mut part.program);
+    let together = together(&mut part.program);
+    TOGETHER.with(|n| n.set(n.get() + together));
     let views = views.into_keys().collect();
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
 }
 
-static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
+// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
+//
+// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
+// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
+// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
+// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
+// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
+//
+// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
+// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
+// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
+//
+// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
+thread_local! {
+    /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
+    /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
+    /// other tests run beside it.
+    static BY_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOGETHER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
-/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
+/// The recursive strata maintained by levels so far by this thread's runs (decision 0090), not by delete-and-rederive.
 pub fn strata_by_levels() -> usize {
-    BY_LEVELS.load(std::sync::atomic::Ordering::Relaxed)
+    BY_LEVELS.with(std::cell::Cell::get)
 }
 
-static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The sets of pieces run as one component so far in this process (`together`).
+/// The sets of pieces run as one component so far by this thread's runs (`together`).
 pub fn pieces_together() -> usize {
-    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
+    TOGETHER.with(std::cell::Cell::get)
 }
 
-/// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
-/// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
-///
-/// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
-/// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
-/// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
-/// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
-/// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
-///
-/// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
-/// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
-/// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
-///
-/// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
-fn together(prog: &mut front::Program) {
+/// The sets of pieces it made into one component each.
+fn together(prog: &mut front::Program) -> usize {
     if std::env::var_os("RERAIL_PIECES_APART").is_some() {
-        return;
+        return 0;
     }
     if crate::code_rule_dsl::logic::plan::placement::device() {
         crate::code_rule_dsl::logic::profile::decision("pieces together (decision 0101 §3)", || "apart: the run's binding is the device, which takes no gates".to_owned());
-        return;
+        return 0;
     }
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut rules_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -745,6 +788,7 @@ fn together(prog: &mut front::Program) {
     let apart: BTreeSet<usize> = front::apart(prog).into_iter().collect();
     let sets: Vec<(usize, BTreeSet<String>)> = sets.into_iter().enumerate().filter(|(i, _)| !apart.contains(i)).map(|(_, s)| s).collect();
     prog.together.clear();
+    let mut made = 0;
     for (g, set) in sets {
         // Each negated piece's depth in the set (its gates' order), and what it reads there.
         let inner: BTreeMap<&String, BTreeSet<String>> = set.iter().map(|r| {
@@ -805,6 +849,7 @@ fn together(prog: &mut front::Program) {
         }
         prog.again[g].owned.extend(members.iter().cloned());
         prog.together.push(members);
-        TOGETHER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        made += 1;
     }
+    made
 }

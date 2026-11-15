@@ -20,15 +20,15 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_text_test` (with `native_text_pattern`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
 use super::front::Name;
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
@@ -100,6 +100,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_text_test", &["p:sym", "rel:sym", "input:sym", "column:int", "op:sym"]),
+        ("native_text_pattern", &["p:sym", "rel:sym", "i:int", "pattern:sym"]),
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
@@ -119,10 +121,18 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
+        // `asked_by`: the k-th rule of each request relation, one row for each relation whose readers it serves
+        // (decision 0174).
+        ("asked", &["p:sym", "req:sym", "k:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
         ("tape_column", &["p:sym", "rel:sym", "i:int"]),
+        // `shapes`: the join shape directives, in order: each one's head, literal and text, and when its literal
+        // joins (after a relation, or once its variables are bound).
+        ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
+        ("shape_after", &["p:sym", "k:int", "rel:sym"]),
+        ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
     ];
     SCHEMA
         .iter()
@@ -302,6 +312,17 @@ impl Writer<'_> {
                 self.row("tape_column", vec![s(rel), n(*i)]);
             }
         }
+        for (k, shape) in prog.shapes.iter().enumerate() {
+            self.row("shape", vec![n(k), s(&shape.head), s(&shape.lit), s(&shape.text)]);
+            match &shape.wait {
+                ShapeWait::After(a) => self.row("shape_after", vec![n(k), s(a)]),
+                ShapeWait::Bound(vars) => {
+                    for (i, x) in vars.iter().enumerate() {
+                        self.row("shape_bound", vec![n(k), n(i), s(x)]);
+                    }
+                }
+            }
+        }
         for (rel, l) in &prog.lattice {
             self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
             if let Some(f) = &l.merge {
@@ -369,6 +390,12 @@ impl Writer<'_> {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
                     }
                 }
+                Native::TextTest { input, column, op, patterns } => {
+                    self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
+                    }
+                }
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
                 Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
@@ -396,6 +423,13 @@ impl Writer<'_> {
         for (req, by) in &prog.answers {
             for (i, b) in by.iter().enumerate() {
                 self.row("answer", vec![s(req), n(i), s(b)]);
+            }
+        }
+        for (req, rules) in &prog.asked_by {
+            for (k, readers) in rules.iter().enumerate() {
+                for b in readers {
+                    self.row("asked", vec![s(req), n(k), s(b)]);
+                }
             }
         }
         for (span, text) in &prog.rx_spans {
@@ -722,6 +756,18 @@ impl<'a, C: Cell> Reader<'a, C> {
             gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: indexed(quiet.get(&k))?, deps: indexed(deps.get(&k))? })));
         }
         prog.gates = ordered(gates);
+        let after = self.by_id("shape_after")?;
+        let bound = self.by_id("shape_bound")?;
+        let mut shapes = Vec::new();
+        for row in self.get("shape") {
+            let k = int(&row[0])?;
+            let wait = match after.get(&k).and_then(|r| r.first()) {
+                Some(r) => ShapeWait::After(text(&r[0])?),
+                None => ShapeWait::Bound(indexed(bound.get(&k))?),
+            };
+            shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
+        }
+        prog.shapes = ordered(shapes);
         prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;
@@ -735,6 +781,12 @@ impl<'a, C: Cell> Reader<'a, C> {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+        }
+        let patterns = self.by_id_text("native_text_pattern")?;
+        for row in self.get("native_text_test") {
+            let rel = text(&row[0])?;
+            let patterns = ordered(patterns.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            prog.natives.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
         }
         for row in self.get("native_python_candidates") {
             prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
@@ -793,6 +845,15 @@ impl<'a, C: Cell> Reader<'a, C> {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
         }
         prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
+        for row in self.get("asked") {
+            let (req, k, by) = (text(&row[0])?, int(&row[1])?, text(&row[2])?);
+            let k = usize::try_from(k).map_err(|_| format!("asked: rule {k}"))?;
+            let rules = prog.asked_by.entry(req).or_default();
+            if rules.len() <= k {
+                rules.resize_with(k + 1, BTreeSet::new);
+            }
+            rules[k].insert(by);
+        }
         Ok(prog)
     }
 

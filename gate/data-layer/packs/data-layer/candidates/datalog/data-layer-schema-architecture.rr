@@ -61,7 +61,7 @@ schema_planning_frame_mark("function_definition"). schema_planning_frame_mark("d
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, child, text, node_text, token, cpython_syntax_error
+.input doc, node, line, syntax_error, field, child, text, cpython_syntax_error, node_text, token
 .output violation
 lifecycle_dir("l2000_connection/").
 lifecycle_dir("l3200_metadata/").

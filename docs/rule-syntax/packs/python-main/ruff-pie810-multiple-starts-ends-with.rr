@@ -19,7 +19,7 @@ PIE810(n, FIRST, M) :- kind(n, "boolean_operator"), pie810_or_op(n),
     pie810_affix_call(c2, M, R), node(_, c2, _, _, _), FIRST = c2, within_stop(c2, p5, pie810_stop_10), pie810_or_op(p5),
     count : { child(p6, p5, _), pie810_or_op(p6) } = 0, within_stop(c7, p5, pie810_stop_10),
     !pie810_or_op(c7), pie810_affix_call(c7, M, R), node(_, c7, _, _, _), SECOND = c7,
-    text(SECOND, t8), text(FIRST, t9), t8 != t9.
+    node(_, SECOND, _, _, _), node(_, FIRST, _, _, _), SECOND != FIRST.
 
 // or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
 .decl pie810_or_op(n: node)
@@ -373,15 +373,13 @@ pie810_alt_4(n) :- ref_site(n, b1), site_stop_at_global(b1), (st2 = b1 ; within(
     ).
 
 pie810_alt_4(n) :- ref_site(n, b6), site_stop_at_global(b6), binding_value(b6, x7),
-    pie810_tuple_init(x7), (st8 = b6 ; within(b6, st8)),
-    count : { child(st8, c9, _), kind(c9, "type") } = 0.
+    pie810_tuple_init(x7), st8 = b6, count : { child(st8, c9, _), kind(c9, "type") } = 0.
 pie810_alt_4(n) :- ref_site(n, b10), site_stop_at_global(b10),
     (st11 = b10 ; within(b10, st11)), kind(st11, "as_pattern"), child(p12, st11, _),
     kind(p12, "with_item"), child(st11, c13, _), pie810_tuple_init(c13), pie810_tok_precedes_8(c13),
     child(st11, c21, _), kind(c21, "as_pattern_target"), child(c21, c22, _),
     pie810_plain_target(c22).
-pie810_alt_4(n) :- ref_site(n, b23), site_annotation(b23, o24), pie810_tuple_ann(o24),
-    (st25 = b23 ; within(b23, st25)),
+pie810_alt_4(n) :- ref_site(n, b23), site_annotation(b23, o24), pie810_tuple_ann(o24), st25 = b23,
     count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
 pie810_alt_4(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
     kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),

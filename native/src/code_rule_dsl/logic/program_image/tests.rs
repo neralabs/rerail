@@ -790,3 +790,166 @@ fn the_planners_reading_of_a_rule_is_the_trees() {
     }
     assert!(n > 1000, "{n}");
 }
+
+/// `every_part` with a field of every other kind `plan::run` reads: a native of each kind, lattices with a merge and a
+/// widening, answers, gates, qualifiers, tape columns and demand in an order.
+fn every_field() -> Program {
+    use crate::code_rule_dsl::logic::front::{ast::Gate, LatticeDecl};
+    let mut p = every_part();
+    p.natives.insert("dfs_x".into(), Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: Some("roots".into()) });
+    p.natives.insert("dfs_y".into(), Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: None });
+    p.natives.insert("match_x".into(), Native::MatchAll { input: "src".into(), pattern: "(a)(b)?".into(), groups: vec!["g2".into(), "g1".into()], positions: true });
+    p.natives.insert("match_y".into(), Native::MatchAll { input: "src".into(), pattern: "c".into(), groups: vec![], positions: false });
+    p.natives.insert("tt_x".into(), Native::TextTest { input: "src".into(), column: 0, op: "contains".into(), patterns: vec!["b".into(), "a".into()] });
+    p.natives.insert("comp_x".into(), Native::Components { edge: "e".into(), own: "own".into() });
+    p.natives.insert("through_x".into(), Native::ReachThrough { reach: "reach_x".into(), map: "m".into() });
+    p.natives.insert("py_x".into(), Native::Python { kind: "calls".into(), input: "src".into(), targets: Some("tg".into()) });
+    p.natives.insert("py_y".into(), Native::Python { kind: "defs".into(), input: "src".into(), targets: None });
+    p.natives.insert("cand_x".into(), Native::PythonCandidates { input: "src".into(), targets: "tg".into(), context: "ctx".into(), member: "mem".into() });
+    p.lattice.insert("best".into(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None });
+    p.lattice.insert("joined".into(), LatticeDecl { keys: 2, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(3) });
+    p.answers.insert("ask".into(), vec!["told".into(), "also".into()]);
+    p.answers.insert("ask2".into(), vec!["told2".into()]);
+    p.gates.push(("done_x".into(), Gate { src: Some("x_demand".into()), rel: "x".into(), level: 2, quiet: vec!["q1".into(), "q0".into()], deps: vec!["done_y".into()] }));
+    p.gates.push(("done_y".into(), Gate { src: None, rel: "y".into(), level: 1, quiet: vec![], deps: vec![] }));
+    p.qualifiers.insert("r".into(), ["inline".to_owned(), "no_magic".to_owned()].into());
+    p.qualifiers.insert("nearest".into(), ["no_inline".to_owned()].into());
+    p.tapes.insert("r".into(), [1usize].into());
+    p.demand = vec!["r".into(), "*".into(), "nearest".into()];
+    p
+}
+
+/// A native's fields, as the tree writes them.
+fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &super::NativeSpec) -> Native {
+    use super::NativeSpec as S;
+    let r = |x: RelId| f.rel_name(x).to_owned();
+    let t = |x: AtomId| f.text(x).to_owned();
+    match s {
+        S::DfsFirst { edge, target, roots } => Native::DfsFirst { edge: r(*edge), target: r(*target), roots: roots.map(r) },
+        S::MatchAll { input, pattern, groups, positions } => Native::MatchAll { input: r(*input), pattern: t(*pattern), groups: groups.iter().map(|&g| t(g)).collect(), positions: *positions },
+        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
+        S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
+        S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
+        S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
+        S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
+        S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
+    }
+}
+
+/// Every field `plan::run` reads of `p` (all but its rules, `again` and `together`), read through `Fields` from its
+/// image, says what the tree says, by text.
+fn fields_agree(p: &Program) {
+    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields};
+    use std::collections::BTreeSet;
+    let placed = Placed::of_program(p).unwrap();
+    let f = Fields::of(&placed).expect("a whole image");
+    // Read once, and shared by the clones.
+    let again = placed.clone();
+    assert!(std::ptr::eq(f.about, Fields::of(&placed).unwrap().about));
+    assert!(std::ptr::eq(f.about, Fields::of(&again).unwrap().about));
+    fn strs(xs: &[String]) -> Vec<&str> {
+        xs.iter().map(String::as_str).collect()
+    }
+    assert_eq!(f.inputs().collect::<Vec<_>>(), strs(&p.inputs));
+    assert_eq!(f.outputs().collect::<Vec<_>>(), strs(&p.outputs));
+    for r in &p.inputs {
+        assert!(f.is_input(r), "{r}");
+    }
+    for r in &p.outputs {
+        assert!(f.is_output(r), "{r}");
+    }
+    // Declarations.
+    assert_eq!(f.decls().len(), p.decls.len());
+    for (rel, cols) in &p.decls {
+        let want: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        assert_eq!(f.columns(rel.as_str()), Some(want.clone()), "{rel}");
+        assert_eq!(f.arity(rel.as_str()), Some(cols.len()));
+        for (c, (_, t)) in want.iter().enumerate() {
+            assert_eq!(f.column_type(rel.as_str(), c), Some(*t));
+        }
+    }
+    // Facts.
+    assert_eq!(f.fact_rels().len(), p.facts.len());
+    for (rel, rows) in &p.facts {
+        let got: Vec<Vec<String>> = f.facts(rel).unwrap_or_else(|| panic!("facts of {rel}")).rows().map(|row| row.map(|c| f.cell_text(c)).collect()).collect();
+        let want: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(|x| match x {
+            Value::Int(i) => i.to_string(),
+            Value::Str(s) => format!("{:?}", s.as_str()),
+        }).collect()).collect();
+        assert_eq!(got, want, "{rel}");
+        assert_eq!(f.has_facts(rel), !rows.is_empty());
+    }
+    // Lattices.
+    assert_eq!(f.lattices().len(), p.lattice.len());
+    for (rel, l) in &p.lattice {
+        let d = f.lattice_decl(rel).unwrap_or_else(|| panic!("lattice {rel}"));
+        assert_eq!((d.keys, f.text(d.ty), d.merge.map(|m| f.text(m)), d.widen), (l.keys, l.ty.as_str(), l.merge.as_deref(), l.widen), "{rel}");
+        assert_eq!(f.lattice_name(rel), Some(l.lattice()));
+        assert!(f.lattice(rel));
+    }
+    // Natives, each of its fields.
+    assert_eq!(f.natives().len(), p.natives.len());
+    for (rel, n) in &p.natives {
+        let got = f.native(rel).unwrap_or_else(|| panic!("native {rel}"));
+        assert_eq!(&native_tree(&f, &got.spec), n, "{rel}");
+        assert_eq!(got.reads.iter().map(|&r| f.rel_name(r)).collect::<Vec<_>>(), n.reads(), "{rel}");
+    }
+    // Answers, in order.
+    assert_eq!(f.answers().len(), p.answers.values().map(Vec::len).sum::<usize>());
+    for (req, ps) in &p.answers {
+        assert_eq!(f.answers_of(req), strs(ps), "{req}");
+        assert!(f.request(req) && f.answer(req));
+    }
+    // Gates, in order.
+    let gates: Vec<(String, Option<String>, String, usize, Vec<String>, Vec<String>)> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
+    let want: Vec<_> = p.gates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
+    assert_eq!(gates, want);
+    for (k, _) in &p.gates {
+        assert!(f.gate(k) && f.demanded_or_gate(k));
+    }
+    // Qualifiers, tapes, kind sets, nullary and demand.
+    for (rel, ws) in &p.qualifiers {
+        assert_eq!(f.qualifiers_of(rel).into_iter().collect::<BTreeSet<_>>(), ws.iter().map(String::as_str).collect(), "{rel}");
+        for w in ws {
+            assert!(f.qualified(rel, w));
+        }
+    }
+    assert_eq!(f.about.qualifiers.len(), p.qualifiers.values().map(BTreeSet::len).sum::<usize>());
+    for (rel, cols) in &p.tapes {
+        assert_eq!(f.tapes_of(rel), cols.iter().copied().collect::<Vec<_>>(), "{rel}");
+    }
+    assert_eq!(f.tapes().len(), p.tapes.values().map(BTreeSet::len).sum::<usize>());
+    assert_eq!(f.kindsets().len(), p.kindsets.len());
+    for (set, kinds) in &p.kindsets {
+        let got: Vec<&str> = f.kindset(set).unwrap_or_else(|| panic!("kind set {set}")).iter().map(|&k| f.text(k)).collect();
+        assert_eq!(got, strs(kinds), "{set}");
+    }
+    assert_eq!(f.nullaries().collect::<BTreeSet<_>>(), p.nullary.iter().map(String::as_str).collect());
+    for r in &p.nullary {
+        assert!(f.nullary(r));
+    }
+    assert_eq!(f.demand().collect::<Vec<_>>(), strs(&p.demand));
+    for r in &p.demand {
+        assert!(f.demanded(r));
+    }
+    // Shapes, in order.
+    assert_eq!(f.shapes().iter().map(|s| (f.text(s.head), f.text(s.lit), f.text(s.text))).collect::<Vec<_>>(), p.shapes.iter().map(|s| (s.head.as_str(), s.lit.as_str(), s.text.as_str())).collect::<Vec<_>>());
+}
+
+/// A version's fields (`plan::fields::Fields`, read once from its `Placed`) say what the tree's fields say: on the pack
+/// programs, and on programs with a field of every kind.
+#[test]
+fn a_versions_fields_say_what_the_tree_says() {
+    let mut n = 0;
+    for (_, prog) in pack_programs() {
+        if encode(&prog).is_err() {
+            continue;
+        }
+        fields_agree(&prog);
+        n += 1;
+    }
+    assert!(n > 50, "{n}");
+    fields_agree(&every_part());
+    fields_agree(&analysed());
+    fields_agree(&every_field());
+}

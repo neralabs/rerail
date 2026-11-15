@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    check_compiler_cache();
     // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
     if !std::env::var("TARGET").unwrap_or_default().starts_with("wasm32") {
         napi_build::setup();
@@ -30,6 +31,42 @@ fn main() {
     configure_fixtures();
     build_identities(&registry);
 }
+
+/// On a machine with the build farm (`scripts/build/farm`: its configuration exists), every build
+/// goes through the farm's wrapper, the one compiler cache every worktree shares: another wrapper,
+/// or none, would compile again what the other worktrees compiled. The farm's `setup` makes it
+/// the machine's (`~/.cargo/config.toml`); this stops a build that overrode it (`RUSTC_WRAPPER`
+/// exported). Relax (`RELAX_STD` set) builds without one or with itself as the wrapper, and `RERAIL_FARM_ANY_ENV=1` allows any
+/// (a measurement of the compiler itself). Elsewhere (CI, a machine without the farm) it does nothing.
+fn check_compiler_cache() {
+    for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return };
+    let config = std::env::var_os("RERAIL_FARM_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config/rerail-farm/farm.json"));
+    if !config.exists() || std::env::var("RERAIL_FARM_ANY_ENV").as_deref() == Ok("1") {
+        return;
+    }
+    let farm = home.join(".local/share/rerail-farm/rustc-wrapper");
+    let wrapper = std::env::var_os("RUSTC_WRAPPER").unwrap_or_default();
+    // Relax drives its own cargo pass with itself as the wrapper (`RUSTC_WRAPPER=.../bin/relax`); its
+    // builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
+    let relax = std::env::var_os("RELAX_STD").is_some()
+        && (wrapper.is_empty() || Path::new(&wrapper).file_name().is_some_and(|n| n == "relax"));
+    if PathBuf::from(&wrapper) == farm || relax {
+        return;
+    }
+    panic!(
+        "this machine has the build farm, but this build's RUSTC_WRAPPER is {wrapper:?}, not the farm's \
+         ({}): it would not reuse what the other worktrees compiled. Do not set RUSTC_WRAPPER (the farm's \
+         setup puts the farm's in ~/.cargo/config.toml); RERAIL_FARM_ANY_ENV=1 allows a build that must \
+         differ (scripts/build/farm/README.md, \"One configuration\").",
+        farm.display()
+    );
+}
+
 
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
 /// `lang-<id>` (all are by default; the browser build picks the ones a page needs, `wasm/README.md`).
@@ -186,6 +223,8 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/java/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/csharp/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/html/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/css/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

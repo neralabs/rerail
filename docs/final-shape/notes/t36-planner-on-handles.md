@@ -87,6 +87,57 @@ split's rounds, a refused inlining) is a candidate overlay, dropped when refused
 Each pass is checked against its tree form while it is ported, as items 3 and 4 were: the overlay, decoded, equals
 the tree pass's program, over the planner's, corpus, session, `rr` and keeps tests and dl1. Then the tree form goes.
 
+## Item 7, step by step
+
+Surveyed 2026-11-14, at commit `f0ab6f6ab`. Every caller passes `run` a tree, and no corpus, typing or session code
+makes a version yet. Inside `run` (about 1,680 lines) the rule lists are trees (`&Rule`, made into a `Body` only to
+plan one, found by address), and the program's fields are read from the tree about 110 times. About 35 helpers read
+only the tree. Eight have version forms already, unused on this path: `passes::normalize` and `stated_apart`, and
+`analyses::accepts`, `needed`, `strata` and `projections`. `About::produced` and `Version::decl_of` are also unused
+here. `Fields` covers most field reads.
+
+Leaves first, as before. Each step leaves every caller working, and is checked against its tree form while it is
+ported, over the targeted tests and dl1.
+
+1. **The image holds the whole program.** `Again`, `together` and shapes, the gates' details (`level`, `src`,
+   `quiet`, `deps`), `kindsets` and tapes become about rows, read by `About`. `Builder::of_program` stops refusing a
+   maintained program, and `Placed::of_program` is whole for every program.
+2. **`run` starts from a version.** It makes its input's version once, at the top, and normalizes it with
+   `passes::normalize` and `stated_apart`, as derivations. The tree passes are decoded from the result (until step
+   9). `Lowered`'s domains, ops and dialect travel beside the version, not in a cloned tree.
+3. **The run's rule lists are ids.** The strata (`analyses::strata`), `rules_by`, `by_stratum`, `rules_by_stratum`,
+   the strands and `issue`'s `Members` hold `RuleId`s (or `RuleKey`s), not `&Rule`s. `Versions::key` by address
+   goes. `needed`, `projections`, `produced` and `accepts` read the version.
+4. **The fields from the version.** `Run` holds the run's `Placed` and its `Fields`, not `prog`. `make_plan`,
+   `Stats::read`, the `Run` helpers (indexes, deferred rows, `again`, the native relations), `sql_kernel::component`
+   and `drive` read them there.
+5. **The stratum readers on handles:**
+   - `stratum_reads`, `first_reads`, `last_reads`, `retainable_stratum`, `with_answers`, `identities`, `plan_views`
+     and `decoded_outputs`;
+   - `native_stratum_`, `seed_specs` and `issue::Board`;
+   - `native_fixpoint` and `native_set_fixpoint`, whose made rules (`rest` under `sfx_…`) become rules of a run-local
+     overlay, as the keeps parts did.
+6. **Compose on handles.** `compose::planned`, `compile` and `finish` read the version.
+7. **The maintained forms by edits.** `maintain::rewrite_with` and `Driver::form` write their rules with `RuleBuilder`
+   over the run's version, an overlay (E3 and E5). `supports` and `maintained_cross` follow, and the `Forms` arena
+   goes.
+   **Order, revised after steps 1 and 2 (2026-11-14).** The run's rule lists cannot become ids (step 3) before their
+   readers read handles: each of about 30 helpers reads `r.head` and `r.body`. A tree rule of the run already finds
+   its handle (`Versions::body(&Rule)`, by address). So the readers move first, one helper at a time, each reading
+   the rule's `Body` and the version's fields (steps 5 and 4). Once none reads the tree, the lists become `RuleKey`s
+   (step 3), which is then mechanical, and the address lookup goes.
+8. **`run` takes a version.** Its signature takes the program's `Placed` and the lowering's domains. `run_atoms*`
+   pass the version they were given. `choices` keeps only the version.
+9. **The callers pass versions (E1 to E3).**
+   - The split's parts are views with their inputs and outputs overlaid (E1). This needs a view whose fields are
+     overlaid, and a fold that does not count a view's removals.
+   - A run's edits are overlays (E2): the cross memo, the request cone and the run constants. This needs an input
+     added alone, and a literal edit made as a remove plus an add.
+   - A session's cut is an overlay (E3).
+   - The prepared program read from the store keeps its image, rather than decoding it.
+   The trees on that path go. The digests that still read the tree (`memo::program_digest`, `retain::key`,
+   `choices::key`, `prepared_key`, `cross_digest`) are decision 0173's step 6. They keep a decode until then.
+
 ## Done
 
 - **Item 1, a step names its literal by position** (2026-11-13).
@@ -276,3 +327,78 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     - What reads trees in the passes now: nothing. They still take the tree too (`prog`): `choose` hands it to the
       planner's `plan_rule`, and both passes give a decoded program for the rest of the run (item 7). The maintained
       form's rewrite is item 7's (above).
+- **Item 7, steps 1 and 2** (2026-11-14).
+  - Step 1: every program has a whole image.
+    - Join shape directives are about rows (`shape`, `shape_after`, `shape_bound`), written and read back by
+      `program_facts`. `About` reads them, and reads the gates' details, the kind sets and the tape columns
+      (`GateRef`, `ShapeRef`). `Builder::of_program` no longer refuses a program with shapes.
+    - A maintained program's `again` and `together` are a typed form beside its version (decision 0215,
+      `body::Maint`). Each stratum's rules and deltas are rules of an overlay of the version, and its relation sets
+      are relation ids there. `Placed::of_program` is whole for every program (`Builder::of_program_less_maintenance`).
+    - `keeps::choose` and `split_negations` give nothing for a program with `Maint`, as before. A program with shapes
+      alone is passed again, as it was before item 6 made it a version of rules alone.
+  - Step 2: `run` makes its input's version once, at its top, for every program (`Placed::normalized`).
+    `passes::normalize` derives it and `passes::stated_apart` overlays it. The passes edit that version, and the run
+    reads its rules from it. A run that reuses a choice whose program is its own reads it there too. The tree the rest
+    of the run reads is still the tree passes' (`sql_kernel::normalize`, `stated_apart`): nothing is decoded.
+  - Checked while porting:
+    - the parts: the shapes, gates, kind sets and tapes, read back, and each `again` stratum's rules, deltas and
+      relation sets, and `together`, equalled the tree's. Maintained programs of 1 to 16 strata derived again were
+      checked, over the maintain, again, edit, retain and corpus tests.
+    - the normalized version: equal, rule by rule (head, literals, observation key), digest and about rows, to the
+      normalized tree's image. This was checked over the planner's, keeps, demand, negation, inline, choices, cone,
+      phase0, session, maintain, again, edit, retain, corpus, rr and image tests and dl1.
+    The checks are gone.
+  - Cost: making the version is a span of its own ("the program's version"). On dl1 cold it is 46 ms of CPU over
+    30 runs, of the batch's 3.8 s in spans. Before step 2, a corpus run made its image only when it missed the kept
+    choices. The callers' versions (step 9) remove it.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 47.0, 49.1 and
+    50.1 G over three runs (load about 50), within the spread of this session's runs (44 to 50 G). Warm took 1.7 G.
+- **Item 7, step 4 begun: the fields the run reads, from the version** (2026-11-14).
+  - A version's fields are read once and shared: `Placed` holds a `FieldsData` (its `About` and its inputs and
+    outputs) made at the first `Fields::of`, shared by its clones, and `Fields<'v>` borrows it.
+    `Versions::fields(k)` gives the run's `k`-th version's (the program's is 0).
+  - `About` keeps every native's fields (`NativeSpec`, one per `front::Native` variant), a lattice's `ty`, `merge`
+    and `widen`, and the demand in order. `Fields` answers by name every program field `run` and its helpers read of
+    the tree: inputs and outputs in order, declarations and their columns, facts, lattices, natives, answers in order,
+    gates, qualifiers, tapes, kind sets, nullary, demand and shapes. Not `again` and `together` (`Maint`).
+  - Not read yet: `run` still reads the tree. Left for its port: the digest over the fields (`plan.rs` near 3602) and
+    the keys made of the tree's text (near 7340, 7373), which need a version's form; `Stats`' input set, keyed by the
+    tree's address (near 1006); and the tree edits (`stated_apart`, an outputs reset near 9594), which the passes
+    already make on the version.
+  - Checked: `a_versions_fields_say_what_the_tree_says` (engine, `program_image::tests`) reads every field through
+    `Fields` from `Placed::of_program` and compares it by text with the tree, on the sampled pack programs and on
+    programs with a field of every kind (`every_field`: each native kind, merges and widenings, answers, gates,
+    qualifiers, tapes, demand in order). `fields_are_read_once_and_say_the_trees` (logic) checks the sharing.
+
+- **Item 7, step 4: the run reads the program's fields from its version** (2026-11-14).
+  - `Run` holds `version`, the place of its current program among `run.versions` (0, the program; a maintained
+    form's once added), set with `prog` by `set_prog` wherever the run swaps to a form and back, and in a strand of
+    forms (`run_forms`, `strand_forms`). `Run::fields()` reads the current program's `Fields`; a helper that mutates
+    the run takes them from its own clone of `versions`.
+  - `Versions::add(form)` adds a whole version of its own (`Placed::of_program`: its rules, fields and `Maint`),
+    found by the program's address (`index_of`); `add_rules` stays an overlay for again's rule lists. The run's
+    version 0 is whole: a kept choice stored as text (no version) has its image made at the run's start, and a
+    program with no image is an error.
+  - Moved to `Fields`: the tables made over the declarations (iterated by name, `decls_by_name`, facts from the
+    version's cells), the named set, inputs and outputs, adopted inputs, the gated and kept sets, the retained strata's
+    checks (`retainable_stratum`, `with_answers`, `kept_strata_ran`, `produced_rows`, `kept_strata_hold`,
+    `stored_types`), the requests and produced relations (`produced`, `request_of`: of several requests the last by
+    name, as `answers::produced` maps it), the natives (`native_relation`, `reach_rows`, `native_reach`, the Python and
+    components operators take `NativeSpec`), `index_for`, `insert_rows`, `strand_reads_with`, `strand_forms`,
+    `absorb_forms`, `seed_specs`, `native_stratum_` (lattices, gates as `GateRef`s sorted by level then name,
+    qualifiers, facts, types), `drive`, `native_fixpoint`, `native_set_fixpoint`, `decline_class`, and
+    `sql_kernel::program_for` and `component` (lattice tops by name, value types, inputs). `issue.rs` reads no field.
+  - Still the tree's, and why: `again` and `together` (step 7, `Maint`); the rule lists; `Model`'s methods, which
+    take the tree (`plan_rule*`, `sql_select`, `make_statistics`, `late`, `resolve`, `fork`, `absorb`), and
+    `prior_stats`/`prior_now` with them; `join_spec` (its own `Run` impl, with `prog_types`); the stratum readers
+    shared with tree callers (`stratum_reads`, `first_reads`, `last_reads`, `identities` and `leaf_identity`, whose
+    digests are of the tree's text) and those shared with `emit` (`plan_views`, `decoded_outputs`): step 5; the run's
+    input set extended with a form's inputs (its names must live as long as the run); and what runs before the
+    version is made (`sql_kernel::normalize`, `stated_apart`, the lowering's domains, the composed path).
+  - Checked while porting: at the run's start and at each `set_prog`, every field the run reads (inputs and outputs
+    in order, declarations, facts by text, lattices, natives and their reads, answers in order, `request_of` against
+    `answers::produced`, gates, qualifiers) equalled the tree's, over the planner's tests (logic `plan::`, 110) and the
+    engine's keeps, demand, negation, inline, choices, cone, phase0, session, maintain, again, retain, edit,
+    `corpus::`, `rr::`, program_image, strata, answer, native and setfix tests, and dl1 cold and warm. The check is
+    gone; `fields_are_read_once_and_say_the_trees` checks a form's version (`add`, `index_of`).

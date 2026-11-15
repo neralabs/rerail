@@ -27,7 +27,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::{ResidentFrames, TapeFrame};
+pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -52,6 +52,7 @@ mod search_index;
 mod snapshots;
 mod tree_diff;
 mod tree_pages;
+pub mod upkeep;
 /// G's tree result segments as copied, beside `tree_pages` (O19).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
@@ -67,7 +68,7 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, SymbolReader as FrameSymbolReader, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, SymbolReader as FrameSymbolReader, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -180,7 +181,7 @@ impl Drop for WriteLockSection {
 
 /// Returns `(write sections entered, SHA-256 digests computed inside them)` on this thread
 /// since the last call, and resets both.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     (
         WRITE_LOCK_SECTIONS.with(|sections| sections.replace(0)),

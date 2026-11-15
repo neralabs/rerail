@@ -184,9 +184,10 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
 }
 
 impl Inputs<'_> {
-    /// The constants' digests: the inputs a round binds as they are, which the frames' reads record.
-    pub(in crate::code_rule_dsl) fn constant_digests(&self) -> HashMap<String, u64> {
-        self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect()
+    /// The constants' digests: the inputs a round binds as they are, which the frames' reads record; of their
+    /// content (`retain::cells_of`, decision 0212), as `program` types them.
+    pub(in crate::code_rule_dsl) fn constant_digests(&self, atoms: &crate::content_store::atoms::Atoms, program: &crate::code_rule_dsl::logic::front::Program, domains: &super::lower::Domains) -> HashMap<String, u64> {
+        self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref(), &retain::cells_of(atoms, program, domains, rel, source.columns().len())))).collect()
     }
 }
 
@@ -297,6 +298,8 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
     pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    /// The run's text tests (`plan::Hooks::texts`).
+    pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
 
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
@@ -348,10 +351,13 @@ impl RoundProgram {
             }
         }
         let closing = closing.is_some();
+        // Each round's inputs digested by content (decision 0212), as the frames' reads record them.
+        let domains = super::lower::domains(&self.program).unwrap_or_default();
+        let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
             Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests())?.frames().cloned(),
+            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program, &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &inputs.constant_digests(&atoms, &self.program, &domains))?.frames().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
@@ -423,12 +429,12 @@ impl RoundProgram {
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
-                let digest = retain::digest(source.as_ref());
+                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.program, &domains, &rel, width));
                 bound.insert(rel, (source, digest));
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
             drop(s);
-            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes)?;
+            let ran = maintained::run(Some(on.store), on.db, on.modules, on.lowered, on.key, &given, kept.take(), &mut stats, on.keep, on.modes, on.texts)?;
             strata = (strata.0 + ran.strata.0, ran.strata.1);
             maintained_n += ran.maintained;
             again += ran.derived_again;
@@ -532,7 +538,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.program, &super::lower::domains(&self.program).unwrap_or_default(), &retain::Locations::new(), &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                next.write_frames(on.store, was, &self.program, &domains, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::components_of(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
             }
             None => 0,
         };

@@ -372,8 +372,19 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
-/// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
+/// queued under (`write_back::Key`), where only it stores the text.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Stored already (decision 0223): named now, and only its pin queued (a lock, as `stored_source` takes it). The
+    // writer is for what a queued write stores: the lookup there was a write a warm run made.
+    if let Some(id) = stored_source(cache, &text).ok().flatten() {
+        late.lock().expect("the late sources").push(id);
+        return;
+    }
+    // Not stored, and nothing queued stores it: the writer would find nothing either.
+    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
+        return;
+    }
     let late = std::sync::Arc::clone(late);
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None,
@@ -392,10 +403,6 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
         }),
     );
 }
-
-/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0146 §4): the plan's runs are
-/// every root's, so worktrees that take turns keep theirs.
-const MEMO_RUNS: i64 = 32;
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
@@ -424,6 +431,13 @@ impl Syms {
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
+    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
+    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
+        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
+        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
+        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
+    }
+
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
         if let Some(rel) = key.strip_prefix("base:") {
             return self.0.get(rel).cloned();
@@ -728,8 +742,8 @@ impl Found {
 
 }
 
-/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. The
-/// frames found are marked as used by this run, behind it (a lookup writes nothing itself: decision 0104).
+/// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. A
+/// lookup writes nothing, and marks nothing (decisions 0104, 0227).
 pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
     off();
     let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
@@ -775,6 +789,8 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
     } else {
         store.admit_parts_of(&space, &rel, &parts)?
     };
+    // A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept manifest names its
+    // content (`collect_unreachable_frames`), not by the runs that read it.
     // An entry's outputs' frame beside it, for the identities a later run found its rows hold (`Frame::outputs`).
     let mut outputs = if rel.name != entry_rel(plan).name {
         HashMap::new()
@@ -784,32 +800,13 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
         store.admit_parts_of(&space, &outputs_rel(plan), &parts)?
     };
     let mut out = Vec::new();
-    let mut used = Vec::new();
     for (i, digest, part) in wanted {
         let Some(mut frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
         frame.outputs = outputs.remove(&part).and_then(|f| Frame::of(f, None)).filter(|o| o.digest == digest && o.path == frame.path).map(|o| o.frame);
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
-            used.push(part);
             out.push((i, Found::Frame(frame)));
         }
-    }
-    if !used.is_empty() {
-        // The use counts the run it is of, once however many windows mark it: without the run's token (`0`) each mark
-        // counts a run, and a run's later windows age out (`MEMO_RUNS`) the entries its first ones used. A wave runs on
-        // a job of the run (`threads::Jobs::spawn` carries its token): one without it is a thread the run did not
-        // start, and is refused here, where it would otherwise lose the store's entries one run later.
-        let token = super::run_token();
-        if token == 0 && crate::code_rule_dsl::logic::profile::inside_waves() {
-            return Err(StoreError::Invalid("the memo's frames were used in a wave on a thread that carries no run (threads::Jobs::spawn carries it)".into()));
-        }
-        // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
-        // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
-        // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
-        if rel.name == outputs_rel(plan).name {
-            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), token, MEMO_RUNS);
-        }
-        store.queue_frame_parts_used(space, rel, used, token, MEMO_RUNS);
     }
     Ok(out)
 }
@@ -881,6 +878,10 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
+    if held.is_empty() {
+        return Ok(());
+    }
     // What the writer writes, the queue's measure: of an entry whose rows frame stands, its outputs alone. The rest of
     // it stays held for this process's readers (`pending`) until it is written; it was the chunk's already.
     let bytes: usize = held.iter().map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { e.outputs_bytes() } else { e.bytes() }).sum();
@@ -902,7 +903,6 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
     }
     let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
-    let token = super::run_token();
     let syms = program.syms.clone();
     store.write_back_syms(
         crate::content_store::write_back::Syms::Mapped,
@@ -947,11 +947,8 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
             }
             let space = crate::content_store::local_space(&plan);
             store.keep_frames(&space, &puts, &[], None)?;
-            let parts: Vec<i64> = puts.iter().filter(|p| p.rel.name == "local_out").map(|p| p.part).collect();
-            store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)?;
-            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)?;
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
-            // one file of the 20, was kept `MEMO_RUNS` runs: 450 MB of one space).
+            // one file of the 20, was kept 32 runs: 450 MB of one space).
             let mut keys: Vec<u64> = puts.iter().map(|p| p.digest).collect();
             keys.sort_unstable();
             keys.dedup();

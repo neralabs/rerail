@@ -23,14 +23,13 @@ pyi052_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
 .decl pyi052_enum_class(n: node)
-pyi052_enum_class(n) :- pyi052_demand_enum_class(n), kind(n, "class_definition"), child(n, c1, _),
+pyi052_enum_class(n) :- kind(n, "class_definition"), child(n, c1, _),
     kind(c1, "argument_list"), child(c1, c2, _), pyi052_alt_2(c2).
 
 // enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
 .decl pyi052_enum_ref(n: node)
-pyi052_enum_ref(n) :- pyi052_demand_enum_ref(n), pyi052_enum_base(n).
-pyi052_enum_ref(n) :- pyi052_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), pyi052_enum_class(st2).
+pyi052_enum_ref(n) :- pyi052_enum_base(n).
+pyi052_enum_ref(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, pyi052_enum_class(st2).
 
 // plain_lit(n): the JSON util `plain-lit`, used where the JSON says `matches: "plain-lit"`
 .decl pyi052_plain_lit(n: node)
@@ -61,14 +60,13 @@ pyi052_neg_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi05
 
 // neg_number(n): the JSON util `neg-number`, used where the JSON says `matches: "neg-number"`
 .decl pyi052_neg_number(n: node)
-pyi052_neg_number(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
-    field(n, "argument", c2), pyi052_neg_arg(c2).
+pyi052_neg_number(n) :- kind(n, "unary_operator"), pyi052_tok_has_1(n), field(n, "argument", c9),
+    pyi052_neg_arg(c9).
 
 // complex_sum(n): the JSON util `complex-sum`, used where the JSON says `matches: "complex-sum"`
 .decl pyi052_complex_sum(n: node)
-pyi052_complex_sum(n) :- kind(n, "binary_operator"), field(n, "operator", c1),
-    glob("[+-]", c1), field(n, "right", c2), pyi052_imaginary(c2), field(n, "left", c3),
-    pyi052_real_left(c3).
+pyi052_complex_sum(n) :- kind(n, "binary_operator"), pyi052_tok_has_2(n), field(n, "right", c9),
+    pyi052_imaginary(c9), field(n, "left", c10), pyi052_real_left(c10).
 
 // imaginary(n): the JSON util `imaginary`, used where the JSON says `matches: "imaginary"`
 .decl pyi052_imaginary(n: node)
@@ -83,9 +81,9 @@ pyi052_short_real(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), py
 // real_left(n): the JSON util `real-left`, used where the JSON says `matches: "real-left"`
 .decl pyi052_real_left(n: node)
 pyi052_real_left(n) :- pyi052_short_real(n).
-pyi052_real_left(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
-    field(n, "argument", c2), pyi052_short_real(c2).
-pyi052_real_left(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi052_real_left(c3).
+pyi052_real_left(n) :- kind(n, "unary_operator"), pyi052_tok_has_1(n), field(n, "argument", c9),
+    pyi052_short_real(c9).
+pyi052_real_left(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), pyi052_real_left(c10).
 
 // leaf(n): the JSON util `leaf`, used where the JSON says `matches: "leaf"`
 .decl pyi052_leaf(n: node)
@@ -147,35 +145,43 @@ pyi052_value_of(n, NAME) :- child(p2, n, _), kind(p2, "parenthesized_expression"
 pyi052_target_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !pyi052_special(n).
 pyi052_target_name(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pyi052_target_name(c1, NAME).
-pyi052_target_name(n, NAME) :- kind(n, "tuple_pattern"), !pyi052_tok_has_1(n), child(n, c10, _),
+pyi052_target_name(n, NAME) :- kind(n, "tuple_pattern"), !pyi052_tok_has_3(n), child(n, c10, _),
     pyi052_target_name(c10, NAME).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^-$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi052_tok_has_1(n: node)
 .stored pyi052_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi052_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
-pyi052_tok_has_1(n) :- op(n, t3), match(",", t3).
-pyi052_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+pyi052_tok_has_1(n) :- field(n, "operator", c1), glob("-", c1).
+pyi052_tok_has_1(n) :- op(n, t2), match("-", t2).
+pyi052_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi052_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi052_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi052_tok_has_2(n: node)
+.stored pyi052_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi052_tok_has_2(n) :- field(n, "operator", c1), glob("[+-]", c1).
+pyi052_tok_has_2(n) :- op(n, t2), match("[+-]", t2).
+pyi052_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi052_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi052_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi052_tok_has_3(n: node)
+.stored pyi052_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi052_tok_has_3(n) :- child(n, c2, _), glob("\\,", c2).
+pyi052_tok_has_3(n) :- op(n, t3), match(",", t3).
+pyi052_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-pyi052_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+pyi052_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-pyi052_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
-
-// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
-.decl pyi052_demand_alt_2(n: node)
-pyi052_demand_alt_2(c2) :- pyi052_demand_enum_class(n), kind(n, "class_definition"), child(n, c1, _),
-    kind(c1, "argument_list"), child(c1, c2, _).
-
-// demand_enum_class: the nodes enum_class is asked at (its recursion looks at every descendant)
-.decl pyi052_demand_enum_class(n: node)
-pyi052_demand_enum_class(st2) :- pyi052_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)).
-pyi052_demand_enum_class(p3) :- within_stop(n, p3, "class_definition").
-
-// demand_enum_ref: the nodes enum_ref is asked at (its recursion looks at every descendant)
-.decl pyi052_demand_enum_ref(n: node)
-pyi052_demand_enum_ref(n) :- pyi052_demand_alt_2(n).
-pyi052_demand_enum_ref(c1) :- pyi052_demand_alt_2(n), kind(n, "subscript"), field(n, "value", c1).
+pyi052_tok_has_3(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl pyi052_set_1(v: symbol)
@@ -193,8 +199,8 @@ pyi052_set_3("sys.hexversion"). pyi052_set_3("sys.winver").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi052_alt_2(n: node)
-pyi052_alt_2(n) :- pyi052_demand_alt_2(n), pyi052_enum_ref(n).
-pyi052_alt_2(n) :- pyi052_demand_alt_2(n), kind(n, "subscript"), field(n, "value", c1), pyi052_enum_ref(c1).
+pyi052_alt_2(n) :- pyi052_enum_ref(n).
+pyi052_alt_2(n) :- kind(n, "subscript"), field(n, "value", c1), pyi052_enum_ref(c1).
 
 // counted_4(n): the siblings the JSON `nthChild.ofRule` counts
 .decl pyi052_counted_4(n: node)

@@ -65,7 +65,7 @@ eager_signature_types("type").
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, node_text, reference_edge
+.input doc, syntax_error, node, field, child, text, line, reference_edge, node_text
 .output violation
 direct_execution_case_group("case_pattern").
 direct_execution_case_group("union_pattern").

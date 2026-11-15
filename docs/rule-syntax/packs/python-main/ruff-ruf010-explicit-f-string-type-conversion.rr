@@ -28,10 +28,7 @@ ruf010_positional_argument(n) :- ruf010_one_argument(n), child(n, c1, _), !ruf01
 // object_argument(n): the JSON util `object-argument`, used where the JSON says `matches: "object-argument"`
 .decl ruf010_object_argument(n: node)
 ruf010_object_argument(n) :- ruf010_one_argument(n), child(n, c1, _), !ruf010_alt_3(c1),
-    ( !kind(c1, "keyword_argument")
-    ; kind(c1, "keyword_argument"), field(c1, "name", c2), glob("object", c2)
-    ).
-
+    (!kind(c1, "keyword_argument") ; kind(c1, "keyword_argument"), ruf010_tok_has_2(c1)).
 
 // str_call(n): the JSON util `str-call`, used where the JSON says `matches: "str-call"`
 .decl ruf010_str_call(n: node)
@@ -66,7 +63,7 @@ ruf010_any_conversion_call(n) :- ruf010_ascii_call(n).
 ruf010_stops_the_string(n) :- kind(n, "interpolation"),
     count : { child(n, c1, _), kind(c1, "type_conversion") } = 0,
     ( within_stop(c2, n, ruf010_stop_10), ruf010_starred_call(c2)
-    ; ruf010_tok_has_2(n), within_stop(c3, n, ruf010_stop_10), ruf010_any_conversion_call(c3)
+    ; ruf010_tok_has_4(n), within_stop(c3, n, ruf010_stop_10), ruf010_any_conversion_call(c3)
     ).
 
 
@@ -95,28 +92,52 @@ RUF010_explicit_repr(n) :- ruf010_repr_call(n), ruf010_bare_interpolation_slot(n
     suppress noqa "RUF010"
 RUF010_explicit_ascii(n) :- ruf010_ascii_call(n), ruf010_bare_interpolation_slot(n).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^object$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf010_tok_has_1(n: node)
 .stored ruf010_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf010_tok_has_1(n) :- child(n, c3, _), glob("=", c3).
-ruf010_tok_has_1(n) :- op(n, t4), match("=", t4).
-ruf010_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
-ruf010_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
-ruf010_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
-    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+ruf010_tok_has_1(n) :- field(n, "name", c2), glob("object", c2).
+ruf010_tok_has_1(n) :- op(n, t3), match("object", t3).
+ruf010_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g4).
+ruf010_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g4).
+ruf010_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g4).
 
-// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^object$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf010_tok_has_2(n: node)
 .stored ruf010_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf010_tok_has_2(n) :- child(n, c2, _), glob("=", c2).
-ruf010_tok_has_2(n) :- op(n, t3), match("=", t3).
-ruf010_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+ruf010_tok_has_2(n) :- field(n, "name", c1), glob("object", c1).
+ruf010_tok_has_2(n) :- op(n, t2), match("object", t2).
+ruf010_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+ruf010_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+ruf010_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf010_tok_has_3(n: node)
+.stored ruf010_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf010_tok_has_3(n) :- child(n, c3, _), glob("=", c3).
+ruf010_tok_has_3(n) :- op(n, t4), match("=", t4).
+ruf010_tok_has_3(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+ruf010_tok_has_3(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+ruf010_tok_has_3(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf010_tok_has_4(n: node)
+.stored ruf010_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf010_tok_has_4(n) :- child(n, c2, _), glob("=", c2).
+ruf010_tok_has_4(n) :- op(n, t3), match("=", t3).
+ruf010_tok_has_4(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
-ruf010_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+ruf010_tok_has_4(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
-ruf010_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+ruf010_tok_has_4(n) :- node_text(n, g4), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
 
 // demand_bare_interpolation_slot: the nodes bare_interpolation_slot is asked at (it looks at every ancestor of every node)

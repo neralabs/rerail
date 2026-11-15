@@ -180,7 +180,27 @@ impl<'a> Board<'a> {
             counts: Counts::default(),
             groups: 0,
             from: producers,
-            trace: std::env::var_os("RERAIL_STRATA_TRACE").map(|_| Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]) }),
+            // Always kept (a few words a stratum): the run's measured critical path reads it (decision 0208), and
+            // `RERAIL_STRATA_TRACE` writes it.
+            trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]) }),
+        }
+    }
+
+    /// Each stratum's start and end, in seconds since the run's, and where it ran (0 the loop's thread, 1 a job, 2 a
+    /// component run at its retire); `None` where it did not run.
+    pub(super) fn timeline(&self) -> Vec<Option<(f64, f64, u8)>> {
+        self.trace.as_ref().map(|t| t.rows.clone()).unwrap_or_default()
+    }
+
+    /// The loop is done with the stratum it was at, before it waits for anything (answers, a device wave): the
+    /// stratum ends now, and the wait is the gap before the next one.
+    pub(super) fn close(&mut self) {
+        let Some(t) = self.trace.as_mut() else { return };
+        if let Some((p, since)) = t.at
+            && !t.by_component
+            && t.rows[p].is_none()
+        {
+            t.rows[p] = Some(((since - t.t0).as_secs_f64(), (Instant::now() - t.t0).as_secs_f64(), 0));
         }
     }
 
@@ -279,7 +299,7 @@ impl<'a> Board<'a> {
             let mut est = self.estimate(run, &rules_of(j));
             let mut local: HashMap<usize, u32> = HashMap::new();
             let mut chain: BTreeSet<usize> = BTreeSet::new();
-            let mut grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
+            let grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
                 for &r in &this.readers[m] {
                     let n = local.entry(r).or_default();
                     *n += 1;

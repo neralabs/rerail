@@ -198,7 +198,7 @@ matching_file_kind("function_definition").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, child, text, op, line, value, strprefix, name, value_type_of, fstring_piece, source, end_line, node_text, cpython_syntax_error
+.input doc, node, field, child, text, op, line, strprefix, name, value_type_of, fstring_piece, source, end_line, cpython_syntax_error, node_text, value
 .output violation
 matching_file_contract_name("MatchSpec").
 matching_file_contract_name("MatchResult").

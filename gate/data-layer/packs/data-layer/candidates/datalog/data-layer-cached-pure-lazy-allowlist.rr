@@ -202,7 +202,7 @@
 .decl tape_syntax_error(d: number)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, line, value, col, node_text, literal_json, dump_sha256, body_sha256, signature_sha256
+.input doc, syntax_error, node, field, child, line, col, literal_json, dump_sha256, body_sha256, signature_sha256, node_text, value
 .output violation
 cached_closure_k("function_definition").
 cached_closure_k("lambda").

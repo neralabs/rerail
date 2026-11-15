@@ -416,6 +416,26 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     assert_eq!(r.end().len(), 0);
 }
 
+/// A run after the first (a phase's) holds every stored atom as the first did: the lease given back at the first's end
+/// and taken again keeps its lookups out of the database (decision 0104). Before, every miss read the store's key.
+#[test]
+fn a_second_run_still_holds_every_atom() {
+    let path = path("second-run");
+    let store = ContentStore::open(&path).unwrap();
+    let atoms = store.atoms_handle();
+    assert!(atoms.ready_for_run().unwrap());
+    store.intern_atoms(&["a", "b"]).unwrap();
+    atoms.run_over();
+    // The first run's end: its atoms written, the lease given back.
+    store.flush_atoms().unwrap();
+    assert!(!atoms.leased.load(Ordering::Acquire));
+    // A new string before the next run's `ready_for_run` takes the lease again: still complete.
+    assert_eq!(store.intern_atoms(&["c"]).unwrap(), [3]);
+    assert!(atoms.complete.load(Ordering::Acquire));
+    assert!(atoms.ready_for_run().unwrap());
+    assert_eq!(store.intern_atoms(&["a", "d"]).unwrap(), [1, 4]);
+}
+
 /// A commit's pending atoms are written in segments of a bounded size, so neither a copy of them nor SQLite's
 /// record of one holds a whole run's atoms at once; once stored, the arena holds their bytes once.
 #[test]

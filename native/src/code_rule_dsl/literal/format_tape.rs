@@ -75,11 +75,20 @@ impl TreeParser for FormatStrings {
                 return Err("source exceeds tape range".into());
             }
             let root = literal.parse(source);
-            let nodes = preorder(&root)
+            let order = preorder(&root);
+            // A tape node lies within its parent. A literal tree may put a child past its parent (main's eslint
+            // directive: `b:off`'s item is over `b`, its setting over `off`), so a parent runs over its children.
+            let mut spans: Vec<(usize, usize)> =
+                order.iter().map(|(n, _)| (n.start.min(source.len()), n.end.clamp(n.start, source.len()))).collect();
+            for i in (1..order.len()).rev() {
+                let p = order[i].1.expect("a child") as usize;
+                spans[p] = (spans[p].0.min(spans[i].0), spans[p].1.max(spans[i].1));
+            }
+            let nodes = order
                 .into_iter()
-                .map(|(n, parent)| {
-                    let start = n.start.min(source.len()) as u32;
-                    let end = n.end.clamp(n.start, source.len()) as u32;
+                .zip(spans)
+                .map(|((n, parent), (start, end))| {
+                    let (start, end) = (start as u32, end as u32);
                     Pending { kf: n.kind, parent, start, length: end - start, size: 1, extra: n.extra, error: false, missing: false, kind_alias: None }
                 })
                 .collect();
@@ -102,6 +111,8 @@ pub fn values(lang: GrammarDialect, source: &str) -> Vec<Option<(String, &'stati
         .into_iter()
         .map(|(n, _)| match &n.value {
             Some(Value::Str(s)) => Some((s.clone(), "str")),
+            // A JavaScript string (the directive grammar's names): its text.
+            Some(Value::Utf16(u)) => Some((String::from_utf16_lossy(u), "str")),
             Some(Value::Int(i)) => Some((i.to_string(), "int")),
             Some(Value::Bool(b)) => Some(((if *b { "True" } else { "False" }).to_owned(), "bool")),
             _ => None,

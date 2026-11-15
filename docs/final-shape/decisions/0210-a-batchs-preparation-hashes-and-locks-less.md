@@ -64,6 +64,11 @@ and the split and magic self-checks pass.
    `absorb_with` sets the columns below the width from the fork's vector, as moving each entry did. Reads take
    `at(relation, column)` and build no key. Keying `Model` by `RelId` as a whole (0173 stage 2) waits on the
    planner taking a program version (t36 item 7), which is not started.
+
+   *Merged (2026-11-14):* the hub had meanwhile numbered the statistics (decision 0209 step 1: `table::ColMap`,
+   each relation's columns a block of slots in one array, by `RelId`), so that form is kept and this `ColMap` was
+   dropped. What it saved on a fork is kept on 0209's form: `Stats::dfreq` holds each frequency map in an `Arc`,
+   so a fork copies a pointer per column, not the map.
 10. **The split numbered for the run.** §6 numbered each rule in scope again at every split, and the constants
     and filters fixpoints still read names. Now:
     - A rule body's form (`shape::Form`: its variables, their classes, the value tapes and binders, each read's

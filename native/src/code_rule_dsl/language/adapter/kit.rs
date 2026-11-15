@@ -1374,7 +1374,9 @@ fn shared_walks_read_the_kinds_they_named() {
             ids(&["parenthesized_expression"]),
             "{dialect:?}"
         );
-        if S::FLOW {
+        // A family whose scope is refused (the format strings') has no walks: its own trees may name
+        // a kind `attribute` (a brace-format field's `.name`) that is no expression's.
+        if S::FLOW || !S::SUPPORTED {
             return;
         }
         assert_eq!(
@@ -1398,7 +1400,7 @@ fn shared_walks_read_the_kinds_they_named() {
                     is_comment_kind(name),
                     matches!(
                         name,
-                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                        "comment" | "html_comment" | "line_comment" | "block_comment" | "js_comment"
                     ),
                     "{name} in {dialect:?}"
                 );

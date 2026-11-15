@@ -33,7 +33,7 @@ bootstrap_cache_scope("function_definition"). bootstrap_cache_scope("decorator")
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, src_line, node_text, cpython_syntax_error
+.input doc, syntax_error, node, field, child, text, line, src_line, cpython_syntax_error, node_text
 .output violation
 bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests").
 bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests_async").

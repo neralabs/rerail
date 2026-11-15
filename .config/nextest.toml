@@ -1,0 +1,39 @@
+# cargo-nextest (docs/final-shape/notes/t37, §2): each test in a process of its own, with its time.
+#
+#   cargo nextest run --lib                    the quick tier: everything but the slow tests
+#   cargo nextest run --lib --profile gate     everything, the slow tier too (a phase gate)
+#
+# A filter on the command line narrows the profile's tier; `--ignore-default-filter` drops it
+# (`cargo nextest run --lib --ignore-default-filter some_slow_test`).
+
+# The slow tier: the tests that took 20 s or more each in a full run (2026-11-15, an M3 Max at
+# -j 16, debug): 45 of 2,639 tests (the per-pack families whole), 2,151 of the run's 3,460 test-seconds. Most read every pack's
+# programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
+[profile.default]
+default-filter = """not (
+    test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
+  | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent)/)
+  | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
+  | test(/^code_rule_dsl::logic::program_image::tests::(pack_programs_read_back_from_their_images|the_passes_over_a_version_are_the_tree_passes|the_planners_reading_of_a_rule_is_the_trees|the_analyses_over_a_version_say_what_the_tree_says|views_and_overlays_are_the_programs_they_say)$/)
+  | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
+  | test(=code_rule_dsl::logic::json_rules::tests::json_rules_pack_is_current)
+  | test(/^code_rule_dsl::slice::tests::(the_napi_slice_audits_and_applies_as_the_slice_does|an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)$/)
+  | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk)$/)
+  | test(=code_rule_dsl::sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work)
+  | test(=code_rule_dsl::sql_executor::tests::recursive::partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fresh)
+  | test(=code_rule_dsl::sql_executor::tests::reductions::dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts)
+  | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
+)"""
+# A test past this is reported as slow; past four periods it is stopped.
+slow-timeout = { period = "60s", terminate-after = 4 }
+failure-output = "final"
+
+[profile.default.junit]
+path = "junit.xml"
+
+# Everything. The longest test (convert's replay sample, ~230 s on an M3 Max) bounds its wall time.
+[profile.gate]
+default-filter = "all()"
+
+[profile.gate.junit]
+path = "junit.xml"

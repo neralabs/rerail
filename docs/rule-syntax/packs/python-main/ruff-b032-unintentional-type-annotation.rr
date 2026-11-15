@@ -14,10 +14,10 @@ B032(n) :- kind(n, "assignment"), child(p1, n, _), kind(p1, "expression_statemen
     child(n, c2, _), kind(c2, "type"), !b032_tok_has_4(n), child(n, c11, _),
     !b032_tok_follows_5(c11), b032_target(c11).
 
-// name(n): the JSON util `name`, used where the JSON says `matches: "name"`
-.decl b032_name(n: node)
-b032_name(n) :- kind(n, "identifier").
-b032_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b032_name(c1).
+// name_util(n): the JSON util `name`, used where the JSON says `matches: "name"`
+.decl b032_name_util(n: node)
+b032_name_util(n) :- kind(n, "identifier").
+b032_name_util(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b032_name_util(c1).
 
 // non_self_name(n): the JSON util `non-self-name`, used where the JSON says `matches: "non-self-name"`
 .decl b032_non_self_name(n: node)
@@ -82,7 +82,7 @@ b032_tok_follows_5(n) :- structural_before(n, g14), match("(?s)^.*\\S\\s*$", g14
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl b032_alt_1(n: node)
-b032_alt_1(n) :- kind(n, "subscript"), child(n, c1, _), !b032_tok_follows_1(c1), b032_name(c1).
+b032_alt_1(n) :- kind(n, "subscript"), child(n, c1, _), !b032_tok_follows_1(c1), b032_name_util(c1).
 b032_alt_1(n) :- kind(n, "attribute"), child(n, c9, _), !b032_tok_follows_2(c9),
     b032_non_self_name(c9).
 b032_alt_1(n) :- kind(n, "tuple_pattern"), !b032_tok_has_3(n), child(n, c25, _), b032_target(c25).

@@ -155,23 +155,41 @@ impl Drop for Pins<'_> {
 /// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
 /// write when this process queued one.
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
+    // Stored already (decision 0223): named now, its pin queued (a lock). The writer finds what a write queued
+    // before it stores; a warm run's entry is stored, and its lookup there was a write.
+    if let Some(found) = program_source(cache, key, false).ok().flatten() {
+        cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[found])));
+        late.lock().expect("the late sources").push(found);
+        return;
+    }
+    // Not stored, and no write of the entry queued (`remember`'s): the writer would find nothing either.
+    if !cache.queued(&queued(key)) {
+        return;
+    }
     let (key, late) = (*key, std::sync::Arc::clone(late));
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None, "the combined program's text, named",
         0,
         Vec::new(),
         Box::new(move |store| {
-            let Some(source) = store.held_source_by_hash(HashKey::sha256(source_text(&key).as_bytes()))? else { return Ok(()) };
-            let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
-            let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(()) };
-            let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(()) };
-            let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(()) };
-            let Some(digest) = unhex(&digest) else { return Ok(()) };
-            let found = store.held_source_by_hash(HashKey::from_sha256_digest(digest))?;
+            let found = program_source(store, &key, true)?;
             late.lock().expect("the late sources").extend(found);
             Ok(())
         }),
     );
+}
+
+/// The source of the program text of texts `key`'s entry, when the store keeps the entry and the text; `held`: the
+/// sources pinned as they are found (on the store's writer).
+fn program_source(store: &ContentStore, key: &[u8; 32], held: bool) -> StoreResult<Option<crate::content_store::SourceId>> {
+    let by_hash = |hash| if held { store.held_source_by_hash(hash) } else { store.source_by_hash(hash) };
+    let Some(source) = by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
+    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
+    let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(None) };
+    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
+    let Some(digest) = unhex(digest) else { return Ok(None) };
+    by_hash(HashKey::from_sha256_digest(digest))
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).

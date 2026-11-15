@@ -35,8 +35,7 @@ b507_after_paramiko_import(n) :- b507_demand_after_paramiko_import(n), within(n,
 .decl b507_alias_to_target(n: node, alias: loc)
 b507_alias_to_target(n, ALIAS) :- b507_demand_alias_to_target(n, ALIAS),
     kind(n, "aliased_import"), field(n, "alias", c1),
-    text(c1, t_alias1), text(ALIAS, t_alias1), field(n, "name", c2),
-    match(".*(?:^|\\.)\\s*set_missing_host_key_policy", c2), @doc(c1) = @doc(ALIAS).
+    text(c1, t_alias1), text(ALIAS, t_alias1), b507_tok_has_1(n), @doc(c1) = @doc(ALIAS).
 
 // after_alias_to_target(n): the JSON util `after-alias-to-target`, used where the JSON says `matches: "after-alias-to-target"`
 //   ALIAS: metavariable of the calling rule, passed in (bound by the caller)
@@ -46,21 +45,19 @@ b507_after_alias_to_target(n, ALIAS) :- b507_demand_after_alias_to_target(n, ALI
 
 // target_callee(n): the JSON util `target-callee`, used where the JSON says `matches: "target-callee"`
 .decl b507_target_callee(n: node)
-b507_target_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("set_missing_host_key_policy", c1).
+b507_target_callee(n) :- kind(n, "attribute"), b507_tok_has_2(n).
 b507_target_callee(n) :- kind(n, "identifier"), glob("set_missing_host_key_policy", n).
 b507_target_callee(n) :- kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n,
     b507_after_alias_to_target(n, ALIAS).
-b507_target_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
-    b507_target_callee(c2).
+b507_target_callee(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    b507_target_callee(c9).
 
 // policy_name(n): the JSON util `policy-name`, used where the JSON says `matches: "policy-name"`
 .decl b507_policy_name(n: node)
-b507_policy_name(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("{AutoAddPolicy,WarningPolicy}", c1).
+b507_policy_name(n) :- kind(n, "attribute"), b507_tok_has_3(n).
 b507_policy_name(n) :- kind(n, "identifier"), glob("{AutoAddPolicy,WarningPolicy}", n).
-b507_policy_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
-    b507_policy_name(c2).
+b507_policy_name(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    b507_policy_name(c9).
 
 // trusting_policy(n): the JSON util `trusting-policy`, used where the JSON says `matches: "trusting-policy"`
 .decl b507_trusting_policy(n: node)
@@ -68,6 +65,43 @@ b507_trusting_policy(n) :- b507_policy_name(n).
 b507_trusting_policy(n) :- kind(n, "call"), field(n, "function", c1), b507_policy_name(c1).
 b507_trusting_policy(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     b507_trusting_policy(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "(?:^|\\.)\\s*set_missing_host_key_policy$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b507_tok_has_1(n: node)
+.stored b507_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b507_tok_has_1(n) :- field(n, "name", c2),
+    match(".*(?:^|\\.)\\s*set_missing_host_key_policy", c2).
+b507_tok_has_1(n) :- op(n, t3), match(".*(?:^|\\.)\\s*set_missing_host_key_policy", t3).
+b507_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:(?:^|\\.)\\s*set_missing_host_key_policy$)\\S*.*)$", g4).
+b507_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:(?:^|\\.)\\s*set_missing_host_key_policy$)\\S*.*)$", g4).
+b507_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:(?:^|\\.)\\s*set_missing_host_key_policy$)\\S*.*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^set_missing_host_key_policy$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b507_tok_has_2(n: node)
+.stored b507_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b507_tok_has_2(n) :- field(n, "attribute", c1), glob("set_missing_host_key_policy", c1).
+b507_tok_has_2(n) :- op(n, t2), match("set_missing_host_key_policy", t2).
+b507_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:set_missing_host_key_policy)(?:\\W.*)?)$", g3).
+b507_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:set_missing_host_key_policy)(?:\\W.*)?)$", g3).
+b507_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:set_missing_host_key_policy)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(?:AutoAddPolicy|WarningPolicy)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b507_tok_has_3(n: node)
+.stored b507_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b507_tok_has_3(n) :- field(n, "attribute", c1), glob("{AutoAddPolicy,WarningPolicy}", c1).
+b507_tok_has_3(n) :- op(n, t2), match("(?:AutoAddPolicy|WarningPolicy)", t2).
+b507_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:AutoAddPolicy)(?:\\W.*)?|(?:.*\\W)?(?:WarningPolicy)(?:\\W.*)?)$", g3).
+b507_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:AutoAddPolicy)(?:\\W.*)?|(?:.*\\W)?(?:WarningPolicy)(?:\\W.*)?)$", g3).
+b507_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:AutoAddPolicy)(?:\\W.*)?|(?:.*\\W)?(?:WarningPolicy)(?:\\W.*)?)$", g3).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl b507_args_plain(l: node, a: node, i: number)

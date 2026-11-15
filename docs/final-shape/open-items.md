@@ -4829,6 +4829,61 @@ corpus tests pass with it, but none makes this case.
 **Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
 stratum above it, which sees both the facts and the answers.
 
+## O162. Metal forms of the matcher wave and of block programs with rounds, back fills and loads
+
+Decision 0202 (a). `kernel_forms` ranks them by batches. **Closure:** generated MSL for each, compiled in upkeep at
+idle, with the record's `metal-form` entries gone.
+
+## O163. IR forms of the clauses the lowering refuses, and of the logic natives
+
+Decision 0202 (b). **Closure:** the `ir-form` entries lowered, most batches first, each with a test that the
+program's findings equal the native ones.
+
+## O164. A compiled form a later process can reuse
+
+Decision 0202 (c, d). A `Program` has no byte form. **Closure:** a first compile's split measured (MSL front end
+and pipeline); then stored programs (0173) or `MTLBinaryArchive`s keyed by `pipeline_key`, whichever pays.
+
+## O165. Upkeep's compiles are released by the residency's drop
+
+Decision 0202. `drop_pipelines` clears every pipeline two minutes after a full execution. **Closure:** pipelines
+compiled ahead of need exempted, or persisted (O164).
+
+## O160. Re-sorting stored rows is not an upkeep job yet
+
+Decision 0190 §5: once 0164's frames keep sorted orders, their compaction past the dead-row bound (and an order for a
+relation probed by a key without one) is an upkeep job, one frame a step, published by the frame's swap.
+
+**Closure:** the job registered for each store, due from 0164's counters, with a test that a frame past its bound is
+rewritten in its key order on an idle machine and probes read it.
+
+## O161. Join orders observed to be slow are not tried again
+
+Decision 0190 §6: `plan_feedback` keeps each plan's measured cost per root, and `compiled_plans` its decisions, but
+nothing lists the joins whose cost is past their forecast, and nothing tries the other orders away from a run.
+
+**Closure:** the planner's alternative orders for a plan exposed, a bounded off-path run of one over the store's
+facts, and an upkeep job that records a winning order as the plan's kept choice (0090 §5), with a test on a join
+planned with a wrong estimate.
+
+**Progress (2026-11-14, decision 0203):** built: the runners-up exposed, slow lines flagged mid-run with exact pair
+statistics, the critical path, the memo beside the kept plans, and the `join-search` upkeep job, whose proposals
+the next plan weighs. A test plans a join with a wrong estimate (`exact_statistics_and_the_memo_change_the_plan`).
+What remains is the off-path run: proposals are priced, not run over stored facts.
+
+## O166. No batch pricer is set for the join choices
+
+Decision 0203 §2: `joins::choose` calls a `Pricer` once a round, but none is set, so the planner's estimates stand.
+**Closure:** the misprediction classifier (the cost model's batched GPU prediction, 0100 §14) set as the pricer,
+with its features drawn from the candidates' steps, and a measurement of a round's prediction cost against the
+search's.
+
+## O167. Wider searches asked for by a one-shot process are lost at its exit
+
+Decision 0203 §5: the `join-search` job runs at idle; a command exits first, and only `wants_search` survives (the
+next run searches inline where the line's work pays). **Closure:** the queued requests kept in the store as the
+line and rule, and run by `rerail-engine upkeep` or a daemon, which rebuild the model from the stored statistics.
+
 ## Remeasured after the hub merge (2026-11-13)
 
 At 17bbc4cd7, the hub (9a203197e) merged into rr-align. Debug build, CPU, strict; load 19-43.
@@ -5058,6 +5113,45 @@ rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms 
 **Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
 domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
 `dl1` and the Python pack's programs, with identical domains for every column.
+
+## O168. Whole plans are not cut (decision 0206)
+
+A probe run as its whole plan (its delta is all of its relation, in a component's first wave) has no budget, so a
+slow whole plan runs to its end. The driver plans whole plans apart from the delta probes (`take_whole`), and a
+handoff would need the whole plan's own replacement and its rows left. **Closed (2026-11-14):** a whole plan has its
+probe's budget, and a cut one is checked, trialled and handed off as a seed is (decision 0206, *Whole plans*).
+
+## O169. A trial's rows are made twice (decision 0207)
+
+A trial's rows are counted and dropped, then made again by the order that goes on. Over a sample that is most of
+the rows left, that work is done twice. The winner's rows could be kept (a component's relations are sets) and its
+sample's rows taken out of the rows left. **Closed (2026-11-14):** the first finished trial's rows join the cut wave,
+and its sample leaves the rows left (`keep_trial_rows`, decision 0207).
+
+## O170. Statistics' maps move to one flat table (decision 0209)
+
+Every reader of `plan::Stats`' string-keyed maps moves to the flat table of numbered relations and columns
+(0209 §3). Until then the maps are views over it; the planner's tests hold unchanged at each step.
+
+Closed (2026-11-14). `plan::table` numbers each relation once in the process (`rel_id`). `Stats.card`,
+`delta_rows`, `fan`, `dfreq` and `Model.ndv` are arrays by those numbers (`RelMap`, `ColMap`: a relation's columns a
+block of slots in one array). The planner's prepared atoms (`AtomCols`) resolve their relation once and read slots;
+readers by name pay one lookup of the name, where each read built a `(String, usize)` key before. Planner tests: 116
+pass (the 115 unchanged, and the table's own). `ColStats` (input columns by name) stays as it is: its readers are the
+SQL statistics' loads, not the search.
+
+## O171. A trial's sample misses a skewed key's heavy rows (decision 0216)
+
+A trial (decision 0207) samples a line's rows at a stride. On `call_ret`, 23% of the rows (those of the 64
+largest functions) do 96% of the work, so a 9-row sample measures mostly light rows: 492 rows of work a row, where
+the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both. Open.
+
+## O172. Heavy values: deltas, processes, GPU (decision 0216)
+
+Heavy values are made by a full pass over a relation when a column is raised. Open:
+- a delta's Misra–Gries summary merged into the kept one (0209 §4), so a growing relation is not counted again;
+- a line's raised columns kept with its note across processes;
+- the GPU batch (0209 §6, step 4).
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 

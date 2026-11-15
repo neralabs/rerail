@@ -1663,6 +1663,10 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .collect();
     let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
+    // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
+    // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
+    // (below), and keeps its name there (`merge`).
+    let read = read_rels(prog);
     let cands: Vec<&str> = rules_of
         .keys()
         .copied()
@@ -1851,10 +1855,33 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     for &r in &cands {
         groups.entry(class[r]).or_default().push(r.to_owned());
     }
-    groups.into_values().filter(|g| g.len() > 1).map(|mut g| {
-        g.sort();
-        g
-    }).collect()
+    // An unread relation joins a class only with a lowering's widened copy of it (`rr_wide_<attr>_<r>`, decision
+    // 0174): the copy is that relation, so it is read as it. Any other unread relation stays apart, equal or not: one
+    // an unreached clause keeps (a library's facts) must not rename what the reached rules read, and one read by
+    // name keeps its name.
+    groups
+        .into_values()
+        .filter_map(|g| {
+            let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
+            let copies = |u: &str| {
+                super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
+            };
+            let own = unread.into_iter().find(|u| copies(u));
+            kept.extend(own);
+            kept.sort();
+            (kept.len() > 1).then_some(kept)
+        })
+        .collect()
+}
+
+/// The relations a program reads: in a rule's body, by a native, or as an output.
+fn read_rels(prog: &Program) -> BTreeSet<&str> {
+    prog.rules
+        .iter()
+        .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()))
+        .chain(prog.natives.values().flat_map(|n| n.reads()))
+        .chain(prog.outputs.iter().map(String::as_str))
+        .collect()
 }
 
 /// A recursive component of unary node relations whose rules are bases (no member read), copies (`R(x) :- S(x)`)
@@ -2041,11 +2068,16 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     }
     let mut rename: BTreeMap<String, String> = BTreeMap::new();
     let mut taken: BTreeSet<String> = prog.decls.keys().cloned().map(String::from).collect();
+    // Each class's rules are one member's: the member it is named after, or its first where its name is new.
+    let mut firsts: BTreeSet<String> = BTreeSet::new();
+    let read: BTreeSet<String> = read_rels(prog).into_iter().map(str::to_owned).collect();
     for g in &groups {
         let suffixes: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(_, s)| s)).collect();
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
         let is_output = |r: &str| prog.outputs.iter().any(|o| o == r);
-        let to = match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
+        let unread = g.iter().find(|r| !read.contains(r.as_str()));
+        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one).
+        let to = if let Some(u) = unread { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
             (Some(Some(s)), 1, n) if n > 1 => {
                 let mut name = format!("s_{s}");
                 let mut k = 1;
@@ -2068,16 +2100,21 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
                 taken.insert(name.clone());
                 name
             }
-            _ => g.iter().find(|r| !is_output(r)).unwrap_or(&g[0]).clone(),
-        };
+            // Named after its member with the shortest name: a lowering's copy of a relation (`rr_wide_<attr>_<r>`)
+            // is that relation's name with a prefix, so the relation names it.
+            _ => g.iter().filter(|r| !is_output(r)).min_by_key(|r| r.len()).unwrap_or(&g[0]).clone(),
+        } };
+        if !g.contains(&to) {
+            firsts.insert(g[0].clone());
+        }
         for r in g {
             if *r != to {
                 rename.insert(r.clone(), to.clone());
             }
         }
     }
-    // One class's rules are kept: its first member's, renamed. An output merged keeps its name, as a copy of the class.
-    let firsts: BTreeSet<String> = groups.iter().map(|g| g[0].clone()).collect();
+    // One class's rules are kept, renamed: its namesake's (not renamed), or its first member's. An output merged
+    // keeps its name, as a copy of the class.
     let outputs: Vec<(String, String)> = rename.iter().filter(|(from, _)| prog.outputs.iter().any(|o| o == *from)).map(|(f, t)| (f.clone(), t.clone())).collect();
     let mut copies: Vec<Rule> = Vec::new();
     for (from, to) in &outputs {
@@ -2253,6 +2290,77 @@ pub mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// A relation nothing reads keeps its name, though it equals a read one: the engine may read it by name (`env`'s
+    /// settings). A class is named after its shortest member: a copy's name is its relation's with a prefix.
+    #[test]
+    fn unread_relations_stay_and_a_class_takes_its_shortest_name() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl base(n: number)
+            .input base
+            .decl env(k: symbol, v: symbol)
+            env("load.budget", "9").
+            .decl cfg(k: symbol, v: symbol)
+            cfg("load.budget", "9").
+            .decl q(n: number)
+            .decl rr_wide_node_text_q(n: number)
+            q(n) :- base(n).
+            rr_wide_node_text_q(n) :- base(n).
+            .decl out(n: number, v: symbol)
+            .output out
+            out(n, v) :- q(n), rr_wide_node_text_q(n), cfg(_, v).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.merged, vec![("q".to_owned(), "rr_wide_node_text_q".to_owned())]);
+        assert!(prog.facts.contains_key("env") && prog.facts.contains_key("cfg"), "{:?}", prog.facts.keys().collect::<Vec<_>>());
+        // The class keeps one member's rules: its namesake's, not its first's as well.
+        assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "q").count(), 1, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+
+    /// A relation nothing reads joins the class of its own widened copy and names it (all its readers read the copy);
+    /// one whose name only ends like a copy's relation (`same_q` against `rr_wide_node_text_cmp_same_q`) stays apart.
+    #[test]
+    fn an_unread_relation_names_its_own_copys_class_only() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl base(n: number)
+            .input base
+            .decl q(n: number)
+            .decl rr_wide_node_text_q(n: number)
+            q(n) :- base(n).
+            rr_wide_node_text_q(n) :- base(n).
+            .decl other(n: number)
+            .input other
+            .decl same_q(n: number)
+            .decl cmp_same_q(n: number)
+            .decl rr_wide_node_text_cmp_same_q(n: number)
+            same_q(n) :- other(n).
+            cmp_same_q(n) :- other(n).
+            rr_wide_node_text_cmp_same_q(n) :- other(n).
+            .decl out(n: number)
+            .output out
+            out(n) :- rr_wide_node_text_q(n), rr_wide_node_text_cmp_same_q(n), cmp_same_q(n).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        let mut merged = report.merged.clone();
+        merged.sort();
+        assert_eq!(
+            merged,
+            vec![("cmp_same_q".to_owned(), "rr_wide_node_text_cmp_same_q".to_owned()), ("q".to_owned(), "rr_wide_node_text_q".to_owned())],
+            "{:?}",
+            prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>()
+        );
+        // `same_q` neither joined nor named the class: the reached rule reads `cmp_same_q` still. (Its own rules go
+        // with the other unread relations' rules, `simplify`'s dead-rule pass.)
+        let out = prog.rules.iter().find(|r| r.head.rel == "out").unwrap();
+        let reads: Vec<&str> = out.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
+        assert!(reads.contains(&"cmp_same_q") && !reads.contains(&"same_q"), "{reads:?}");
     }
 
     /// Two atoms of one keyed row merge by renaming the later's variable, in the head's computed terms too: the
