@@ -86,7 +86,7 @@ describe("TLS daemon", () => {
   const originalRerailHome = process.env.RERAIL_HOME;
 
   afterEach(async () => {
-    for (const holder of fileHolders.splice(0)) holder.kill();
+    await endHolders();
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
@@ -163,7 +163,17 @@ Start-Sleep 60`;
     }));
   }
 
-  /** Resolves with the first line `holder` prints, or with why it ended first; it is ended after the test. */
+  /** Ends each holder of a file this test started, and waits until it has exited, so the test's folder can go. */
+  async function endHolders(): Promise<void> {
+    await Promise.all(fileHolders.splice(0).map(async holder => {
+      if (holder.pid === undefined || holder.exitCode !== null || holder.signalCode !== null) return;
+      const closed = once(holder, "close");
+      holder.kill();
+      await closed;
+    }));
+  }
+
+  /** Resolves with the first line `holder` prints, or with why it ended first; `endHolders` ends it. */
   async function holdWith(holder: ChildProcess): Promise<string> {
     fileHolders.push(holder);
     let said = "";
@@ -287,7 +297,7 @@ Start-Sleep 60`;
       await expect(refused).rejects.toThrow(`${files.keyFile} is open to other users (mode 0644)`);
       await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
       expect(performance.now() - started).toBeLessThan(1_000);
-      for (const holder of fileHolders.splice(0)) holder.kill();
+      await endHolders();
     }
   }, 5_000);
 
@@ -308,7 +318,7 @@ Start-Sleep 60`;
       await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
       await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
       expect(performance.now() - started).toBeLessThan(5_000);
-      for (const holder of fileHolders.splice(0)) holder.kill();
+      await endHolders();
     }
   }, 30_000);
 
