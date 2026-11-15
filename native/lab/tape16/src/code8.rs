@@ -608,7 +608,10 @@ pub struct Rank8 {
     per: u32,
     start: Vec<u32>,
     off: Vec<u8>,
-    low: Vec<u8>,
+    /// The low part a node past the cutoff keeps: one byte, or two when a prefix covers more than 256 numbers
+    /// (E25: a table from the grammar, 1,800–3,700 codes, under the one prefix 255).
+    low: Vec<u16>,
+    low_w: usize,
     /// Per 64-node group: the nodes past the cutoff before it in its block (E23: the rank read).
     sub: Vec<u8>,
     nodes: usize,
@@ -656,10 +659,16 @@ impl Rank8 {
     }
     /// The same over any id column (`num` numbers the ids).
     pub fn of_ids(ids: &[u32], num: &[u32], cut: u32) -> Rank8 {
-        let ncodes = num.len() as u32;
+        Rank8::of_table(ids, num, cut, num.len())
+    }
+    /// The same for a table of `table` codes (at least `num`'s): the grammar's, of which `num` numbers those
+    /// a corpus showed first.
+    pub fn of_table(ids: &[u32], num: &[u32], cut: u32, table: usize) -> Rank8 {
+        let ncodes = table.max(num.len()) as u32;
         let cut = if ncodes <= 256 { 256 } else { cut };
         let per = if cut >= 256 { 1 } else { (ncodes - cut).div_ceil(256 - cut) };
-        assert!(per <= 256, "{ncodes} codes do not fit a cutoff of {cut}");
+        assert!(per <= 1 << 16, "{ncodes} codes do not fit a cutoff of {cut}");
+        let low_w = if per <= 256 { 1 } else { 2 };
         let n = ids.len();
         let blocks = n.div_ceil(BLOCK);
         let mut bytes = vec![0u8; n];
@@ -674,7 +683,7 @@ impl Rank8 {
                 bytes[i] = (cut + t / per) as u8;
                 start[i / BLOCK + 1] += 1;
                 off.push((i % BLOCK) as u8);
-                low.push((t % per) as u8);
+                low.push((t % per) as u16);
             }
         }
         for b in 0..blocks {
@@ -695,7 +704,7 @@ impl Rank8 {
         }
         // Padded to whole groups (zeros, never the prefix) so a group reads as 8 words.
         bytes.resize(groups * GROUP, 0);
-        Rank8 { bytes, cut, per, start, off, low, sub, nodes: n }
+        Rank8 { bytes, cut, per, start, off, low, low_w, sub, nodes: n }
     }
     #[inline(always)]
     pub fn byte(&self, i: usize) -> u8 {
@@ -801,21 +810,23 @@ impl Rank8 {
             side.extend_from_slice(&v.to_le_bytes());
         }
         side.extend_from_slice(&self.off);
-        side.extend_from_slice(&self.low);
+        for &l in &self.low {
+            side.extend_from_slice(&l.to_le_bytes()[..self.low_w]);
+        }
         (self.bytes[..self.nodes].to_vec(), side)
     }
     pub fn tail_nodes(&self) -> usize {
         self.off.len()
     }
     pub fn side_bytes(&self) -> usize {
-        self.start.len() * 4 + self.off.len() + self.low.len()
+        self.start.len() * 4 + self.off.len() + self.low.len() * self.low_w
     }
     /// The stored bytes with the side list after them, as written to disk.
     pub fn disk_bytes(&self) -> Vec<u8> {
         let mut b = self.bytes.clone();
         for (&o, &l) in self.off.iter().zip(&self.low) {
             b.push(o);
-            b.push(l);
+            b.extend_from_slice(&l.to_le_bytes()[..self.low_w]);
         }
         b
     }

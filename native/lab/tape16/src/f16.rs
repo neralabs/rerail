@@ -44,10 +44,32 @@ pub struct F16Lang {
     pub num: Vec<u32>,
     pub by_num: Vec<u32>,
     pub cut: u32,
+    /// The code table's size, from the grammar (`grammar_codes`).
+    pub table: usize,
     /// Slots, gaps, lengths, in bits (multiples of 8).
     pub widths: [u32; 3],
     /// Sets compiled to numbers, once per set (a rule's set is compiled once, not per file).
     sets: RefCell<HashMap<(usize, usize), Rc<NumSet>>>,
+}
+
+/// The codes a language's grammar allows (E25, `tape16 gcodes`, which derives them from node-types.json and
+/// checks every captured node against them): the table every tape of the language numbers into. `.rr` and
+/// Blade, whose parsers declare no node types, are the bound kinds × fields × flags.
+pub fn grammar_codes(tag: u8) -> usize {
+    match tag {
+        1 => 2045,
+        2 => 3647,
+        3 => 3696,
+        6 => 2419,
+        7 => 2761,
+        8 => 2035,
+        9 => 1843,
+        10 => 1937,
+        12 => 76,
+        13 => 14896,
+        14 => 70,
+        _ => 0,
+    }
 }
 
 /// A language's statistics, gathered file by file (nothing held), then fixed by `finish`.
@@ -72,30 +94,30 @@ impl Learner {
         self.hg.add(g.into_iter());
         self.hl.add(l.into_iter());
     }
-    pub fn finish(mut self, codes: &Codes) -> F16Lang {
+    /// `table`: the language's code table from the grammar (`grammar_codes`), at least the capture's codes.
+    pub fn finish(mut self, codes: &Codes, table: usize) -> F16Lang {
         self.freq.resize(codes.table.len(), 0);
+        let table = table.max(codes.table.len());
         let num = numbers_by(&self.freq);
         let mut by_num = vec![0u32; num.len()];
         for (k, &n) in num.iter().enumerate() {
             by_num[n as usize] = k as u32;
         }
-        let nc = num.len() as u32;
-        // The fewest prefixes that number every code: 256 − k bytes stand for themselves, k prefixes cover 256
-        // numbers each.
-        let prefixes = if nc <= 256 { 0 } else { (nc - 256).div_ceil(255) };
-        assert!(prefixes <= 2, "{nc} codes: the sweep's prefix test handles one or two prefixes");
-        F16Lang { num, by_num, cut: 256 - prefixes, widths: [self.hs.width_bytes(), self.hg.width_bytes(), self.hl.width_bytes()], sets: RefCell::default() }
+        // One prefix, 255, when the grammar's table passes 256 codes: the low part past it is one byte to 511
+        // codes, two beyond (E25). The codes the corpus never showed are numbered after those it did.
+        let cut = if table <= 256 { 256 } else { 255 };
+        F16Lang { num, by_num, cut, table, widths: [self.hs.width_bytes(), self.hg.width_bytes(), self.hl.width_bytes()], sets: RefCell::default() }
     }
 }
 
 impl F16Lang {
     /// From the language's code table and the files the choices are learned on.
-    pub fn learn<'a>(codes: &Codes, files: impl Iterator<Item = &'a Cols>) -> F16Lang {
+    pub fn learn<'a>(codes: &Codes, table: usize, files: impl Iterator<Item = &'a Cols>) -> F16Lang {
         let mut l = Learner::default();
         for c in files {
             l.add(c);
         }
-        l.finish(codes)
+        l.finish(codes, table)
     }
     fn numset(&self, set: &[bool]) -> Rc<NumSet> {
         let key = (set.as_ptr() as usize, set.len());
@@ -131,7 +153,7 @@ pub struct F16<'a> {
 impl<'a> F16<'a> {
     pub fn new(c: &Cols, lang: &'a F16Lang) -> F16<'a> {
         let ids: Vec<u32> = c.code.iter().map(|&k| k as u32).collect();
-        let codes = Rank8::of_ids(&ids, &lang.num, lang.cut);
+        let codes = Rank8::of_table(&ids, &lang.num, lang.cut, lang.table);
         let slot = Esc::new(&sib_slots(c, K), lang.widths[0]);
         let (g, l) = gaps(c);
         let gap = Esc::new(&g, lang.widths[1]);
@@ -378,7 +400,7 @@ pub fn run(files: &[&File]) -> Report {
     let cols: Vec<Cols> = files.iter().map(|f| Cols::of_tree(&read(f), &codes)).collect();
     let train_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 0).collect();
     let test_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 1).collect();
-    let lang = F16Lang::learn(&codes, train_idx.iter().map(|&i| &cols[i]));
+    let lang = F16Lang::learn(&codes, grammar_codes(files[0].tag), train_idx.iter().map(|&i| &cols[i]));
     let mut r = Report { files: files.len(), measured_files: test_idx.len(), codes: codes.table.len(), cut: lang.cut, widths: lang.widths, ..Report::default() };
     let streams = |i: usize| -> Streams { F16::new(&cols[i], &lang).streams() };
     let train: Vec<Streams> = train_idx.iter().map(|&i| streams(i)).collect();

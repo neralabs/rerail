@@ -1116,7 +1116,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             learn.entry(f.tag).or_default().add(&Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
-        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t]))).collect()
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)))).collect()
     };
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
@@ -1394,7 +1394,7 @@ fn cmd_prim(path: &str) {
             learn.entry(f.tag).or_default().add(&rerail_tape_lab::inplace::Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
-        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t]))).collect()
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)))).collect()
     };
     // Rows: (primitive, set) → per candidate cost and count.
     let mut rows: Vec<String> = Vec::new();
@@ -1719,6 +1719,24 @@ fn cmd_f16(path: &str) {
     }
 }
 
+/// E25 (t39 step 17): every code the grammar allows, checked against every node of the capture (`gcodes.rs`).
+#[cfg(feature = "grammar")]
+fn cmd_gcodes(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::gcodes::run(*tag, fs, &scratch) {
+            Ok(r) => rerail_tape_lab::gcodes::print(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
 /// E22 (t39 step 14): the field taken out of the code (`nofield.rs`).
 fn cmd_nofield(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1788,6 +1806,8 @@ fn main() {
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
         "f16" => cmd_f16(path),
+        #[cfg(feature = "grammar")]
+        "gcodes" => cmd_gcodes(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

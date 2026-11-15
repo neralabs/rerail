@@ -111,14 +111,20 @@ also what a compressor matches (2.1).
 
 A **code** is a node's (kind, field, flags, supertype memberships). Kind and field are the
 grammar's own ids. The memberships are a mask over the supertypes the grammar lists for the kind
-(below). Each language has one **code table** for its grammar build and format version, numbered
-by frequency over a training corpus, the most frequent first. There is no per-tape table.
+(below). Each language has one **code table** for its grammar build and format version. There is
+no per-tape table.
 
+- **The table comes from the grammar.** It holds every code the grammar allows, not the codes a
+  corpus showed, so no file can hold a code outside it (below, E25).
+- **A corpus only orders it.** The codes a training corpus showed are numbered by frequency, the
+  most frequent first. The rest follow in a fixed order of the grammar's.
 - **Below the cutoff, the byte is the code.** A language with more than 256 codes has a cutoff of
-  255: bytes 0–254 are the 255 most frequent codes, and byte 255 is a prefix.
-- **Past the cutoff**, a node's code is 255 + a low byte kept in its block's side list (1.5). A
-  language past 511 codes takes a second prefix (254).
-- **A language with 256 codes or fewer** (JSON, `.rr`, SQL, small grammars) has no cutoff.
+  255: bytes 0–254 are the 255 most frequent codes, and byte 255 is the one prefix.
+- **Past the cutoff**, a node's code is 255 + a low part kept in its block's side list (1.5): one
+  byte to 511 codes, two beyond. Every tree-sitter grammar measured but JSON's and Vue's passes 511
+  (1,843–3,696 codes), so its low part is two bytes. The codes the corpus never showed are all past
+  the cutoff, and the nodes past it stay as few as before (they are the rare codes either way).
+- **A language with 256 codes or fewer** (JSON 70, Vue 76) has no cutoff.
 - Measured on files the numbering never saw: 0.36–1.12% of nodes past the cutoff on Python, Rust,
   TypeScript and JavaScript (t39 step 13).
 
@@ -162,10 +168,44 @@ sql             61        0           0                              148, 54
 Kind ids stay per language. Global ids (language × 2^16 + kind) stay in indexes only, as the
 spike's Option B and decision 0055 say.
 
-**Open: a code the table lacks.** A file can hold a (kind, field, flags, mask) tuple the training
-corpus never showed. The table can list every tuple the grammar allows, which `node-types.json`
-bounds, with the unseen ones numbered last, past the cutoff. Or a tape can carry a short extension
-list. Counting the grammar's allowed tuples is the next check (E2).
+**Every code the grammar allows (E25).** The table is derived from the grammar's `node-types.json`,
+generated from `grammar.json` by the generator the build uses (tree-sitter-generate 0.27.1), or as
+the registry crate ships it. A code comes from one of these places:
+
+- **a field** of a type, or **its unfielded children**: a kind listed there, or every kind under a
+  supertype listed there. Its memberships are the supertypes on its path, or any inner part of the
+  path, because `node-types.json` names only the outermost supertype a place allows;
+- **the root**: the grammar's first rule;
+- **an extra**: under any node, no field, flagged extra;
+- **an ERROR**: under any field or none, flagged error, or error and extra when the parser skipped
+  it;
+- **under an ERROR**: any kind, no field, with any membership path it has anywhere;
+- **a missing leaf**: wherever a leaf of its kind can be, flagged missing.
+
+`tape16 gcodes` lists them and checks every node of the rerail and data-layer captures against the
+list. Every captured code is on it, in all 11 languages:
+
+```text
+language     codes the grammar allows   codes seen (rerail, data-layer)
+python          2,045                    420, 471
+typescript      3,647                    499, 177
+tsx             3,696                     49
+javascript      2,419                    351, 339
+php             2,761                    365
+rust            1,843                    512, 389
+sql             1,937                    155, 57
+json               70                     26, 26
+vue                76                     28
+.rr            14,896 (bound)            107
+blade           2,035 (bound)             37
+```
+
+The list over-approximates: "any inner part of the path" and "anything under an ERROR" allow more
+than a parser makes, and that costs only numbers past the cutoff no node uses. `.rr` and Blade are
+parsed by Rerail's own parsers, which declare no node types, so their bound is every kind under
+every field, plain, extra or missing. Each own parser should declare its node types as a
+`node-types.json` does, which would bring `.rr` from 14,896 to about its fields' real pairs. Until
+then the bound fits the two-byte low part.
 
 ### 1.3 Structure: the slot
 
@@ -677,7 +717,8 @@ Each reports a curve over its options, not a pass or fail. Each runs on captured
 - **E1, bytes** (T1–T4). Bytes a node at rest per language, for codec × layout × block size ×
   dictionary. With format 15 + zstd + its dictionary as the reference line.
 - **E2, codes.** Supertype masks, fields and kinds, checked against the parser's cursor on a corpus.
-  The grammar counts are in 1.3.
+  The grammar counts are in 1.2. **Answered by E25**: the table is every code the grammar allows
+  (1.2), and no captured node falls outside it.
 - **E3, decode** (T1, T5). On Metal and on the CPU: throughput, the latency of one random read, and
   the parent pass derived against stored. Against today's host zstd + restore (0.7 ms a document).
 - **E4, edits** (T3, T7). Replay the data-layer repository's history: blocks re-encoded per commit,
