@@ -1,0 +1,4 @@
+[
+  {"name": "builder-a", "cores": 16},
+  {"name": "builder-b", "cores": 8, "enabled": false}
+]

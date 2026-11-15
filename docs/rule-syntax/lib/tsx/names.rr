@@ -165,6 +165,13 @@ jsx_tag_ref(r) :- kind(r, "identifier"), field(o, "name", r),
     (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), !match("[a-z].*", r).
 // `{ a }` in an object literal reads the variable a: shorthand `{ a }` means `{ a: a }`.
 ref(r, x, "value") :- kind(r, "shorthand_property_identifier"), text(r, x).
+// `export { e }` (no `from`): the name reads the top level's e, a value or a type, as main's scope makes it one
+// reference of both spaces. Its space is "dual": the lookup stops at a scope that declares e in either space. A
+// re-export (`export { e } from "m"`) names no local binding.
+ref(r, x, "dual") :- export_list_name(r), text(r, x).
+.decl export_list_name(r: node)
+export_list_name(r) :- field(p, "name", r), kind(r, "identifier"), kind(p, "export_specifier"), child(c, p, _),
+    kind(c, "export_clause"), child(st, c, _), !field(st, "source", _).
 // `({ a } = obj)` assigns the variable a: a shorthand pattern that declares nothing is a (write) reference.
 ref(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, x), !decl_site(_, x, r, _, _).
 // Lookup: from the innermost scope outwards, to the first that declares the name in its namespace.
@@ -179,7 +186,8 @@ lex_scope(k) :- fn_scope(k) ; block_scope(k).
 // Start at the innermost scope around r.
 look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, lex_scope).
 // Step outwards only while the current scope does not declare x; so the inner declaration shadows outer ones.
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
+look(r, x, sp, p) :- look(r, x, sp, s), sp != "dual", !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
+look(r, x, "dual", p) :- look(r, x, "dual", s), !decl_site(s, x, _, _, _), nearest(s, p, lex_scope).
 
 // ==== interface ===================================================================================================
 // ref_site(r, site): reference r resolves to declaration site. The lookup above stops at the first scope that
@@ -187,6 +195,7 @@ look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p
 // In `import { Link } from "x"; <Link/>`, the use of Link has ref_site to the import specifier.
 .decl ref_site(r: node, site: node)
 ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
+ref_site(r, d) :- look(r, x, "dual", s), decl_site(s, x, d, _, _).
 // site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern" | "catch").
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
@@ -366,20 +375,51 @@ ann_type(a, a) :- kind(a, "type_annotation"), count : { child(a, c, _), !kind(c,
 // `languageOptions` globals and lib, which the translated rule does not carry.
 .decl site_builtin(site: node)
 site_builtin(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), es_global(x).
-// site_directives(site, "eslint"): main's `directives: "eslint"` is no filter of its own: it widens `builtin` and
-// `exported` to the names ESLint's `/* global */` and `/* exported */` comments list. The translator writes it as a
-// separate atom, and those comments have no rows here, so it holds for every site and widens nothing.
-.decl site_directives(site: node, tool: symbol)
-site_directives(d, "eslint") :- binding(_, _, d, _).
+// With main's `directives: "eslint"`, `builtin` and `exported` also read ESLint's comments. site_builtin_directives:
+// a script's top-level variable a `/* global x */` comment names (on or off). site_exported_directives: one an
+// `/* exported x */` comment names.
+.decl site_builtin_directives(site: node)
+site_builtin_directives(d) :- site_builtin(d).
+site_builtin_directives(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), docof(p, doc),
+    directive_named(doc, "global", x).
+.decl site_exported_directives(site: node)
+site_exported_directives(d) :- site_exported(d).
+site_exported_directives(d) :- binding(p, x, d, _), kind(p, "program"), main_script_top(p), docof(p, doc),
+    directive_named(doc, "exported", x).
 
 // global_ref(r, "window"): r is a value reference with no declaration in the file, and the name is a known global
 // (from the environment tables in es_global). Undeclared names that are not globals match neither relation.
 .decl global_ref(r: node, x: symbol)  // a reference no file-local declaration binds, to a declared global
 global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
+// global_ref_with(r, x, directives, script): global_ref as main's `resolves.global` reads it with `directives:
+// "eslint"` (1: `/* global x */` comments add x, `x: off` removes it) and `scriptDeclarations` (1: a reference to a
+// script's top-level declaration is the global variable itself).
+.decl global_ref_with(r: node, x: symbol, directives: number, script: number)
+global_ref_with(r, x, 0, 0) :- global_ref(r, x), ref(r, _, _).
+global_ref_with(r, x, 1, 0) :- ref(r, x, "value"), !ref_site(r, _), docof(r, d),
+    (es_global(x), !directive_turned_off(d, x) ; directive_global(d, x)).
+global_ref_with(r, x, dr, 1) :- global_ref_with(r, x, dr, 0).
+global_ref_with(r, x, dr, 1) :- (dr = 0 ; dr = 1), ref(r, x, "value"), ref_site(r, s), binding(p, x, s, _),
+    kind(p, "program"), main_script_top(p).
+.decl directive_turned_off(d: number, x: symbol)
+directive_turned_off(d, x) :- directive_named(d, "global", x), !directive_global(d, x).
+// A `/* global x */` comment's item (the `eslint-directive` guest's `item`, valued by its name) resolves to the
+// global x when the environment has one: main's `resolves: {global: true}` on a directive's item.
+global_ref(r, x) :- kind(r, "item"), value(r, x), es_global(x).
 
 // directive_global(d, "jQuery") for a file with `/* global jQuery */`: ESLint treats such names as declared.
-// No rules here: rows come from a native comment reader (comments are not on the syntax tape).
 .decl directive_global(d: number, x: symbol)  // names from `/* global */` comments (native comment reader)
+// directive_named(d, "global" | "exported", x): a `/* global a, b:off */` or `/* exported a */` comment of document
+// d names x, read through the comment's `eslint-directive` tree (an `item` per name; `globals` is `global`).
+.decl directive_named(d: number, label: symbol, x: symbol)
+directive_named(d, l, x) :- kind(c, "comment"), parsed(c, "eslintDirective", r), value(r, v),
+    (match("globals?", v), l = "global" ; v = "exported", l = "exported"),
+    child(r, i, _), kind(i, "item"), value(i, x), docof(c, d).
+// A `/* global x */` comment's names, less those it turns off (`x: off`).
+directive_global(d, x) :- kind(c, "comment"), parsed(c, "eslintDirective", r), value(r, v), match("globals?", v),
+    child(r, i, _), kind(i, "item"), value(i, x), !directive_off(i), docof(c, d).
+.decl directive_off(i: node)
+directive_off(i) :- child(i, s, _), kind(s, "setting"), value(s, "off").
 
 // unresolved_ref(r): main's `resolves: {unresolved: true}`. r names x, nothing on its search path declares x, and x is
 // no global: not the environment's (es_global), not a `/* global x */` comment's. An export clause's name
@@ -540,7 +580,17 @@ site_occurrence(d, o) :- decl_site(_, _, d, _, _), field(d, "name", o).
 site_occurrence(d, r) :- ref_site(r, d).
 // site_used: at least one reference resolves to the site (the opposite of "unused variable").
 .decl site_used(site: node)
-site_used(d) :- ref_site(_, d).
+site_used(d) :- ref_site(r, d), !unread_ref(r).
+// unread_ref(r): a reference ESLint does not count as a use: a plain write (`x = 1`, `for (x in o)`, `({ x } = o)`),
+// or a self-update whose value nothing reads (`x++;`, `x += 1;` as a statement).
+.decl unread_ref(r: node)
+unread_ref(r) :- write_target(r, a), (kind(a, "assignment_expression") ; kind(a, "for_in_statement")).
+unread_ref(r) :- write_target(r, a), kind(a, "augmented_assignment_expression"), child(st, a, _), kind(st, "expression_statement").
+unread_ref(r) :- kind(u, "update_expression"), field(u, "argument", r), child(st, u, _), kind(st, "expression_statement").
+// write_target(r, a): r is written by a: a's `left` is r, or a destructuring pattern r is in (`a[i] = 1` writes no a).
+.decl write_target(r: node, a: node)
+write_target(r, a) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression") ; kind(a, "for_in_statement")),
+    field(a, "left", p), (r = p ; within(r, p), (kind(p, "object_pattern") ; kind(p, "array_pattern"))), kind(r, k), (k = "identifier" ; k = "shorthand_property_identifier_pattern").
 // site_only: no other declaration of the same name in the same scope and namespace (`var x; var x;` fails it).
 .decl site_only(site: node)  // the variable's one declaration in its scope
 site_only(d) :- decl_site(s, x, d, _, sp), count : { decl_site(s, x, o, _, sp), o != d } = 0.
@@ -558,3 +608,25 @@ imported_sym(n, q) :- sym_of(n, q), ref_site(n, sp), import_binding(sp, _, _, _)
 // es_global(x): names that exist without a declaration: "window", "document", "Promise", "process", ….
 // No rules here; the facts are generated and shipped with the library.
 .decl es_global(x: symbol)  // shipped as facts, generated from ESLint's and TypeScript's lib tables
+#include "tsx/es-globals.rr"
+
+// write_anchor(a, d): where ESLint reports the variable that site d defines (main's `resolves.write: "last"`,
+// scope/usage/ecma.rs `anchor`): its last write made from its own function scope (eslint-scope's variableScope),
+// else its first definition's name. A variable is every site of one name in one scope (`var a; var a = 1`).
+//   function f() { let x = 1; x = 2; }   write_anchor(<the x of `x = 2`>, <the declarator>)
+//   let y; function g() { y = 1; }       write_anchor(<the y of `let y`>, …): g's write is from another function
+.decl write_anchor(a: node, d: node)
+.decl write_ref(r: node)  // r is written: an assignment's or update's target, a for-in/of target, in a pattern too
+write_ref(r) :- write_target(r, _).
+write_ref(r) :- kind(u, "update_expression"), field(u, "argument", r).
+.decl var_write(w: node, sc: node, x: symbol)
+var_write(n, sc, x) :- binding(sc, x, d, _), def_write(d), bind_name(n, d).
+var_write(r, sc, x) :- write_ref(r), ref_site(r, d), binding(sc, x, d, _).
+.decl var_fscope(sc: node, f: node)  // the function scope of scope sc: sc itself, or its nearest
+var_fscope(sc, sc) :- binding(sc, _, _, _), kind(sc, k), fn_scope(k).
+var_fscope(sc, f) :- binding(sc, _, _, _), kind(sc, k), !fn_scope(k), nearest(sc, f, fn_scope).
+.decl own_write(w: node, sc: node, x: symbol)
+own_write(w, sc, x) :- var_write(w, sc, x), nearest(w, f, fn_scope), var_fscope(sc, f).
+write_anchor(a, d) :- binding(sc, x, d, _), own_write(a, sc, x), count : { own_write(w, sc, x), w > a } = 0.
+write_anchor(a, d) :- binding(sc, x, d, _), count : { own_write(_, sc, x) } = 0,
+    binding(sc, x, d1, _), bind_name(a, d1), count : { binding(sc, x, d2, _), d2 < d1 } = 0.

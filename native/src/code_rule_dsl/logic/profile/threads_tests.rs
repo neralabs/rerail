@@ -25,10 +25,12 @@ fn the_profile_accounts_for_every_threads_cpu() {
     let _run = profile::one_run();
     profile::set(true);
     let (park, parked) = std::sync::mpsc::channel::<()>();
+    let (burnt, done) = std::sync::mpsc::channel::<()>();
     let helper = std::thread::Builder::new()
         .name("xhelper".into())
         .spawn(move || {
             burn(0.15);
+            let _ = burnt.send(());
             let _ = parked.recv();
         })
         .unwrap();
@@ -37,7 +39,8 @@ fn the_profile_accounts_for_every_threads_cpu() {
         use rayon::prelude::*;
         (0..64).into_par_iter().for_each(|_| burn(0.005));
     }
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // The helper's CPU is all taken before the account (a wall-time wait fell short at load 90: 0.05 s of 0.15).
+    done.recv().unwrap();
     let account = profile::threads();
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("threads");
     report::write(&dir, "header\n").unwrap();

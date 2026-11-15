@@ -149,13 +149,22 @@ c416_single_for(n, IT) :- k2 = count : { child(n, c1, _), kind(c1, "for_in_claus
 // items_call(n): the JSON util `items-call`, used where the JSON says `matches: "items-call"`
 .decl c416_items_call(n: node)
 c416_items_call(n) :- kind(n, "call"), field(n, "function", c1), kind(c1, "attribute"),
-    field(c1, "object", c2), c416_receiver_name(c2), field(c1, "attribute", c3),
-    glob("items", c3).
-c416_items_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), c416_items_call(c4).
+    field(c1, "object", c2), c416_receiver_name(c2), c416_tok_has_8(c1).
+c416_items_call(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    c416_items_call(c11).
+
+// kind_name(n): the JSON util `kind-name`, used where the JSON says `matches: "kind-name"`
+//   W: metavariable of the calling rule, passed in (bound by the caller)
+//   KN: metavariable this relation binds for the calling rule
+.decl c416_kind_name(n: node, kn: symbol, w: loc)
+c416_kind_name(n, KN, W) :- c416_demand_kind_name(n, W),
+    (kind(n, "identifier") ; kind(n, "dotted_name")), node(_, n, _, _, _), BN = n, text(BN, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
 
 // fn_body(n): the JSON util `fn-body`, used where the JSON says `matches: "fn-body"`
 .decl c416_fn_body(n: node)
-c416_fn_body(n) :- c416_demand_fn_body(n), within(n, p1), field(_, "body", n),
+c416_fn_body(n) :- c416_demand_fn_body(n), within(n, p1),
+    field(p1, "body", f2), (f2 = n ; within(n, f2)),
     (kind(p1, "function_definition") ; kind(p1, "lambda")).
 
 // comp(n): the JSON util `comp`, used where the JSON says `matches: "comp"`
@@ -174,14 +183,91 @@ c416_not_first_iter(n) :- node(_, n, _, _, _), !kind(n, "for_in_clause").
 c416_not_first_iter(n) :- kind(n, "for_in_clause"), precedes(s1, n),
     kind(s1, "for_in_clause").
 
+// comp_binds(n): the JSON util `comp-binds`, used where the JSON says `matches: "comp-binds"`
+//   W: metavariable of the calling rule, passed in (bound by the caller)
+//   KN: metavariable this relation binds for the calling rule
+.decl c416_comp_binds(n: node, kn: symbol, w: loc)
+c416_comp_binds(n, KN, W) :- c416_demand_comp_binds(n, W), c416_comp(n), child(n, c1, _),
+    kind(c1, "for_in_clause"), within(c2, c1),
+    field(c1, "left", f3), (f3 = c2 ; within(c2, f3)), c416_kind_name(c2, KN, W),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// shadowed(n): the JSON util `shadowed`, used where the JSON says `matches: "shadowed"`
+//   W: metavariable of the calling rule, passed in (bound by the caller)
+//   KN: metavariable this relation binds for the calling rule
+.decl c416_shadowed(n: node, kn: symbol, w: loc)
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), c416_fn_body(n), inside(n, p1, "module"),
+    within(c2, p1), c416_kind_name(c2, KN, W),
+    count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
+    bind_name(c2, b4), site_scope(b4, "module"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W),
+    ( precedes(s1, n), within(c1, s1), c416_kind_name(c1, KN, W), count : { bind_name(c1, b1), (main_form(b1, "except") ; main_form(b1, "annotation")) } = 0, bind_name(c1, b2), site_scope(b2, "module")
+    ; within(n, p1), precedes(s2, p1), within(c2, s2), c416_kind_name(c2, KN, W), count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0, bind_name(c2, b4), site_scope(b4, "module")
+    ),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), within(n, p14),
+    field(p14, "body", f15), (f15 = n ; within(n, f15)),
+    (kind(p14, "function_definition") ; kind(p14, "lambda")), within(p14, p16),
+    field(p16, "body", f17), (f17 = p14 ; within(p14, f17)),
+    (kind(p16, "function_definition") ; kind(p16, "lambda")), node(_, p16, _, _, _), F = p16,
+    within(c18, p16), c416_kind_name(c18, KN, W),
+    count : { bind_name(c18, b19), (main_form(b19, "except") ; main_form(b19, "annotation")) } = 0,
+    bind_name(c18, b20), (site_scope(b20, "function") ; site_scope(b20, "lambda")),
+    st21 = b20, within(st21, p22),
+    (kind(p22, "function_definition") ; kind(p22, "lambda")), node(_, p22, _, _, _), G = p22,
+    node(_, G, _, _, _), node(_, F, _, _, _), G = F, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), within(n, p25),
+    field(p25, "body", f26), (f26 = n ; within(n, f26)),
+    (kind(p25, "function_definition") ; kind(p25, "lambda")), node(_, p25, _, _, _), F = p25,
+    c416_alt_13(n, F, KN, W), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), inside(n, p44, "lambda"),
+    field(p44, "body", f45), (f45 = n ; within(n, f45)), child(p44, c46, _),
+    kind(c46, "lambda_parameters"), within(c47, c46), c416_kind_name(c47, KN, W),
+    bind_name(c47, b48), site_scope(b48, "lambda"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), inside(n, p49, "class_definition"),
+    field(p49, "body", f50), (f50 = n ; within(n, f50)), node(_, p49, _, _, _), F = p49,
+    count : { within_stop(n, p51, "class_definition"), field(p51, "body", f52), (f52 = n ; within(n, f52)), (kind(p51, "function_definition") ; kind(p51, "lambda")) } = 0,
+    count : { child(p53, n, _), c416_comp(p53) } = 0,
+    count : { within_stop(n, p54, "class_definition"), c416_not_first_iter(p54), child(p55, p54, _), c416_comp(p55) } = 0,
+    c416_alt_14(n, F, KN, W), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), child(n, c73, _),
+    kind(c73, "for_in_clause"), has(c73, c74, "named_expression"),
+    field(c73, "right", f75), (f75 = c74 ; within(c74, f75)), field(c74, "name", c76),
+    c416_kind_name(c76, KN, W), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), child(p77, n, _), c416_comp_binds(p77, KN, W),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), within(n, p78), c416_not_first_iter(p78),
+    child(p79, p78, _), c416_comp_binds(p79, KN, W), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), within_stop(n, p80, c416_stop_15),
+    kind(p80, "block"), child(p81, p80, _), kind(p81, "except_clause"),
+    child(p81, c82, _), kind(c82, "as_pattern"), child(c82, c83, _),
+    kind(c83, "as_pattern_target"), child(c83, c84, _), c416_kind_name(c84, KN, W),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), within(n, p85),
+    field(p85, "body", f86), (f86 = n ; within(n, f86)),
+    (kind(p85, "function_definition") ; kind(p85, "class_definition")),
+    within(c87, p85),
+    field(p85, "type_parameters", f88), (f88 = c87 ; within(c87, f88)),
+    c416_kind_name(c87, KN, W), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), inside(n, p89, "type_alias_statement"),
+    field(p89, "right", f90), (f90 = n ; within(n, f90)), within(c91, p89),
+    field(p89, "left", f92), (f92 = c91 ; within(c91, f92)), c416_kind_name(c91, KN, W),
+    bind_name(c91, b93), main_form(b93, "typeParameter"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
 // list_comprehension_in_annotation(n): the JSON util `list-comprehension-in-annotation`, used where the JSON says `matches: "list-comprehension-in-annotation"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
 .decl c416_list_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_list_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), c416_alt_17(c2, COMP, IT, KN, TK, TV, W),
-    count : { c416_fn_body(n), inside(n, p1_28, "module"), within(c2_28, p1_28), (kind(c2_28, "identifier") ; kind(c2_28, "dotted_name")), node(_, c2_28, _, _, _), BN = c2_28, text(BN, KN), count : { bind_name(c2_28, b3_28), (main_form(b3_28, "except") ; main_form(b3_28, "annotation")) } = 0, bind_name(c2_28, b4_28), site_scope(b4_28, "module") } = 0, count : { (precedes(s1_29, n), within(c1_29, s1_29), (kind(c1_29, "identifier") ; kind(c1_29, "dotted_name")), node(_, c1_29, _, _, _), BN = c1_29, text(BN, KN), count : { bind_name(c1_29, b1_29), (main_form(b1_29, "except") ; main_form(b1_29, "annotation")) } = 0, bind_name(c1_29, b2_29), site_scope(b2_29, "module") ; within(n, p1_29), precedes(s2_29, p1_29), within(c2_29, s2_29), (kind(c2_29, "identifier") ; kind(c2_29, "dotted_name")), node(_, c2_29, _, _, _), BN = c2_29, text(BN, KN), count : { bind_name(c2_29, b3_29), (main_form(b3_29, "except") ; main_form(b3_29, "annotation")) } = 0, bind_name(c2_29, b4_29), site_scope(b4_29, "module")) } = 0, count : { within(n, p14_30), field(_, "body", n), (kind(p14_30, "function_definition") ; kind(p14_30, "lambda")), within(p14_30, p15_30), field(_, "body", p14_30), (kind(p15_30, "function_definition") ; kind(p15_30, "lambda")), node(_, p15_30, _, _, _), F = p15_30, within(c16_30, p15_30), (kind(c16_30, "identifier") ; kind(c16_30, "dotted_name")), node(_, c16_30, _, _, _), BN = c16_30, text(BN, KN), count : { bind_name(c16_30, b17_30), (main_form(b17_30, "except") ; main_form(b17_30, "annotation")) } = 0, bind_name(c16_30, b18_30), (site_scope(b18_30, "function") ; site_scope(b18_30, "lambda")), (st19_30 = b18_30 ; within(b18_30, st19_30)), within(st19_30, p20_30), (kind(p20_30, "function_definition") ; kind(p20_30, "lambda")), node(_, p20_30, _, _, _), G = p20_30, text(G, t21_30), text(F, t21_30) } = 0, count : { within(n, p23_31), field(_, "body", n), (kind(p23_31, "function_definition") ; kind(p23_31, "lambda")), node(_, p23_31, _, _, _), F = p23_31, (precedes(s1_20_31, n), within(c2_20_31, s1_20_31), (kind(c2_20_31, "identifier") ; kind(c2_20_31, "dotted_name")), node(_, c2_20_31, _, _, _), BN = c2_20_31, text(BN, KN), count : { bind_name(c2_20_31, b3_20_31), (main_form(b3_20_31, "except") ; main_form(b3_20_31, "annotation")) } = 0, bind_name(c2_20_31, b4_20_31), (site_scope(b4_20_31, "function") ; site_scope(b4_20_31, "lambda")), (st5_20_31 = b4_20_31 ; within(b4_20_31, st5_20_31)), within(st5_20_31, p6_20_31), (kind(p6_20_31, "function_definition") ; kind(p6_20_31, "lambda")), node(_, p6_20_31, _, _, _), G = p6_20_31, text(G, t7_20_31), text(F, t7_20_31) ; within(n, p9_21_31), precedes(s10_21_31, p9_21_31), within(c11_21_31, s10_21_31), (kind(c11_21_31, "identifier") ; kind(c11_21_31, "dotted_name")), node(_, c11_21_31, _, _, _), BN = c11_21_31, text(BN, KN), count : { bind_name(c11_21_31, b12_21_31), (main_form(b12_21_31, "except") ; main_form(b12_21_31, "annotation")) } = 0, bind_name(c11_21_31, b13_21_31), (site_scope(b13_21_31, "function") ; site_scope(b13_21_31, "lambda")), (st14_21_31 = b13_21_31 ; within(b13_21_31, st14_21_31)), within(st14_21_31, p15_21_31), (kind(p15_21_31, "function_definition") ; kind(p15_21_31, "lambda")), node(_, p15_21_31, _, _, _), G = p15_21_31, text(G, t16_21_31), text(F, t16_21_31)) } = 0, count : { inside(n, p41_32, "lambda"), field(_, "body", n), child(p41_32, c42_32, _), kind(c42_32, "lambda_parameters"), within(c43_32, c42_32), (kind(c43_32, "identifier") ; kind(c43_32, "dotted_name")), node(_, c43_32, _, _, _), BN = c43_32, text(BN, KN), bind_name(c43_32, b44_32), site_scope(b44_32, "lambda") } = 0, count : { inside(n, p45_33, "class_definition"), field(_, "body", n), node(_, p45_33, _, _, _), F = p45_33, count : { within_stop(n, p46_33, "class_definition"), field(_, "body", n), (kind(p46_33, "function_definition") ; kind(p46_33, "lambda")) } = 0, count : { child(p47_33, n, _), c416_comp(p47_33) } = 0, count : { within_stop(n, p48_33, "class_definition"), c416_not_first_iter(p48_33), child(p49_33, p48_33, _), c416_comp(p49_33) } = 0, (precedes(s1_22_33, n), within(c2_22_33, s1_22_33), (kind(c2_22_33, "identifier") ; kind(c2_22_33, "dotted_name")), node(_, c2_22_33, _, _, _), BN = c2_22_33, text(BN, KN), count : { bind_name(c2_22_33, b3_22_33), (main_form(b3_22_33, "except") ; main_form(b3_22_33, "annotation")) } = 0, bind_name(c2_22_33, b4_22_33), site_scope(b4_22_33, "class"), (st5_22_33 = b4_22_33 ; within(b4_22_33, st5_22_33)), inside(st5_22_33, p6_22_33, "class_definition"), node(_, p6_22_33, _, _, _), G = p6_22_33, text(G, t7_22_33), text(F, t7_22_33) ; within(n, p9_23_33), precedes(s10_23_33, p9_23_33), within(c11_23_33, s10_23_33), (kind(c11_23_33, "identifier") ; kind(c11_23_33, "dotted_name")), node(_, c11_23_33, _, _, _), BN = c11_23_33, text(BN, KN), count : { bind_name(c11_23_33, b12_23_33), (main_form(b12_23_33, "except") ; main_form(b12_23_33, "annotation")) } = 0, bind_name(c11_23_33, b13_23_33), site_scope(b13_23_33, "class"), (st14_23_33 = b13_23_33 ; within(b13_23_33, st14_23_33)), inside(st14_23_33, p15_23_33, "class_definition"), node(_, p15_23_33, _, _, _), G = p15_23_33, text(G, t16_23_33), text(F, t16_23_33)) } = 0, count : { child(n, c67_34, _), kind(c67_34, "for_in_clause"), has(c67_34, c68_34, "named_expression"), field(_, "right", c68_34), field(c68_34, "name", c69_34), (kind(c69_34, "identifier") ; kind(c69_34, "dotted_name")), node(_, c69_34, _, _, _), BN = c69_34, text(BN, KN) } = 0, count : { child(p70_35, n, _), c416_comp(p70_35), child(p70_35, c1_24_35, _), kind(c1_24_35, "for_in_clause"), within(c2_24_35, c1_24_35), field(_, "left", c2_24_35), (kind(c2_24_35, "identifier") ; kind(c2_24_35, "dotted_name")), node(_, c2_24_35, _, _, _), BN = c2_24_35, text(BN, KN) } = 0, count : { within(n, p71_36), c416_not_first_iter(p71_36), child(p72_36, p71_36, _), c416_comp(p72_36), child(p72_36, c1_25_36, _), kind(c1_25_36, "for_in_clause"), within(c2_25_36, c1_25_36), field(_, "left", c2_25_36), (kind(c2_25_36, "identifier") ; kind(c2_25_36, "dotted_name")), node(_, c2_25_36, _, _, _), BN = c2_25_36, text(BN, KN) } = 0, count : { c416_stop_15_within(n, p73_37), kind(p73_37, "block"), child(p74_37, p73_37, _), kind(p74_37, "except_clause"), child(p74_37, c75_37, _), kind(c75_37, "as_pattern"), child(c75_37, c76_37, _), kind(c76_37, "as_pattern_target"), child(c76_37, c77_37, _), (kind(c77_37, "identifier") ; kind(c77_37, "dotted_name")), node(_, c77_37, _, _, _), BN = c77_37, text(BN, KN) } = 0, count : { within(n, p78_38), field(_, "body", n), (kind(p78_38, "function_definition") ; kind(p78_38, "class_definition")), within(c79_38, p78_38), field(_, "type_parameters", c79_38), (kind(c79_38, "identifier") ; kind(c79_38, "dotted_name")), node(_, c79_38, _, _, _), BN = c79_38, text(BN, KN) } = 0, count : { inside(n, p80_39, "type_alias_statement"), field(_, "right", n), within(c81_39, p80_39), field(_, "left", c81_39), (kind(c81_39, "identifier") ; kind(c81_39, "dotted_name")), node(_, c81_39, _, _, _), BN = c81_39, text(BN, KN), bind_name(c81_39, b82_39), main_form(b82_39, "typeParameter") } = 0,
+    within(c2, r1), c416_alt_17(c2, COMP, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
 
 // set_comprehension_in_annotation(n): the JSON util `set-comprehension-in-annotation`, used where the JSON says `matches: "set-comprehension-in-annotation"`
@@ -190,8 +276,7 @@ c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand
 .decl c416_set_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_set_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), c416_alt_19(c2, COMP, IT, KN, TK, TV, W),
-    count : { c416_fn_body(n), inside(n, p1_40, "module"), within(c2_40, p1_40), (kind(c2_40, "identifier") ; kind(c2_40, "dotted_name")), node(_, c2_40, _, _, _), BN = c2_40, text(BN, KN), count : { bind_name(c2_40, b3_40), (main_form(b3_40, "except") ; main_form(b3_40, "annotation")) } = 0, bind_name(c2_40, b4_40), site_scope(b4_40, "module") } = 0, count : { (precedes(s1_41, n), within(c1_41, s1_41), (kind(c1_41, "identifier") ; kind(c1_41, "dotted_name")), node(_, c1_41, _, _, _), BN = c1_41, text(BN, KN), count : { bind_name(c1_41, b1_41), (main_form(b1_41, "except") ; main_form(b1_41, "annotation")) } = 0, bind_name(c1_41, b2_41), site_scope(b2_41, "module") ; within(n, p1_41), precedes(s2_41, p1_41), within(c2_41, s2_41), (kind(c2_41, "identifier") ; kind(c2_41, "dotted_name")), node(_, c2_41, _, _, _), BN = c2_41, text(BN, KN), count : { bind_name(c2_41, b3_41), (main_form(b3_41, "except") ; main_form(b3_41, "annotation")) } = 0, bind_name(c2_41, b4_41), site_scope(b4_41, "module")) } = 0, count : { within(n, p14_42), field(_, "body", n), (kind(p14_42, "function_definition") ; kind(p14_42, "lambda")), within(p14_42, p15_42), field(_, "body", p14_42), (kind(p15_42, "function_definition") ; kind(p15_42, "lambda")), node(_, p15_42, _, _, _), F = p15_42, within(c16_42, p15_42), (kind(c16_42, "identifier") ; kind(c16_42, "dotted_name")), node(_, c16_42, _, _, _), BN = c16_42, text(BN, KN), count : { bind_name(c16_42, b17_42), (main_form(b17_42, "except") ; main_form(b17_42, "annotation")) } = 0, bind_name(c16_42, b18_42), (site_scope(b18_42, "function") ; site_scope(b18_42, "lambda")), (st19_42 = b18_42 ; within(b18_42, st19_42)), within(st19_42, p20_42), (kind(p20_42, "function_definition") ; kind(p20_42, "lambda")), node(_, p20_42, _, _, _), G = p20_42, text(G, t21_42), text(F, t21_42) } = 0, count : { within(n, p23_43), field(_, "body", n), (kind(p23_43, "function_definition") ; kind(p23_43, "lambda")), node(_, p23_43, _, _, _), F = p23_43, (precedes(s1_20_43, n), within(c2_20_43, s1_20_43), (kind(c2_20_43, "identifier") ; kind(c2_20_43, "dotted_name")), node(_, c2_20_43, _, _, _), BN = c2_20_43, text(BN, KN), count : { bind_name(c2_20_43, b3_20_43), (main_form(b3_20_43, "except") ; main_form(b3_20_43, "annotation")) } = 0, bind_name(c2_20_43, b4_20_43), (site_scope(b4_20_43, "function") ; site_scope(b4_20_43, "lambda")), (st5_20_43 = b4_20_43 ; within(b4_20_43, st5_20_43)), within(st5_20_43, p6_20_43), (kind(p6_20_43, "function_definition") ; kind(p6_20_43, "lambda")), node(_, p6_20_43, _, _, _), G = p6_20_43, text(G, t7_20_43), text(F, t7_20_43) ; within(n, p9_21_43), precedes(s10_21_43, p9_21_43), within(c11_21_43, s10_21_43), (kind(c11_21_43, "identifier") ; kind(c11_21_43, "dotted_name")), node(_, c11_21_43, _, _, _), BN = c11_21_43, text(BN, KN), count : { bind_name(c11_21_43, b12_21_43), (main_form(b12_21_43, "except") ; main_form(b12_21_43, "annotation")) } = 0, bind_name(c11_21_43, b13_21_43), (site_scope(b13_21_43, "function") ; site_scope(b13_21_43, "lambda")), (st14_21_43 = b13_21_43 ; within(b13_21_43, st14_21_43)), within(st14_21_43, p15_21_43), (kind(p15_21_43, "function_definition") ; kind(p15_21_43, "lambda")), node(_, p15_21_43, _, _, _), G = p15_21_43, text(G, t16_21_43), text(F, t16_21_43)) } = 0, count : { inside(n, p41_44, "lambda"), field(_, "body", n), child(p41_44, c42_44, _), kind(c42_44, "lambda_parameters"), within(c43_44, c42_44), (kind(c43_44, "identifier") ; kind(c43_44, "dotted_name")), node(_, c43_44, _, _, _), BN = c43_44, text(BN, KN), bind_name(c43_44, b44_44), site_scope(b44_44, "lambda") } = 0, count : { inside(n, p45_45, "class_definition"), field(_, "body", n), node(_, p45_45, _, _, _), F = p45_45, count : { within_stop(n, p46_45, "class_definition"), field(_, "body", n), (kind(p46_45, "function_definition") ; kind(p46_45, "lambda")) } = 0, count : { child(p47_45, n, _), c416_comp(p47_45) } = 0, count : { within_stop(n, p48_45, "class_definition"), c416_not_first_iter(p48_45), child(p49_45, p48_45, _), c416_comp(p49_45) } = 0, (precedes(s1_22_45, n), within(c2_22_45, s1_22_45), (kind(c2_22_45, "identifier") ; kind(c2_22_45, "dotted_name")), node(_, c2_22_45, _, _, _), BN = c2_22_45, text(BN, KN), count : { bind_name(c2_22_45, b3_22_45), (main_form(b3_22_45, "except") ; main_form(b3_22_45, "annotation")) } = 0, bind_name(c2_22_45, b4_22_45), site_scope(b4_22_45, "class"), (st5_22_45 = b4_22_45 ; within(b4_22_45, st5_22_45)), inside(st5_22_45, p6_22_45, "class_definition"), node(_, p6_22_45, _, _, _), G = p6_22_45, text(G, t7_22_45), text(F, t7_22_45) ; within(n, p9_23_45), precedes(s10_23_45, p9_23_45), within(c11_23_45, s10_23_45), (kind(c11_23_45, "identifier") ; kind(c11_23_45, "dotted_name")), node(_, c11_23_45, _, _, _), BN = c11_23_45, text(BN, KN), count : { bind_name(c11_23_45, b12_23_45), (main_form(b12_23_45, "except") ; main_form(b12_23_45, "annotation")) } = 0, bind_name(c11_23_45, b13_23_45), site_scope(b13_23_45, "class"), (st14_23_45 = b13_23_45 ; within(b13_23_45, st14_23_45)), inside(st14_23_45, p15_23_45, "class_definition"), node(_, p15_23_45, _, _, _), G = p15_23_45, text(G, t16_23_45), text(F, t16_23_45)) } = 0, count : { child(n, c67_46, _), kind(c67_46, "for_in_clause"), has(c67_46, c68_46, "named_expression"), field(_, "right", c68_46), field(c68_46, "name", c69_46), (kind(c69_46, "identifier") ; kind(c69_46, "dotted_name")), node(_, c69_46, _, _, _), BN = c69_46, text(BN, KN) } = 0, count : { child(p70_47, n, _), c416_comp(p70_47), child(p70_47, c1_24_47, _), kind(c1_24_47, "for_in_clause"), within(c2_24_47, c1_24_47), field(_, "left", c2_24_47), (kind(c2_24_47, "identifier") ; kind(c2_24_47, "dotted_name")), node(_, c2_24_47, _, _, _), BN = c2_24_47, text(BN, KN) } = 0, count : { within(n, p71_48), c416_not_first_iter(p71_48), child(p72_48, p71_48, _), c416_comp(p72_48), child(p72_48, c1_25_48, _), kind(c1_25_48, "for_in_clause"), within(c2_25_48, c1_25_48), field(_, "left", c2_25_48), (kind(c2_25_48, "identifier") ; kind(c2_25_48, "dotted_name")), node(_, c2_25_48, _, _, _), BN = c2_25_48, text(BN, KN) } = 0, count : { c416_stop_15_within(n, p73_49), kind(p73_49, "block"), child(p74_49, p73_49, _), kind(p74_49, "except_clause"), child(p74_49, c75_49, _), kind(c75_49, "as_pattern"), child(c75_49, c76_49, _), kind(c76_49, "as_pattern_target"), child(c76_49, c77_49, _), (kind(c77_49, "identifier") ; kind(c77_49, "dotted_name")), node(_, c77_49, _, _, _), BN = c77_49, text(BN, KN) } = 0, count : { within(n, p78_50), field(_, "body", n), (kind(p78_50, "function_definition") ; kind(p78_50, "class_definition")), within(c79_50, p78_50), field(_, "type_parameters", c79_50), (kind(c79_50, "identifier") ; kind(c79_50, "dotted_name")), node(_, c79_50, _, _, _), BN = c79_50, text(BN, KN) } = 0, count : { inside(n, p80_51, "type_alias_statement"), field(_, "right", n), within(c81_51, p80_51), field(_, "left", c81_51), (kind(c81_51, "identifier") ; kind(c81_51, "dotted_name")), node(_, c81_51, _, _, _), BN = c81_51, text(BN, KN), bind_name(c81_51, b82_51), main_form(b82_51, "typeParameter") } = 0,
+    within(c2, r1), c416_alt_19(c2, COMP, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
 
 // dict_comprehension_in_annotation(n): the JSON util `dict-comprehension-in-annotation`, used where the JSON says `matches: "dict-comprehension-in-annotation"`
@@ -200,8 +285,7 @@ c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_
 .decl c416_dict_comprehension_in_annotation(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c416_demand_dict_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), c416_alt_20(c2, COMP, EK, EV, IT, KN, TK, TV, W),
-    count : { c416_fn_body(n), inside(n, p1_52, "module"), within(c2_52, p1_52), (kind(c2_52, "identifier") ; kind(c2_52, "dotted_name")), node(_, c2_52, _, _, _), BN = c2_52, text(BN, KN), count : { bind_name(c2_52, b3_52), (main_form(b3_52, "except") ; main_form(b3_52, "annotation")) } = 0, bind_name(c2_52, b4_52), site_scope(b4_52, "module") } = 0, count : { (precedes(s1_53, n), within(c1_53, s1_53), (kind(c1_53, "identifier") ; kind(c1_53, "dotted_name")), node(_, c1_53, _, _, _), BN = c1_53, text(BN, KN), count : { bind_name(c1_53, b1_53), (main_form(b1_53, "except") ; main_form(b1_53, "annotation")) } = 0, bind_name(c1_53, b2_53), site_scope(b2_53, "module") ; within(n, p1_53), precedes(s2_53, p1_53), within(c2_53, s2_53), (kind(c2_53, "identifier") ; kind(c2_53, "dotted_name")), node(_, c2_53, _, _, _), BN = c2_53, text(BN, KN), count : { bind_name(c2_53, b3_53), (main_form(b3_53, "except") ; main_form(b3_53, "annotation")) } = 0, bind_name(c2_53, b4_53), site_scope(b4_53, "module")) } = 0, count : { within(n, p14_54), field(_, "body", n), (kind(p14_54, "function_definition") ; kind(p14_54, "lambda")), within(p14_54, p15_54), field(_, "body", p14_54), (kind(p15_54, "function_definition") ; kind(p15_54, "lambda")), node(_, p15_54, _, _, _), F = p15_54, within(c16_54, p15_54), (kind(c16_54, "identifier") ; kind(c16_54, "dotted_name")), node(_, c16_54, _, _, _), BN = c16_54, text(BN, KN), count : { bind_name(c16_54, b17_54), (main_form(b17_54, "except") ; main_form(b17_54, "annotation")) } = 0, bind_name(c16_54, b18_54), (site_scope(b18_54, "function") ; site_scope(b18_54, "lambda")), (st19_54 = b18_54 ; within(b18_54, st19_54)), within(st19_54, p20_54), (kind(p20_54, "function_definition") ; kind(p20_54, "lambda")), node(_, p20_54, _, _, _), G = p20_54, text(G, t21_54), text(F, t21_54) } = 0, count : { within(n, p23_55), field(_, "body", n), (kind(p23_55, "function_definition") ; kind(p23_55, "lambda")), node(_, p23_55, _, _, _), F = p23_55, (precedes(s1_20_55, n), within(c2_20_55, s1_20_55), (kind(c2_20_55, "identifier") ; kind(c2_20_55, "dotted_name")), node(_, c2_20_55, _, _, _), BN = c2_20_55, text(BN, KN), count : { bind_name(c2_20_55, b3_20_55), (main_form(b3_20_55, "except") ; main_form(b3_20_55, "annotation")) } = 0, bind_name(c2_20_55, b4_20_55), (site_scope(b4_20_55, "function") ; site_scope(b4_20_55, "lambda")), (st5_20_55 = b4_20_55 ; within(b4_20_55, st5_20_55)), within(st5_20_55, p6_20_55), (kind(p6_20_55, "function_definition") ; kind(p6_20_55, "lambda")), node(_, p6_20_55, _, _, _), G = p6_20_55, text(G, t7_20_55), text(F, t7_20_55) ; within(n, p9_21_55), precedes(s10_21_55, p9_21_55), within(c11_21_55, s10_21_55), (kind(c11_21_55, "identifier") ; kind(c11_21_55, "dotted_name")), node(_, c11_21_55, _, _, _), BN = c11_21_55, text(BN, KN), count : { bind_name(c11_21_55, b12_21_55), (main_form(b12_21_55, "except") ; main_form(b12_21_55, "annotation")) } = 0, bind_name(c11_21_55, b13_21_55), (site_scope(b13_21_55, "function") ; site_scope(b13_21_55, "lambda")), (st14_21_55 = b13_21_55 ; within(b13_21_55, st14_21_55)), within(st14_21_55, p15_21_55), (kind(p15_21_55, "function_definition") ; kind(p15_21_55, "lambda")), node(_, p15_21_55, _, _, _), G = p15_21_55, text(G, t16_21_55), text(F, t16_21_55)) } = 0, count : { inside(n, p41_56, "lambda"), field(_, "body", n), child(p41_56, c42_56, _), kind(c42_56, "lambda_parameters"), within(c43_56, c42_56), (kind(c43_56, "identifier") ; kind(c43_56, "dotted_name")), node(_, c43_56, _, _, _), BN = c43_56, text(BN, KN), bind_name(c43_56, b44_56), site_scope(b44_56, "lambda") } = 0, count : { inside(n, p45_57, "class_definition"), field(_, "body", n), node(_, p45_57, _, _, _), F = p45_57, count : { within_stop(n, p46_57, "class_definition"), field(_, "body", n), (kind(p46_57, "function_definition") ; kind(p46_57, "lambda")) } = 0, count : { child(p47_57, n, _), c416_comp(p47_57) } = 0, count : { within_stop(n, p48_57, "class_definition"), c416_not_first_iter(p48_57), child(p49_57, p48_57, _), c416_comp(p49_57) } = 0, (precedes(s1_22_57, n), within(c2_22_57, s1_22_57), (kind(c2_22_57, "identifier") ; kind(c2_22_57, "dotted_name")), node(_, c2_22_57, _, _, _), BN = c2_22_57, text(BN, KN), count : { bind_name(c2_22_57, b3_22_57), (main_form(b3_22_57, "except") ; main_form(b3_22_57, "annotation")) } = 0, bind_name(c2_22_57, b4_22_57), site_scope(b4_22_57, "class"), (st5_22_57 = b4_22_57 ; within(b4_22_57, st5_22_57)), inside(st5_22_57, p6_22_57, "class_definition"), node(_, p6_22_57, _, _, _), G = p6_22_57, text(G, t7_22_57), text(F, t7_22_57) ; within(n, p9_23_57), precedes(s10_23_57, p9_23_57), within(c11_23_57, s10_23_57), (kind(c11_23_57, "identifier") ; kind(c11_23_57, "dotted_name")), node(_, c11_23_57, _, _, _), BN = c11_23_57, text(BN, KN), count : { bind_name(c11_23_57, b12_23_57), (main_form(b12_23_57, "except") ; main_form(b12_23_57, "annotation")) } = 0, bind_name(c11_23_57, b13_23_57), site_scope(b13_23_57, "class"), (st14_23_57 = b13_23_57 ; within(b13_23_57, st14_23_57)), inside(st14_23_57, p15_23_57, "class_definition"), node(_, p15_23_57, _, _, _), G = p15_23_57, text(G, t16_23_57), text(F, t16_23_57)) } = 0, count : { child(n, c67_58, _), kind(c67_58, "for_in_clause"), has(c67_58, c68_58, "named_expression"), field(_, "right", c68_58), field(c68_58, "name", c69_58), (kind(c69_58, "identifier") ; kind(c69_58, "dotted_name")), node(_, c69_58, _, _, _), BN = c69_58, text(BN, KN) } = 0, count : { child(p70_59, n, _), c416_comp(p70_59), child(p70_59, c1_24_59, _), kind(c1_24_59, "for_in_clause"), within(c2_24_59, c1_24_59), field(_, "left", c2_24_59), (kind(c2_24_59, "identifier") ; kind(c2_24_59, "dotted_name")), node(_, c2_24_59, _, _, _), BN = c2_24_59, text(BN, KN) } = 0, count : { within(n, p71_60), c416_not_first_iter(p71_60), child(p72_60, p71_60, _), c416_comp(p72_60), child(p72_60, c1_25_60, _), kind(c1_25_60, "for_in_clause"), within(c2_25_60, c1_25_60), field(_, "left", c2_25_60), (kind(c2_25_60, "identifier") ; kind(c2_25_60, "dotted_name")), node(_, c2_25_60, _, _, _), BN = c2_25_60, text(BN, KN) } = 0, count : { c416_stop_15_within(n, p73_61), kind(p73_61, "block"), child(p74_61, p73_61, _), kind(p74_61, "except_clause"), child(p74_61, c75_61, _), kind(c75_61, "as_pattern"), child(c75_61, c76_61, _), kind(c76_61, "as_pattern_target"), child(c76_61, c77_61, _), (kind(c77_61, "identifier") ; kind(c77_61, "dotted_name")), node(_, c77_61, _, _, _), BN = c77_61, text(BN, KN) } = 0, count : { within(n, p78_62), field(_, "body", n), (kind(p78_62, "function_definition") ; kind(p78_62, "class_definition")), within(c79_62, p78_62), field(_, "type_parameters", c79_62), (kind(c79_62, "identifier") ; kind(c79_62, "dotted_name")), node(_, c79_62, _, _, _), BN = c79_62, text(BN, KN) } = 0, count : { inside(n, p80_63, "type_alias_statement"), field(_, "right", n), within(c81_63, p80_63), field(_, "left", c81_63), (kind(c81_63, "identifier") ; kind(c81_63, "dotted_name")), node(_, c81_63, _, _, _), BN = c81_63, text(BN, KN), bind_name(c81_63, b82_63), main_form(b82_63, "typeParameter") } = 0,
+    within(c2, r1), c416_alt_20(c2, COMP, EK, EV, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
 
 // C416(n): a finding at node n, from clause `list-comprehension`.
@@ -431,6 +515,18 @@ c416_tok_has_7(n) :- child(n, c13, _), structural_after(c13, g8),
     match("(?s)^(?:.*(?:,).*)$", g8).
 c416_tok_has_7(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
 
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^items$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_has_8(n: node)
+.stored c416_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_has_8(n) :- field(n, "attribute", c3), glob("items", c3).
+c416_tok_has_8(n) :- op(n, t4), match("items", t4).
+c416_tok_has_8(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g5).
+c416_tok_has_8(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g5).
+c416_tok_has_8(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g5).
+
 // demand_alt_17: the rows of alt_17 its callers ask for (the metavariable columns they pass in)
 .decl c416_demand_alt_17(n: node, w: loc)
 c416_demand_alt_17(c2, W) :- c416_demand_list_comprehension_in_annotation(n, W),
@@ -464,53 +560,112 @@ c416_demand_alt_20(n, W) :- node(_, n, _, _, _), W = n, text(W, t1).
 .decl c416_demand_dict_comprehension_in_annotation(n: node, w: loc)
 c416_demand_dict_comprehension_in_annotation(n, W) :- c416_demand_alt_20(n, W).
 
-// demand_fn_body: the nodes fn_body is asked at (it looks at every ancestor of every node)
-.decl c416_demand_fn_body(n: node)
-c416_demand_fn_body(n) :- node(_, KN, _, _, _),
-    c416_demand_list_comprehension_in_annotation(n, W),
+// demand_shadowed: the rows of shadowed its callers ask for (the metavariable columns they pass in)
+.decl c416_demand_shadowed(n: node, w: loc)
+c416_demand_shadowed(n, W) :- c416_demand_list_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), inside(n, p1_28, "module"), within(c2_28, p1_28),
-    (kind(c2_28, "identifier") ; kind(c2_28, "dotted_name")), node(_, c2_28, _, _, _), BN = c2_28,
-    text(BN, t1_7_28), text(KN, t1_7_28), bind_name(c2_28, b4_28),
-    site_scope(b4_28, "module").
-c416_demand_fn_body(n) :- node(_, KN, _, _, _),
-    c416_demand_set_comprehension_in_annotation(n, W),
+    within(c2, r1).
+c416_demand_shadowed(n, W) :- c416_demand_set_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), inside(n, p1_40, "module"), within(c2_40, p1_40),
-    (kind(c2_40, "identifier") ; kind(c2_40, "dotted_name")), node(_, c2_40, _, _, _), BN = c2_40,
-    text(BN, t1_7_40), text(KN, t1_7_40), bind_name(c2_40, b4_40),
-    site_scope(b4_40, "module").
-c416_demand_fn_body(n) :- node(_, KN, _, _, _),
-    c416_demand_dict_comprehension_in_annotation(n, W),
+    within(c2, r1).
+c416_demand_shadowed(n, W) :- c416_demand_dict_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
-    within(c2, r1), inside(n, p1_52, "module"), within(c2_52, p1_52),
-    (kind(c2_52, "identifier") ; kind(c2_52, "dotted_name")), node(_, c2_52, _, _, _), BN = c2_52,
-    text(BN, t1_7_52), text(KN, t1_7_52), bind_name(c2_52, b4_52),
-    site_scope(b4_52, "module").
-c416_demand_fn_body(n) :- c416_demand_alt_17(n, W), kind(n, "list_comprehension"),
+    within(c2, r1).
+c416_demand_shadowed(n, W) :- c416_demand_alt_17(n, W), kind(n, "list_comprehension"),
     c416_single_for(n, IT),
-    ( field(n, "body", c1_1_26), c416_name_elt(c1_1_26, E), child(n, c2_1_26, _), kind(c2_1_26, "for_in_clause"), field(c2_1_26, "left", c3_1_26), c416_name_tgt(c3_1_26, T), text(E, t4_1_26), text(T, t4_1_26), @doc(E) = @doc(T) ; child(n, c6_2_26, _), kind(c6_2_26, "for_in_clause"), field(c6_2_26, "right", c7_2_26), c416_items_call(c7_2_26), field(c6_2_26, "left", c8_2_26), c416_target_pair(c8_2_26, TK, TV), field(n, "body", c9_2_26), c416_tuple_pair(c9_2_26, EK, EV), text(EK, t10_2_26), text(TK, t10_2_26), text(EV, t12_2_26), text(TV, t12_2_26), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ),
-    node(_, n, _, _, _), COMP = n, inside(n, p1_64, "module"), within(c2_64, p1_64),
-    (kind(c2_64, "identifier") ; kind(c2_64, "dotted_name")), node(_, c2_64, _, _, _), BN = c2_64,
-    text(BN, t1_7_64), text(w64_kn, t1_7_64), bind_name(c2_64, b4_64),
-    site_scope(b4_64, "module"), @doc(BN) = @doc(w64_kn).
-c416_demand_fn_body(n) :- c416_demand_alt_19(n, W), kind(n, "set_comprehension"),
+    ( field(n, "body", c1_1_6), c416_name_elt(c1_1_6, E), child(n, c2_1_6, _), kind(c2_1_6, "for_in_clause"), field(c2_1_6, "left", c3_1_6), c416_name_tgt(c3_1_6, T), text(E, t4_1_6), text(T, t4_1_6), @doc(E) = @doc(T) ; child(n, c6_2_6, _), kind(c6_2_6, "for_in_clause"), field(c6_2_6, "right", c7_2_6), c416_items_call(c7_2_6), field(c6_2_6, "left", c8_2_6), c416_target_pair(c8_2_6, TK, TV), field(n, "body", c9_2_6), c416_tuple_pair(c9_2_6, EK, EV), text(EK, t10_2_6), text(TK, t10_2_6), text(EV, t12_2_6), text(TV, t12_2_6), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ),
+    node(_, n, _, _, _), COMP = n.
+c416_demand_shadowed(n, W) :- c416_demand_alt_19(n, W), kind(n, "set_comprehension"),
     c416_single_for(n, IT),
-    ( field(n, "body", c1_3_27), c416_name_elt(c1_3_27, E), child(n, c2_3_27, _), kind(c2_3_27, "for_in_clause"), field(c2_3_27, "left", c3_3_27), c416_name_tgt(c3_3_27, T), text(E, t4_3_27), text(T, t4_3_27), @doc(E) = @doc(T) ; child(n, c6_4_27, _), kind(c6_4_27, "for_in_clause"), field(c6_4_27, "right", c7_4_27), c416_items_call(c7_4_27), field(c6_4_27, "left", c8_4_27), c416_target_pair(c8_4_27, TK, TV), field(n, "body", c9_4_27), c416_tuple_pair(c9_4_27, EK, EV), text(EK, t10_4_27), text(TK, t10_4_27), text(EV, t12_4_27), text(TV, t12_4_27), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ),
-    node(_, n, _, _, _), COMP = n, inside(n, p1_76, "module"), within(c2_76, p1_76),
-    (kind(c2_76, "identifier") ; kind(c2_76, "dotted_name")), node(_, c2_76, _, _, _), BN = c2_76,
-    text(BN, t1_7_76), text(w76_kn, t1_7_76), bind_name(c2_76, b4_76),
-    site_scope(b4_76, "module"), @doc(BN) = @doc(w76_kn).
-c416_demand_fn_body(n) :- c416_demand_alt_20(n, W), kind(n, "dictionary_comprehension"),
+    ( field(n, "body", c1_3_7), c416_name_elt(c1_3_7, E), child(n, c2_3_7, _), kind(c2_3_7, "for_in_clause"), field(c2_3_7, "left", c3_3_7), c416_name_tgt(c3_3_7, T), text(E, t4_3_7), text(T, t4_3_7), @doc(E) = @doc(T) ; child(n, c6_4_7, _), kind(c6_4_7, "for_in_clause"), field(c6_4_7, "right", c7_4_7), c416_items_call(c7_4_7), field(c6_4_7, "left", c8_4_7), c416_target_pair(c8_4_7, TK, TV), field(n, "body", c9_4_7), c416_tuple_pair(c9_4_7, EK, EV), text(EK, t10_4_7), text(TK, t10_4_7), text(EV, t12_4_7), text(TV, t12_4_7), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ),
+    node(_, n, _, _, _), COMP = n.
+c416_demand_shadowed(n, W) :- c416_demand_alt_20(n, W), kind(n, "dictionary_comprehension"),
     c416_single_for(n, IT), field(n, "body", c1_5), kind(c1_5, "pair"),
     field(c1_5, "key", c2_5), c416_name_key(c2_5, EK), field(c1_5, "value", c3_5),
     c416_name_value(c3_5, EV), child(n, c4_5, _), kind(c4_5, "for_in_clause"),
     field(c4_5, "left", c5_5), c416_target_tuple_pair(c5_5, TK, TV), text(EK, t6_5),
-    text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), node(_, n, _, _, _), COMP = n,
-    inside(n, p1_88, "module"), within(c2_88, p1_88),
-    (kind(c2_88, "identifier") ; kind(c2_88, "dotted_name")), node(_, c2_88, _, _, _), BN = c2_88,
-    text(BN, t1_7_88), text(w88_kn, t1_7_88), bind_name(c2_88, b4_88),
-    site_scope(b4_88, "module"), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV), @doc(BN) = @doc(w88_kn).
+    text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), node(_, n, _, _, _), COMP = n, @doc(EK) = @doc(TK), @doc(EV) = @doc(TV).
+
+// demand_alt_13: the rows of alt_13 its callers ask for (the metavariable columns they pass in)
+.decl c416_demand_alt_13(n: node, f: loc, w: loc)
+c416_demand_alt_13(n, F, W) :- c416_demand_shadowed(n, W), within(n, p25),
+    field(p25, "body", f26), (f26 = n ; within(n, f26)),
+    (kind(p25, "function_definition") ; kind(p25, "lambda")), node(_, p25, _, _, _), F = p25.
+
+// demand_alt_14: the rows of alt_14 its callers ask for (the metavariable columns they pass in)
+.decl c416_demand_alt_14(n: node, f: loc, w: loc)
+c416_demand_alt_14(n, F, W) :- c416_demand_shadowed(n, W), inside(n, p49, "class_definition"),
+    field(p49, "body", f50), (f50 = n ; within(n, f50)), node(_, p49, _, _, _), F = p49.
+
+// demand_comp_binds: the rows of comp_binds its callers ask for (the metavariable columns they pass in)
+.decl c416_demand_comp_binds(n: node, w: loc)
+c416_demand_comp_binds(p77, W) :- c416_demand_shadowed(n, W), child(p77, n, _).
+c416_demand_comp_binds(p79, W) :- c416_demand_shadowed(n, W), within(n, p78),
+    c416_not_first_iter(p78), child(p79, p78, _).
+
+// demand_kind_name: the rows of kind_name its callers ask for (the metavariable columns they pass in)
+.decl c416_demand_kind_name(n: node, w: loc)
+c416_demand_kind_name(c2, W) :- c416_demand_comp_binds(n, W), c416_comp(n), child(n, c1, _),
+    kind(c1, "for_in_clause"), within(c2, c1), field(c1, "left", f3),
+    (f3 = c2 ; within(c2, f3)).
+c416_demand_kind_name(c2, W) :- c416_demand_shadowed(n, W), c416_fn_body(n), inside(n, p1, "module"),
+    within(c2, p1), bind_name(c2, b4), site_scope(b4, "module").
+c416_demand_kind_name(c1, W) :- c416_demand_shadowed(n, W), precedes(s1, n), within(c1, s1),
+    bind_name(c1, b2), site_scope(b2, "module").
+c416_demand_kind_name(c2, W) :- c416_demand_shadowed(n, W), within(n, p1), precedes(s2, p1),
+    within(c2, s2), bind_name(c2, b4), site_scope(b4, "module").
+c416_demand_kind_name(c18, W) :- c416_demand_shadowed(n, W), within(n, p14),
+    field(p14, "body", f15), (f15 = n ; within(n, f15)),
+    (kind(p14, "function_definition") ; kind(p14, "lambda")), within(p14, p16),
+    field(p16, "body", f17), (f17 = p14 ; within(p14, f17)),
+    (kind(p16, "function_definition") ; kind(p16, "lambda")), node(_, p16, _, _, _), F = p16,
+    within(c18, p16), bind_name(c18, b20),
+    (site_scope(b20, "function") ; site_scope(b20, "lambda")), st21 = b20,
+    within(st21, p22), (kind(p22, "function_definition") ; kind(p22, "lambda")),
+    node(_, p22, _, _, _), G = p22, node(_, G, _, _, _), node(_, F, _, _, _), G = F.
+c416_demand_kind_name(c47, W) :- c416_demand_shadowed(n, W), inside(n, p44, "lambda"),
+    field(p44, "body", f45), (f45 = n ; within(n, f45)), child(p44, c46, _),
+    kind(c46, "lambda_parameters"), within(c47, c46), bind_name(c47, b48),
+    site_scope(b48, "lambda").
+c416_demand_kind_name(c76, W) :- c416_demand_shadowed(n, W), child(n, c73, _),
+    kind(c73, "for_in_clause"), has(c73, c74, "named_expression"),
+    field(c73, "right", f75), (f75 = c74 ; within(c74, f75)), field(c74, "name", c76).
+c416_demand_kind_name(c84, W) :- c416_demand_shadowed(n, W), within_stop(n, p80, c416_stop_15),
+    kind(p80, "block"), child(p81, p80, _), kind(p81, "except_clause"),
+    child(p81, c82, _), kind(c82, "as_pattern"), child(c82, c83, _),
+    kind(c83, "as_pattern_target"), child(c83, c84, _).
+c416_demand_kind_name(c87, W) :- c416_demand_shadowed(n, W), within(n, p85),
+    field(p85, "body", f86), (f86 = n ; within(n, f86)),
+    (kind(p85, "function_definition") ; kind(p85, "class_definition")),
+    within(c87, p85), field(p85, "type_parameters", f88),
+    (f88 = c87 ; within(c87, f88)).
+c416_demand_kind_name(c91, W) :- c416_demand_shadowed(n, W),
+    inside(n, p89, "type_alias_statement"), field(p89, "right", f90),
+    (f90 = n ; within(n, f90)), within(c91, p89), field(p89, "left", f92),
+    (f92 = c91 ; within(c91, f92)), bind_name(c91, b93),
+    main_form(b93, "typeParameter").
+c416_demand_kind_name(c2, W) :- c416_demand_alt_13(n, F, W), precedes(s1, n), within(c2, s1),
+    bind_name(c2, b4), (site_scope(b4, "function") ; site_scope(b4, "lambda")),
+    st5 = b4, within(st5, p6), (kind(p6, "function_definition") ; kind(p6, "lambda")),
+    node(_, p6, _, _, _), G = p6, node(_, G, _, _, _), node(_, F, _, _, _), G = F.
+c416_demand_kind_name(c11, W) :- c416_demand_alt_13(n, F, W), within(n, p9), precedes(s10, p9),
+    within(c11, s10), bind_name(c11, b13),
+    (site_scope(b13, "function") ; site_scope(b13, "lambda")), st14 = b13,
+    within(st14, p15), (kind(p15, "function_definition") ; kind(p15, "lambda")),
+    node(_, p15, _, _, _), G = p15, node(_, G, _, _, _), node(_, F, _, _, _), G = F.
+c416_demand_kind_name(c2, W) :- c416_demand_alt_14(n, F, W), precedes(s1, n), within(c2, s1),
+    bind_name(c2, b4), site_scope(b4, "class"), st5 = b4,
+    inside(st5, p6, "class_definition"), node(_, p6, _, _, _), G = p6, node(_, G, _, _, _),
+    node(_, F, _, _, _), G = F.
+c416_demand_kind_name(c11, W) :- c416_demand_alt_14(n, F, W), within(n, p9), precedes(s10, p9),
+    within(c11, s10), bind_name(c11, b13), site_scope(b13, "class"), st14 = b13,
+    inside(st14, p15, "class_definition"), node(_, p15, _, _, _), G = p15, node(_, G, _, _, _),
+    node(_, F, _, _, _), G = F.
+
+// demand_fn_body: the nodes fn_body is asked at (it looks at every ancestor of every node)
+.decl c416_demand_fn_body(n: node)
+c416_demand_fn_body(n) :- c416_demand_shadowed(n, W), inside(n, p1, "module"), within(c2, p1),
+    bind_name(c2, b4), site_scope(b4, "module").
 
 // alt_1_u0_empty: level -1 of an unrolled recursion, empty
 .decl c416_alt_1_u0_empty(n: node)
@@ -533,14 +688,13 @@ c416_alt_3(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
     ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
     ).
 
-c416_alt_3(n) :- ref_site(n, b6), binding_value(b6, x7), c416_dict_init(x7),
-    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+c416_alt_3(n) :- ref_site(n, b6), binding_value(b6, x7), c416_dict_init(x7), st8 = b6,
+    count : { child(st8, c9, _), kind(c9, "type") } = 0.
 c416_alt_3(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
     kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
     child(st11, c13, _), c416_dict_init(c13), c416_tok_precedes_5(c13), child(st11, c21, _),
     kind(c21, "as_pattern_target"), child(c21, c22, _), c416_plain_target(c22).
-c416_alt_3(n) :- ref_site(n, b23), site_annotation(b23, o24), c416_dict_ann(o24),
-    (st25 = b23 ; within(b23, st25)),
+c416_alt_3(n) :- ref_site(n, b23), site_annotation(b23, o24), c416_dict_ann(o24), st25 = b23,
     count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
 c416_alt_3(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
     kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),
@@ -568,13 +722,52 @@ c416_alt_10(n) :- kind(n, "comment").
 c416_alt_11(n) :- kind(n, "if_clause").
 c416_alt_11(n) :- kind(n, "for_in_clause"), match("async\\b.*", n).
 
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   F, W: metavariables of the calling rule, passed in (bound by the caller)
+//   KN: metavariable this relation binds for the calling rule
+.decl c416_alt_13(n: node, f: loc, kn: symbol, w: loc)
+c416_alt_13(n, F, KN, W) :- c416_demand_alt_13(n, F, W), precedes(s1, n), within(c2, s1),
+    c416_kind_name(c2, KN, W),
+    count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
+    bind_name(c2, b4), (site_scope(b4, "function") ; site_scope(b4, "lambda")),
+    st5 = b4, within(st5, p6), (kind(p6, "function_definition") ; kind(p6, "lambda")),
+    node(_, p6, _, _, _), G = p6, node(_, G, _, _, _), node(_, F, _, _, _), G = F, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_alt_13(n, F, KN, W) :- c416_demand_alt_13(n, F, W), within(n, p9), precedes(s10, p9),
+    within(c11, s10), c416_kind_name(c11, KN, W),
+    count : { bind_name(c11, b12), (main_form(b12, "except") ; main_form(b12, "annotation")) } = 0,
+    bind_name(c11, b13), (site_scope(b13, "function") ; site_scope(b13, "lambda")),
+    st14 = b13, within(st14, p15),
+    (kind(p15, "function_definition") ; kind(p15, "lambda")), node(_, p15, _, _, _), G = p15,
+    node(_, G, _, _, _), node(_, F, _, _, _), G = F, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+//   F, W: metavariables of the calling rule, passed in (bound by the caller)
+//   KN: metavariable this relation binds for the calling rule
+.decl c416_alt_14(n: node, f: loc, kn: symbol, w: loc)
+c416_alt_14(n, F, KN, W) :- c416_demand_alt_14(n, F, W), precedes(s1, n), within(c2, s1),
+    c416_kind_name(c2, KN, W),
+    count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
+    bind_name(c2, b4), site_scope(b4, "class"), st5 = b4,
+    inside(st5, p6, "class_definition"), node(_, p6, _, _, _), G = p6,
+    node(_, G, _, _, _), node(_, F, _, _, _), G = F, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_alt_14(n, F, KN, W) :- c416_demand_alt_14(n, F, W), within(n, p9), precedes(s10, p9),
+    within(c11, s10), c416_kind_name(c11, KN, W),
+    count : { bind_name(c11, b12), (main_form(b12, "except") ; main_form(b12, "annotation")) } = 0,
+    bind_name(c11, b13), site_scope(b13, "class"), st14 = b13,
+    inside(st14, p15, "class_definition"), node(_, p15, _, _, _), G = p15,
+    node(_, G, _, _, _), node(_, F, _, _, _), G = F, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
 // alt_17(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
 .decl c416_alt_17(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 // KN, TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_17(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_17(n, W),
-    kind(n, "list_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_1_26), c416_name_elt(c1_1_26, E), child(n, c2_1_26, _), kind(c2_1_26, "for_in_clause"), field(c2_1_26, "left", c3_1_26), c416_name_tgt(c3_1_26, T), text(E, t4_1_26), text(T, t4_1_26), @doc(E) = @doc(T) ; child(n, c6_2_26, _), kind(c6_2_26, "for_in_clause"), field(c6_2_26, "right", c7_2_26), c416_items_call(c7_2_26), field(c6_2_26, "left", c8_2_26), c416_target_pair(c8_2_26, TK, TV), field(n, "body", c9_2_26), c416_tuple_pair(c9_2_26, EK, EV), text(EK, t10_2_26), text(TK, t10_2_26), text(EV, t12_2_26), text(TV, t12_2_26), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), count : { c416_fn_body(n), inside(n, p1_64, "module"), within(c2_64, p1_64), (kind(c2_64, "identifier") ; kind(c2_64, "dotted_name")), node(_, c2_64, _, _, _), BN = c2_64, text(BN, t1_7_64), text(w64_kn, t1_7_64), count : { bind_name(c2_64, b3_64), (main_form(b3_64, "except") ; main_form(b3_64, "annotation")) } = 0, bind_name(c2_64, b4_64), site_scope(b4_64, "module"), @doc(BN) = @doc(w64_kn) } = 0, count : { (precedes(s1_65, n), within(c1_65, s1_65), (kind(c1_65, "identifier") ; kind(c1_65, "dotted_name")), node(_, c1_65, _, _, _), BN = c1_65, text(BN, t1_9_65), text(w65_kn, t1_9_65), count : { bind_name(c1_65, b1_65), (main_form(b1_65, "except") ; main_form(b1_65, "annotation")) } = 0, bind_name(c1_65, b2_65), site_scope(b2_65, "module"), @doc(BN) = @doc(w65_kn) ; within(n, p1_65), precedes(s2_65, p1_65), within(c2_65, s2_65), (kind(c2_65, "identifier") ; kind(c2_65, "dotted_name")), node(_, c2_65, _, _, _), BN = c2_65, text(BN, t1_8_65), text(w65_kn, t1_8_65), count : { bind_name(c2_65, b3_65), (main_form(b3_65, "except") ; main_form(b3_65, "annotation")) } = 0, bind_name(c2_65, b4_65), site_scope(b4_65, "module"), @doc(BN) = @doc(w65_kn) ) } = 0, count : { within(n, p14_66), field(_, "body", n), (kind(p14_66, "function_definition") ; kind(p14_66, "lambda")), within(p14_66, p15_66), field(_, "body", p14_66), (kind(p15_66, "function_definition") ; kind(p15_66, "lambda")), node(_, p15_66, _, _, _), F = p15_66, within(c16_66, p15_66), (kind(c16_66, "identifier") ; kind(c16_66, "dotted_name")), node(_, c16_66, _, _, _), BN = c16_66, text(BN, t1_10_66), text(w66_kn, t1_10_66), count : { bind_name(c16_66, b17_66), (main_form(b17_66, "except") ; main_form(b17_66, "annotation")) } = 0, bind_name(c16_66, b18_66), (site_scope(b18_66, "function") ; site_scope(b18_66, "lambda")), (st19_66 = b18_66 ; within(b18_66, st19_66)), within(st19_66, p20_66), (kind(p20_66, "function_definition") ; kind(p20_66, "lambda")), node(_, p20_66, _, _, _), G = p20_66, text(G, t21_66), text(F, t21_66), @doc(BN) = @doc(w66_kn), @doc(G) = @doc(F) } = 0, count : { within(n, p23_67), field(_, "body", n), (kind(p23_67, "function_definition") ; kind(p23_67, "lambda")), node(_, p23_67, _, _, _), F = p23_67, (precedes(s1_20_67, n), within(c2_20_67, s1_20_67), (kind(c2_20_67, "identifier") ; kind(c2_20_67, "dotted_name")), node(_, c2_20_67, _, _, _), BN = c2_20_67, text(BN, t1_16_20_67), text(w67_kn, t1_16_20_67), count : { bind_name(c2_20_67, b3_20_67), (main_form(b3_20_67, "except") ; main_form(b3_20_67, "annotation")) } = 0, bind_name(c2_20_67, b4_20_67), (site_scope(b4_20_67, "function") ; site_scope(b4_20_67, "lambda")), (st5_20_67 = b4_20_67 ; within(b4_20_67, st5_20_67)), within(st5_20_67, p6_20_67), (kind(p6_20_67, "function_definition") ; kind(p6_20_67, "lambda")), node(_, p6_20_67, _, _, _), G = p6_20_67, text(G, t7_20_67), text(F, t7_20_67), @doc(BN) = @doc(w67_kn), @doc(G) = @doc(F) ; within(n, p9_21_67), precedes(s10_21_67, p9_21_67), within(c11_21_67, s10_21_67), (kind(c11_21_67, "identifier") ; kind(c11_21_67, "dotted_name")), node(_, c11_21_67, _, _, _), BN = c11_21_67, text(BN, t1_17_21_67), text(w67_kn, t1_17_21_67), count : { bind_name(c11_21_67, b12_21_67), (main_form(b12_21_67, "except") ; main_form(b12_21_67, "annotation")) } = 0, bind_name(c11_21_67, b13_21_67), (site_scope(b13_21_67, "function") ; site_scope(b13_21_67, "lambda")), (st14_21_67 = b13_21_67 ; within(b13_21_67, st14_21_67)), within(st14_21_67, p15_21_67), (kind(p15_21_67, "function_definition") ; kind(p15_21_67, "lambda")), node(_, p15_21_67, _, _, _), G = p15_21_67, text(G, t16_21_67), text(F, t16_21_67), @doc(BN) = @doc(w67_kn), @doc(G) = @doc(F) ) } = 0, count : { inside(n, p41_68, "lambda"), field(_, "body", n), child(p41_68, c42_68, _), kind(c42_68, "lambda_parameters"), within(c43_68, c42_68), (kind(c43_68, "identifier") ; kind(c43_68, "dotted_name")), node(_, c43_68, _, _, _), BN = c43_68, text(BN, t1_11_68), text(w68_kn, t1_11_68), bind_name(c43_68, b44_68), site_scope(b44_68, "lambda"), @doc(BN) = @doc(w68_kn) } = 0, count : { inside(n, p45_69, "class_definition"), field(_, "body", n), node(_, p45_69, _, _, _), F = p45_69, count : { within_stop(n, p46_69, "class_definition"), field(_, "body", n), (kind(p46_69, "function_definition") ; kind(p46_69, "lambda")) } = 0, count : { child(p47_69, n, _), c416_comp(p47_69) } = 0, count : { within_stop(n, p48_69, "class_definition"), c416_not_first_iter(p48_69), child(p49_69, p48_69, _), c416_comp(p49_69) } = 0, (precedes(s1_22_69, n), within(c2_22_69, s1_22_69), (kind(c2_22_69, "identifier") ; kind(c2_22_69, "dotted_name")), node(_, c2_22_69, _, _, _), BN = c2_22_69, text(BN, t1_18_22_69), text(w69_kn, t1_18_22_69), count : { bind_name(c2_22_69, b3_22_69), (main_form(b3_22_69, "except") ; main_form(b3_22_69, "annotation")) } = 0, bind_name(c2_22_69, b4_22_69), site_scope(b4_22_69, "class"), (st5_22_69 = b4_22_69 ; within(b4_22_69, st5_22_69)), inside(st5_22_69, p6_22_69, "class_definition"), node(_, p6_22_69, _, _, _), G = p6_22_69, text(G, t7_22_69), text(F, t7_22_69), @doc(BN) = @doc(w69_kn), @doc(G) = @doc(F) ; within(n, p9_23_69), precedes(s10_23_69, p9_23_69), within(c11_23_69, s10_23_69), (kind(c11_23_69, "identifier") ; kind(c11_23_69, "dotted_name")), node(_, c11_23_69, _, _, _), BN = c11_23_69, text(BN, t1_19_23_69), text(w69_kn, t1_19_23_69), count : { bind_name(c11_23_69, b12_23_69), (main_form(b12_23_69, "except") ; main_form(b12_23_69, "annotation")) } = 0, bind_name(c11_23_69, b13_23_69), site_scope(b13_23_69, "class"), (st14_23_69 = b13_23_69 ; within(b13_23_69, st14_23_69)), inside(st14_23_69, p15_23_69, "class_definition"), node(_, p15_23_69, _, _, _), G = p15_23_69, text(G, t16_23_69), text(F, t16_23_69), @doc(BN) = @doc(w69_kn), @doc(G) = @doc(F) ) } = 0, count : { child(n, c67_70, _), kind(c67_70, "for_in_clause"), has(c67_70, c68_70, "named_expression"), field(_, "right", c68_70), field(c68_70, "name", c69_70), (kind(c69_70, "identifier") ; kind(c69_70, "dotted_name")), node(_, c69_70, _, _, _), BN = c69_70, text(BN, t1_12_70), text(w70_kn, t1_12_70), @doc(BN) = @doc(w70_kn) } = 0, count : { child(p70_71, n, _), c416_comp(p70_71), child(p70_71, c1_24_71, _), kind(c1_24_71, "for_in_clause"), within(c2_24_71, c1_24_71), field(_, "left", c2_24_71), (kind(c2_24_71, "identifier") ; kind(c2_24_71, "dotted_name")), node(_, c2_24_71, _, _, _), BN = c2_24_71, text(BN, t1_6_24_71), text(w71_kn, t1_6_24_71), @doc(BN) = @doc(w71_kn) } = 0, count : { within(n, p71_72), c416_not_first_iter(p71_72), child(p72_72, p71_72, _), c416_comp(p72_72), child(p72_72, c1_25_72, _), kind(c1_25_72, "for_in_clause"), within(c2_25_72, c1_25_72), field(_, "left", c2_25_72), (kind(c2_25_72, "identifier") ; kind(c2_25_72, "dotted_name")), node(_, c2_25_72, _, _, _), BN = c2_25_72, text(BN, t1_6_25_72), text(w72_kn, t1_6_25_72), @doc(BN) = @doc(w72_kn) } = 0, count : { c416_stop_15_within(n, p73_73), kind(p73_73, "block"), child(p74_73, p73_73, _), kind(p74_73, "except_clause"), child(p74_73, c75_73, _), kind(c75_73, "as_pattern"), child(c75_73, c76_73, _), kind(c76_73, "as_pattern_target"), child(c76_73, c77_73, _), (kind(c77_73, "identifier") ; kind(c77_73, "dotted_name")), node(_, c77_73, _, _, _), BN = c77_73, text(BN, t1_13_73), text(w73_kn, t1_13_73), @doc(BN) = @doc(w73_kn) } = 0, count : { within(n, p78_74), field(_, "body", n), (kind(p78_74, "function_definition") ; kind(p78_74, "class_definition")), within(c79_74, p78_74), field(_, "type_parameters", c79_74), (kind(c79_74, "identifier") ; kind(c79_74, "dotted_name")), node(_, c79_74, _, _, _), BN = c79_74, text(BN, t1_14_74), text(w74_kn, t1_14_74), @doc(BN) = @doc(w74_kn) } = 0, count : { inside(n, p80_75, "type_alias_statement"), field(_, "right", n), within(c81_75, p80_75), field(_, "left", c81_75), (kind(c81_75, "identifier") ; kind(c81_75, "dotted_name")), node(_, c81_75, _, _, _), BN = c81_75, text(BN, t1_15_75), text(w75_kn, t1_15_75), bind_name(c81_75, b82_75), main_form(b82_75, "typeParameter"), @doc(BN) = @doc(w75_kn) } = 0, node(_, n, _, _, _), COMP = n,
+    kind(n, "list_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_1_6), c416_name_elt(c1_1_6, E), child(n, c2_1_6, _), kind(c2_1_6, "for_in_clause"), field(c2_1_6, "left", c3_1_6), c416_name_tgt(c3_1_6, T), text(E, t4_1_6), text(T, t4_1_6), @doc(E) = @doc(T) ; child(n, c6_2_6, _), kind(c6_2_6, "for_in_clause"), field(c6_2_6, "right", c7_2_6), c416_items_call(c7_2_6), field(c6_2_6, "left", c8_2_6), c416_target_pair(c8_2_6, TK, TV), field(n, "body", c9_2_6), c416_tuple_pair(c9_2_6, EK, EV), text(EK, t10_2_6), text(TK, t10_2_6), text(EV, t12_2_6), text(TV, t12_2_6), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,
     unset(KN), unset(TK), unset(TV).
 c416_alt_17(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_17(n, W),
     c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W), text(W, t1_td),
@@ -586,7 +779,7 @@ c416_alt_17(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_17(n, W),
 .decl c416_alt_19(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 // KN, TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_19(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_19(n, W),
-    kind(n, "set_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_3_27), c416_name_elt(c1_3_27, E), child(n, c2_3_27, _), kind(c2_3_27, "for_in_clause"), field(c2_3_27, "left", c3_3_27), c416_name_tgt(c3_3_27, T), text(E, t4_3_27), text(T, t4_3_27), @doc(E) = @doc(T) ; child(n, c6_4_27, _), kind(c6_4_27, "for_in_clause"), field(c6_4_27, "right", c7_4_27), c416_items_call(c7_4_27), field(c6_4_27, "left", c8_4_27), c416_target_pair(c8_4_27, TK, TV), field(n, "body", c9_4_27), c416_tuple_pair(c9_4_27, EK, EV), text(EK, t10_4_27), text(TK, t10_4_27), text(EV, t12_4_27), text(TV, t12_4_27), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), count : { c416_fn_body(n), inside(n, p1_76, "module"), within(c2_76, p1_76), (kind(c2_76, "identifier") ; kind(c2_76, "dotted_name")), node(_, c2_76, _, _, _), BN = c2_76, text(BN, t1_7_76), text(w76_kn, t1_7_76), count : { bind_name(c2_76, b3_76), (main_form(b3_76, "except") ; main_form(b3_76, "annotation")) } = 0, bind_name(c2_76, b4_76), site_scope(b4_76, "module"), @doc(BN) = @doc(w76_kn) } = 0, count : { (precedes(s1_77, n), within(c1_77, s1_77), (kind(c1_77, "identifier") ; kind(c1_77, "dotted_name")), node(_, c1_77, _, _, _), BN = c1_77, text(BN, t1_9_77), text(w77_kn, t1_9_77), count : { bind_name(c1_77, b1_77), (main_form(b1_77, "except") ; main_form(b1_77, "annotation")) } = 0, bind_name(c1_77, b2_77), site_scope(b2_77, "module"), @doc(BN) = @doc(w77_kn) ; within(n, p1_77), precedes(s2_77, p1_77), within(c2_77, s2_77), (kind(c2_77, "identifier") ; kind(c2_77, "dotted_name")), node(_, c2_77, _, _, _), BN = c2_77, text(BN, t1_8_77), text(w77_kn, t1_8_77), count : { bind_name(c2_77, b3_77), (main_form(b3_77, "except") ; main_form(b3_77, "annotation")) } = 0, bind_name(c2_77, b4_77), site_scope(b4_77, "module"), @doc(BN) = @doc(w77_kn) ) } = 0, count : { within(n, p14_78), field(_, "body", n), (kind(p14_78, "function_definition") ; kind(p14_78, "lambda")), within(p14_78, p15_78), field(_, "body", p14_78), (kind(p15_78, "function_definition") ; kind(p15_78, "lambda")), node(_, p15_78, _, _, _), F = p15_78, within(c16_78, p15_78), (kind(c16_78, "identifier") ; kind(c16_78, "dotted_name")), node(_, c16_78, _, _, _), BN = c16_78, text(BN, t1_10_78), text(w78_kn, t1_10_78), count : { bind_name(c16_78, b17_78), (main_form(b17_78, "except") ; main_form(b17_78, "annotation")) } = 0, bind_name(c16_78, b18_78), (site_scope(b18_78, "function") ; site_scope(b18_78, "lambda")), (st19_78 = b18_78 ; within(b18_78, st19_78)), within(st19_78, p20_78), (kind(p20_78, "function_definition") ; kind(p20_78, "lambda")), node(_, p20_78, _, _, _), G = p20_78, text(G, t21_78), text(F, t21_78), @doc(BN) = @doc(w78_kn), @doc(G) = @doc(F) } = 0, count : { within(n, p23_79), field(_, "body", n), (kind(p23_79, "function_definition") ; kind(p23_79, "lambda")), node(_, p23_79, _, _, _), F = p23_79, (precedes(s1_20_79, n), within(c2_20_79, s1_20_79), (kind(c2_20_79, "identifier") ; kind(c2_20_79, "dotted_name")), node(_, c2_20_79, _, _, _), BN = c2_20_79, text(BN, t1_16_20_79), text(w79_kn, t1_16_20_79), count : { bind_name(c2_20_79, b3_20_79), (main_form(b3_20_79, "except") ; main_form(b3_20_79, "annotation")) } = 0, bind_name(c2_20_79, b4_20_79), (site_scope(b4_20_79, "function") ; site_scope(b4_20_79, "lambda")), (st5_20_79 = b4_20_79 ; within(b4_20_79, st5_20_79)), within(st5_20_79, p6_20_79), (kind(p6_20_79, "function_definition") ; kind(p6_20_79, "lambda")), node(_, p6_20_79, _, _, _), G = p6_20_79, text(G, t7_20_79), text(F, t7_20_79), @doc(BN) = @doc(w79_kn), @doc(G) = @doc(F) ; within(n, p9_21_79), precedes(s10_21_79, p9_21_79), within(c11_21_79, s10_21_79), (kind(c11_21_79, "identifier") ; kind(c11_21_79, "dotted_name")), node(_, c11_21_79, _, _, _), BN = c11_21_79, text(BN, t1_17_21_79), text(w79_kn, t1_17_21_79), count : { bind_name(c11_21_79, b12_21_79), (main_form(b12_21_79, "except") ; main_form(b12_21_79, "annotation")) } = 0, bind_name(c11_21_79, b13_21_79), (site_scope(b13_21_79, "function") ; site_scope(b13_21_79, "lambda")), (st14_21_79 = b13_21_79 ; within(b13_21_79, st14_21_79)), within(st14_21_79, p15_21_79), (kind(p15_21_79, "function_definition") ; kind(p15_21_79, "lambda")), node(_, p15_21_79, _, _, _), G = p15_21_79, text(G, t16_21_79), text(F, t16_21_79), @doc(BN) = @doc(w79_kn), @doc(G) = @doc(F) ) } = 0, count : { inside(n, p41_80, "lambda"), field(_, "body", n), child(p41_80, c42_80, _), kind(c42_80, "lambda_parameters"), within(c43_80, c42_80), (kind(c43_80, "identifier") ; kind(c43_80, "dotted_name")), node(_, c43_80, _, _, _), BN = c43_80, text(BN, t1_11_80), text(w80_kn, t1_11_80), bind_name(c43_80, b44_80), site_scope(b44_80, "lambda"), @doc(BN) = @doc(w80_kn) } = 0, count : { inside(n, p45_81, "class_definition"), field(_, "body", n), node(_, p45_81, _, _, _), F = p45_81, count : { within_stop(n, p46_81, "class_definition"), field(_, "body", n), (kind(p46_81, "function_definition") ; kind(p46_81, "lambda")) } = 0, count : { child(p47_81, n, _), c416_comp(p47_81) } = 0, count : { within_stop(n, p48_81, "class_definition"), c416_not_first_iter(p48_81), child(p49_81, p48_81, _), c416_comp(p49_81) } = 0, (precedes(s1_22_81, n), within(c2_22_81, s1_22_81), (kind(c2_22_81, "identifier") ; kind(c2_22_81, "dotted_name")), node(_, c2_22_81, _, _, _), BN = c2_22_81, text(BN, t1_18_22_81), text(w81_kn, t1_18_22_81), count : { bind_name(c2_22_81, b3_22_81), (main_form(b3_22_81, "except") ; main_form(b3_22_81, "annotation")) } = 0, bind_name(c2_22_81, b4_22_81), site_scope(b4_22_81, "class"), (st5_22_81 = b4_22_81 ; within(b4_22_81, st5_22_81)), inside(st5_22_81, p6_22_81, "class_definition"), node(_, p6_22_81, _, _, _), G = p6_22_81, text(G, t7_22_81), text(F, t7_22_81), @doc(BN) = @doc(w81_kn), @doc(G) = @doc(F) ; within(n, p9_23_81), precedes(s10_23_81, p9_23_81), within(c11_23_81, s10_23_81), (kind(c11_23_81, "identifier") ; kind(c11_23_81, "dotted_name")), node(_, c11_23_81, _, _, _), BN = c11_23_81, text(BN, t1_19_23_81), text(w81_kn, t1_19_23_81), count : { bind_name(c11_23_81, b12_23_81), (main_form(b12_23_81, "except") ; main_form(b12_23_81, "annotation")) } = 0, bind_name(c11_23_81, b13_23_81), site_scope(b13_23_81, "class"), (st14_23_81 = b13_23_81 ; within(b13_23_81, st14_23_81)), inside(st14_23_81, p15_23_81, "class_definition"), node(_, p15_23_81, _, _, _), G = p15_23_81, text(G, t16_23_81), text(F, t16_23_81), @doc(BN) = @doc(w81_kn), @doc(G) = @doc(F) ) } = 0, count : { child(n, c67_82, _), kind(c67_82, "for_in_clause"), has(c67_82, c68_82, "named_expression"), field(_, "right", c68_82), field(c68_82, "name", c69_82), (kind(c69_82, "identifier") ; kind(c69_82, "dotted_name")), node(_, c69_82, _, _, _), BN = c69_82, text(BN, t1_12_82), text(w82_kn, t1_12_82), @doc(BN) = @doc(w82_kn) } = 0, count : { child(p70_83, n, _), c416_comp(p70_83), child(p70_83, c1_24_83, _), kind(c1_24_83, "for_in_clause"), within(c2_24_83, c1_24_83), field(_, "left", c2_24_83), (kind(c2_24_83, "identifier") ; kind(c2_24_83, "dotted_name")), node(_, c2_24_83, _, _, _), BN = c2_24_83, text(BN, t1_6_24_83), text(w83_kn, t1_6_24_83), @doc(BN) = @doc(w83_kn) } = 0, count : { within(n, p71_84), c416_not_first_iter(p71_84), child(p72_84, p71_84, _), c416_comp(p72_84), child(p72_84, c1_25_84, _), kind(c1_25_84, "for_in_clause"), within(c2_25_84, c1_25_84), field(_, "left", c2_25_84), (kind(c2_25_84, "identifier") ; kind(c2_25_84, "dotted_name")), node(_, c2_25_84, _, _, _), BN = c2_25_84, text(BN, t1_6_25_84), text(w84_kn, t1_6_25_84), @doc(BN) = @doc(w84_kn) } = 0, count : { c416_stop_15_within(n, p73_85), kind(p73_85, "block"), child(p74_85, p73_85, _), kind(p74_85, "except_clause"), child(p74_85, c75_85, _), kind(c75_85, "as_pattern"), child(c75_85, c76_85, _), kind(c76_85, "as_pattern_target"), child(c76_85, c77_85, _), (kind(c77_85, "identifier") ; kind(c77_85, "dotted_name")), node(_, c77_85, _, _, _), BN = c77_85, text(BN, t1_13_85), text(w85_kn, t1_13_85), @doc(BN) = @doc(w85_kn) } = 0, count : { within(n, p78_86), field(_, "body", n), (kind(p78_86, "function_definition") ; kind(p78_86, "class_definition")), within(c79_86, p78_86), field(_, "type_parameters", c79_86), (kind(c79_86, "identifier") ; kind(c79_86, "dotted_name")), node(_, c79_86, _, _, _), BN = c79_86, text(BN, t1_14_86), text(w86_kn, t1_14_86), @doc(BN) = @doc(w86_kn) } = 0, count : { inside(n, p80_87, "type_alias_statement"), field(_, "right", n), within(c81_87, p80_87), field(_, "left", c81_87), (kind(c81_87, "identifier") ; kind(c81_87, "dotted_name")), node(_, c81_87, _, _, _), BN = c81_87, text(BN, t1_15_87), text(w87_kn, t1_15_87), bind_name(c81_87, b82_87), main_form(b82_87, "typeParameter"), @doc(BN) = @doc(w87_kn) } = 0, node(_, n, _, _, _), COMP = n,
+    kind(n, "set_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_3_7), c416_name_elt(c1_3_7, E), child(n, c2_3_7, _), kind(c2_3_7, "for_in_clause"), field(c2_3_7, "left", c3_3_7), c416_name_tgt(c3_3_7, T), text(E, t4_3_7), text(T, t4_3_7), @doc(E) = @doc(T) ; child(n, c6_4_7, _), kind(c6_4_7, "for_in_clause"), field(c6_4_7, "right", c7_4_7), c416_items_call(c7_4_7), field(c6_4_7, "left", c8_4_7), c416_target_pair(c8_4_7, TK, TV), field(n, "body", c9_4_7), c416_tuple_pair(c9_4_7, EK, EV), text(EK, t10_4_7), text(TK, t10_4_7), text(EV, t12_4_7), text(TV, t12_4_7), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,
     unset(KN), unset(TK), unset(TV).
 c416_alt_19(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_19(n, W),
     c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W), text(W, t1_td),
@@ -598,12 +791,8 @@ c416_alt_19(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_19(n, W),
 .decl c416_alt_20(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
 // KN: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_20(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c416_demand_alt_20(n, W),
-    kind(n, "dictionary_comprehension"), c416_single_for(n, IT), field(n, "body", c1_5), kind(c1_5, "pair"), field(c1_5, "key", c2_5), c416_name_key(c2_5, EK), field(c1_5, "value", c3_5), c416_name_value(c3_5, EV), child(n, c4_5, _), kind(c4_5, "for_in_clause"), field(c4_5, "left", c5_5), c416_target_tuple_pair(c5_5, TK, TV), text(EK, t6_5), text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), count : { c416_fn_body(n), inside(n, p1_88, "module"), within(c2_88, p1_88), (kind(c2_88, "identifier") ; kind(c2_88, "dotted_name")), node(_, c2_88, _, _, _), BN = c2_88, text(BN, t1_7_88), text(w88_kn, t1_7_88), count : { bind_name(c2_88, b3_88), (main_form(b3_88, "except") ; main_form(b3_88, "annotation")) } = 0, bind_name(c2_88, b4_88), site_scope(b4_88, "module"), @doc(BN) = @doc(w88_kn) } = 0, count : { (precedes(s1_89, n), within(c1_89, s1_89), (kind(c1_89, "identifier") ; kind(c1_89, "dotted_name")), node(_, c1_89, _, _, _), BN = c1_89, text(BN, t1_9_89), text(w89_kn, t1_9_89), count : { bind_name(c1_89, b1_89), (main_form(b1_89, "except") ; main_form(b1_89, "annotation")) } = 0, bind_name(c1_89, b2_89), site_scope(b2_89, "module"), @doc(BN) = @doc(w89_kn) ; within(n, p1_89), precedes(s2_89, p1_89), within(c2_89, s2_89), (kind(c2_89, "identifier") ; kind(c2_89, "dotted_name")), node(_, c2_89, _, _, _), BN = c2_89, text(BN, t1_8_89), text(w89_kn, t1_8_89), count : { bind_name(c2_89, b3_89), (main_form(b3_89, "except") ; main_form(b3_89, "annotation")) } = 0, bind_name(c2_89, b4_89), site_scope(b4_89, "module"), @doc(BN) = @doc(w89_kn) ) } = 0, count : { within(n, p14_90), field(_, "body", n), (kind(p14_90, "function_definition") ; kind(p14_90, "lambda")), within(p14_90, p15_90), field(_, "body", p14_90), (kind(p15_90, "function_definition") ; kind(p15_90, "lambda")), node(_, p15_90, _, _, _), F = p15_90, within(c16_90, p15_90), (kind(c16_90, "identifier") ; kind(c16_90, "dotted_name")), node(_, c16_90, _, _, _), BN = c16_90, text(BN, t1_10_90), text(w90_kn, t1_10_90), count : { bind_name(c16_90, b17_90), (main_form(b17_90, "except") ; main_form(b17_90, "annotation")) } = 0, bind_name(c16_90, b18_90), (site_scope(b18_90, "function") ; site_scope(b18_90, "lambda")), (st19_90 = b18_90 ; within(b18_90, st19_90)), within(st19_90, p20_90), (kind(p20_90, "function_definition") ; kind(p20_90, "lambda")), node(_, p20_90, _, _, _), G = p20_90, text(G, t21_90), text(F, t21_90), @doc(BN) = @doc(w90_kn), @doc(G) = @doc(F) } = 0, count : { within(n, p23_91), field(_, "body", n), (kind(p23_91, "function_definition") ; kind(p23_91, "lambda")), node(_, p23_91, _, _, _), F = p23_91, (precedes(s1_20_91, n), within(c2_20_91, s1_20_91), (kind(c2_20_91, "identifier") ; kind(c2_20_91, "dotted_name")), node(_, c2_20_91, _, _, _), BN = c2_20_91, text(BN, t1_16_20_91), text(w91_kn, t1_16_20_91), count : { bind_name(c2_20_91, b3_20_91), (main_form(b3_20_91, "except") ; main_form(b3_20_91, "annotation")) } = 0, bind_name(c2_20_91, b4_20_91), (site_scope(b4_20_91, "function") ; site_scope(b4_20_91, "lambda")), (st5_20_91 = b4_20_91 ; within(b4_20_91, st5_20_91)), within(st5_20_91, p6_20_91), (kind(p6_20_91, "function_definition") ; kind(p6_20_91, "lambda")), node(_, p6_20_91, _, _, _), G = p6_20_91, text(G, t7_20_91), text(F, t7_20_91), @doc(BN) = @doc(w91_kn), @doc(G) = @doc(F) ; within(n, p9_21_91), precedes(s10_21_91, p9_21_91), within(c11_21_91, s10_21_91), (kind(c11_21_91, "identifier") ; kind(c11_21_91, "dotted_name")), node(_, c11_21_91, _, _, _), BN = c11_21_91, text(BN, t1_17_21_91), text(w91_kn, t1_17_21_91), count : { bind_name(c11_21_91, b12_21_91), (main_form(b12_21_91, "except") ; main_form(b12_21_91, "annotation")) } = 0, bind_name(c11_21_91, b13_21_91), (site_scope(b13_21_91, "function") ; site_scope(b13_21_91, "lambda")), (st14_21_91 = b13_21_91 ; within(b13_21_91, st14_21_91)), within(st14_21_91, p15_21_91), (kind(p15_21_91, "function_definition") ; kind(p15_21_91, "lambda")), node(_, p15_21_91, _, _, _), G = p15_21_91, text(G, t16_21_91), text(F, t16_21_91), @doc(BN) = @doc(w91_kn), @doc(G) = @doc(F) ) } = 0, count : { inside(n, p41_92, "lambda"), field(_, "body", n), child(p41_92, c42_92, _), kind(c42_92, "lambda_parameters"), within(c43_92, c42_92), (kind(c43_92, "identifier") ; kind(c43_92, "dotted_name")), node(_, c43_92, _, _, _), BN = c43_92, text(BN, t1_11_92), text(w92_kn, t1_11_92), bind_name(c43_92, b44_92), site_scope(b44_92, "lambda"), @doc(BN) = @doc(w92_kn) } = 0, count : { inside(n, p45_93, "class_definition"), field(_, "body", n), node(_, p45_93, _, _, _), F = p45_93, count : { within_stop(n, p46_93, "class_definition"), field(_, "body", n), (kind(p46_93, "function_definition") ; kind(p46_93, "lambda")) } = 0, count : { child(p47_93, n, _), c416_comp(p47_93) } = 0, count : { within_stop(n, p48_93, "class_definition"), c416_not_first_iter(p48_93), child(p49_93, p48_93, _), c416_comp(p49_93) } = 0, (precedes(s1_22_93, n), within(c2_22_93, s1_22_93), (kind(c2_22_93, "identifier") ; kind(c2_22_93, "dotted_name")), node(_, c2_22_93, _, _, _), BN = c2_22_93, text(BN, t1_18_22_93), text(w93_kn, t1_18_22_93), count : { bind_name(c2_22_93, b3_22_93), (main_form(b3_22_93, "except") ; main_form(b3_22_93, "annotation")) } = 0, bind_name(c2_22_93, b4_22_93), site_scope(b4_22_93, "class"), (st5_22_93 = b4_22_93 ; within(b4_22_93, st5_22_93)), inside(st5_22_93, p6_22_93, "class_definition"), node(_, p6_22_93, _, _, _), G = p6_22_93, text(G, t7_22_93), text(F, t7_22_93), @doc(BN) = @doc(w93_kn), @doc(G) = @doc(F) ; within(n, p9_23_93), precedes(s10_23_93, p9_23_93), within(c11_23_93, s10_23_93), (kind(c11_23_93, "identifier") ; kind(c11_23_93, "dotted_name")), node(_, c11_23_93, _, _, _), BN = c11_23_93, text(BN, t1_19_23_93), text(w93_kn, t1_19_23_93), count : { bind_name(c11_23_93, b12_23_93), (main_form(b12_23_93, "except") ; main_form(b12_23_93, "annotation")) } = 0, bind_name(c11_23_93, b13_23_93), site_scope(b13_23_93, "class"), (st14_23_93 = b13_23_93 ; within(b13_23_93, st14_23_93)), inside(st14_23_93, p15_23_93, "class_definition"), node(_, p15_23_93, _, _, _), G = p15_23_93, text(G, t16_23_93), text(F, t16_23_93), @doc(BN) = @doc(w93_kn), @doc(G) = @doc(F) ) } = 0, count : { child(n, c67_94, _), kind(c67_94, "for_in_clause"), has(c67_94, c68_94, "named_expression"), field(_, "right", c68_94), field(c68_94, "name", c69_94), (kind(c69_94, "identifier") ; kind(c69_94, "dotted_name")), node(_, c69_94, _, _, _), BN = c69_94, text(BN, t1_12_94), text(w94_kn, t1_12_94), @doc(BN) = @doc(w94_kn) } = 0, count : { child(p70_95, n, _), c416_comp(p70_95), child(p70_95, c1_24_95, _), kind(c1_24_95, "for_in_clause"), within(c2_24_95, c1_24_95), field(_, "left", c2_24_95), (kind(c2_24_95, "identifier") ; kind(c2_24_95, "dotted_name")), node(_, c2_24_95, _, _, _), BN = c2_24_95, text(BN, t1_6_24_95), text(w95_kn, t1_6_24_95), @doc(BN) = @doc(w95_kn) } = 0, count : { within(n, p71_96), c416_not_first_iter(p71_96), child(p72_96, p71_96, _), c416_comp(p72_96), child(p72_96, c1_25_96, _), kind(c1_25_96, "for_in_clause"), within(c2_25_96, c1_25_96), field(_, "left", c2_25_96), (kind(c2_25_96, "identifier") ; kind(c2_25_96, "dotted_name")), node(_, c2_25_96, _, _, _), BN = c2_25_96, text(BN, t1_6_25_96), text(w96_kn, t1_6_25_96), @doc(BN) = @doc(w96_kn) } = 0, count : { c416_stop_15_within(n, p73_97), kind(p73_97, "block"), child(p74_97, p73_97, _), kind(p74_97, "except_clause"), child(p74_97, c75_97, _), kind(c75_97, "as_pattern"), child(c75_97, c76_97, _), kind(c76_97, "as_pattern_target"), child(c76_97, c77_97, _), (kind(c77_97, "identifier") ; kind(c77_97, "dotted_name")), node(_, c77_97, _, _, _), BN = c77_97, text(BN, t1_13_97), text(w97_kn, t1_13_97), @doc(BN) = @doc(w97_kn) } = 0, count : { within(n, p78_98), field(_, "body", n), (kind(p78_98, "function_definition") ; kind(p78_98, "class_definition")), within(c79_98, p78_98), field(_, "type_parameters", c79_98), (kind(c79_98, "identifier") ; kind(c79_98, "dotted_name")), node(_, c79_98, _, _, _), BN = c79_98, text(BN, t1_14_98), text(w98_kn, t1_14_98), @doc(BN) = @doc(w98_kn) } = 0, count : { inside(n, p80_99, "type_alias_statement"), field(_, "right", n), within(c81_99, p80_99), field(_, "left", c81_99), (kind(c81_99, "identifier") ; kind(c81_99, "dotted_name")), node(_, c81_99, _, _, _), BN = c81_99, text(BN, t1_15_99), text(w99_kn, t1_15_99), bind_name(c81_99, b82_99), main_form(b82_99, "typeParameter"), @doc(BN) = @doc(w99_kn) } = 0, node(_, n, _, _, _), COMP = n,
+    kind(n, "dictionary_comprehension"), c416_single_for(n, IT), field(n, "body", c1_5), kind(c1_5, "pair"), field(c1_5, "key", c2_5), c416_name_key(c2_5, EK), field(c1_5, "value", c3_5), c416_name_value(c3_5, EV), child(n, c4_5, _), kind(c4_5, "for_in_clause"), field(c4_5, "left", c5_5), c416_target_tuple_pair(c5_5, TK, TV), text(EK, t6_5), text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,
     unset(KN), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV).
 c416_alt_20(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c416_demand_alt_20(n, W),
     c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV, W),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-
-// stop_15_within: within_stop over the stop set stop_15, read inside an aggregate
-.decl c416_stop_15_within(n: node, a: node)
-c416_stop_15_within(x, y) :- within_stop(x, y, c416_stop_15).

@@ -321,8 +321,12 @@ impl Emitter {
             AstMatcher::Compare(_) => return gap("compare"),
             AstMatcher::Count(_) => return gap("count"),
             AstMatcher::Never => self.never(n),
-            #[cfg(any(test, feature = "test-hooks"))]
-            AstMatcher::TestUnknown(_) => return gap("three-valued"),
+            // The test-only leaf, which this crate may be built unable to name (`AstMatcher::test_only`).
+            #[allow(unreachable_patterns)]
+            other => {
+                debug_assert!(other.test_only(), "a matcher convert does not handle");
+                return gap("three-valued");
+            }
         })
     }
 

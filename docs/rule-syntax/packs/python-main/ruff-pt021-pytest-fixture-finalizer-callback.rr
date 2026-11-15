@@ -42,20 +42,20 @@ pt021_request_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // finalizer_attr(n): the JSON util `finalizer-attr`, used where the JSON says `matches: "finalizer-attr"`
 .decl pt021_finalizer_attr(n: node)
 pt021_finalizer_attr(n) :- kind(n, "attribute"), field(n, "object", c1), pt021_request_name(c1),
-    field(n, "attribute", c2), glob("addfinalizer", c2).
-pt021_finalizer_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    pt021_finalizer_attr(c3).
+    pt021_tok_has_1(n).
+pt021_finalizer_attr(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pt021_finalizer_attr(c10).
 
 // request_param(n): the JSON util `request-param`, used where the JSON says `matches: "request-param"`
 .decl pt021_request_param(n: node)
 pt021_request_param(n) :- kind(n, "identifier"), glob("request", n).
 pt021_request_param(n) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
-    field(n, "name", c1), glob("request", c1).
+    pt021_tok_has_2(n).
 pt021_request_param(n) :- (kind(n, "list_splat_pattern") ; kind(n, "dictionary_splat_pattern")),
-    child(n, c2, _), kind(c2, "identifier"), glob("request", c2).
-pt021_request_param(n) :- kind(n, "typed_parameter"), child(n, c3, _),
-    ( kind(c3, "identifier"), glob("request", c3)
-    ; (kind(c3, "list_splat_pattern") ; kind(c3, "dictionary_splat_pattern")), child(c3, c1, _), kind(c1, "identifier"), glob("request", c1)
+    child(n, c9, _), kind(c9, "identifier"), glob("request", c9).
+pt021_request_param(n) :- kind(n, "typed_parameter"), child(n, c10, _),
+    ( kind(c10, "identifier"), glob("request", c10)
+    ; (kind(c10, "list_splat_pattern") ; kind(c10, "dictionary_splat_pattern")), child(c10, c1, _), kind(c1, "identifier"), glob("request", c1)
     ).
 
 
@@ -110,6 +110,30 @@ pt021_not_last(n) :- within_stop(n, p3, "function_definition"), !pt021_alt_5(p3)
 pt021_not_last(n) :- precedes(s5, n), pt021_late_annotation(s5), within(c6, s5), pt021_walked_call(c6).
 pt021_not_last(n) :- within_stop(n, p7, "function_definition"), precedes(s8, p7),
     pt021_late_annotation(s8), within(c9, s8), pt021_walked_call(c9).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^addfinalizer$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt021_tok_has_1(n: node)
+.stored pt021_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt021_tok_has_1(n) :- field(n, "attribute", c2), glob("addfinalizer", c2).
+pt021_tok_has_1(n) :- op(n, t3), match("addfinalizer", t3).
+pt021_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:addfinalizer)(?:\\W.*)?)$", g4).
+pt021_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:addfinalizer)(?:\\W.*)?)$", g4).
+pt021_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:addfinalizer)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^request$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt021_tok_has_2(n: node)
+.stored pt021_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt021_tok_has_2(n) :- field(n, "name", c1), glob("request", c1).
+pt021_tok_has_2(n) :- op(n, t2), match("request", t2).
+pt021_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:request)(?:\\W.*)?)$", g3).
+pt021_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:request)(?:\\W.*)?)$", g3).
+pt021_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:request)(?:\\W.*)?)$", g3).
 
 // set_2: node kinds from a JSON `any`
 .decl pt021_set_2(v: symbol)

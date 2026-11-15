@@ -71,6 +71,30 @@ b905_not_positional(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_spl
 b905_not_positional(n) :- b905_trivia(n).
 b905_not_positional(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(times)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b905_tok_has_1(n: node)
+.stored b905_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b905_tok_has_1(n) :- field(n, "name", c12), glob("times", c12).
+b905_tok_has_1(n) :- op(n, t13), match("(times)", t13).
+b905_tok_has_1(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g14).
+b905_tok_has_1(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g14).
+b905_tok_has_1(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g14).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(times)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b905_tok_has_2(n: node)
+.stored b905_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b905_tok_has_2(n) :- field(n, "name", c9), glob("times", c9).
+b905_tok_has_2(n) :- op(n, t10), match("(times)", t10).
+b905_tok_has_2(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g11).
+b905_tok_has_2(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g11).
+b905_tok_has_2(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:times)(?:\\W.*)?)$", g11).
+
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl b905_args_plain(l: node, a: node, i: number)
 b905_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
@@ -139,8 +163,8 @@ b905_alt_1(n) :- node(_, n, _, _, _), k2 = count : { child(n, c1, _), !b905_not_
 b905_alt_1(n) :- k5 = count : { child(n, c4, _), !b905_not_positional(c4) }, k5 >= 2, k5 <= 2,
     child(n, c6, _), !b905_not_positional(c6), b905_none_literal(c6), precedes(s7, c6),
     !b905_not_positional(s7).
-b905_alt_1(n) :- child(n, c8, _), kind(c8, "keyword_argument"), field(c8, "name", c9),
-    glob("times", c9), field(c8, "value", c10), b905_none_literal(c10).
+b905_alt_1(n) :- child(n, c8, _), kind(c8, "keyword_argument"), b905_tok_has_2(c8),
+    field(c8, "value", c17), b905_none_literal(c17).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule

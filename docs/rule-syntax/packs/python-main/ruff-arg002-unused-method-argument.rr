@@ -14,7 +14,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation ARG002(at: node, n: loc) "Remove `{n}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
+.violation ARG002(at: node, n_mv: loc) "Remove `{n_mv}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
     suppress noqa "ARG002"
 ARG002_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
     main_form(b1, "parameter"), site_scope(b1, "function"), site_latest(b1),
@@ -305,5 +305,5 @@ arg002_alt_117(n) :- option("flake8-unused-arguments.ignore-variadic-names", "tr
     (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern")).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl ARG002_raw(at: node, n: loc)
+.decl ARG002_raw(at: node, n_mv: loc)
 ARG002(v0, v1) :- ARG002_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

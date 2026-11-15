@@ -48,17 +48,15 @@ dtz007_zoned(n) :- child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _),
 // replace_tz_none(n): the JSON util `replace-tz-none`, used where the JSON says `matches: "replace-tz-none"`
 .decl dtz007_replace_tz_none(n: node)
 dtz007_replace_tz_none(n) :- dtz007_demand_replace_tz_none(n), dtz007_up_1(n, p1),
-    field(p1, "attribute", c2), glob("replace", c2), within_stop(p1, p3, dtz007_stop_13),
-    kind(p3, "call"), child(p3, c4, _), kind(c4, "argument_list"), child(c4, c5, _),
-    kind(c5, "keyword_argument"), field(c5, "name", c6), glob("tzinfo", c6),
-    field(c5, "value", c7), dtz007_none_lit(c7).
+    within_stop(p1, p10, dtz007_stop_13), kind(p10, "call"), child(p10, c11, _),
+    kind(c11, "argument_list"), child(c11, c12, _), kind(c12, "keyword_argument"),
+    dtz007_tok_has_6(c12), field(c12, "value", c21), dtz007_none_lit(c21).
 
 // replace_tz(n): the JSON util `replace-tz`, used where the JSON says `matches: "replace-tz"`
 .decl dtz007_replace_tz(n: node)
-dtz007_replace_tz(n) :- dtz007_demand_replace_tz(n), dtz007_up_2(n, p1), field(p1, "attribute", c2),
-    glob("replace", c2), within_stop(p1, p3, dtz007_stop_13), kind(p3, "call"),
-    child(p3, c4, _), kind(c4, "argument_list"), child(c4, c5, _),
-    kind(c5, "keyword_argument"), field(c5, "name", c6), glob("tzinfo", c6).
+dtz007_replace_tz(n) :- dtz007_demand_replace_tz(n), dtz007_up_2(n, p1), within_stop(p1, p10, dtz007_stop_13),
+    kind(p10, "call"), child(p10, c11, _), kind(c11, "argument_list"),
+    child(c11, c12, _), kind(c12, "keyword_argument"), dtz007_tok_has_6(c12).
 
 // DTZ007(n, detail): findings from clauses `no-zone`, `replace-tzinfo-none`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -68,6 +66,78 @@ DTZ007(n, "Make the result aware: parse a UTC offset with `%z`, else chain `.rep
     field(n, "function", c1), dtz007_callee(c1), !dtz007_alt_16(n), !dtz007_replace_tz(n).
 DTZ007(n, "Pass the timezone the text is in to `tzinfo`, e.g. `datetime.timezone.utc`, instead of `None`; keep `None` only if a naive datetime") :- kind(n, "call"),
     field(n, "function", c1), dtz007_callee(c1), !dtz007_alt_16(n), dtz007_replace_tz_none(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^astimezone$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_1(n: node)
+.stored dtz007_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_1(n) :- field(n, "attribute", c2), glob("astimezone", c2).
+dtz007_tok_has_1(n) :- op(n, t3), match("astimezone", t3).
+dtz007_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+dtz007_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+dtz007_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_2(n: node)
+.stored dtz007_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_2(n) :- field(n, "attribute", c10), glob("replace", c10).
+dtz007_tok_has_2(n) :- op(n, t11), match("replace", t11).
+dtz007_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+dtz007_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+dtz007_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^astimezone$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_3(n: node)
+.stored dtz007_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz007_tok_has_3(n) :- op(n, t2), match("astimezone", t2).
+dtz007_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+dtz007_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+dtz007_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_4(n: node)
+.stored dtz007_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_4(n) :- field(n, "attribute", c9), glob("replace", c9).
+dtz007_tok_has_4(n) :- op(n, t10), match("replace", t10).
+dtz007_tok_has_4(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+dtz007_tok_has_4(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+dtz007_tok_has_4(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_5(n: node)
+.stored dtz007_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_5(n) :- field(n, "attribute", c2), glob("replace", c2).
+dtz007_tok_has_5(n) :- op(n, t3), match("replace", t3).
+dtz007_tok_has_5(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g4).
+dtz007_tok_has_5(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g4).
+dtz007_tok_has_5(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g4).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^tzinfo$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz007_tok_has_6(n: node)
+.stored dtz007_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz007_tok_has_6(n) :- field(n, "name", c13), glob("tzinfo", c13).
+dtz007_tok_has_6(n) :- op(n, t14), match("tzinfo", t14).
+dtz007_tok_has_6(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g15).
+dtz007_tok_has_6(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g15).
+dtz007_tok_has_6(n) :- node_text(n, g15), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g15).
 
 // demand_replace_tz_none: the nodes replace_tz_none is asked at (it looks at every ancestor of every node)
 .decl dtz007_demand_replace_tz_none(n: node)
@@ -80,11 +150,16 @@ dtz007_demand_replace_tz(n) :- kind(n, "call"), field(n, "function", c1), dtz007
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl dtz007_up_1(n: node, p: node)
 dtz007_up_1(n, p) :- dtz007_demand_replace_tz_none(n), within_stop(n, p, dtz007_stop_1),
-    kind(p, "attribute").
+    kind(p, "attribute"), dtz007_tok_has_5(p).
 
 // up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl dtz007_up_2(n: node, p: node)
-dtz007_up_2(n, p) :- dtz007_demand_replace_tz(n), within_stop(n, p, dtz007_stop_1), kind(p, "attribute").
+dtz007_up_2(n, p) :- dtz007_demand_replace_tz(n), within_stop(n, p, dtz007_stop_1), kind(p, "attribute"),
+    dtz007_tok_has_5(p).
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz007_up_3(n: node, p: node)
+dtz007_up_3(n, p) :- dtz007_tok_has_4(n), within_stop(n, p, dtz007_stop_1), kind(p, "call"), dtz007_astz_safe(p).
 
 // stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl dtz007_stop_1(n: node)
@@ -92,9 +167,8 @@ dtz007_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl dtz007_alt_3(n: node)
-dtz007_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
-dtz007_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz007_stop_1),
-    kind(p3, "call"), dtz007_astz_safe(p3).
+dtz007_alt_3(n) :- dtz007_tok_has_3(n).
+dtz007_alt_3(n) :- dtz007_tok_has_4(n), dtz007_up_3(n, p17).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 .decl dtz007_alt_5(n: node)

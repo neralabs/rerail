@@ -200,7 +200,7 @@ is `frames <store>` (decision 0227), the frames a keep decision left unreachable
 
 - A corpus run that collects registers it for its store, once a process (`Frames::register_once`); so do the daemon
   and the `upkeep` command.
-- It is due while `corpus_decided.run` is past `frames_swept.run`: a point read at each poll.
+- It is due while `corpus_decided.run` is past `corpus_decided.swept`: a point read at each poll.
 - A collection pass that makes a keep decision kicks the scheduler.
 - The outermost run calls `finish_soon` after its collection is joined, so a run leaves no sweep behind it.
 - A process stopped before its sweep leaves it due, and the next process to register the job sweeps it.

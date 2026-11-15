@@ -191,10 +191,7 @@ pyi036_class_member(n) :- child(p3, n, _), kind(p3, "decorated_definition"), pyi
 // exit_kind(n): the JSON util `exit-kind`, used where the JSON says `matches: "exit-kind"`
 .decl pyi036_exit_kind(n: node)
 pyi036_exit_kind(n) :- kind(n, "function_definition"),
-    ( field(n, "name", c1), glob("__exit__", c1), !match("async\\b.*", n)
-    ; field(n, "name", c2), glob("__aexit__", c2), match("async\\b.*", n)
-    ).
-
+    (pyi036_tok_has_8(n), !match("async\\b.*", n) ; pyi036_tok_has_9(n), match("async\\b.*", n)).
 
 // overloaded(n): the JSON util `overloaded`, used where the JSON says `matches: "overloaded"`
 .decl pyi036_overloaded(n: node)
@@ -417,6 +414,30 @@ pyi036_tok_has_7(n) :- child(n, c21, _), structural_before(c21, g16),
 pyi036_tok_has_7(n) :- child(n, c21, _), structural_after(c21, g16),
     match("(?s)^(?:.*(?:,).*)$", g16).
 pyi036_tok_has_7(n) :- node_text(n, g16), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g16).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^__exit__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_8(n: node)
+.stored pyi036_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_8(n) :- field(n, "name", c1), glob("__exit__", c1).
+pyi036_tok_has_8(n) :- op(n, t2), match("__exit__", t2).
+pyi036_tok_has_8(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__exit__).*)$", g3).
+pyi036_tok_has_8(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__exit__).*)$", g3).
+pyi036_tok_has_8(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__exit__).*)$", g3).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^__aexit__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_9(n: node)
+.stored pyi036_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_9(n) :- field(n, "name", c9), glob("__aexit__", c9).
+pyi036_tok_has_9(n) :- op(n, t10), match("__aexit__", t10).
+pyi036_tok_has_9(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__aexit__).*)$", g11).
+pyi036_tok_has_9(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:__aexit__).*)$", g11).
+pyi036_tok_has_9(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aexit__).*)$", g11).
 
 // demand_usable_overload: the rows of usable_overload its callers ask for (the metavariable columns they pass in)
 .decl pyi036_demand_usable_overload(n: node)

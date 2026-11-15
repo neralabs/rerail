@@ -3,7 +3,7 @@
 //! `rerail_accel::upkeep::Job`.
 
 use super::{CapacityState, ContentStore, CorpusPolicy};
-use rerail_accel::upkeep::{Due, Job, Qos, Registered, Slice, Step};
+use rerail_accel::upkeep::{Due, Job, Qos, Slice, Step};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -278,7 +278,7 @@ pub fn interrupted(e: &rusqlite::Error) -> bool {
 }
 
 /// The frames the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
-/// due once a decision is past the last sweep (`frames_swept`), so the sweep runs soon after the decision, behind the
+/// due once a decision is past the last sweep (`corpus_decided.swept`), so the sweep runs soon after the decision, behind the
 /// run, and before the process exits (`upkeep::finish_soon`). A decision left unswept (a process stopped) is the
 /// next process's to sweep.
 pub struct Frames {
@@ -294,13 +294,10 @@ impl Frames {
         Frames { path: path.to_path_buf(), name: format!("frames {name}"), reader: None }
     }
 
-    /// The job for the store at `path`, registered once a process: the runs over that store share it.
+    /// The job for the store at `path`, registered once a process: the runs over that store share it (the
+    /// registry finds it by its name and file).
     pub fn register_once(path: &Path) {
-        static JOBS: std::sync::Mutex<Vec<(PathBuf, Registered)>> = std::sync::Mutex::new(Vec::new());
-        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
-        if !jobs.iter().any(|(p, _)| p == path) {
-            jobs.push((path.to_path_buf(), rerail_accel::upkeep::register(Box::new(Frames::new(path)))));
-        }
+        rerail_accel::upkeep::register_for_process(Box::new(Frames::new(path)));
     }
 }
 

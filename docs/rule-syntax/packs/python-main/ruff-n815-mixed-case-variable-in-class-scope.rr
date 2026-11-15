@@ -145,7 +145,7 @@ n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n),
     ).
 
 n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), n815_typed_dict_class(st2),
+    ref_site(n, b1), st2 = b1, n815_typed_dict_class(st2),
     count : { n815_stop_4_within(st2, p3), n815_class_body(p3) } = 0.
 n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
     field(n, "attribute", c4), node(_, c4, _, _, _), TDATTR = c4, field(n, "object", c5),
@@ -181,7 +181,7 @@ n815_demand_typed_dict_base(c2) :- n815_demand_typed_dict_base(n),
 n815_demand_typed_dict_class(p1) :- kind(n, "block"), field(p1, "body", n),
     kind(p1, "class_definition").
 n815_demand_typed_dict_class(st2) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)).
+    ref_site(n, b1), st2 = b1.
 n815_demand_typed_dict_class(c9) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
     field(n, "attribute", c4), node(_, c4, _, _, _), TDATTR = c4, field(n, "object", c5),
     kind(c5, "identifier"), ref_site(c5, b6), (st7 = b6 ; within(b6, st7)),

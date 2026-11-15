@@ -620,6 +620,19 @@ pub fn register(job: Box<dyn Job>) -> Registered {
     Registered(id)
 }
 
+/// Adds a job for the process's life, unless one of its name over its file is registered already: the runs over a
+/// store share its job, which the registry itself holds (no guard to keep).
+pub fn register_for_process(job: Box<dyn Job>) {
+    let (name, file) = (job.name(), job.file());
+    {
+        let jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.iter().any(|e| e.report.name == name && e.job.file() == file) {
+            return;
+        }
+    }
+    std::mem::forget(register(job));
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     SCHEDULER.get_or_init(|| {

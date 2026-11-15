@@ -228,6 +228,10 @@ impl StatIndex {
     pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
         self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
     }
+    /// The source last read at `path`, whatever the file's stat is now.
+    pub fn recorded(&self, path: &str) -> Option<SourceId> {
+        self.entries.get(path).map(|(_, id)| *id)
+    }
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -346,6 +350,21 @@ impl ContentStore {
             .query_map([&plan[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Some((plan, decode_ids(&sources)?, relations)))
+    }
+
+    /// The sources the newest run of lane `lane` over `root` read (`record_corpus_run_lane`), whichever build ran it:
+    /// empty if the lane has no run. A run reads before its first wave the tapes of those its waves will load
+    /// (decision 0104), as it reads its own files' before.
+    pub fn lane_sources(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let sources: Option<Vec<u8>> = connection
+            .prepare_cached(
+                "SELECT m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
+                 WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1",
+            )?
+            .query_row(params![root, &lane[..]], |r| r.get(0))
+            .optional()?;
+        Ok(sources.map(|s| decode_ids(&s)).transpose()?.unwrap_or_default().into_iter().map(SourceId).collect())
     }
 
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
@@ -689,7 +708,7 @@ impl ContentStore {
             let started = std::time::Instant::now();
             let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
                 let out = super::frames::collect_unreachable_frames(tx)?;
-                tx.execute("UPDATE frames_swept SET run=(SELECT run FROM corpus_decided WHERE singleton=1) WHERE singleton=1", [])?;
+                tx.execute("UPDATE corpus_decided SET swept=run WHERE singleton=1", [])?;
                 Ok(out)
             });
             match out {
@@ -931,10 +950,10 @@ fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
 }
 
-/// Whether `corpus_decided` is past `frames_swept` on connection `c` (a read: the `frames` job's `due`).
+/// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the `frames` job's `due`).
 pub fn frames_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
     c.query_row(
-        "SELECT d.run > coalesce((SELECT run FROM frames_swept WHERE singleton=1), 0) FROM corpus_decided d WHERE d.singleton=1",
+        "SELECT run > swept FROM corpus_decided WHERE singleton=1",
         [],
         |r| r.get(0),
     )

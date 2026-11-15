@@ -70,14 +70,16 @@
 //! tag (`</ElTable.TableColumn>`) with an `ERROR` in it, a syntax error in the file (a
 //! self-closing dotted tag parses).
 
-use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
+use crate::code_rule_dsl::embed::{Program, host::HostNode, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::vue::sfc;
 use crate::code_rule_dsl::vue::template::{self, Arg, Directive, Parse};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::ops::Range;
-use tree_sitter::{Node, Parser, Tree};
+#[cfg(any(test, feature = "test-hooks"))]
+use tree_sitter::Node;
+use tree_sitter::{Parser, Tree};
 
 /// The program a Vue single-file component embeds and its map back to the file.
 pub struct View {
@@ -89,9 +91,10 @@ pub struct View {
 }
 
 impl View {
-    /// The program the SFC whose tree-sitter-vue tree is `root` embeds; `None` where its script
+    /// The program the SFC whose tape's root is `root` (tree-sitter-vue's tree, from whichever
+    /// parser read it: `embed::host`) embeds; `None` where its script
     /// is in a language other than JavaScript or TypeScript, or nothing it holds is read.
-    pub fn build(root: Node<'_>, source: &str) -> Option<Self> {
+    pub fn build(root: HostNode<'_>, source: &str) -> Option<Self> {
         let blocks = sfc::blocks(root, source);
         let dialect = sfc::script_dialect(&blocks)?;
         let language = dialect.get_ts_language();
@@ -431,7 +434,7 @@ enum Branch {
 
 /// An element of the template, its start tag read once.
 struct Element<'t> {
-    node: Node<'t>,
+    node: HostNode<'t>,
     /// The tag name's bytes (`template::tag_name`), where the tag is a component the view reads
     /// (`Tag;`, `Ns.Tag;`).
     component: Option<Range<usize>>,
@@ -448,7 +451,7 @@ struct Element<'t> {
 impl<'t> Element<'t> {
     /// The element `node` (an `element` or `template_element`), `None` for a `v-pre` one, which
     /// Vue does not compile.
-    fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
+    fn read(node: HostNode<'t>, source: &'t str) -> Option<Self> {
         let mut element = Element {
             node,
             component: None,
@@ -457,15 +460,13 @@ impl<'t> Element<'t> {
             for_loop: None,
             slot: None,
         };
-        let mut cursor = node.walk();
         let Some(start) = node
-            .named_children(&mut cursor)
+            .named_children()
             .find(|child| matches!(child.kind(), "start_tag" | "self_closing_tag"))
         else {
             return Some(element);
         };
-        let mut cursor = start.walk();
-        for attribute in start.named_children(&mut cursor) {
+        for attribute in start.named_children() {
             if attribute.kind() == "tag_name" {
                 let tag = template::tag_name(attribute);
                 if is_component(&source[tag.clone()]) {
@@ -500,7 +501,7 @@ impl<'t> Element<'t> {
 /// A child of the template or of an element, as the view reads it.
 enum Child<'t> {
     /// `{{ E }}` and the range of `E`.
-    Interpolation(Node<'t>, Range<usize>),
+    Interpolation(HostNode<'t>, Range<usize>),
     /// An element Vue compiles (no `v-pre`).
     Element(Element<'t>),
     /// A comment or whitespace: a `v-if` chain continues across it.
@@ -512,7 +513,7 @@ enum Child<'t> {
 
 impl<'t> Child<'t> {
     /// How the view reads the template node `node`.
-    fn read(node: Node<'t>, source: &'t str) -> Self {
+    fn read(node: HostNode<'t>, source: &'t str) -> Self {
         match node.kind() {
             "interpolation" => node
                 .named_child(0)
@@ -635,7 +636,7 @@ impl<'t> Emitter<'t> {
     }
 
     /// The `<template>` block `node`: `{ ... }` over it.
-    fn template(&mut self, node: Node<'t>) {
+    fn template(&mut self, node: HostNode<'t>) {
         let open = if self.out.is_empty() { "{" } else { "\n{" };
         self.emit(open, node.byte_range());
         self.children(node);
@@ -643,11 +644,10 @@ impl<'t> Emitter<'t> {
     }
 
     /// The children of `parent` in order, each `v-if` chain read as one statement.
-    fn children(&mut self, parent: Node<'t>) {
+    fn children(&mut self, parent: HostNode<'t>) {
         let source = self.source;
-        let mut cursor = parent.walk();
         let children: Vec<Child<'t>> = parent
-            .named_children(&mut cursor)
+            .named_children()
             .map(|node| Child::read(node, source))
             .collect();
         let mut index = 0;
@@ -809,10 +809,9 @@ impl<'t> Emitter<'t> {
         if let Arg::Dynamic(inner) = &directive.arg
             && let Some(argument) = trimmed(source, inner.clone())
         {
-            let mut cursor = directive.node.walk();
             let anchor = directive
                 .node
-                .named_children(&mut cursor)
+                .named_children()
                 .find(|child| child.kind() == "dynamic_directive_value")
                 .map_or_else(|| directive.node.byte_range(), |node| node.byte_range());
             self.expression(argument, anchor);

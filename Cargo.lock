@@ -3184,6 +3184,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-css-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-device-metal"
 version = "0.1.0"
 dependencies = [
@@ -3309,10 +3317,11 @@ dependencies = [
  "rerail-accel",
  "rerail-compiler",
  "rerail-csharp-lean",
+ "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
- "rerail-engine",
  "rerail-facts",
+ "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
  "rerail-lang-ecma",
@@ -3322,6 +3331,8 @@ dependencies = [
  "rerail-lang-rust",
  "rerail-lang-sql",
  "rerail-logic",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-php-lean",
@@ -3333,6 +3344,7 @@ dependencies = [
  "rerail-rust-lean",
  "rerail-sessions",
  "rerail-simdjson",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
@@ -3443,6 +3455,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-html-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-java-lean"
 version = "0.1.0"
 dependencies = [
@@ -3494,15 +3514,20 @@ dependencies = [
  "rerail-accel",
  "rerail-compiler",
  "rerail-csharp-lean",
+ "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
+ "rerail-markdown-inline-lean",
+ "rerail-markdown-lean",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-sql-lean",
  "rerail-store",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -4022,6 +4047,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-markdown-inline-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-markdown-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
@@ -4390,6 +4431,14 @@ name = "rerail-simdjson-native"
 version = "0.1.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "rerail-sql-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

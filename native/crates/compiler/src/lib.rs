@@ -26,6 +26,7 @@ mod error;
 pub mod native_cpu_block;
 pub mod native_cpu_walk;
 pub mod native_cpu_codegen;
+pub mod native_cpu_bytes;
 pub mod native_cpu_lanes;
 pub mod native_cpu_pressure;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).

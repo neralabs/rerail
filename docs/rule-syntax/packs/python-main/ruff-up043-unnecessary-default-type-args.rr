@@ -55,15 +55,15 @@ up043_tuple_generator(n) :- kind(n, "parenthesized_expression"), within_stop(c2,
 // defaulted_generator(n): the JSON util `defaulted-generator`, used where the JSON says `matches: "defaulted-generator"`
 .decl up043_defaulted_generator(n: node)
 up043_defaulted_generator(n) :- kind(n, "subscript"), child(n, c1, _), up043_generator(c1),
-    precedes_stop(c1, s2, up043_stop_1), glob("\\[", s2),
+    up043_tok_precedes_3(c1),
     ( child(n, c2, _), up043_tail_generator(c2)
-    ; child(n, c3, _), up043_tuple_generator(c3), count : { up043_stop_1_precedes(c3, s1), glob("\\,", s1) } = 0, k1 = count : { precedes(s3, c3), up043_element(s3) }, k1 <= 0
+    ; child(n, c3, _), up043_tuple_generator(c3), !up043_tok_precedes_5(c3), k1 = count : { precedes(s1, c3), up043_element(s1) }, k1 <= 0
     ).
 
-up043_defaulted_generator(n) :- kind(n, "generic_type"), child(n, c8, _), up043_generator(c8),
-    child(n, c9, _), kind(c9, "type_parameter"),
-    ( child(c9, c1, _), up043_tail_generator(c1)
-    ; child(c9, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_generator(c3), count : { up043_stop_1_precedes(c2, s1), glob("\\,", s1) } = 0, k1 = count : { precedes(s2, c2), up043_element(s2) }, k1 <= 0
+up043_defaulted_generator(n) :- kind(n, "generic_type"), child(n, c20, _), up043_generator(c20),
+    child(n, c21, _), kind(c21, "type_parameter"),
+    ( child(c21, c1, _), up043_tail_generator(c1)
+    ; child(c21, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_generator(c3), !up043_tok_precedes_7(c2), k1 = count : { precedes(s1, c2), up043_element(s1) }, k1 <= 0
     ).
 
 
@@ -83,15 +83,15 @@ up043_tuple_async_generator(n) :- kind(n, "parenthesized_expression"),
 // defaulted_async_generator(n): the JSON util `defaulted-async-generator`, used where the JSON says `matches: "defaulted-async-generator"`
 .decl up043_defaulted_async_generator(n: node)
 up043_defaulted_async_generator(n) :- kind(n, "subscript"), child(n, c1, _),
-    up043_async_generator(c1), precedes_stop(c1, s2, up043_stop_1), glob("\\[", s2),
+    up043_async_generator(c1), up043_tok_precedes_3(c1),
     ( child(n, c2, _), up043_tail_async_generator(c2)
-    ; child(n, c3, _), up043_tuple_async_generator(c3), count : { up043_stop_1_precedes(c3, s1), glob("\\,", s1) } = 0, k1 = count : { precedes(s3, c3), up043_element(s3) }, k1 <= 0
+    ; child(n, c3, _), up043_tuple_async_generator(c3), !up043_tok_precedes_5(c3), k1 = count : { precedes(s1, c3), up043_element(s1) }, k1 <= 0
     ).
 
-up043_defaulted_async_generator(n) :- kind(n, "generic_type"), child(n, c8, _),
-    up043_async_generator(c8), child(n, c9, _), kind(c9, "type_parameter"),
-    ( child(c9, c1, _), up043_tail_async_generator(c1)
-    ; child(c9, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_async_generator(c3), count : { up043_stop_1_precedes(c2, s1), glob("\\,", s1) } = 0, k1 = count : { precedes(s2, c2), up043_element(s2) }, k1 <= 0
+up043_defaulted_async_generator(n) :- kind(n, "generic_type"), child(n, c20, _),
+    up043_async_generator(c20), child(n, c21, _), kind(c21, "type_parameter"),
+    ( child(c21, c1, _), up043_tail_async_generator(c1)
+    ; child(c21, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_async_generator(c3), !up043_tok_precedes_7(c2), k1 = count : { precedes(s1, c2), up043_element(s1) }, k1 <= 0
     ).
 
 
@@ -135,15 +135,74 @@ UP043_raw(T, n) :- up043_direct_ref(n, T).
 UP043_default_type_args_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
 UP043_default_type_args_raw(T, n) :- up043_direct_ref(n, T).
 
-// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
-.decl up043_stop_1(n: node)
-up043_stop_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_1(n: node)
+.stored up043_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_1(n) :- next_sibling(n, s1), glob("\\[", s1).
+up043_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("\\[", t2).
+up043_tok_precedes_1(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:\\[).*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_2(n: node)
+.stored up043_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_2(n) :- next_sibling(n, s1), glob("\\,", s1).
+up043_tok_precedes_2(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match(",", t2).
+up043_tok_precedes_2(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:,).*)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_3(n: node)
+.stored up043_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_3(n) :- next_sibling(n, s2), glob("\\[", s2).
+up043_tok_precedes_3(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("\\[", t3).
+up043_tok_precedes_3(n) :- structural_after(n, g4), match("(?s)^(?:\\s*(?:\\[).*)$", g4).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_4(n: node)
+.stored up043_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_4(n) :- next_sibling(n, s11), glob("\\,", s11).
+up043_tok_precedes_4(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match(",", t12).
+up043_tok_precedes_4(n) :- structural_after(n, g13), match("(?s)^(?:\\s*(?:,).*)$", g13).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_5(n: node)
+.stored up043_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_5(n) :- next_sibling(n, s3), glob("\\,", s3).
+up043_tok_precedes_5(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match(",", t4).
+up043_tok_precedes_5(n) :- structural_after(n, g5), match("(?s)^(?:\\s*(?:,).*)$", g5).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_6(n: node)
+.stored up043_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_6(n) :- next_sibling(n, s25), glob("\\,", s25).
+up043_tok_precedes_6(n) :- structural_after(n, g27), match("\\s*", g27), child(p28, n, _),
+    node(_, n, _, _, en31), o29 = en31 + strlen(g27), token(p28, _, t26, o29, _),
+    match(",", t26).
+up043_tok_precedes_6(n) :- structural_after(n, g27), match("(?s)^(?:\\s*(?:,).*)$", g27).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_7(n: node)
+.stored up043_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_7(n) :- next_sibling(n, s4), glob("\\,", s4).
+up043_tok_precedes_7(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match(",", t5).
+up043_tok_precedes_7(n) :- structural_after(n, g6), match("(?s)^(?:\\s*(?:,).*)$", g6).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl up043_alt_2(n: node)
 up043_alt_2(n) :- kind(n, "comment").
 up043_alt_2(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
-up043_alt_2(n) :- precedes_stop(n, s1, up043_stop_1), glob("\\[", s1).
+up043_alt_2(n) :- up043_tok_precedes_1(n).
 
 // stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up043_stop_13(n: node)
@@ -159,10 +218,6 @@ up043_alt_21(n) :- up043_forward_ref_excluded(n).
 .decl up043_alt_22(n: node, t: loc)
 up043_alt_22(n, T) :- up043_default_args(n), T = n.
 up043_alt_22(n, T) :- up043_direct_ref(n, T).
-
-// stop_1_precedes: precedes_stop over the stop set stop_1, read inside an aggregate
-.decl up043_stop_1_precedes(a: node, b: node)
-up043_stop_1_precedes(x, y) :- precedes_stop(x, y, up043_stop_1).
 
 // main's file condition {"regex": "\\.pyi$"}
 .decl UP043_raw(at: loc, t: node)

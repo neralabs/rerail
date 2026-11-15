@@ -23,7 +23,8 @@ air311_imports_airflow(n) :- within(c1, n), air311_airflow_name(c1),
 
 // seen_airflow(n): the JSON util `seen-airflow`, used where the JSON says `matches: "seen-airflow"`
 .decl air311_seen_airflow(n: node)
-air311_seen_airflow(n) :- inside(n, p1, "module"), air311_imports_airflow(p1).
+air311_seen_airflow(n) :- air311_demand_seen_airflow(n), inside(n, p1, "module"),
+    air311_imports_airflow(p1).
 
 // string_literal(n): the JSON util `string-literal`, used where the JSON says `matches: "string-literal"`
 .decl air311_string_literal(n: node)
@@ -117,22 +118,22 @@ air311_moved_1(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_6(n, OR
 // moved_2(n): the JSON util `moved-2`, used where the JSON says `matches: "moved-2"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_2(n: node, n_mv: loc)
-air311_moved_2(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "7").
+air311_moved_2(n, N) :- air311_moved_bare(n, N, _), !air311_alt_7(n).
 
 // moved_3(n): the JSON util `moved-3`, used where the JSON says `matches: "moved-3"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_3(n: node, n_mv: loc)
-air311_moved_3(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "8").
+air311_moved_3(n, N) :- air311_moved_bare(n, N, _), !air311_alt_8(n).
 
 // moved_4(n): the JSON util `moved-4`, used where the JSON says `matches: "moved-4"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_4(n: node, n_mv: loc)
-air311_moved_4(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "9").
+air311_moved_4(n, N) :- air311_moved_bare(n, N, _), !air311_alt_9(n).
 
 // moved_5(n): the JSON util `moved-5`, used where the JSON says `matches: "moved-5"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_5(n: node, n_mv: loc)
-air311_moved_5(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "10").
+air311_moved_5(n, N) :- air311_moved_bare(n, N, _), !air311_alt_10(n).
 
 // replacement_6(n): the JSON util `replacement-6`, used where the JSON says `matches: "replacement-6"`
 .decl air311_replacement_6(n: node)
@@ -153,17 +154,17 @@ air311_moved_6(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_11(n, O
 // moved_7(n): the JSON util `moved-7`, used where the JSON says `matches: "moved-7"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_7(n: node, n_mv: loc)
-air311_moved_7(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "12").
+air311_moved_7(n, N) :- air311_moved_bare(n, N, _), !air311_alt_12(n).
 
 // moved_8(n): the JSON util `moved-8`, used where the JSON says `matches: "moved-8"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_8(n: node, n_mv: loc)
-air311_moved_8(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "13").
+air311_moved_8(n, N) :- air311_moved_bare(n, N, _), !air311_alt_13(n).
 
 // moved_9(n): the JSON util `moved-9`, used where the JSON says `matches: "moved-9"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_9(n: node, n_mv: loc)
-air311_moved_9(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "14").
+air311_moved_9(n, N) :- air311_moved_bare(n, N, _), !air311_alt_14(n).
 
 // replacement(n, key): 8 copies of one rule set (`replacement-10`, `replacement-2`, `replacement-3` and 5 more), folded into one: row `key` of
 // replacement_case gives the strings each copy had.
@@ -173,7 +174,7 @@ air311_replacement(n, q2) :- air311_replacement_case(q2, s1), air311_statement_n
 // moved_10(n): the JSON util `moved-10`, used where the JSON says `matches: "moved-10"`
 //   N: metavariable this relation binds for the calling rule
 .decl air311_moved_10(n: node, n_mv: loc)
-air311_moved_10(n, N) :- air311_moved_bare(n, N, _), !air311_alt(n, "15").
+air311_moved_10(n, N) :- air311_moved_bare(n, N, _), !air311_alt_15(n).
 
 // replacement_11(n): the JSON util `replacement-11`, used where the JSON says `matches: "replacement-11"`
 .decl air311_replacement_11(n: node)
@@ -192,7 +193,7 @@ air311_moved_11(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_16(n, 
 // AIR311(n): a finding at node n, from clause `name-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311(at: loc, n: node, orig: loc) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311(at: loc, n_mv: node, orig: loc) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311(N, n, ORIG) :- (air311_old(n), air311_moved_1(n, N, ORIG) ; air311_quoted(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -210,7 +211,7 @@ air311_quoted(n, N, ORIG) :- air311_demand_quoted(n), air311_string_literal(n), 
 // AIR311_name_2(n, detail): findings from clauses `name-2`, `name-3`, `name-4`, `name-5` and 4 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_2(at: loc, n: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_2(at: loc, n_mv: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_2(N, n, "Import `Asset` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0)") :- (air311_old_name_2(n), air311_moved_2(n, N) ; air311_quoted_name_2(n, N)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -260,7 +261,7 @@ air311_quoted_name_5(n, N) :- air311_demand_quoted_name_5(n), air311_string_lite
 // AIR311_name_6(n): a finding at node n, from clause `name-6`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_6(at: loc, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_6(at: loc, n_mv: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_6(N, n, ORIG) :- (air311_old_name_6(n), air311_moved_6(n, N, ORIG) ; air311_quoted_name_6(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -308,7 +309,7 @@ air311_quoted_name_10(n, N) :- air311_demand_quoted_name_10(n), air311_string_li
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_name_param(at: loc, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_param(at: loc, n_mv: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_param(N, n, ORIG) :- (air311_old_name_param(n), air311_moved_11(n, N, ORIG) ; air311_quoted_name_param(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n),
@@ -321,13 +322,13 @@ air311_old_name_param(n) :- sym_of(n, q1), match("(airflow\\.models)(\\.|$).*", 
 // quoted_name_param(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N, ORIG: metavariables this relation binds for the calling rule
 .decl air311_quoted_name_param(n: node, n_mv: loc, orig: loc)
-air311_quoted_name_param(n, N, ORIG) :- air311_string_literal(n), parsed(n, "annotation", r1),
-    within(c2, r1), air311_alt_60(c2, N, ORIG).
+air311_quoted_name_param(n, N, ORIG) :- air311_demand_quoted_name_param(n), air311_string_literal(n),
+    parsed(n, "annotation", r1), within(c2, r1), air311_alt_60(c2, N, ORIG).
 
 // AIR311_name_no_replacement(n): a finding at node n, from clause `name-no-replacement`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_no_replacement(at: loc, n: node, orig: loc) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
+.violation AIR311_name_no_replacement(at: loc, n_mv: node, orig: loc) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
     suppress noqa "AIR311"
 AIR311_name_no_replacement(N, n, ORIG) :-
     ( air311_old_name(n, "no_replacement"), air311_moved_bare(n, N, ORIG)
@@ -350,10 +351,11 @@ air311_quoted_name_no_replacement(n, N, ORIG) :- air311_demand_quoted_name_no_re
     suppress noqa "AIR311"
 AIR311_dag_sla_miss_callback(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla_miss_callback", c1), node(_, c1, _, _, _), K = c1,
-    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("sla_miss_callback", c3) } = 0,
-    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
-    field(p5, "function", c6), air311_callee(c6, ORIG), inside(n, p7, "module"),
-    within(c8, p7), air311_airflow_name(c8), air311_seen_airflow(n), glob("{DAG,dag}", ORIG).
+    count : { precedes(s2, n), kind(s2, "keyword_argument"), air311_tok_has_11(s2) } = 0,
+    child(p11, n, _), kind(p11, "argument_list"), child(p12, p11, _),
+    kind(p12, "call"), field(p12, "function", c13), air311_callee(c13, ORIG),
+    inside(n, p14, "module"), within(c15, p14), air311_airflow_name(c15), air311_seen_airflow(n),
+    glob("{DAG,dag}", ORIG).
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
@@ -370,10 +372,10 @@ air311_callee(n, ORIG) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     suppress noqa "AIR311"
 AIR311_timetable_datasets(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("datasets", c1), node(_, c1, _, _, _), K = c1,
-    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("datasets", c3) } = 0,
-    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
-    field(p5, "function", c6), air311_callee_timetable_datasets(c6), inside(n, p7, "module"),
-    within(c8, p7), air311_airflow_name(c8), air311_seen_airflow(n).
+    count : { precedes(s2, n), kind(s2, "keyword_argument"), air311_tok_has_12(s2) } = 0,
+    child(p11, n, _), kind(p11, "argument_list"), child(p12, p11, _),
+    kind(p12, "call"), field(p12, "function", c13), air311_callee_timetable_datasets(c13),
+    inside(n, p14, "module"), within(c15, p14), air311_airflow_name(c15), air311_seen_airflow(n).
 
 // callee_timetable_datasets(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 .decl air311_callee_timetable_datasets(n: node)
@@ -390,11 +392,11 @@ air311_callee_timetable_datasets(n) :- kind(n, "parenthesized_expression"), chil
     suppress noqa "AIR311"
 AIR311_builtin_operator_sla(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("sla", c1), node(_, c1, _, _, _), K = c1,
-    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("sla", c3) } = 0,
-    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
-    field(p5, "function", c6), air311_callee_builtin_operator_sla(c6, ORIG),
-    inside(n, p7, "module"), within(c8, p7), air311_airflow_name(c8), air311_seen_airflow(n),
-    suffix("Operator", ORIG).
+    count : { precedes(s2, n), kind(s2, "keyword_argument"), air311_tok_has_13(s2) } = 0,
+    child(p11, n, _), kind(p11, "argument_list"), child(p12, p11, _),
+    kind(p12, "call"), field(p12, "function", c13),
+    air311_callee_builtin_operator_sla(c13, ORIG), inside(n, p14, "module"), within(c15, p14),
+    air311_airflow_name(c15), air311_seen_airflow(n), suffix("Operator", ORIG).
 
 // callee_builtin_operator_sla(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
@@ -412,11 +414,11 @@ air311_callee_builtin_operator_sla(n, ORIG) :- kind(n, "parenthesized_expression
     suppress noqa "AIR311"
 AIR311_provider_operator_sla(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla", c1), node(_, c1, _, _, _), K = c1,
-    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("sla", c3) } = 0,
-    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
-    field(p5, "function", c6), air311_callee_provider_operator_sla(c6, ORIG),
-    inside(n, p7, "module"), within(c8, p7), air311_airflow_name(c8), air311_seen_airflow(n),
-    suffix("Operator", ORIG).
+    count : { precedes(s2, n), kind(s2, "keyword_argument"), air311_tok_has_13(s2) } = 0,
+    child(p11, n, _), kind(p11, "argument_list"), child(p12, p11, _),
+    kind(p12, "call"), field(p12, "function", c13),
+    air311_callee_provider_operator_sla(c13, ORIG), inside(n, p14, "module"),
+    within(c15, p14), air311_airflow_name(c15), air311_seen_airflow(n), suffix("Operator", ORIG).
 
 // callee_provider_operator_sla(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
@@ -484,6 +486,138 @@ air311_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n
 air311_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
     (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
     !field(s, "module_name", n), air311_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^Asset$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_3(n: node)
+.stored air311_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_3(n) :- field(n, "attribute", c10), glob("Asset", c10).
+air311_tok_has_3(n) :- op(n, t11), match("Asset", t11).
+air311_tok_has_3(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Asset)(?:\\W.*)?)$", g12).
+air311_tok_has_3(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:Asset)(?:\\W.*)?)$", g12).
+air311_tok_has_3(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:Asset)(?:\\W.*)?)$", g12).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^AssetAlias$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_4(n: node)
+.stored air311_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_4(n) :- field(n, "attribute", c10), glob("AssetAlias", c10).
+air311_tok_has_4(n) :- op(n, t11), match("AssetAlias", t11).
+air311_tok_has_4(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAlias)(?:\\W.*)?)$", g12).
+air311_tok_has_4(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAlias)(?:\\W.*)?)$", g12).
+air311_tok_has_4(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAlias)(?:\\W.*)?)$", g12).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^AssetAll$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_5(n: node)
+.stored air311_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_5(n) :- field(n, "attribute", c10), glob("AssetAll", c10).
+air311_tok_has_5(n) :- op(n, t11), match("AssetAll", t11).
+air311_tok_has_5(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAll)(?:\\W.*)?)$", g12).
+air311_tok_has_5(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAll)(?:\\W.*)?)$", g12).
+air311_tok_has_5(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAll)(?:\\W.*)?)$", g12).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^AssetAny$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_6(n: node)
+.stored air311_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_6(n) :- field(n, "attribute", c10), glob("AssetAny", c10).
+air311_tok_has_6(n) :- op(n, t11), match("AssetAny", t11).
+air311_tok_has_6(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAny)(?:\\W.*)?)$", g12).
+air311_tok_has_6(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAny)(?:\\W.*)?)$", g12).
+air311_tok_has_6(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetAny)(?:\\W.*)?)$", g12).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^attach$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_7(n: node)
+.stored air311_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_7(n) :- field(n, "attribute", c10), glob("attach", c10).
+air311_tok_has_7(n) :- op(n, t11), match("attach", t11).
+air311_tok_has_7(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:attach)(?:\\W.*)?)$", g12).
+air311_tok_has_7(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:attach)(?:\\W.*)?)$", g12).
+air311_tok_has_7(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:attach)(?:\\W.*)?)$", g12).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^poke_mode_only$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_8(n: node)
+.stored air311_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_8(n) :- field(n, "attribute", c10), glob("poke_mode_only", c10).
+air311_tok_has_8(n) :- op(n, t11), match("poke_mode_only", t11).
+air311_tok_has_8(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:poke_mode_only)(?:\\W.*)?)$", g12).
+air311_tok_has_8(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:poke_mode_only)(?:\\W.*)?)$", g12).
+air311_tok_has_8(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:poke_mode_only)(?:\\W.*)?)$", g12).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^expand_alias_to_assets$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_9(n: node)
+.stored air311_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_9(n) :- field(n, "attribute", c10), glob("expand_alias_to_assets", c10).
+air311_tok_has_9(n) :- op(n, t11), match("expand_alias_to_assets", t11).
+air311_tok_has_9(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:expand_alias_to_assets)(?:\\W.*)?)$", g12).
+air311_tok_has_9(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:expand_alias_to_assets)(?:\\W.*)?)$", g12).
+air311_tok_has_9(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:expand_alias_to_assets)(?:\\W.*)?)$", g12).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^AssetOrTimeSchedule$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_10(n: node)
+.stored air311_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_10(n) :- field(n, "attribute", c10), glob("AssetOrTimeSchedule", c10).
+air311_tok_has_10(n) :- op(n, t11), match("AssetOrTimeSchedule", t11).
+air311_tok_has_10(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetOrTimeSchedule)(?:\\W.*)?)$", g12).
+air311_tok_has_10(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetOrTimeSchedule)(?:\\W.*)?)$", g12).
+air311_tok_has_10(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:AssetOrTimeSchedule)(?:\\W.*)?)$", g12).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^sla_miss_callback$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_11(n: node)
+.stored air311_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_11(n) :- field(n, "name", c3), glob("sla_miss_callback", c3).
+air311_tok_has_11(n) :- op(n, t4), match("sla_miss_callback", t4).
+air311_tok_has_11(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sla_miss_callback)(?:\\W.*)?)$", g5).
+air311_tok_has_11(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sla_miss_callback)(?:\\W.*)?)$", g5).
+air311_tok_has_11(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:sla_miss_callback)(?:\\W.*)?)$", g5).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^datasets$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_12(n: node)
+.stored air311_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_12(n) :- field(n, "name", c3), glob("datasets", c3).
+air311_tok_has_12(n) :- op(n, t4), match("datasets", t4).
+air311_tok_has_12(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g5).
+air311_tok_has_12(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g5).
+air311_tok_has_12(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:datasets)(?:\\W.*)?)$", g5).
+
+// tok_has_13(n): a child of n, a named node or an anonymous token, matches "^sla$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air311_tok_has_13(n: node)
+.stored air311_tok_has_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air311_tok_has_13(n) :- field(n, "name", c3), glob("sla", c3).
+air311_tok_has_13(n) :- op(n, t4), match("sla", t4).
+air311_tok_has_13(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sla)(?:\\W.*)?)$", g5).
+air311_tok_has_13(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:sla)(?:\\W.*)?)$", g5).
+air311_tok_has_13(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:sla)(?:\\W.*)?)$", g5).
 
 // demand_alt_11: the rows of alt_11 its callers ask for (the metavariable columns they pass in)
 .decl air311_demand_alt_11(n: node, orig: loc)
@@ -607,6 +741,17 @@ air311_demand_quoted_name_10(n) :- inside(n, p1, "module"), within(c2, p1), air3
     air311_seen_airflow(n).
 air311_demand_quoted_name_10(n) :- air311_demand_alt_56(n).
 
+// demand_alt_60: the nodes alt_60 is asked at (its recursion looks at every descendant)
+.decl air311_demand_alt_60(n: node)
+air311_demand_alt_60(c2) :- air311_demand_quoted_name_param(n), air311_string_literal(n),
+    parsed(n, "annotation", r1), within(c2, r1).
+
+// demand_quoted_name_param: the nodes quoted_name_param is asked at (its recursion looks at every descendant)
+.decl air311_demand_quoted_name_param(n: node)
+air311_demand_quoted_name_param(n) :- inside(n, p1, "module"), within(c2, p1),
+    air311_airflow_name(c2), air311_seen_airflow(n).
+air311_demand_quoted_name_param(n) :- air311_demand_alt_60(n).
+
 // demand_alt_64: the nodes alt_64 is asked at (its recursion looks at every descendant)
 .decl air311_demand_alt_64(n: node)
 air311_demand_alt_64(c2) :- air311_demand_quoted_name_no_replacement(n), air311_string_literal(n),
@@ -624,14 +769,42 @@ air311_demand_attribute_fallback(n) :- air311_demand_alt_6(n, ORIG), kind(n, "at
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
     field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_1(c9),
     field(c9, "attribute", c10), text(c10, t_orig2), text(ORIG, t_orig2), @doc(c10) = @doc(ORIG).
-air311_demand_attribute_fallback(n) :- air311_alt_case(q1, s1, s2), kind(n, "attribute"),
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
-    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, s1),
-    field(c9, "attribute", c10), glob(s2, c10).
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "2"),
+    air311_tok_has_3(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "3"),
+    air311_tok_has_4(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "4"),
+    air311_tok_has_5(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "5"),
+    air311_tok_has_6(c9).
 air311_demand_attribute_fallback(n) :- air311_demand_alt_11(n, ORIG), kind(n, "attribute"),
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
     field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_6(c9),
     field(c9, "attribute", c10), text(c10, t_orig4), text(ORIG, t_orig4), @doc(c10) = @doc(ORIG).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "7"),
+    air311_tok_has_7(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "8"),
+    air311_tok_has_8(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "9"),
+    air311_tok_has_9(c9).
+air311_demand_attribute_fallback(n) :- kind(n, "attribute"),
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "10"),
+    air311_tok_has_10(c9).
 air311_demand_attribute_fallback(n) :- air311_demand_alt_16(n, ORIG), kind(n, "attribute"),
     within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
     field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_11(c9),
@@ -640,28 +813,55 @@ air311_demand_attribute_fallback(n) :- air311_demand_alt_16(n, ORIG), kind(n, "a
 // demand_import_fallback: the nodes import_fallback is asked at (it looks at every ancestor of every node)
 .decl air311_demand_import_fallback(n: node)
 air311_demand_import_fallback(st2) :- air311_demand_alt_6(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_1(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig1), text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_1(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig1),
-    text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
-air311_demand_import_fallback(st2) :- air311_alt_case(q1, s1, s2), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "2"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("Asset", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, s1),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "3"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAlias", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "4"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAll", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "5"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAny", c6).
 air311_demand_import_fallback(st2) :- air311_demand_alt_11(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_6(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig3), text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_6(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig3),
-    text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "7"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("attach", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "8"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("poke_mode_only", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "9"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("expand_alias_to_assets", c6).
+air311_demand_import_fallback(st2) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1,
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "10"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("AssetOrTimeSchedule", c6).
 air311_demand_import_fallback(st2) :- air311_demand_alt_16(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_11(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig5),
-    text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
+    ref_site(n, b1), st2 = b1, within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_11(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig5), text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
 
 // demand_operators_segment: the nodes operators_segment is asked at (its recursion looks at every descendant)
 .decl air311_demand_operators_segment(n: node)
@@ -669,6 +869,29 @@ air311_demand_operators_segment(n) :- sym_of(n, q1),
     match("(airflow\\.providers)(\\.|$).*", q1), air311_moved_bare(n, _, ORIG).
 air311_demand_operators_segment(c2) :- air311_demand_operators_segment(n), kind(n, "attribute"),
     field(n, "object", c2).
+
+// demand_seen_airflow: the nodes seen_airflow is asked at (it looks at every ancestor of every node)
+.decl air311_demand_seen_airflow(n: node)
+air311_demand_seen_airflow(n) :- inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2).
+air311_demand_seen_airflow(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("sla_miss_callback", c1), node(_, c1, _, _, _), K = c1, child(p11, n, _),
+    kind(p11, "argument_list"), child(p12, p11, _), kind(p12, "call"),
+    field(p12, "function", c13), air311_callee(c13, ORIG), inside(n, p14, "module"),
+    within(c15, p14), air311_airflow_name(c15), glob("{DAG,dag}", ORIG).
+air311_demand_seen_airflow(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("datasets", c1), node(_, c1, _, _, _), K = c1, child(p11, n, _), kind(p11, "argument_list"),
+    child(p12, p11, _), kind(p12, "call"), field(p12, "function", c13),
+    air311_callee_timetable_datasets(c13), inside(n, p14, "module"), within(c15, p14),
+    air311_airflow_name(c15).
+air311_demand_seen_airflow(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("sla", c1), node(_, c1, _, _, _), K = c1, child(p11, n, _), kind(p11, "argument_list"),
+    child(p12, p11, _), kind(p12, "call"), field(p12, "function", c13),
+    air311_callee_builtin_operator_sla(c13, ORIG), inside(n, p14, "module"), within(c15, p14),
+    air311_airflow_name(c15), suffix("Operator", ORIG).
+air311_demand_seen_airflow(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("sla", c1), node(_, c1, _, _, _), K = c1, child(p11, n, _), kind(p11, "argument_list"),
+    child(p12, p11, _), kind(p12, "call"), field(p12, "function", c13),
+    inside(n, p14, "module"), within(c15, p14), air311_airflow_name(c15).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl air311_up_1(n: node, p: node)
@@ -707,13 +930,6 @@ air311_set_38("airflow.decorators.base.DecoratedOperator").
 air311_set_38("airflow.decorators.base.TaskDecorator").
 air311_set_38("airflow.decorators.base.get_unique_task_id").
 air311_set_38("airflow.decorators.base.task_decorator_factory").
-
-// alt_case: one row per relation folded into alt: its key, then the strings that differed.
-.decl air311_alt_case(key: symbol, s1: symbol, s2: symbol)
-air311_alt_case("10", "5", "AssetAny"). air311_alt_case("12", "7", "attach").
-air311_alt_case("13", "8", "poke_mode_only"). air311_alt_case("14", "9", "expand_alias_to_assets").
-air311_alt_case("15", "10", "AssetOrTimeSchedule"). air311_alt_case("7", "2", "Asset").
-air311_alt_case("8", "3", "AssetAlias"). air311_alt_case("9", "4", "AssetAll").
 
 // old_name_case: one row per relation folded into old_name: its key, then the strings that differed.
 .decl air311_old_name_case(key: symbol, s1: symbol)
@@ -761,48 +977,116 @@ air311_alt_4(n) :- within_stop(n, p2, air311_stop_3), kind(p2, "delete_statement
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air311_alt_6(n: node, orig: loc)
 air311_alt_6(n, ORIG) :- air311_demand_alt_6(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air311_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_1(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_1(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig1), text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
 air311_alt_6(n, ORIG) :- air311_demand_alt_6(n, ORIG), kind(n, "attribute"), air311_attribute_fallback(n),
     air311_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_1(c9),
     field(c9, "attribute", c10), text(c10, t_orig2), text(ORIG, t_orig2), @doc(c10) = @doc(ORIG).
 
-// alt(n, key): 8 copies of one rule set (`alt_10`, `alt_12`, `alt_13` and 5 more), folded into one: row `key` of
-// alt_case gives the strings each copy had.
-.decl air311_alt(n: node, key: symbol)
-air311_alt(n, q1) :- air311_alt_case(q1, s1, s2), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air311_import_fallback(st2),
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_7(n: node)
+air311_alt_7(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
     within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, s1),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
-air311_alt(n, q1) :- air311_alt_case(q1, s1, s2), kind(n, "attribute"), air311_attribute_fallback(n),
-    air311_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, s1),
-    field(c9, "attribute", c10), glob(s2, c10).
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "2"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("Asset", c6).
+air311_alt_7(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "2"),
+    air311_tok_has_3(c9).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_8(n: node)
+air311_alt_8(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "3"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAlias", c6).
+air311_alt_8(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "3"),
+    air311_tok_has_4(c9).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_9(n: node)
+air311_alt_9(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "4"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAll", c6).
+air311_alt_9(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "4"),
+    air311_tok_has_5(c9).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_10(n: node)
+air311_alt_10(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "5"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("AssetAny", c6).
+air311_alt_10(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "5"),
+    air311_tok_has_6(c9).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air311_alt_11(n: node, orig: loc)
 air311_alt_11(n, ORIG) :- air311_demand_alt_11(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air311_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_6(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_6(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig3), text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
 air311_alt_11(n, ORIG) :- air311_demand_alt_11(n, ORIG), kind(n, "attribute"), air311_attribute_fallback(n),
     air311_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_6(c9),
     field(c9, "attribute", c10), text(c10, t_orig4), text(ORIG, t_orig4), @doc(c10) = @doc(ORIG).
 
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_12(n: node)
+air311_alt_12(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "7"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob("attach", c6).
+air311_alt_12(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "7"),
+    air311_tok_has_7(c9).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_13(n: node)
+air311_alt_13(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "8"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("poke_mode_only", c6).
+air311_alt_13(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "8"),
+    air311_tok_has_8(c9).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_14(n: node)
+air311_alt_14(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "9"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("expand_alias_to_assets", c6).
+air311_alt_14(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "9"),
+    air311_tok_has_9(c9).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl air311_alt_15(n: node)
+air311_alt_15(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, air311_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement(c5, "10"),
+    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    glob("AssetOrTimeSchedule", c6).
+air311_alt_15(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_up_3(n, p7),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement(c9, "10"),
+    air311_tok_has_10(c9).
+
 // alt_16(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air311_alt_16(n: node, orig: loc)
 air311_alt_16(n, ORIG) :- air311_demand_alt_16(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    (st2 = b1 ; within(b1, st2)), air311_import_fallback(st2),
-    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
-    field(p3, "body", c4), has(c4, c5, "dotted_name"), air311_replacement_11(c5),
-    air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
+    air311_replacement_11(c5), air311_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
     text(c6, t_orig5), text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
 air311_alt_16(n, ORIG) :- air311_demand_alt_16(n, ORIG), kind(n, "attribute"), air311_attribute_fallback(n),
     air311_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air311_replacement_11(c9),
@@ -908,13 +1192,13 @@ air311_alt_56(n, N) :- air311_demand_alt_56(n), air311_quoted_name_10(n, N).
 // alt_60(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule
 .decl air311_alt_60(n: node, n_mv: loc, orig: loc)
-air311_alt_60(n, N, ORIG) :- kind(n, "identifier"), glob("{Param,ParamsDict,DagParam}", n),
-    N = n, ORIG = n,
+air311_alt_60(n, N, ORIG) :- air311_demand_alt_60(n), kind(n, "identifier"),
+    glob("{Param,ParamsDict,DagParam}", n), N = n, ORIG = n,
     ( air311_old_name_param(n)
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name_param(p1)
     ).
 
-air311_alt_60(n, N, ORIG) :- air311_quoted_name_param(n, N, ORIG).
+air311_alt_60(n, N, ORIG) :- air311_demand_alt_60(n), air311_quoted_name_param(n, N, ORIG).
 
 // alt_64(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule

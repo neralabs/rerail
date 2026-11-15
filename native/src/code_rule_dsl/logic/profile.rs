@@ -668,9 +668,13 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        if on && (all || std::thread::current().name() == Some("main")) {
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
         }
         return Span(false);
     }
@@ -876,8 +880,8 @@ pub fn strict() -> bool {
 ///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
 ///
 /// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
-/// every fault and goes on, each distinct one once with its stack, and ends the process with status 3 if there was
-/// one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
+/// every fault and goes on, a line each as it happens (the first 60 with their stacks), and ends the process with
+/// status 3 if there was one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
 /// out (`reuse::NOT_OUTPUTS`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Warm {
@@ -887,12 +891,17 @@ pub enum Warm {
 }
 
 pub fn warm_mode() -> Warm {
-    static WARM: std::sync::OnceLock<Warm> = std::sync::OnceLock::new();
-    *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
-        Err(_) | Ok("" | "0" | "off") => Warm::Off,
-        Ok("list") => Warm::List,
-        Ok(_) => Warm::Fail,
-    })
+    // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
+    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+        Err(_) | Ok("" | "0" | "off") => 0,
+        Ok("list") => 2,
+        Ok(_) => 1,
+    }) {
+        0 => Warm::Off,
+        2 => Warm::List,
+        _ => Warm::Fail,
+    }
 }
 
 /// Whether the warm check is on (`warm_mode`).
@@ -947,8 +956,8 @@ pub fn warm_job(what: &str) {
     }
 }
 
-/// The faults of a `RERAIL_WARM=list` run so far: by kind, how many and the first's detail.
-static WARM_FAULTS: std::sync::Mutex<BTreeMap<(&'static str, String), usize>> = std::sync::Mutex::new(BTreeMap::new());
+/// How many faults a `RERAIL_WARM=list` run has had so far: its exit status is 3 if any.
+static WARM_FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A recomputation in a warm run (`warm_mode`): `kind` is what happened (a SQLite write, a queued write, ...),
 /// `detail` which one. Nothing without `RERAIL_WARM`. Safe inside SQLite's callbacks: it aborts, never unwinds.
@@ -967,37 +976,21 @@ pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
         eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
         std::process::abort();
     }
-    let mut faults = WARM_FAULTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let first = faults.is_empty();
-    let first_of_kind = !faults.keys().any(|(k, _)| *k == kind);
-    let n = {
-        let n = faults.entry((kind, detail.clone())).or_insert(0);
-        *n += 1;
-        *n
-    };
-    drop(faults);
+    // Each fault is a line as it happens (`sort | uniq -c` groups them), the first 60 with their stacks.
+    let n = WARM_FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     #[cfg(not(windows))]
-    if first {
+    if n == 1 {
         extern "C" fn report() {
-            let faults = WARM_FAULTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let total: usize = faults.values().sum();
-            eprintln!("rerail: RERAIL_WARM: {total} recomputations in a warm run, {} distinct:", faults.len());
-            for ((kind, detail), n) in faults.iter().take(200) {
-                eprintln!("  {n:>7}  {kind}: {detail}");
-            }
+            eprintln!("rerail: RERAIL_WARM: {} recomputations in a warm run", WARM_FAULTS.load(std::sync::atomic::Ordering::Relaxed));
             // SAFETY: ends the process with the warm check's status, after its other exit handlers ran.
             unsafe { libc::_exit(3) };
         }
         // SAFETY: registers a function without arguments, run once as the process exits.
         unsafe { libc::atexit(report) };
     }
-    #[cfg(windows)]
-    let _ = first;
-    // Each distinct one once, with its stack (the first 60; then without).
-    static STACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    if n == 1 && (first_of_kind || STACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 60) {
+    if n <= 60 {
         eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
-    } else if n == 1 {
+    } else {
         eprintln!("rerail: RERAIL_WARM: {kind}: {detail} (thread {thread}, span {})", current());
     }
 }

@@ -557,7 +557,7 @@ pub(super) struct CoreRows {
     pub(super) long_text_any: bool,
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
-    pub(super) text_nodes: Option<(BTreeSet<String>, BTreeSet<String>)>,
+    pub(super) text_nodes: Option<super::TextNodes>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -582,6 +582,8 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
+    end_point: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -644,10 +646,18 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
-    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, or in a field read.
+    /// Whether a rule reads node `id`'s `text` (`text_nodes`): of kind `kind`, in a field read, a child of a kind read,
+    /// or with a text a rule compares it with.
     fn reads_text(&self, f: &Facts, dialect: &Dialect, id: u32, kind: &str) -> bool {
-        self.text_nodes.as_ref().is_none_or(|(kinds, fields)| {
-            kinds.contains(kind) || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| fields.contains(name))
+        self.text_nodes.as_ref().is_none_or(|t| {
+            t.kinds.contains(kind)
+                || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| t.fields.contains(name))
+                || !(t.parents.is_empty() && t.parent_fields.is_empty())
+                    && f.parent(id).is_some_and(|p| {
+                        t.parents.contains(dialect.name(f, p))
+                            || dialect.catalog.field_name(f.field[p as usize]).is_some_and(|name| t.parent_fields.contains(name))
+                    })
+                || !t.values.is_empty() && t.values.contains(f.text(id))
         })
     }
 
@@ -827,6 +837,10 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
+        if x.ends > 0 {
+            let from = p.len() + x.ends_from();
+            self.end_point.extend((0..x.ends).map(|l| [p.global(l), p.global(from + l)]));
+        }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -855,7 +869,8 @@ impl CoreRows {
         let narrowed = self.text_nodes.is_some();
         let token_text = projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all");
         if wants_text {
-            for i in 0..(p.locs() - p.len()) as usize {
+            // An end point has no text (it is empty): the positions before them.
+            for i in 0..x.ends_from() as usize {
                 let [a, b] = p.span(p.len() + i as u32);
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
@@ -1100,6 +1115,7 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("end_point", pair(&["n", "p"], &self.end_point)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),

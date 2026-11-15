@@ -703,7 +703,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("completed_directory_reuse", &["tree_hash_id", "package_hash_id", "catalog_hash_id"]),
     ("completed_workspace_revisions", &["workspace_id", "revision", "catalog_hash_id", "completed_at"]),
     ("context_check_results", &["source_id", "context_hash_id", "check_id", "codec_id", "raw_length", "frame"]),
-    ("corpus_decided", &["singleton", "run", "time"]),
+    ("corpus_decided", &["singleton", "run", "time", "swept"]),
     ("corpus_live", &["source_id", "grammar_version", "tape_format"]),
     ("corpus_manifest_plans", &["manifest_id", "plan_digest"]),
     ("corpus_manifests", &["manifest_id", "root_id", "last_run", "last_time", "grammar_version", "tape_format", "plan_digest", "digest", "sources", "lane"]),

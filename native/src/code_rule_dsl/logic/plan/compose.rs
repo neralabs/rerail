@@ -73,7 +73,7 @@ pub fn accepts(prog: &Program) -> Result<bool> {
     {
         return Ok(false);
     }
-    for scc in strata(prog)?.0 {
+    for scc in components_of(prog)? {
         if scc.len() != 1 {
             return Ok(false);
         }
@@ -236,7 +236,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             BTreeMap::new(),
         );
     }
-    for scc in strata(prog)?.0 {
+    for scc in components_of(prog)? {
         let rel = scc.iter().next().unwrap();
         if !needed.contains(rel) || prog.inputs.contains(rel) {
             continue;

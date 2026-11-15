@@ -37,10 +37,11 @@ tc006_plain_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
 .decl tc006_type_slot(n: node)
 tc006_type_slot(n) :- child(p1, n, _), kind(p1, "argument_list"), field(p2, "arguments", p1),
     tc006_cast_call(p2), !tc006_alt_2(n).
-tc006_type_slot(n) :- field(p4, "value", n), kind(p4, "keyword_argument"),
-    field(p4, "name", c5), glob("typ", c5), child(p6, p4, _),
-    kind(p6, "argument_list"), field(p7, "arguments", p6), tc006_cast_call(p7).
-tc006_type_slot(n) :- child(p8, n, _), kind(p8, "parenthesized_expression"), tc006_type_slot(p8).
+tc006_type_slot(n) :- field(p4, "value", n), kind(p4, "keyword_argument"), tc006_tok_has_1(p4),
+    child(p13, p4, _), kind(p13, "argument_list"), field(p14, "arguments", p13),
+    tc006_cast_call(p14).
+tc006_type_slot(n) :- child(p15, n, _), kind(p15, "parenthesized_expression"),
+    tc006_type_slot(p15).
 
 // unquoted_type(n): the JSON util `unquoted-type`, used where the JSON says `matches: "unquoted-type"`
 .decl tc006_unquoted_type(n: node)
@@ -76,6 +77,18 @@ TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 TC006_unquoted_cast_type_generator_raw(TYPE, n) :- kind(n, "generator_expression"),
     match("(?s)\\((?:\\s*#[^\\n]*\\n)*\\s*(?P<TYPE>[^\\s#].*?)(?:\\s*#[^\\n\"']*\\n)*\\s*\\)", n),
     field(p1, "arguments", n), tc006_cast_call(p1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^typ$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl tc006_tok_has_1(n: node)
+.stored tc006_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+tc006_tok_has_1(n) :- field(n, "name", c5), glob("typ", c5).
+tc006_tok_has_1(n) :- op(n, t6), match("typ", t6).
+tc006_tok_has_1(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g7).
+tc006_tok_has_1(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g7).
+tc006_tok_has_1(n) :- node_text(n, g7), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:typ)(?:\\W.*)?)$", g7).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl tc006_alt_1(n: node)

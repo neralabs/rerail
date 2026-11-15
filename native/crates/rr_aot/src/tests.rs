@@ -220,3 +220,38 @@ fn tier2_words_a_token() {
     }
 }
 
+
+/// A profile's load (`xctrace`): one form over the corpus for `RR_SECONDS` of CPU, `RR_FORM`
+/// `tier1` (the ahead-of-time tier 1, its generated Rust with line tables) or `lexer` (the
+/// lean lexer), to place the samples on their lines.
+#[test]
+#[ignore = "a profile's load: run by hand"]
+fn aot_profile_loop() {
+    let form = std::env::var("RR_FORM").unwrap_or_else(|_| "tier1".into());
+    let seconds: f64 = std::env::var("RR_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+    let files = corpus();
+    // `jit1`: the JIT's tier 1 over every file, no ahead-of-time build (a scratch compile is
+    // another program).
+    let jit1 = form == "jit1";
+    let aot = (!jit1).then(|| crate::aot(BOTH).expect("the ahead-of-time build"));
+    // Every file: tier 1 runs on each, and a scratch compile may refuse others.
+    let ours: Vec<&String> = files.iter().collect();
+    let mut batches: Vec<_> = aot.iter().flat_map(|a| ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&a.parser.tier1, &[f.as_bytes()]))).collect();
+    let jit = rerail_rr_parser::compiled().expect("compiles");
+    let mut jit_batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()])).collect();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let (t0, (i0, c0)) = (thread_cpu(), retired());
+    let (mut rounds, mut n) = (0usize, 0usize);
+    while (thread_cpu() - t0).as_secs_f64() < seconds {
+        match form.as_str() {
+            "tier1" => batches.iter_mut().for_each(|b| b.call(&aot.as_ref().expect("built").parser.tier1)),
+            "jit1" => jit_batches.iter_mut().for_each(|b| b.call(&jit.parser.tier1)),
+            "lexer" => ours.iter().for_each(|f| n += rr::lean::token_count(f)),
+            other => panic!("RR_FORM={other}: tier1 or lexer"),
+        }
+        rounds += 1;
+    }
+    std::hint::black_box(n);
+    let (t1, (i1, c1)) = (thread_cpu(), retired());
+    eprintln!("{form}: {rounds} rounds, {:.1}M instructions and {:.1}M cycles a round, {:?} CPU; {} a round", (i1 - i0) as f64 / rounds as f64 / 1e6, (c1 - c0) as f64 / rounds as f64 / 1e6, (t1 - t0) / rounds as u32, n / rounds.max(1));
+}

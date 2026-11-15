@@ -3,8 +3,9 @@
 //! runs after every script, so the program reads it after them, wherever it stands in the file: the
 //! program's text stands out of host order, as a Vue template expression's does. Its first script's
 //! `lang` names the dialect (`ts`, `tsx`, else JavaScript). The program is read from the host's
-//! recovered tree: the host's syntax errors are not its own.
+//! recovered tree's tape: the host's syntax errors are not its own.
 
+use super::host::HostNode;
 use super::segments::SegmentMap;
 use super::{Embedder, Program};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -13,12 +14,11 @@ use ast_grep_core::AstGrep;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use std::sync::Arc;
-use tree_sitter::Node as TsNode;
 
 /// The documents of the HTML file `source`, persisted as the store keeps them and restored: the
 /// file's tree and the program its scripts and handlers make.
 pub fn html(source: &str) -> AstGrep<TapeDoc> {
-    let grammar = Grammar::new(GrammarDialect::Html).expect("grammar");
+    let grammar = Grammar::new(GrammarDialect::TestHtml).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
         .expect("encodes")
@@ -34,16 +34,15 @@ pub fn html(source: &str) -> AstGrep<TapeDoc> {
 pub struct TestScript;
 
 impl Embedder for TestScript {
-    fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program> {
+    fn build(&self, root: HostNode<'_>, source: &str) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
-        let mut cursor = root.walk();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             match node.kind() {
                 "script_element" => scripts.push(node),
                 "attribute" => {
-                    let mut named = node.named_children(&mut cursor);
+                    let mut named = node.named_children();
                     let name = named.next();
                     let value = named.next().map(|value| {
                         if value.kind() == "quoted_attribute_value" {
@@ -63,7 +62,7 @@ impl Embedder for TestScript {
                 }
                 _ => {}
             }
-            let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+            let children = node.named_children().collect::<Vec<_>>();
             stack.extend(children.into_iter().rev());
         }
         let dialect = match scripts.first().and_then(|script| lang(*script, source)) {
@@ -82,9 +81,8 @@ impl Embedder for TestScript {
             segments.push(at, text.len(), range.end..range.end, false, false);
         };
         for script in &scripts {
-            let mut cursor = script.walk();
             if let Some(body) = script
-                .named_children(&mut cursor)
+                .named_children()
                 .find(|child| child.kind() == "raw_text")
             {
                 copy(body.byte_range(), "\n");
@@ -111,14 +109,12 @@ impl Embedder for TestScript {
 }
 
 /// The value of a script element's `lang` attribute.
-fn lang<'s>(script: TsNode<'_>, source: &'s str) -> Option<&'s str> {
-    let mut cursor = script.walk();
+fn lang<'s>(script: HostNode<'_>, source: &'s str) -> Option<&'s str> {
     let start = script
-        .named_children(&mut cursor)
+        .named_children()
         .find(|child| child.kind() == "start_tag")?;
-    let mut cursor = start.walk();
     let attributes = start
-        .named_children(&mut cursor)
+        .named_children()
         .filter(|child| child.kind() == "attribute")
         .collect::<Vec<_>>();
     attributes.into_iter().find_map(|attribute| {
