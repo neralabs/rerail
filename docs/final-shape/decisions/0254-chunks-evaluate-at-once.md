@@ -93,6 +93,14 @@ pool and a load's path resolved once (c437302c7):
 | 8 at once | 44.1 s | 202.8 s | 71.0 s | 2,222 B | 2.66 GB | 29,747 (the same set) |
 | 15 at once (`RERAIL_CHUNKS_AT_ONCE=15`) | 38.1 s | 210.9 s | 61.9 s | 2,188 B | 2.77 GB | 29,747 (the same set) |
 
+Again on the M3 Max idle (load average 3.9 before the runs; the run itself brings it to 8–11):
+
+| | wall | user | sys | instructions | peak | violations |
+|---|---|---|---|---|---|---|
+| 8 at once | 43.4 s | 208.9 s | 76.6 s | 2,238 B | 2.72 GB | 29,747 (the same set) |
+| 11 at once | 42.6 s | 230.2 s | 70.9 s | 2,394 B | 2.73 GB | 29,747 (the same set) |
+| 15 at once | 37.5 s | 224.3 s | 65.2 s | 2,145 B | 2.72 GB | 29,747 (the same set) |
+
 System time halves: the pool's threads evaluate chunks instead of waking for a component's small jobs and
 yielding.
 
