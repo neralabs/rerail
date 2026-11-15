@@ -500,12 +500,37 @@ export async function filesystemClock(): Promise<number> {
 interface WalkGap {
   readonly path?: string;
   readonly reason: string;
+  /**
+   * Said by the checkpoint but not yet a place for the record (`#tellGaps`): an EPERM the walk had no room to look at
+   * again (`MAX_LOOKED_AGAIN`), which a later walk looks at, or a whole walk a path being removed made fail.
+   */
+  readonly unrecorded?: true;
 }
+/**
+ * A path that refused the walk with EPERM, looked at once more by `lookedAgain` before its failure is a gap: Windows refuses
+ * a path for a moment while it is removed, and always when the user is denied it.
+ */
+interface Refusal {
+  /** The failure's path as the session folder names it. */
+  readonly path: string;
+  /** The path the refusal named: the one examined, or a child whose real path its folder's listing asked for. */
+  readonly refused: string;
+  /** `refused` is the path examined, so a look again that finds it gone finds the failure's path gone. */
+  readonly examined: boolean;
+  /** What the walk's lstat found at `refused` before the refusal, when it found it there. */
+  readonly before?: Stats;
+}
+/** What a look again at a refused path finds: still there (a denial), gone, or another entry than the walk found. */
+type LookedAgain = "there" | "gone" | "changed";
 interface SourceScan {
   readonly sources: Map<string, Source>;
   readonly failedRoots: Set<string>;
   /** What the walk could not check, in the order it met them. */
   readonly errors: WalkGap[];
+  /** The failures a look again found no denial (`judgeRefusals`): no gap. */
+  readonly withdrawn: Set<string>;
+  /** The paths of failures whose EPERM the walk had no room to look at again: said, not recorded (`WalkGap.unrecorded`). */
+  readonly unconfirmed: Set<string>;
   /** Unlisted files too large to read, by path (`SourceDiscovery.unread`); left out of `errors`. */
   readonly unread: Map<string, { readonly stamp: string; readonly readError: string }>;
   /**
@@ -542,10 +567,12 @@ interface SourceWalk {
   readonly roots: ReadonlySet<string>;
   /** What the walk asks of each file and folder it finds: the auditor's `walkView` for this walk, or the auditor. */
   readonly view: WalkView;
-  /** The paths that refused the walk with EPERM, to look at again once its other paths are done (`deferredRefusal`). */
-  refused?: string[];
-  /** The walk is looking at `refused` again: a refusal now is the path's. */
-  retried?: boolean;
+  /** Whether the record holds the EPERM gap of a path (`#holdsRefusal`): a refusal there is a gap, and is not looked at again. */
+  readonly held: (path: string) => boolean;
+  /** The refusals to look at again once the walk's other paths are done (`noteRefusal`), at most `MAX_LOOKED_AGAIN`. */
+  refusals?: Refusal[];
+  /** When the first of `refusals` came: they are looked at no sooner than `REFUSED_RETRY_MS` after it. */
+  refusedAt?: number;
 }
 /** What a walk of `SourceDiscovery` compares its scan with, all read before it started. */
 interface WalkStart {
@@ -718,18 +745,89 @@ function vanished(error: unknown): boolean {
 function goneWhenExamined(walk: SourceWalk, absolute: string, error: unknown): boolean {
   return vanished(error) && !walk.roots.has(absolute);
 }
-/** How long a walk waits before it looks again at the paths that refused it with EPERM (`deferredRefusal`). */
-const REFUSED_RETRY_MS = 25;
 /**
- * Whether the walk looks at `absolute` again later: on Windows a file or folder being removed refuses every open with
- * EPERM until the last handle to it closes, as one the user is denied does, and the real path of a child being removed
- * fails its folder's listing the same way. Looked at again once (`#observeRefused`), what is gone then is absent and
- * what is denied fails again.
+ * How long after a walk's first EPERM its refusals are looked at again, at the least (`judgeRefusals`). On Windows 11 a
+ * path being removed refuses its real path or an open with EPERM for less than the time to the next call: of 52 such
+ * refusals sampled beside a process making and removing files, an lstat right after found all 52 gone.
  */
-function deferredRefusal(walk: SourceWalk, absolute: string, error: unknown): boolean {
-  if (walk.retried === true || !hasErrorCode(error, "EPERM")) return false;
-  (walk.refused ??= []).push(absolute);
-  return true;
+const REFUSED_RETRY_MS = 5;
+/**
+ * The most refusals one walk looks at again, as many as a checkpoint records (`MAX_TOLD_AT_ONCE`): the rest are said and
+ * left to later walks to look at, so a tree of 10,000 denied files costs a walk at most that many lstats more.
+ */
+const MAX_LOOKED_AGAIN = MAX_TOLD_AT_ONCE;
+/** The path an error names, when it names one. */
+function refusedPath(error: unknown): string | undefined {
+  const path: unknown = error instanceof Error && "path" in error ? error.path : undefined;
+  return typeof path === "string" ? path : undefined;
+}
+/**
+ * Keeps the walk's failure of `absolute` (`#recordObservationFailure`) to look at again once its other paths are done
+ * (`judgeRefusals`) when it refused with EPERM, as Windows refuses a path being removed and one the user is denied. Not a
+ * path the walk starts at, which stays a gap, nor one whose gap the record holds (`SourceWalk.held`); past
+ * `MAX_LOOKED_AGAIN`, the failure is said but not recorded at this walk (`SourceScan.unconfirmed`).
+ */
+function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: Stats | undefined): void {
+  const path = sessionPath(walk.discovery.root, absolute);
+  if (!hasErrorCode(error, "EPERM") || walk.roots.has(absolute) || walk.held(path)) return;
+  const refusals = (walk.refusals ??= []);
+  if (refusals.length === MAX_LOOKED_AGAIN) return void walk.scan.unconfirmed.add(path);
+  refusals.push(refusalOf(path, absolute, refusedPath(error) ?? absolute, before));
+  walk.refusedAt ??= Date.now();
+}
+/** What the walk's lstat found (`before`) names `absolute`: it tells whether `refused` is still that entry only when it is `absolute`. */
+function refusalOf(path: string, absolute: string, refused: string, before: Stats | undefined): Refusal {
+  const examined = refused === absolute;
+  return { path, refused, examined, ...(examined && before !== undefined ? { before } : {}) };
+}
+/**
+ * What an lstat of `refusal.refused` finds: gone (`vanished`), there as the walk found it, or another entry (a path
+ * removed and made again). A path it cannot look at (an EPERM, beneath a folder the user is denied) is there.
+ */
+async function lookedAgain({ refused, before }: Refusal): Promise<LookedAgain> {
+  const now = await lstat(refused).then(info => ({ info }), (error: unknown) => ({ error }));
+  if ("error" in now) return vanished(now.error) ? "gone" : "there";
+  return before === undefined || sameEntry(before, now.info) ? "there" : "changed";
+}
+function sameEntry(before: Stats, now: Stats): boolean {
+  return before.dev === now.dev && before.ino === now.ino;
+}
+/**
+ * Looks again at each refusal of `walk` (`noteRefusal`), `REFUSED_RETRY_MS` after the first at the least: no listing is
+ * made and no path walked again. One there is a denial, and its failure a gap; any other is no gap (`withdrawn`), and a
+ * path examined that is gone is absent from the walk (`absentAfterAll`).
+ */
+async function judgeRefusals(walk: SourceWalk): Promise<void> {
+  const { refusals, refusedAt } = walk;
+  if (refusals === undefined || refusedAt === undefined || walk.discovery.cancelled) return;
+  await new Promise(resolve => { setTimeout(resolve, Math.max(0, refusedAt + REFUSED_RETRY_MS - Date.now())); });
+  const looks = await Promise.all(refusals.map(lookedAgain));
+  refusals.forEach((refusal, index) => notDenied(walk, refusal, looks[index]));
+}
+function notDenied(walk: SourceWalk, { path, examined }: Refusal, looked: LookedAgain | undefined): void {
+  if (looked === "there") return;
+  walk.scan.withdrawn.add(path);
+  if (looked === "gone" && examined) absentAfterAll(walk, path);
+}
+/**
+ * Takes back the walk's failure of `path`, which was gone when looked at again: a file's read error, or a folder's
+ * (`failFolder`) and what it set for each source seen in it before, which then reads as deleted, as when the walk's
+ * lstat finds it gone. It costs what the failure did.
+ */
+function absentAfterAll(walk: SourceWalk, path: string): void {
+  const { scan } = walk;
+  scan.sources.delete(path);
+  if (!scan.failedRoots.delete(path)) return;
+  const gone = new Set([path]);
+  for (const sourcePath of walk.previousSources.keys()) if (underBaselineRoot(gone, sourcePath)) scan.sources.delete(sourcePath);
+}
+/**
+ * The walk's gaps in path order, as a walk's end keeps them: none for a failure a look again found no denial
+ * (`withdrawn`), and those whose EPERM it had no room to look at again marked unrecorded (`unconfirmed`).
+ */
+function scanGaps(scan: SourceScan): WalkGap[] {
+  const kept = scan.errors.filter(gap => !scan.withdrawn.has(gap.path ?? ""));
+  return byPath(kept.map((gap): WalkGap => (scan.unconfirmed.has(gap.path ?? "") ? { ...gap, unrecorded: true } : gap)));
 }
 /**
  * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
@@ -1561,12 +1659,12 @@ export class CodeRuleBridge {
     for (const key of untold.keys()) this.#toldGaps.add(key);
   }
 
-  /** The first `MAX_TOLD_AT_ONCE` of `gaps` not yet told (`#untold`), by key. */
+  /** The first `MAX_TOLD_AT_ONCE` of `gaps` not yet told (`#untold`), by key; none the walk could not yet judge (`WalkGap.unrecorded`). */
   #untoldOf(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): Map<string, DiscoveryGap> {
     const untold = new Map<string, DiscoveryGap>();
     for (const gap of gaps) {
       if (untold.size === MAX_TOLD_AT_ONCE) break;
-      const told = this.#untold(toldGap(boundary, gap), untold);
+      const told = gap.unrecorded === true ? undefined : this.#untold(toldGap(boundary, gap), untold);
       if (told !== undefined) untold.set(told.key, told);
     }
     return untold;
@@ -1680,7 +1778,7 @@ export class CodeRuleBridge {
         try {
           await this.#discoveryPass(discovery);
         } catch (error) {
-          this.#recordDiscoveryError(discovery, error);
+          await this.#recordDiscoveryError(discovery, error);
         }
       }
     } finally {
@@ -1690,8 +1788,30 @@ export class CodeRuleBridge {
     }
   }
 
-  #recordDiscoveryError(discovery: SourceDiscovery, error: unknown): void {
-    if (this.#discovery === discovery && !discovery.cancelled) discovery.gaps = [{ reason: errorMessage(error) }];
+  async #recordDiscoveryError(discovery: SourceDiscovery, error: unknown): Promise<void> {
+    const gaps = await this.#failedWalkGaps(error);
+    if (this.#discovery === discovery && !discovery.cancelled) discovery.gaps = gaps;
+  }
+
+  /**
+   * The gap of a walk that failed whole with `error`. One that failed on an EPERM naming a path is looked at again
+   * (`lookedAgain`), unless the record holds such a gap (`#holdsRefusal`): when the path is gone, it was being removed,
+   * and the gap is said but never recorded.
+   */
+  async #failedWalkGaps(error: unknown): Promise<readonly WalkGap[]> {
+    const gap: WalkGap = { reason: errorMessage(error) };
+    const refused = refusedPath(error);
+    if (refused === undefined || !hasErrorCode(error, "EPERM") || this.#holdsRefusal(undefined)) return [gap];
+    await new Promise(resolve => { setTimeout(resolve, REFUSED_RETRY_MS); });
+    return (await lookedAgain({ path: "", refused, examined: false })) === "there" ? [gap] : [{ ...gap, unrecorded: true }];
+  }
+
+  /**
+   * Whether the record holds the EPERM gap of `path` (a walk that failed whole when it is undefined), or holds all it will
+   * (`UNTOLD_KEY`): a refusal there is a gap, as the record already says, and is not looked at again.
+   */
+  #holdsRefusal(path: string | undefined): boolean {
+    return this.#toldGaps.has(UNTOLD_KEY) || this.#toldGaps.has(gapKey(path, "EPERM"));
   }
 
   /**
@@ -1743,7 +1863,8 @@ export class CodeRuleBridge {
     try {
       await this.#walkSources(discovery, "worktrees", "edit");
     } catch (error) {
-      if (!this.#abandoned(discovery)) discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
+      const gaps = await this.#failedWalkGaps(error);
+      if (!this.#abandoned(discovery)) discovery.worktrees.gaps = gaps;
     }
     discovery.worktrees.nextWalkAt = Date.now() + Math.max(this.#worktreeWalkGapMs, Date.now() - startedAt);
   }
@@ -1791,9 +1912,13 @@ export class CodeRuleBridge {
       captureChanges: !walk.baseline,
       baselineRoots: this.#walkBaselineRoots(discovery, walk),
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
-      scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
+      scan: {
+        sources: new Map(), failedRoots: new Set(), errors: [], withdrawn: new Set(), unconfirmed: new Set(), unread: new Map(),
+        firstSeen: new Map(), checkouts: new Set(), unmerged: new Map(),
+      },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
       view: this.#auditor.walkView?.() ?? this.#auditor,
+      held: path => this.#holdsRefusal(path),
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
@@ -1852,7 +1977,7 @@ export class CodeRuleBridge {
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     discovery.baselineComplete = true;
     discovery.baselineRoots = scan.failedRoots;
-    discovery.gaps = scan.errors;
+    discovery.gaps = scanGaps(scan);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
@@ -1863,7 +1988,7 @@ export class CodeRuleBridge {
     const worktrees = discovery.worktrees;
     for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
-    worktrees.gaps = scan.errors;
+    worktrees.gaps = scanGaps(scan);
     worktrees.unread = scan.unread;
   }
 
@@ -2181,7 +2306,7 @@ export class CodeRuleBridge {
   async #observeSources(walk: SourceWalk): Promise<SourceScan> {
     const { scan } = walk;
     await this.#observeStack(walk);
-    await this.#observeRefused(walk);
+    await judgeRefusals(walk);
     for (const source of scan.sources.values()) recordReadError(scan, source);
     return scan;
   }
@@ -2194,23 +2319,15 @@ export class CodeRuleBridge {
     }
   }
 
-  /** The paths that refused the walk with EPERM (`deferredRefusal`), looked at again once, `REFUSED_RETRY_MS` later. */
-  async #observeRefused(walk: SourceWalk): Promise<void> {
-    if (walk.refused === undefined || walk.discovery.cancelled) return;
-    walk.retried = true;
-    await new Promise(resolve => { setTimeout(resolve, REFUSED_RETRY_MS); });
-    walk.stack.push(...walk.refused);
-    await this.#observeStack(walk);
-  }
-
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
     let info: Stats | undefined;
     try {
       info = await lstat(absolute);
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error) || deferredRefusal(walk, absolute, error)) return;
+      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error)) return;
       this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
+      noteRefusal(walk, absolute, error, info);
     }
   }
 

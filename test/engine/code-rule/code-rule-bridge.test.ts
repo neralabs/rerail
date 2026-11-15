@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { type Dirent, existsSync } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../..
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
+import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { startChurn } from "../../support/processes/churn.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
@@ -34,6 +35,10 @@ const discovery = vi.hoisted(() => ({
   directories: new Map<string, Array<() => Promise<void>>>(),
   /** Run before an `lstat` of the path, the first one first: a test can make a path look gone to the walk. */
   lstats: new Map<string, Array<() => Promise<void>>>(),
+  /** How many lstats, folder listings and file reads the walks asked for, for the tests that pin what a walk costs. */
+  calls: { lstat: 0, opendir: 0, read: 0 },
+  /** Every listing in name order, as Windows lists a folder, where Linux lists it in an order of its own. */
+  inNameOrder: false,
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
@@ -88,10 +93,17 @@ vi.mock("node:fs/promises", async importOriginal => {
       return handle;
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      discovery.calls.opendir += 1;
       await discovery.directories.get(String(args[0]))?.shift()?.();
-      return await actual.opendir(...args);
+      const listing = await actual.opendir(...args);
+      if (!discovery.inNameOrder) return listing;
+      const entries: Dirent[] = [];
+      for await (const entry of listing) entries.push(entry);
+      entries.sort((left, right) => (left.name < right.name ? -1 : 1));
+      return { async *[Symbol.asyncIterator]() { yield* entries; } } as unknown as Awaited<ReturnType<typeof actual.opendir>>;
     },
     lstat: (async (...args: Parameters<typeof actual.lstat>) => {
+      discovery.calls.lstat += 1;
       await discovery.lstats.get(String(args[0]))?.shift()?.();
       return await actual.lstat(...args);
     }) as typeof actual.lstat,
@@ -104,6 +116,7 @@ vi.mock("../../../src/engine/code-rule/walk-read-buffers.js", async importOrigin
   /** A walk's read held once its bytes are in and the file closed (`discovery.reads`), each copy made into text counted. */
   class HeldReadBuffers extends actual.WalkReadBuffers {
     override async lend<T>(absolute: string, size: number, use: (read: WalkReads.LentBytes) => Promise<T>): Promise<T> {
+      discovery.calls.read += 1;
       return await super.lend(absolute, size, async read => {
         await discovery.reads.get(absolute)?.shift()?.();
         return await use({ bytes: read.bytes, text: () => countedText(read) });
@@ -168,6 +181,8 @@ afterEach(async () => {
   discovery.reads.clear();
   discovery.directories.clear();
   discovery.lstats.clear();
+  discovery.calls = { lstat: 0, opendir: 0, read: 0 };
+  discovery.inNameOrder = false;
   heldGit.reads = 0;
   readBuffers.watching = false;
   readBuffers.seen.clear();
@@ -1045,6 +1060,148 @@ describe("CodeRuleBridge", () => {
       expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
     });
 
+    /** An error as Windows gives it for a path it refuses. */
+    const refusal = (syscall: string, path: string): Error =>
+      Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: "EPERM", syscall, path });
+    /** What the walks asked of the filesystem and of `looks`, the walk view, at one checkpoint. */
+    async function checkpointWork(bridge: CodeRuleBridge, looks: () => number): Promise<number> {
+      const total = (): number => discovery.calls.lstat + discovery.calls.opendir + discovery.calls.read + looks();
+      const before = total();
+      await bridge.checkpoint("turn");
+      return total() - before;
+    }
+    async function writeFiles(folder: string, count: number): Promise<void> {
+      for (let start = 0; start < count; start += 500)
+        await Promise.all(Array.from({ length: Math.min(500, count - start) }, async (_, offset) =>
+          await writeFile(join(folder, `f${String(start + offset).padStart(5, "0")}.py`), "x = 1\n")));
+    }
+    /**
+     * A walk view that looks each path up by its real path, as the router's does, so Windows refuses a path the user is
+     * denied with EPERM. `deny` denies a folder, or with `files` the files in it, for real where this process holds no
+     * backup privilege on Windows, else by refusing the view's look of it with EPERM, as Windows does. Counts its looks.
+     */
+    function refusingView(root: string) {
+      const refused: Array<(absolute: string) => boolean> = [];
+      const denied: string[] = [];
+      let looks = 0;
+      const view = {
+        acceptsPath: () => true,
+        ignoresPath: (path: string) => {
+          looks += 1;
+          const absolute = resolve(root, path);
+          if (refused.some(refuses => refuses(absolute))) throw refusal("realpath", absolute);
+          physicalPath(absolute);
+          return false;
+        },
+      };
+      return {
+        view,
+        looks: () => looks,
+        async deny(folder: string, files = false): Promise<boolean> {
+          denied.push(folder);
+          if (process.platform === "win32" && await denyAccess(folder, { files, probe: join(folder, "f00000.py") })) return true;
+          await restoreAccess(folder);
+          refused.push(files ? absolute => dirname(absolute) === folder : absolute => absolute === folder);
+          return false;
+        },
+        async restore(): Promise<void> {
+          for (const folder of denied.splice(0)) await restoreAccess(folder);
+        },
+      };
+    }
+
+    it("lists no folder again and walks no entry twice when a child folder refuses its folder's listing with EPERM, and looks again at it by its lstat alone", async () => {
+      const root = await workspace();
+      const child = join(root, "src", "child");
+      await mkdir(child);
+      const refusing = new Set<string>();
+      const view = {
+        acceptsPath: () => true,
+        ignoresPath: (path: string) => {
+          if (refusing.has(path)) throw refusal("realpath", resolve(root, path));
+          return false;
+        },
+      };
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      const listings = async (): Promise<number> => {
+        const before = discovery.calls.opendir;
+        await bridge.checkpoint("turn");
+        return discovery.calls.opendir - before;
+      };
+      const clean = await listings();
+
+      // Being removed: an lstat of it finds it gone, and the folder that listed it is no gap.
+      refusing.add("src/child");
+      discovery.lstats.set(child, [gone("lstat", child)]);
+      // The session folder and src are listed once each, the child never.
+      expect(await listings()).toBe(clean - 1);
+      expect(discovery.lstats.get(child)).toEqual([]);
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+      // Denied: still there, so the folder whose listing it refused is the gap, as before.
+      const message = `src: EPERM: operation not permitted, realpath '${child}'`;
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(message));
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src", message.slice("src: ".length), "EPERM")]]]);
+      // Once the record holds it, it is not looked at again.
+      const looked = vi.fn(async () => undefined);
+      discovery.lstats.set(child, [looked]);
+      expect(await listings()).toBe(clean - 1);
+      expect(looked).not.toHaveBeenCalled();
+    });
+
+    it("walks 10,000 files with a folder that refuses its listing with EPERM after them at what they cost without it, the first walk but one lstat more", { timeout: 240_000 }, async () => {
+      const root = await workspace();
+      await writeFiles(join(root, "src"), 10_000);
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      // The folder comes after every file, as Windows lists them.
+      discovery.inNameOrder = true;
+      const refusing = refusingView(root);
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
+      try {
+        await bridge.openWorkspace("session-1");
+        await bridge.checkpoint("turn");
+        await bridge.checkpoint("turn");
+        const clean = await checkpointWork(bridge, refusing.looks);
+        await refusing.deny(locked);
+        const extra: number[] = [];
+        for (let turn = 0; turn < 4; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
+        expect(extra[0]).toBeLessThanOrEqual(1);
+        expect(extra.slice(1).filter(more => more > 0)).toEqual([]);
+        expect(onDiscoveryGaps.mock.calls.map(([gaps]) => (gaps as Array<{ path?: string }>).map(gap => gap.path))).toEqual([["src"]]);
+      } finally {
+        await refusing.restore();
+      }
+    });
+
+    // A walk looks again at no more refusals than a checkpoint records.
+    it(`walks 10,000 files that refuse it with EPERM at what they cost readable, but ${MAX_TOLD_AT_ONCE} lstats more a walk at the most, and none once the record holds all it will`, { timeout: 240_000 }, async () => {
+      const root = await workspace();
+      const denied = join(root, "src", "denied");
+      await mkdir(denied);
+      await writeFiles(denied, 10_000);
+      const refusing = refusingView(root);
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
+      try {
+        await bridge.openWorkspace("session-1");
+        await bridge.checkpoint("turn");
+        await bridge.checkpoint("turn");
+        const clean = await checkpointWork(bridge, refusing.looks);
+        await refusing.deny(denied, true);
+        const extra: number[] = [];
+        const turns = MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE + 2;
+        for (let turn = 0; turn < turns; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
+        expect(extra.filter(more => more > MAX_TOLD_AT_ONCE)).toEqual([]);
+        expect(extra.at(-1)).toBeLessThanOrEqual(0);
+        expect(onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as unknown[])).toHaveLength(MAX_TOLD_GAPS + 1);
+      } finally {
+        await refusing.restore();
+      }
+    });
   });
 
   it("discovers a command's shell write that races the startup snapshot read", async () => {
