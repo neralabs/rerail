@@ -2494,6 +2494,50 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     Ok(run)
 }
 
+/// Decision 0245: runs `spec` over a sample of its own first step's rows, at a stride, under `budget` steps: an
+/// order that leads with another atom than the cut's cannot read the rows the cut left (`restricted`), and its work
+/// over the line is its work over the sample scaled by the lead's rows. `size` gives the sample's rows for the
+/// lead's. Nothing is added to any relation, and its rows are not kept (O169 keeps a trial's over the cut's rows).
+/// With the lead's rows, and the ids of those sampled (a walk over them scales the trial, decision 0233). `None`
+/// where its first step reads no atom's rows.
+pub fn trial_own(conn: impl Scoped, name: &str, spec: &JoinSpec, size: &dyn Fn(usize) -> usize, budget: u64) -> Result<Option<(TrialRun, usize, Vec<u32>)>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+    let mut syms = Interner::for_loading(&symbols);
+    let j = join_rule(conn, spec, &mut syms)?;
+    {
+        let mut store = comp.store.write().unwrap();
+        for (r, cols) in &j.multi { store.rels[*r].want(cols); }
+    }
+    let store = comp.store.read().unwrap();
+    let Some(Step::Atom { src, neg: false, .. }) = j.steps.first() else { return Ok(None) };
+    let range = match src {
+        Src::Delta(r) => store.rels[*r].lo as u32..store.rels[*r].hi as u32,
+        Src::Full(r) | Src::FullMulti(r, _) => 0..store.rels[*r].n as u32,
+        Src::In(r, _) => 0..r.len() as u32,
+    };
+    let all = range.len();
+    if all == 0 { return Ok(None) }
+    let stride = all.div_ceil(size(all).max(1)).max(1);
+    let picked: Vec<u32> = range.step_by(stride).collect();
+    let rows = Rows0::of(RowsOf::of(src), &picked);
+    let n = rows.n;
+    scalars::register(&j.steps, Some(&store));
+    LIMIT.with(|l| *l.borrow_mut() = Some(Limit { budget, only: Some((0, rows)) }));
+    // The rows made are collected and dropped: a join emits to its head's fresh rows otherwise.
+    let mut out = Vec::new();
+    let got = run_join_in(&j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None);
+    drop(out);
+    LIMIT.with(|l| l.borrow_mut().take());
+    let spent = SPENT.with(|s| s.borrow_mut().take());
+    let made = got?;
+    syms.check()?;
+    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(spent.map(|s| (TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made, cut: s.left.is_some() }, all, picked)))
+}
+
 /// O169: the rows the cut probe's first finished trial made join its wave, and its sample's rows leave the rows the
 /// probe has left: the order that goes on does not make them again. The rows kept.
 pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {

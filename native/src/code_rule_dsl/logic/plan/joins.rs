@@ -20,9 +20,9 @@
 //! - **The wider search** (`request`, the `join-search` upkeep job, decision 0190): the exact search past the
 //!   greedy bound, and random connected orders, priced with the exact statistics. Decision 0243: where the request
 //!   holds the line's relations (`may_hold`), its best-priced orders and the one that ran are walked over them, and
-//!   the proposals are ranked by walked work; each walk over its price is kept as an order tried. It is the only
-//!   wider search: the plan runs none. A one-shot process serves the waiting searches at its run's end
-//!   (`drain_at_end`), within a share of its CPU.
+//!   the proposals are ranked by walked work. The choice costs a walked order not measured against the walked order
+//!   that ran (decision 0245). It is the only wider search: the plan runs none. A one-shot process serves the
+//!   waiting searches at its run's end (`drain_at_end`), within a share of its CPU; each search stops at its budget.
 
 use super::{Constant, Mode, PlanKey, Sig, Step, StoredStep};
 use parking_lot::{Mutex, RwLock};
@@ -524,7 +524,22 @@ pub fn choose(round: &mut [Choice]) {
             let ratio = note.and_then(|n| n.tried(&steps(&c.candidates[i].order))).map_or(1.0, |t| t.ratio);
             price(i) * ratio
         };
-        let costs: Vec<f64> = (0..c.candidates.len()).map(corrected).collect();
+        let mut costs: Vec<f64> = (0..c.candidates.len()).map(corrected).collect();
+        // Decision 0245: an order the background walked and no run measured is costed in the walks' units, against
+        // the order the line ran: its walked work times that order's measured cost over its walked work. A walk's
+        // ratio to a price made then, times a price made now, mixed two models' prices (on the fixture it took an
+        // order walked 1.35 times the one that ran).
+        if let Some(n) = note.filter(|n| n.walked > 0.0) {
+            let walked_of = |i: usize| { let o = steps(&c.candidates[i].order); n.proposals.iter().find(|(p, _)| *p == o).map(|p| p.1) };
+            let measured = |i: usize| n.tried(&steps(&c.candidates[i].order)).is_some();
+            let ran = (0..c.candidates.len()).find(|&i| measured(i) && walked_of(i) == Some(n.walked));
+            if let Some(ran) = ran {
+                let unit = costs[ran] / n.walked;
+                for (i, cost) in costs.iter_mut().enumerate() {
+                    if !measured(i) && let Some(w) = walked_of(i) { *cost = w * unit; }
+                }
+            }
+        }
         let best = (0..costs.len()).min_by(|&a, &b| costs[a].total_cmp(&costs[b])).unwrap_or(0);
         if best != 0 {
             c.chosen = best;
@@ -760,14 +775,12 @@ pub(super) fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: 
 pub(super) struct Searched {
     pub orders: Vec<(Vec<StoredStep>, f64)>,
     pub walked: Option<f64>,
-    /// Each walked order's walked work over its price: what the walk measured of it, kept as an order tried (the
-    /// order that ran keeps its run's alone). The plan's choice corrects each price by it (`choose`).
-    pub tried: Vec<(Vec<StoredStep>, f64)>,
 }
 
 /// Wider searches waiting for the upkeep job, most important first: each a line's key, its weight, whether it holds
-/// the line's relations to walk (decision 0243), and the search.
-type Search = Box<dyn FnOnce() -> Searched + Send>;
+/// the line's relations to walk (decision 0243), and the search. The search is given whether its time is up: it
+/// walks no further order once it is (decision 0245), and returns what it has.
+type Search = Box<dyn FnOnce(&dyn Fn() -> bool) -> Searched + Send>;
 static REQUESTS: Mutex<Vec<(PlanKey, f64, bool, Search)>> = Mutex::new(Vec::new());
 /// Requests waiting at most (the least important are dropped).
 const REQUESTS_MAX: usize = 64;
@@ -816,25 +829,17 @@ pub fn requests() -> usize {
     REQUESTS.lock().len()
 }
 
-/// Runs the most important waiting search now, on this thread: `false` where none waits.
-pub fn search_one() -> bool {
+/// Runs the most important waiting search now, on this thread, until `over` says its time is up: `false` where none
+/// waits.
+pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     let Some((key, _, _, search)) = ({
         let mut q = REQUESTS.lock();
         (!q.is_empty()).then(|| q.remove(0))
     }) else {
         return false;
     };
-    let found = search();
+    let found = search(over);
     propose(key, found.orders, found.walked);
-    if !found.tried.is_empty() {
-        let mut m = MEMO.write();
-        if let Some(n) = m.notes.get_mut(&key) {
-            for (o, ratio) in found.tried {
-                merge_tried(n, o, ratio.clamp(1e-6, 1e9));
-            }
-            m.dirty = true;
-        }
-    }
     true
 }
 
@@ -857,8 +862,10 @@ pub(super) fn drain() {
     }
     let budget = DRAIN_SHARE * super::super::profile::process_cpu();
     let start = super::super::native::component::thread_cpu();
+    // Decision 0245: each search stops walking at the budget, not only between searches.
+    let over = || super::super::native::component::thread_cpu() - start >= budget;
     let mut served = 0;
-    while super::super::native::component::thread_cpu() - start < budget && search_one() {
+    while !over() && search_one(&over) {
         served += 1;
     }
     let spent = super::super::native::component::thread_cpu() - start;
@@ -880,7 +887,7 @@ impl rerail_accel::upkeep::Job for JoinSearch {
     }
     fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
         while !slice.over() {
-            if !search_one() {
+            if !search_one(&|| slice.over()) {
                 return Ok(rerail_accel::upkeep::Step::Done);
             }
         }

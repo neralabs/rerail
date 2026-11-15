@@ -6484,20 +6484,25 @@ impl<'a> Run<'a, '_> {
         if !joins::wants_request(&key) {
             return Ok(());
         }
-        let snap = match ran { Some((name, line, order)) if joins::may_hold() => WalkSnap::take(self.db, name, line, r, first).map(|s| (s, order.to_vec())), _ => None };
+        let heavy = |rel: &str, c: usize| self.model.heavy_of(rel, c).map(|h| {
+            let mut top = h.top.clone();
+            top.sort_by(|a, b| b.1.total_cmp(&a.1));
+            top.into_iter().take(table::HEAVY).map(|t| t.0).collect::<Vec<i64>>()
+        });
+        let snap = match ran { Some((name, line, order)) if joins::may_hold() => WalkSnap::take(self.db, name, line, r, first, &heavy).map(|s| (s, order.to_vec())), _ => None };
         let holds = snap.is_some();
         let prog = shared_program(self.prog);
         let rels: BTreeSet<String> = r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()).collect();
         let mut model = self.model.fork(self.prog, &rels, &[rule], rels.iter().map(String::as_str))?;
         model.stats.solve(self.model.stats.solving.clone());
         let rule = r.clone();
-        joins::request(key, weight, holds, Box::new(move || {
-            let Ok(v) = body::alone(&rule) else { return joins::Searched { orders: Vec::new(), walked: None, tried: Vec::new() } };
+        joins::request(key, weight, holds, Box::new(move |over: &dyn Fn() -> bool| {
+            let Ok(v) = body::alone(&rule) else { return joins::Searched { orders: Vec::new(), walked: None } };
             let b = body::nth(&v, 0);
             let priced = model.explore(&prog, &b, first);
             match snap {
-                Some((snap, ran)) => snap.walk(&rule, first, &ran, priced),
-                None => joins::Searched { orders: priced.into_iter().map(|(o, w)| (joins::steps(&o), w)).collect(), walked: None, tried: Vec::new() },
+                Some((snap, ran)) => snap.walk(&rule, first, &ran, priced, over),
+                None => joins::Searched { orders: priced.into_iter().map(|(o, w)| (joins::steps(&o), w)).collect(), walked: None },
             }
         }));
         Ok(())
@@ -8190,6 +8195,8 @@ impl<'a> Run<'a, '_> {
                     let lead = first.unwrap_or(cut_order[0].at);
                     let left = if c.led { c.left } else { c.done + c.left };
                     let mut cands: Vec<Vec<Step>> = vec![running.clone(), cut_order.clone()];
+                    // The background's walked work of the proposals tried, which size an own-lead trial's sample.
+                    let mut walked_props: Vec<(Vec<Step>, f64)> = Vec::new();
                     // Decision 0243: where a background search walked the line's orders, the line searches nothing here:
                     // it tries the proposals whose walked work beats the order it ran, the best two. Else, the
                     // search as before (decision 0207), and its request waits for the background.
@@ -8197,6 +8204,7 @@ impl<'a> Run<'a, '_> {
                         Some((ran_w, props)) => {
                             let better: Vec<(Vec<Step>, f64)> = props.into_iter().filter(|(_, w)| *w < ran_w).take(2).collect();
                             joins::log(|| format!("trials {}: the background's walked proposals, the order it ran at {ran_w:.0}: {}", r.head.rel, if better.is_empty() { "none better".to_owned() } else { better.iter().map(|(o, w)| format!("{} {w:.0}", o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."))).collect::<Vec<_>>().join(", ") }));
+                            walked_props = better.clone();
                             cands.extend(better.into_iter().map(|(o, _)| o));
                         }
                         None => {
@@ -8280,9 +8288,11 @@ impl<'a> Run<'a, '_> {
                     // cost probes, bounded by the sample; a trial of a poor order cost its whole cut budget (on the
                     // data-layer files four such trials did as much work as the line).
                     let t_walk = super::native::component::thread_cpu();
+                    // Decision 0245: an order leading with another atom is not walked from the cut lead's rows (on the
+                    // data-layer files such a walk measured 248 M for a line of 5.7 M, and left the order untried).
                     let walked: Vec<Option<[f64; 2]>> = distinct.iter().map(|o| match (&walker, &phase1, x1_run) {
                         (_, _, Some(x)) if same_order(o, &running) => Some(x),
-                        (Some(w), Some(ph), _) => Some([w.work(o, &ph[0]), w.work(o, &ph[1])]),
+                        (Some(w), Some(ph), _) if o[0].at == lead => Some([w.work(o, &ph[0]), w.work(o, &ph[1])]),
                         _ => None,
                     }).collect();
                     walk_s.set(super::native::component::thread_cpu() - t_walk);
@@ -8329,9 +8339,61 @@ impl<'a> Run<'a, '_> {
                             None => super::native::component::trial_over(this.db, &name, line, None, None, pick, budget),
                             Some((spec, step)) => super::native::component::trial_over(this.db, &name, line, Some(spec), *step, pick, budget),
                         };
+                        // Decision 0245: an order the cut's rows cannot be placed in (it leads with another atom than
+                        // the cut, and no one step of it reads those rows) is run over a sample of its own lead's
+                        // rows instead. Its work over the line, over its price for the line, is kept as an order
+                        // tried, so the next plan's choice reads it; it is not placed here, as it would read the
+                        // rows the cut finished again.
+                        let own = |this: &mut Self| -> Result<()> {
+                            let Some((spec, None)) = &spec else { return Ok(()) };
+                            let w = walked_props.iter().find(|(p, _)| same_order(p, o)).map(|p| p.1);
+                            let size = |all: usize| match w {
+                                Some(w) if w > 0.0 => ((cap as f64 / 2.0 * all as f64 / w) as usize).clamp(TRIAL_LEAST, joins::trial_rows() as usize),
+                                _ => sample,
+                            };
+                            let Some((run, all, picked)) = super::native::component::trial_own(this.db, &name, spec, &size, cap)? else { return Ok(()) };
+                            // Two-phase (decision 0233): the background's walk over the lead's rows is the first
+                            // phase, a walk over the trial's rows the second, and the trial's work per row is scaled by
+                            // their ratio. At its rows alone a stride of 250 of 22,926 rows, past a check passing 2%,
+                            // measured the fixture's line at 49,612 rows of work for 388,673.
+                            let lead_at = o[0].at;
+                            let x2 = match (&r.body[lead_at], w) {
+                                (Literal::Atom(a), Some(_)) => super::native::component::derived(this.db, &a.rel).map(|src| {
+                                    let db = this.db;
+                                    let walker = Walker::new(r, lead_at, joins::walk_width(), &|rel| super::native::component::held(db, rel), &|x| super::native::component::symbol_id(db, x).ok().flatten());
+                                    // The walk starts from lead rows: those of the sample matching the lead's constants and
+                                    // repeated variables. Per row sampled, as the trial's work is (the fixture's `kind`
+                                    // rows walked as calls measured 15 times the trial).
+                                    let consts: Vec<(usize, Option<i64>)> = a.args.iter().enumerate().filter_map(|(c, t)| match t {
+                                        Term::Int(i) => Some((c, Some(*i))),
+                                        Term::Str(x) => Some((c, super::native::component::symbol_id(db, x).ok().flatten())),
+                                        _ => None,
+                                    }).collect();
+                                    let same: Vec<(usize, usize)> = a.args.iter().enumerate().filter_map(|(c, t)| a.args.iter().position(|u| u == t).filter(|&d| d < c && matches!(t, Term::Var(_))).map(|d| (d, c))).collect();
+                                    let rows: Vec<Vec<i64>> = picked.iter().map(|&id| (0..a.args.len()).map(|c| src.value(id as usize, c)).collect::<Vec<i64>>())
+                                        .filter(|row| consts.iter().all(|&(c, v)| v == Some(row[c])) && same.iter().all(|&(d, c)| row[d] == row[c])).collect();
+                                    if rows.is_empty() { return 0.0 }
+                                    walker.work_at(o, &rows, 4 * joins::walk_width()) * rows.len() as f64 / picked.len().max(1) as f64
+                                }),
+                                _ => None,
+                            };
+                            let y = run.work as f64 / run.rows.max(1) as f64;
+                            let line_work = match (w, x2) {
+                                (Some(w), Some(x2)) if x2 > 0.0 => w * y / x2,
+                                (Some(_), Some(_)) => f64::NAN,
+                                _ => y * all as f64,
+                            };
+                            let price = this.model.price_for_delta(prog, &b, first, o, (c.done + c.left).max(1) as f64);
+                            let name_o = o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join(".");
+                            if !run.cut && line_work.is_finite() && let Some(p) = price {
+                                joins::put_tried(key, order_rules[line], o, line_work / p.max(1.0));
+                            }
+                            joins::log(|| format!("trials {}: {name_o} over its own lead, {} of its {all} rows: {}{} rows of work, {line_work:.0} over the line (walked {}, {} a row over its rows, priced {}){}", r.head.rel, run.rows, run.work, if run.cut { "+" } else { "" }, w.map_or("-".to_owned(), |w| format!("{w:.0}")), x2.map_or("-".to_owned(), |x| format!("{x:.1}")), price.map_or("-".to_owned(), |p| format!("{p:.0}")), if run.cut { "; cut, not kept" } else { "" }));
+                            Ok(())
+                        };
                         let run = match &parts {
                             None => {
-                                let Some(run) = one(self, Err(sample), budget(least[0], cap))? else { continue };
+                                let Some(run) = one(self, Err(sample), budget(least[0], cap))? else { own(self)?; continue };
                                 if !run.cut { least[0] = Some(least[0].map_or(run.work, |w| w.min(run.work))); }
                                 run
                             }
@@ -8342,6 +8404,7 @@ impl<'a> Run<'a, '_> {
                                     if !run.cut { least[p] = Some(least[p].map_or(run.work, |w| w.min(run.work))); }
                                     got.push(run);
                                 }
+                                if got.is_empty() { own(self)?; }
                                 if got.len() < 2 { continue; }
                                 let all = (ps[0].1 + ps[1].1) as f64;
                                 // A cut order cannot win: it is weighted by its parts' rows (decision 0221), and
@@ -11817,6 +11880,9 @@ struct WalkSnap {
     rels: HashMap<String, std::sync::Arc<super::native::component::InRel>>,
     syms: HashMap<String, i64>,
     delta: Option<(Vec<Vec<i64>>, f64)>,
+    /// Decision 0245: each body atom's columns whose heavy values were made, by relation and column: the `HEAVY`
+    /// most common, as the inline trials split by them (`Run::heavy_parts`).
+    heavy: HashMap<(String, usize), Vec<i64>>,
 }
 
 /// Orders a background search walks, at most: its best-priced, and the one that ran.
@@ -11825,12 +11891,18 @@ const WALK_ORDERS: usize = 16;
 impl WalkSnap {
     /// `None` where a positive atom's relation is not the engine's (the walk could not probe it).
     /// Read by the scope alone (`Db`): a stratum off the run's thread asks too, and reads no SQL (decision 0113).
-    fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, r: &Rule, first: Option<usize>) -> Option<WalkSnap> {
+    fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, r: &Rule, first: Option<usize>, heavy_of: &dyn Fn(&str, usize) -> Option<Vec<i64>>) -> Option<WalkSnap> {
         use super::native::component as engine;
         let mut rels = HashMap::new();
         let mut syms = HashMap::new();
+        let mut heavy = HashMap::new();
         for l in &r.body {
             let Literal::Atom(a) = l else { continue };
+            if !a.neg {
+                for (c, t) in a.args.iter().enumerate() {
+                    if let Term::Var(_) = t && let Some(h) = heavy_of(&a.rel, c) { heavy.insert((a.rel.to_string(), c), h); }
+                }
+            }
             match engine::held(db, &a.rel) {
                 Some(rel) => { rels.insert(a.rel.to_string(), rel); }
                 None if !a.neg => return None,
@@ -11851,7 +11923,43 @@ impl WalkSnap {
             let rows = v.into_iter().take(16 * joins::walk_rows()).map(|(_, id)| (0..a.args.len()).map(|c| src.value(id as usize, c)).collect()).collect();
             Some((rows, ids.len() as f64))
         });
-        Some(WalkSnap { rels, syms, delta })
+        Some(WalkSnap { rels, syms, delta, heavy })
+    }
+
+    /// The checks right after order `o`'s lead: atoms over the lead's variables and constants alone.
+    fn checks<'r>(r: &'r Rule, o: &[Step]) -> Vec<&'r crate::code_rule_dsl::logic::front::Atom> {
+        let Some(Literal::Atom(a)) = o.first().map(|s| &r.body[s.at]) else { return Vec::new() };
+        let lead_vars: Vec<&Term> = a.args.iter().filter(|t| matches!(t, Term::Var(_))).collect();
+        o[1..].iter().map_while(|s| match &r.body[s.at] {
+            Literal::Atom(c) if c.args.iter().all(|t| !matches!(t, Term::Var(_)) || lead_vars.contains(&t)) => Some(c),
+            _ => None,
+        }).collect()
+    }
+
+    /// Decision 0245: the heavy key a walk from `lead` splits by, as `Run::heavy_parts` finds it: a variable of the
+    /// lead at a column with heavy values (`None` for the link's route), else the one atom holding both a variable at
+    /// such a column and a variable of the lead (its key's column, and its column of that variable with the lead's).
+    fn link(&self, r: &Rule, lead: usize) -> Option<(String, usize, Option<(usize, usize)>)> {
+        let Literal::Atom(la) = &r.body[lead] else { return None };
+        for (cv, t) in la.args.iter().enumerate() {
+            if let Term::Var(_) = t && self.heavy.contains_key(&(la.rel.to_string(), cv)) { return Some((la.rel.to_string(), cv, None)) }
+        }
+        for (d, l) in r.body.iter().enumerate() {
+            let Literal::Atom(a) = l else { continue };
+            if d == lead || a.neg { continue }
+            for (cv, t) in a.args.iter().enumerate() {
+                let Term::Var(v) = t else { continue };
+                if !self.heavy.contains_key(&(a.rel.to_string(), cv)) { continue }
+                for (cu, t2) in a.args.iter().enumerate() {
+                    let Term::Var(u) = t2 else { continue };
+                    if u == v { continue }
+                    if let Some(lc) = la.args.iter().position(|t| matches!(t, Term::Var(x) if x == u)) {
+                        return Some((a.rel.to_string(), cv, Some((cu, lc))));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// The rows a walk of order `o` starts from, past its lead and the checks right after it: the lead's rows that
@@ -11863,12 +11971,7 @@ impl WalkSnap {
         let lead = o.first()?.at;
         let Literal::Atom(a) = &r.body[lead] else { return None };
         if a.neg { return None }
-        // The checks after the lead: atoms over the lead's variables and constants alone.
-        let lead_vars: Vec<&Term> = a.args.iter().filter(|t| matches!(t, Term::Var(_))).collect();
-        let checks: Vec<&crate::code_rule_dsl::logic::front::Atom> = o[1..].iter().map_while(|s| match &r.body[s.at] {
-            Literal::Atom(c) if c.args.iter().all(|t| !matches!(t, Term::Var(_)) || lead_vars.contains(&t)) => Some(c),
-            _ => None,
-        }).collect();
+        let checks = Self::checks(r, o);
         let value = |t: &Term, row: &[i64]| -> Option<i64> {
             match t {
                 Term::Int(i) => Some(*i),
@@ -11876,24 +11979,38 @@ impl WalkSnap {
                 _ => a.args.iter().position(|u| u == t).map(|c| row[c]),
             }
         };
+        // The lead's constants, as a probe's columns and key, and its columns that repeat a variable.
+        let (mut cols, mut key) = (Vec::new(), Vec::new());
+        for (c, t) in a.args.iter().enumerate() {
+            match t {
+                Term::Int(i) => { cols.push(c); key.push(*i) }
+                Term::Str(x) => { cols.push(c); key.push(*self.syms.get(x.as_ref())?) }
+                _ => {}
+            }
+        }
+        let same: Vec<(usize, usize)> = a.args.iter().enumerate().filter_map(|(c, t)| a.args.iter().position(|u| u == t).filter(|&d| d < c && matches!(t, Term::Var(_))).map(|d| (d, c))).collect();
         // Each check's rows reached and passed, and the lead rows passing them all.
         let mut reached = vec![0u64; checks.len()];
         let mut passed = vec![0u64; checks.len()];
         let mut survivors: Vec<Vec<i64>> = Vec::new();
-        let mut test = |row: Vec<i64>, survivors: &mut Vec<Vec<i64>>| {
+        // Whether a lead row passes the checks, counting each check's rows reached and passed where `counts`.
+        let passes = |row: &[i64], mut counts: Option<(&mut [u64], &mut [u64])>| -> bool {
             for (i, c) in checks.iter().enumerate() {
-                reached[i] += 1;
-                let key: Option<Vec<i64>> = c.args.iter().map(|t| value(t, &row)).collect();
+                if let Some((r, _)) = counts.as_mut() { r[i] += 1 }
+                let key: Option<Vec<i64>> = c.args.iter().map(|t| value(t, row)).collect();
                 let found = key.is_some_and(|key| {
                     let cols: Vec<usize> = (0..c.args.len()).collect();
                     let mut found = false;
                     if let Some(rel) = self.rels.get(c.rel.as_ref()) { rel.probe_each(&cols, &key, &mut |_| found = true) }
                     found
                 });
-                if found == c.neg { return }
-                passed[i] += 1;
+                if found == c.neg { return false }
+                if let Some((_, p)) = counts.as_mut() { p[i] += 1 }
             }
-            survivors.push(row);
+            true
+        };
+        let mut test = |row: Vec<i64>, survivors: &mut Vec<Vec<i64>>| {
+            if passes(&row, Some((&mut reached, &mut passed))) { survivors.push(row) }
         };
         let (rows, exact) = if Some(lead) == first {
             // The delta's sample, as taken.
@@ -11903,15 +12020,6 @@ impl WalkSnap {
             (rows, exact)
         } else {
             let rel = self.rels.get(a.rel.as_ref())?;
-            let (mut cols, mut key) = (Vec::new(), Vec::new());
-            for (c, t) in a.args.iter().enumerate() {
-                match t {
-                    Term::Int(i) => { cols.push(c); key.push(*i) }
-                    Term::Str(x) => { cols.push(c); key.push(*self.syms.get(x.as_ref())?) }
-                    _ => {}
-                }
-            }
-            let same: Vec<(usize, usize)> = a.args.iter().enumerate().filter_map(|(c, t)| a.args.iter().position(|u| u == t).filter(|&d| d < c && matches!(t, Term::Var(_))).map(|d| (d, c))).collect();
             let mut seed = 0x0243_5eed_u64;
             let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
             let batch = 16 * joins::walk_rows();
@@ -11937,52 +12045,136 @@ impl WalkSnap {
             work += share;
             share *= if reached[i] > 0 { passed[i] as f64 / reached[i] as f64 } else { 0.0 };
         }
-        Some(Starts { rows: survivors, lead_rows: rows, checks: checks.len(), checks_work: work, share })
+        let mut st = Starts { rows: survivors, lead_rows: rows, checks: checks.len(), checks_work: work, share, cold: 1.0, hot: None };
+        // Decision 0245: split by a heavy key, as the inline trials do (0221, 0233). A delta's sample is not split:
+        // its rows are not a relation to draw by key.
+        if !exact && Some(lead) != first && let Some((link, cv, via)) = self.link(r, lead) && let Some(lrel) = self.rels.get(link.as_str()) {
+            let heavy: HashSet<i64> = self.heavy[&(link.clone(), cv)].iter().copied().collect();
+            let hot_row = |row: &[i64]| match via {
+                None => heavy.contains(&row[cv]),
+                Some((cu, lc)) => { let mut hit = false; lrel.probe_each(&[cu], &[row[lc]], &mut |l| hit |= heavy.contains(&l(cv))); hit }
+            };
+            let (hot_u, cold_u): (Vec<Vec<i64>>, Vec<Vec<i64>>) = std::mem::take(&mut st.rows).into_iter().partition(|row| hot_row(row));
+            let cold_share = cold_u.len() as f64 / (hot_u.len() + cold_u.len()).max(1) as f64;
+            // The hot lead rows drawn by key: each heavy value's link rows, sampled in proportion to its rows, then
+            // the lead's rows they reach, kept where they pass the checks. Each heavy value's survivors are scaled
+            // by its rows over those drawn. A lead row two heavy values reach is counted twice.
+            let batch = 16 * joins::walk_rows();
+            let ordered: Vec<i64> = self.heavy[&(link.clone(), cv)].clone();
+            let sizes: Vec<f64> = ordered.iter().map(|&h| { let mut n = 0.0; lrel.probe_each(&[cv], &[h], &mut |_| n += 1.0); n }).collect();
+            let all: f64 = sizes.iter().sum();
+            let mut seed = 0x0245_5eed_u64;
+            let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+            // Per heavy value: its rows (with the lead's constants, where the lead holds the key), and the rows
+            // drawn and passing over all rounds. Rounds go on until `walk_rows` pass, at most `64 * walk_rows`
+            // drawn, as the uniform draw: a check passing 0.3% left 6 rows of one round's 2,080.
+            let mut by: Vec<(f64, usize, usize)> = vec![(0.0, 0, 0); ordered.len()];
+            let (mut hot_rows, mut drawn) = (Vec::new(), 0usize);
+            while hot_rows.len() < joins::walk_rows() && drawn < 64 * joins::walk_rows() && all > 0.0 {
+                let before = drawn;
+                for (i, (&h, &size)) in ordered.iter().zip(&sizes).enumerate() {
+                    if size == 0.0 { continue }
+                    let limit = ((batch as f64 * size / all).ceil() as usize).max(1);
+                    let mut links: Vec<i64> = Vec::new();
+                    let mut leads: Vec<Vec<i64>> = Vec::new();
+                    let n = match via {
+                        None => {
+                            // The lead holds the key: its rows with the key and its constants.
+                            let (mut c2, mut k2) = (cols.clone(), key.clone());
+                            c2.push(cv); k2.push(h);
+                            lrel.probe_sample(&c2, &k2, limit, &mut draw, &mut |row| leads.push((0..a.args.len()).map(row).collect()))
+                        }
+                        Some((cu, _)) => { lrel.probe_sample(&[cv], &[h], limit, &mut draw, &mut |row| links.push(row(cu))); size }
+                    };
+                    let got = match via { None => leads.len(), Some(_) => links.len() };
+                    if got == 0 { continue }
+                    drawn += got;
+                    if let Some((_, lc)) = via {
+                        let lr = self.rels.get(a.rel.as_ref())?;
+                        let (mut c2, mut k2) = (cols.clone(), key.clone());
+                        c2.push(lc);
+                        k2.push(0);
+                        for u in links {
+                            *k2.last_mut().expect("pushed") = u;
+                            lr.probe_each(&c2, &k2, &mut |row| leads.push((0..a.args.len()).map(row).collect()));
+                        }
+                    }
+                    let mut kept = 0usize;
+                    for row in leads {
+                        if same.iter().all(|&(d, c)| row[d] == row[c]) && passes(&row, None) { kept += 1; hot_rows.push(row) }
+                    }
+                    by[i] = (n, by[i].1 + got, by[i].2 + kept);
+                }
+                if drawn == before { break }
+            }
+            // Each heavy value's survivors scaled by its rows over those drawn. A lead row two heavy values reach is
+            // counted twice.
+            let hot_n: f64 = by.iter().filter(|b| b.1 > 0).map(|&(n, got, kept)| n * kept as f64 / got as f64).sum();
+            let drawn_pass = hot_rows.len();
+            // The uniform draw's hot rows are a uniform sample of the same rows: walked with them.
+            hot_rows.extend(hot_u.iter().cloned());
+            joins::log(|| format!("background walk split by {link}.{cv}: {} of {} lead rows past the checks hot by value; {} drawn by key, {} pass, estimated {hot_n:.0}", hot_u.len(), hot_u.len() + cold_u.len(), drawn, drawn_pass));
+            st.rows = cold_u;
+            st.cold = cold_share;
+            st.hot = Some((hot_rows, hot_n));
+        }
+        Some(st)
     }
 
     /// The search's orders, the `WALK_ORDERS` best-priced and the one that ran, each walked from its own lead's rows
     /// that pass the checks after it (`starts`): their walked work over the line. An order not measured is left out
     /// (a price and a walked work are not one measure); where the order that ran is not walked, the priced orders are
     /// kept instead.
-    fn walk(&self, r: &Rule, first: Option<usize>, ran: &[Step], mut priced: Vec<(Vec<Step>, f64)>) -> joins::Searched {
+    ///
+    /// Decision 0245: the order that ran is walked first, then the rest by price, each only while `over` says the
+    /// time is not up.
+    fn walk(&self, r: &Rule, first: Option<usize>, ran: &[Step], mut priced: Vec<(Vec<Step>, f64)>, over: &dyn Fn() -> bool) -> joins::Searched {
         priced.sort_by(|a, b| a.1.total_cmp(&b.1));
         priced.truncate(WALK_ORDERS);
-        if !priced.iter().any(|(o, _)| same_order(o, ran)) { priced.push((ran.to_vec(), f64::NAN)); }
+        let ran_price = priced.iter().position(|(o, _)| same_order(o, ran)).map_or(f64::NAN, |i| priced.remove(i).1);
+        priced.insert(0, (ran.to_vec(), ran_price));
         let mut walkers: HashMap<usize, Walker<'_>> = HashMap::new();
         // The starts by the lead and its checks: orders that share them share their rows.
         let mut starts: HashMap<Vec<usize>, Option<Starts>> = HashMap::new();
         let mut walked = Vec::new();
         let mut ran_w = None;
-        for (o, price) in priced {
+        for (i, (o, price)) in priced.into_iter().enumerate() {
+            if i > 0 && over() { break }
             let Some(lead) = o.first().map(|s| s.at) else { continue };
-            let st = self.starts(r, &o, first);
-            let prefix: Vec<usize> = o.iter().take(1 + st.as_ref().map_or(0, |s| s.checks)).map(|s| s.at).collect();
-            let st = starts.entry(prefix).or_insert(st).as_ref();
+            let prefix: Vec<usize> = o.iter().take(1 + Self::checks(r, &o).len()).map(|s| s.at).collect();
+            let st = starts.entry(prefix).or_insert_with(|| self.starts(r, &o, first)).as_ref();
             let walker = walkers.entry(lead).or_insert_with(|| Walker::new(r, lead, joins::walk_width(), &|rel| self.rels.get(rel).cloned(), &|x| self.syms.get(x).copied()));
             // From the rows past the checks: the walk tests them again, each passing, and goes on. Its work past the
             // checks is the share passing them times its work less theirs. A walk whose sample ran out before its
             // last step measured nothing past it, and is not ranked.
+            // Split by a heavy key (decision 0245), the rest's rows are their share of those past the checks, and the
+            // hot rows are as drawn by key.
             let est = st.and_then(|st| {
-                if st.rows.is_empty() { return Some(st.lead_rows * st.checks_work) }
-                let per = walker.work(&o, &st.rows);
-                (!walker.emptied()).then(|| st.lead_rows * (st.checks_work + st.share * (per - st.checks as f64).max(0.0)))
+                let k = st.checks as f64;
+                let part = |rows: &[Vec<i64>]| -> Option<f64> {
+                    if rows.is_empty() { return Some(0.0) }
+                    let per = walker.work(&o, rows);
+                    (!walker.emptied()).then(|| (per - k).max(0.0))
+                };
+                let mut est = st.lead_rows * (st.checks_work + st.share * st.cold * part(&st.rows)?);
+                if let Some((rows, n)) = &st.hot { est += n * part(rows)?; }
+                Some(est)
             });
             if same_order(&o, ran) { ran_w = est; }
             walked.push((joins::steps(&o), est, price));
         }
         // Without the order that ran walked, the walks have nothing to be compared with: priced, as before.
         let Some(ran_w) = ran_w.filter(|w| *w > 0.0) else {
-            return joins::Searched { orders: walked.into_iter().filter(|w| w.2.is_finite()).map(|(o, _, p)| (o, p)).collect(), walked: None, tried: Vec::new() };
+            return joins::Searched { orders: walked.into_iter().filter(|w| w.2.is_finite()).map(|(o, _, p)| (o, p)).collect(), walked: None };
         };
         // The order that ran stays among the proposals, so the next check compares the rest with it.
         let ran_steps = joins::steps(ran);
-        let tried = walked.iter().filter(|(o, est, price)| *o != ran_steps && est.is_some() && price.is_finite() && *price > 0.0).map(|(o, est, price)| (o.clone(), est.expect("walked") / price)).collect();
         let mut orders: Vec<(Vec<StoredStep>, f64)> = walked.into_iter().filter_map(|(o, est, _)| Some((o, est?))).collect();
         orders.sort_by(|a, b| a.1.total_cmp(&b.1));
         if let Some(at) = orders.iter().position(|(o, _)| *o == ran_steps) && at >= joins::PROPOSALS {
             orders.swap(joins::PROPOSALS - 1, at);
         }
-        joins::Searched { orders, walked: Some(ran_w), tried }
+        joins::Searched { orders, walked: Some(ran_w) }
     }
 }
 
@@ -11994,6 +12186,10 @@ struct Starts {
     checks: usize,
     checks_work: f64,
     share: f64,
+    /// Decision 0245, where split by a heavy key: `rows` are the rest's, `cold` their share of the rows past the
+    /// checks, and `hot` the rows drawn by the key's heavy values with their estimated rows.
+    cold: f64,
+    hot: Option<(Vec<Vec<i64>>, f64)>,
 }
 
 /// Decision 0232: an order's work per lead row, sampled. The walk starts from lead rows (their bindings), and carries

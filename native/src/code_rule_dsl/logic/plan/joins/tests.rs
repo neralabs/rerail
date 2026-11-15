@@ -129,6 +129,25 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
 /// noted with its best order measured far over its price takes the other at its next plan, its wider search left to
 /// the background.
 #[test]
+fn walked_orders_are_costed_against_the_walked_order_that_ran() {
+    let _serial = SERIAL.lock();
+    clear();
+    let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
+    // The order that ran measured twice its price; the other is priced ten times higher.
+    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
+    let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0 }, Candidate { order: order(&[1, 0]), est: 1000.0 }];
+    let mut round = vec![Choice { key: 210, candidates: candidates.clone(), chosen: 9, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 0, "priced: {}", round[0].why);
+    // The background walked the other at a quarter of the one that ran: 50 in the run's units, against its 200.
+    propose(210, vec![(steps(&order(&[0, 1])), 4e5), (steps(&order(&[1, 0])), 1e5)], Some(4e5));
+    let mut round = vec![Choice { key: 210, candidates, chosen: 9, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 1, "walked: {}", round[0].why);
+    clear();
+}
+
+#[test]
 fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
     clear();
@@ -181,11 +200,11 @@ fn a_requested_search_proposes_its_orders() {
         let mut m = MEMO.write();
         noted_mut(&mut m, 400, 1).wants_search = true;
     }
-    request(400, 1.0, false, Box::new(|| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None, tried: Vec::new() }));
+    request(400, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None }));
     assert_eq!(requests(), 1);
     assert!(!wants_request(&400), "one request a line");
-    assert!(search_one());
-    assert!(!search_one());
+    assert!(search_one(&|| false));
+    assert!(!search_one(&|| false));
     let n = note(&400).unwrap();
     assert_eq!(n.proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![3.0, 5.0]);
     assert!(!n.wants_search);
@@ -410,13 +429,13 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
         work
     };
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
-    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None };
+    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
     let steps = |o: &[usize]| -> Vec<Step> { o.iter().map(|&at| Step { at, mode: None }).collect() };
     // From the returns, and from every node; the second priced as if far cheaper, and the order that ran.
     let (good, poor) = ([3usize, 2, 0, 1, 4, 5, 6], [0usize, 5, 6, 4, 2, 3, 1]);
     // And the good order with its lead and first check swapped: from every node, the returns' check first.
     let checked = [2usize, 3, 0, 1, 4, 5, 6];
-    let found = snap.walk(rule, None, &steps(&poor), vec![(steps(&poor), 1.0), (steps(&good), 100.0), (steps(&checked), 50.0)]);
+    let found = snap.walk(rule, None, &steps(&poor), vec![(steps(&poor), 1.0), (steps(&good), 100.0), (steps(&checked), 50.0)], &|| false);
     let of = |o: &[usize]| found.orders.iter().find(|w| w.0 == steps_of(o)).map(|w| w.1);
     assert_eq!(of(&checked), Some(run(&checked)), "from the lead's rows past its check, with the check's work");
     let (ran, best) = (found.walked.expect("walked"), found.orders.iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("orders"));
@@ -426,9 +445,43 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     assert_eq!(best.1, run(&good), "the good order's work over the line, from every row of its lead");
     assert!((ran / run(&poor) - 1.0).abs() < 0.05, "{ran} against {}", run(&poor));
     assert!(ran > 4.0 * best.1, "{ran} against {}", best.1);
-    // Each walked order's walk over its price is kept as an order tried; the order that ran keeps its run's alone.
-    let ratio = |o: &[usize]| found.tried.iter().find(|t| t.0 == steps_of(o)).map(|t| t.1);
-    assert_eq!((ratio(&good), ratio(&checked), ratio(&poor)), (Some(run(&good) / 100.0), Some(run(&checked) / 50.0), None));
+}
+
+#[test]
+fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
+    use std::collections::HashMap;
+    // From the calls: each call's function, then the function's nodes, then their kinds.
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- k(n, 1), r(f, n), r(f, m), k(m, 2).\n.output h\n").unwrap();
+    let rule = &p.rules[0];
+    // 1,000 functions of 30 nodes with 5 calls, and 2 of 2,000 nodes with 50: 2% of the calls, 56% of the work.
+    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    let mut add = |f: i64, nodes: i64, calls: i64| for i in 0..nodes {
+        r.push([f, f * 10_000 + i]);
+        k.push([f * 10_000 + i, if i < calls { 1 } else { 2 }]);
+    };
+    for f in 1..=1000 { add(f, 30, 5) }
+    for f in [5001, 5002] { add(f, 2000, 50) }
+    // Work by step after the lead: each call's function, each call's function's nodes, and their kinds.
+    let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0);
+    let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
+    // The function column's heavy values: both large functions, and some of the rest (their rows tie).
+    let heavy: Vec<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
+    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: [(("r".to_owned(), 0), heavy)].into_iter().collect() };
+    let order: Vec<Step> = [0usize, 1, 2, 3].iter().map(|&at| Step { at, mode: None }).collect();
+    let st = snap.starts(rule, &order, None).expect("measured");
+    let (hot, n) = st.hot.as_ref().expect("split by the function's heavy values");
+    // The heavy values' calls: the large functions' 100, and 5 for each of the 10 others.
+    assert!((n / 150.0 - 1.0).abs() < 0.15, "{n} hot calls, {} drawn", hot.len());
+    assert!(hot.len() >= 64, "{} hot rows to walk", hot.len());
+    let found = snap.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false);
+    let walked = found.walked.expect("walked");
+    let plain = WalkSnap { heavy: HashMap::new(), ..snap };
+    let unsplit = plain.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
+    // Split, 1.04 of the work; drawn whole, 1.76: the uniform draw's hot rows each stand for a large function.
+    assert!((walked / truth - 1.0).abs() < 0.1, "{walked} against {truth}");
+    assert!((unsplit / truth - 1.0).abs() > 3.0 * (walked / truth - 1.0).abs(), "unsplit {unsplit}, split {walked}, against {truth}");
 }
 
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {

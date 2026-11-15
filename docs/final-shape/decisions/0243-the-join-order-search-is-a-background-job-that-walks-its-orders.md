@@ -115,6 +115,9 @@ With the walks as orders tried, the next run's plan chose the swapped order, whi
 
 ## Open
 
+All three addressed by decision 0245 (2026-11-15), which also replaces §2's orders tried: walked orders are costed
+against the walked order that ran.
+
 - **A proposal leading with another atom than a cut cannot be trialled at the check.** It reaches the plan only,
   through its walked ratio. On the 50 files the best walked proposal, `1.0.2.3.4.5` at 2.72 M, was not taken there.
 - **Each search can pass the drain's budget.** One is run to its end once started.
