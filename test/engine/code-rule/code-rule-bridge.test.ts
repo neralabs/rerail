@@ -1060,6 +1060,58 @@ describe("CodeRuleBridge", () => {
       expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
     });
 
+    it("fails nothing when a child folder, or the .git in one, is removed as the walk asks for its real path", async () => {
+      const root = await workspace();
+      const sub = join(root, "src", "sub");
+      await mkdir(sub);
+      await writeFile(join(root, "src", "a.py"), "a = 1\n");
+      await writeFile(join(sub, ".git"), "gitdir: elsewhere\n");
+      await writeFile(join(sub, "b.py"), "b = 1\n");
+      await awaitClockAfter(join(root, "src", "a.py"), join(sub, "b.py"));
+      // `.git` before `b.py`, as Windows lists them: a folder that failed at its `.git` would not have walked `b.py` yet.
+      discovery.inNameOrder = true;
+      // As the router's walk view and owner lookup throw for a path removed as they ask: ENOENT, or on Windows EBADF.
+      const removed: Array<{ path: string; error: Error }> = [];
+      const askedOf = (path: string): void => {
+        const at = removed.findIndex(entry => entry.path === path);
+        if (at >= 0) throw removed.splice(at, 1)[0]!.error;
+      };
+      const removedAs = (path: string, code: string, syscall: string): { path: string; error: Error } => {
+        const absolute = resolve(root, path);
+        return { path, error: Object.assign(new Error(`${code}: gone, ${syscall} '${absolute}'`), { code, syscall, path: absolute }) };
+      };
+      const view = { acceptsPath: () => true, ignoresPath: (path: string) => { askedOf(path); return false; } };
+      const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const onDiscoveryGaps = vi.fn();
+      // What the bridge holds of each file after each walk.
+      const observations: SourceObservationCache = new Map();
+      const bridge = createBridge(root, {
+        ...auditor(auditGeneratedEdits), walkView: () => view, sourceRoot: (path: string) => { askedOf(path); return root; },
+      }, { onDiscoveryGaps, observations });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      const observed = (): string[] => [...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py")).sort();
+      expect(observed()).toEqual(["src/a.py", "src/sub/b.py"]);
+
+      for (const gone of [removedAs("src/sub", "ENOENT", "realpath"), removedAs("src/sub", "EBADF", "realpath"), removedAs("src/sub/.git", "ENOENT", "lstat")]) {
+        removed.push(gone);
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+        expect(removed).toEqual([]);
+        // No file of the folder that listed it read as deleted.
+        expect(observed()).toEqual(["src/a.py", "src/sub/b.py"]);
+      }
+      // A shell edit of each is found as a change of the file the walks held, not as a new file.
+      await bridge.begin("shell-1", "shell", { command: "python3 edit.py" });
+      await writeFile(join(root, "src", "a.py"), "a = 2\n");
+      await writeFile(join(sub, "b.py"), "b = 2\n");
+      await bridge.finish("shell-1");
+      expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits.map(edit => [edit.path, edit.previousReadError, edit.generatedText])).toEqual([
+        ["src/a.py", "Source changed outside a tool with a captured preimage", "a = 2\n"],
+        ["src/sub/b.py", "Source changed outside a tool with a captured preimage", "b = 2\n"],
+      ]);
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+    });
+
     /** An error as Windows gives it for a path it refuses. */
     const refusal = (syscall: string, path: string): Error =>
       Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: "EPERM", syscall, path });

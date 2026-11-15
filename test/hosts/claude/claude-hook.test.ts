@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionData
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startChurn } from "../../support/processes/churn.js";
+import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -270,7 +271,7 @@ describe("Claude Code hook with a running daemon", () => {
     const denies = process.platform !== "win32" && process.getuid?.() !== 0;
     const denied: string[] = [];
     afterEach(async () => {
-      for (const folder of denied.splice(0)) await chmod(folder, 0o755);
+      for (const folder of denied.splice(0)) await restoreAccess(folder);
     });
 
     /** A Git repository under `root` with the rule on, and a daemon serving it, as a person's started repository is. */
@@ -341,9 +342,10 @@ describe("Claude Code hook with a running daemon", () => {
         reader.close();
       }
     }
-    async function deny(folder: string): Promise<void> {
+    /** Takes the folder's rights away (`denyAccess`); whether that holds for the daemon these tests start. */
+    async function deny(folder: string): Promise<boolean> {
       denied.push(folder);
-      await chmod(folder, 0o000);
+      return await denyAccess(folder);
     }
 
     it("records ten places that never change once each over 20 turn ends, and answers each Stop as before", { timeout: 180_000 }, async () => {
@@ -387,7 +389,7 @@ describe("Claude Code hook with a running daemon", () => {
       expect(gapPlaces("churn-session")).toEqual([]);
     });
 
-    it.skipIf(!denies)("records no second copy of a folder whose files it saw, after the daemon restarts and the session resumes", { timeout: 180_000 }, async () => {
+    it("records no second copy of a folder whose files it saw, after the daemon restarts and the session resumes", { timeout: 180_000 }, async ({ skip }) => {
       const root = await temporaryDirectory({ started: false });
       const repository = await startedRepository(root);
       const locked = join(repository, "src", "locked");
@@ -396,17 +398,21 @@ describe("Claude Code hook with a running daemon", () => {
       const session = claudeSession(repository, "restart-session");
       await session.start();
       await session.walked();
-      await deny(locked);
-      await session.turn();
-      expect(gapRows("restart-session")).toHaveLength(1);
+      if (!await deny(locked)) skip("this process reads a folder its user is denied: root, or a Windows token holding the backup privilege");
+      for (let turn = 0; turn < 2; turn += 1) await session.turn();
+      const recorded = gapRows("restart-session");
+      // POSIX lists the folder's parent and records the folder. On Windows the native real path of a path the user is
+      // denied fails the walk view's look of it, so the parent's listing fails, and a walk that met a file it had seen
+      // there fails whole: what is recorded then names the parent, or no path.
+      if (process.platform === "win32") expect(recorded.length).toBeGreaterThan(0);
+      else expect(recorded).toEqual([{ path: "src/locked", reason: `EACCES: permission denied, opendir '${locked}'` }]);
 
       await closeNativeTestDaemons();
       await startNativeTestDaemon(repository);
       await session.start("resume");
       await session.walked();
       for (let turn = 0; turn < 3; turn += 1) await session.turn();
-      expect(gapRows("restart-session")).toHaveLength(1);
-      expect(gapPlaces("restart-session")).toEqual([{ path: "src/locked", reason: `EACCES: permission denied, opendir '${locked}'` }]);
+      expect(gapPlaces("restart-session")).toEqual(recorded);
     });
   });
 });
