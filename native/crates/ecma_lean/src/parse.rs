@@ -1190,6 +1190,8 @@ impl<'a> P<'a> {
             w::ASYNC if self.is_word_at(1, w::FUNCTION) && !self.peek_at(1).nl => self.function(s, true, true),
             w::CLASS => self.class_declaration(s),
             w::IMPORT if !matches!(self.peek_at(1).kind, T::LParen | T::Dot) => self.import_statement(s),
+            // `export` before a line break: tree-sitter reads a name's statement there; not read.
+            w::EXPORT if self.peek_at(1).nl => self.refuse(),
             w::EXPORT => self.export_statement(s),
             _ if self.peek_at(1).kind == T::Colon && t.word != w::DEFAULT => self.labeled_statement(s),
             _ => self.expression_statement(s),
@@ -1200,9 +1202,12 @@ impl<'a> P<'a> {
     fn let_declares(&mut self) -> bool {
         let n = self.peek_at(1);
         match n.kind {
-            T::LBrace | T::LBracket => !n.nl || true,
+            // Before a line break, a name or `{` ends `let` (tree-sitter's scanner inserts the
+            // `;`): `let` is a name's statement. A `[` continues it.
+            T::LBracket => true,
+            T::LBrace => !n.nl,
             // `let` then an operator is a name's (`let in x`); TypeScript's `as` and `satisfies` too.
-            T::Name => !(matches!(n.word, w::IN | w::INSTANCEOF) || (self.ts && matches!(n.word, w::AS | w::SATISFIES))) || n.nl,
+            T::Name => !n.nl && !(matches!(n.word, w::IN | w::INSTANCEOF) || (self.ts && matches!(n.word, w::AS | w::SATISFIES))),
             _ => false,
         }
     }
@@ -1309,10 +1314,13 @@ impl<'a> P<'a> {
         match self.peek() {
             T::LBrace => self.object_pattern(s),
             T::LBracket => self.array_pattern(s),
+            // `yield` as a pattern's name (not a declarator's).
+            T::Name if self.is_word(w::YIELD) && s.field != f::NAME => self.yield_name(s).map(drop),
             T::Name => {
-                // tree-sitter reads a declarator's `undefined` as a name (`var undefined`), and
-                // JavaScript's elsewhere as the `undefined` it is in an expression.
-                let undefined = !self.ts && s.field != f::NAME && self.is_word(w::UNDEFINED);
+                // tree-sitter reads a declarator's and a catch clause's `undefined` as a name
+                // (`var undefined`, `catch (undefined)`), and JavaScript's elsewhere as the
+                // `undefined` it is in an expression.
+                let undefined = !self.ts && !matches!(s.field, f::NAME | f::PARAMETER) && self.is_word(w::UNDEFINED);
                 self.leaf_in(if undefined { K::Undefined } else { K::Identifier }, s)?;
                 Ok(())
             }
@@ -1435,6 +1443,10 @@ impl<'a> P<'a> {
                 self.leaf(K::TLParen, f::NONE, C_NONE)?;
             } else {
                 self.bump()?;
+            }
+            // `for await (let [x] of …)`: tree-sitter reads a subscript of a name `let`; not read.
+            if is_await && self.is_word(w::LET) && self.peek_at(1).kind == T::LBracket {
+                return self.refuse();
             }
             let saved = self.asi;
             self.asi = false;
@@ -1687,12 +1699,17 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         if self.is_word(w::YIELD) && matches!(self.peek_at(1).kind, T::Comma | T::RParen | T::Eq | T::Colon | T::Question) {
-            let n = self.open_in(K::Identifier, s);
-            self.leaf(K::TYield, f::NONE, C_NONE)?;
-            self.close(n);
-            return Ok(K::Identifier);
+            return self.yield_name(s);
         }
         self.open_pattern_target(s)
+    }
+
+    /// `yield` as a pattern's name: an identifier holding its token.
+    fn yield_name(&mut self, s: Slot) -> R<K> {
+        let n = self.open_in(K::Identifier, s);
+        self.leaf(K::TYield, f::NONE, C_NONE)?;
+        self.close(n);
+        Ok(K::Identifier)
     }
 
     /// A pattern's target: a name, an object or array pattern. Its kind. Patterns nest through
@@ -1717,6 +1734,9 @@ impl<'a> P<'a> {
             T::Name => {
                 let k = self.peek_at(1).kind;
                 if !matches!(k, T::Dot | T::QDot | T::LBracket) {
+                    if self.is_word(w::YIELD) {
+                        return self.yield_name(s);
+                    }
                     let kind = if self.is_word(w::UNDEFINED) { K::Undefined } else { K::Identifier };
                     self.leaf_in(kind, s)?;
                     return Ok(kind);
@@ -1745,6 +1765,9 @@ impl<'a> P<'a> {
         match self.peek() {
             T::LBrace => self.object_pattern(BARE)?,
             T::LBracket => self.array_pattern(BARE)?,
+            T::Name if self.is_word(w::YIELD) => {
+                self.yield_name(BARE)?;
+            }
             T::Name => {
                 let kind = if self.is_word(w::UNDEFINED) { K::Undefined } else { K::Identifier };
                 self.leaf_in(kind, BARE)?;
@@ -2697,12 +2720,27 @@ impl<'a> P<'a> {
             }
             let n = self.wrap(N { at: start, kind: left.kind }, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
             self.leaf(op, f::OPERATOR, C_NONE)?;
-            self.binary_as(slot(f::RIGHT, Ctx::Expr), if right_assoc { prec } else { prec + 1 }, right_assoc)?;
+            // The right operand is tree-sitter's `expression`, where `yield` is a
+            // `yield_expression` (`a * yield`). One with an argument after it is not read.
+            if self.is_word(w::YIELD) {
+                if !self.yield_ends() {
+                    return self.refuse();
+                }
+                self.yield_expression(slot(f::RIGHT, Ctx::Expr))?;
+            } else {
+                self.binary_as(slot(f::RIGHT, Ctx::Expr), if right_assoc { prec } else { prec + 1 }, right_assoc)?;
+            }
             self.close(n);
             self.after = V_EXPR;
             left = n;
         }
         Ok(left)
+    }
+
+    /// Whether the `yield` here has no argument: a line break or a closing token after it.
+    fn yield_ends(&mut self) -> bool {
+        let after = self.peek_at(1);
+        after.nl || matches!(after.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Colon | T::Eof)
     }
 
     /// `left as T`, `left as const`, `left satisfies T`, `left` written at `start`.
@@ -2774,8 +2812,7 @@ impl<'a> P<'a> {
             // The argument is tree-sitter's `expression`, where `yield` is a `yield_expression`
             // (`void yield`). One with an argument after it is not read.
             if self.is_word(w::YIELD) {
-                let after = self.peek_at(1);
-                if !after.nl && !matches!(after.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Colon | T::Eof) {
+                if !self.yield_ends() {
                     return self.refuse();
                 }
                 self.yield_expression(slot(f::ARGUMENT, Ctx::Expr))?;
@@ -2833,6 +2870,24 @@ impl<'a> P<'a> {
                     }
                 };
                 self.restore(m);
+            }
+            // `await [a]` and a postfix: tree-sitter-javascript reads a subscript of a name
+            // `await`, the elements its index; not read.
+            if next.kind == T::LBracket && !self.ts {
+                let m = self.mark();
+                self.bump()?;
+                let subscript = self.primary(EXPR).is_err() || {
+                    let after = self.tok();
+                    match after.kind {
+                        T::LParen | T::Dot | T::QDot | T::LBracket | T::Backtick => true,
+                        T::PlusPlus | T::MinusMinus => !after.nl,
+                        _ => false,
+                    }
+                };
+                self.restore(m);
+                if subscript {
+                    return self.refuse();
+                }
             }
             if !called {
                 self.deeper()?;

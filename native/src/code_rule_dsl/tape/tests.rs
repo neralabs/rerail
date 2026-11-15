@@ -2958,6 +2958,9 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "x = new a.b[c + d].e(f + g.h) + new i.j\n",
         // `await (…)` and a postfix: JavaScript calls a name `await`; TypeScript awaits.
         "async function f() { await (a)(); await (a).b; await (a)[0]; await (a)?.b; await (a)`t`; await (a)++; await (a)\n++b; await (a); f()++ }\n",
+        // `let` before a line break and a name or `{` is a name's statement (the scanner's `;`);
+        // before `[`, a declaration.
+        "let\nx\nif (1) let\n{}\nL: let // c\n{}\nlet\n[a] = b;\n",
     ];
     // Arguments no expression reads: a call of `await` in JavaScript, errors in TypeScript.
     // U+0085 is no blank: a name's character.
@@ -2967,6 +2970,9 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         // A hashbang ends at `\n` only.
         "#!/usr/bin/env node\r\nx = 1\n",
         "#! a\r{\n",
+        // `yield` as an operand is a `yield_expression`, as a pattern's name an identifier
+        // holding its token; a catch clause's `undefined` is a name.
+        "x = a * yield;\nvar {a: yield} = b;\n[yield] = c;\nvar [d, ...yield] = e;\ntry {} catch (undefined) {}\n",
     ];
     let jsx = [
         "const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n",
@@ -3098,6 +3104,17 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         for invalid in invalid {
             assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
             assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err(), "{dialect:?} accepted {invalid:?}");
+        }
+        // Valid, but tree-sitter reads `export` before a line break as a name's statement, and
+        // JavaScript's `await [a]` and a postfix, and `for await (let [x] of …)`, as subscripts of
+        // names: refused, not read as what they are.
+        let mut odd = vec!["export\nconst a = 1;\n", "async function f() { for await (let [x] of y) {} }\n"];
+        if dialect == Dialect::JavaScript {
+            odd.extend(["async function f() { x = await [1].y; }\n", "f(await [1]?.[0]);\n"]);
+        }
+        for odd in odd {
+            assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{dialect:?}: {odd:?} reads with an error");
+            assert!(ecma_lean::encode(dialect, &grammar, odd, &|| false).is_err(), "{dialect:?} read {odd:?}");
         }
     }
 }
