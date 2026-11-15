@@ -1014,9 +1014,9 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
 /**
- * One place the walks a checkpoint answered after could not check, so shell writes there went unchecked: a folder or file
- * the last walk of the session folder or of the other worktrees could not read, or an unlisted file too large to read.
- * The checkpoint's `source-incomplete` failure joins each as `path: reason`.
+ * One place the walks a checkpoint answered after could not fully check: a folder or file the last walk of the session
+ * folder or of the other worktrees could not read, or an unlisted file too large to read, where shell writes went
+ * unchecked. The checkpoint's `source-incomplete` failure joins each as `path: reason`.
  */
 export interface DiscoveryGap {
   readonly boundary: Extract<CodeRuleCheckpoint, "turn" | "final">;

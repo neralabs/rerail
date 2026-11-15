@@ -84,11 +84,11 @@ describe("what the timeline says Rerail did not see of the session", () => {
     ].join("; "));
   });
 
-  it("says when rules could not check part of the repository, beside the boundaries that answered before their walk ended", () => {
+  it("says when rules could not fully check part of the repository, beside the boundaries that answered before their walk ended", () => {
     withGaps({ ...NO_GAPS, discoveryGaps: 1 });
-    expect(coverageGaps(row())).toBe("rules could not check part of the repository (1 place)");
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (1 place)");
     withGaps({ ...NO_GAPS, uncheckedBoundaries: 2, discoveryGaps: 3 });
-    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not check part of the repository (3 places)");
+    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not fully check part of the repository (3 places)");
   });
 
   it("lists the places the daemon names with why, and says how many of the session's places they are", () => {
@@ -97,9 +97,10 @@ describe("what the timeline says Rerail did not see of the session", () => {
     expect(discoveryGapPlaces(row())).toEqual([place]);
     withGaps({ ...NO_GAPS, discoveryGaps: 1 });
     expect(discoveryGapPlaces(row())).toEqual([]);
-    expect(placesHeading(1, 1)).toBe("Rules could not check this place, so shell edits there went unchecked:");
-    expect(placesHeading(3, 3)).toBe("Rules could not check these places, so shell edits there went unchecked:");
-    expect(placesHeading(20, 1001)).toBe("Rules could not check the first 20 of these 1,001 places, so shell edits there went unchecked:");
+    // Words true of every reason a place has: one Rerail could not read went unchecked, one checked in part was not.
+    expect(placesHeading(1, 1)).toBe("Rules could not fully check this place:");
+    expect(placesHeading(3, 3)).toBe("Rules could not fully check these places:");
+    expect(placesHeading(20, 1001)).toBe("Rules could not fully check the first 20 of these 1,001 places:");
   });
 
   it("says nothing of a walk's gaps when the session has none, or the answer counts none", () => {

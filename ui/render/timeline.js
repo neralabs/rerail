@@ -252,7 +252,7 @@ function renderEarlier(earlier) {
 const COVERAGE_CLAUSES = [
   [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
   [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
-  [discoveryGaps, n => `rules could not check part of the repository (${fmt(n)} ${plural(n, "place")})`],
+  [discoveryGaps, n => `rules could not fully check part of the repository (${fmt(n)} ${plural(n, "place")})`],
   [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
   [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
   [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],
@@ -266,10 +266,13 @@ export function coverageGaps(sess) {
   }).join("; ");
 }
 
-/** The heading over the places listed: how many of the session's `total` they are. */
+/**
+ * The heading over the places listed: how many of the session's `total` they are. Its words hold for every reason a place
+ * can have, given beside it: what happened to shell edits there is the reason's to say.
+ */
 export function placesHeading(shown, total) {
   const which = shown < total ? `the first ${fmt(shown)} of these ${fmt(total)} places` : plural(shown, "this place", "these places");
-  return `Rules could not check ${which}, so shell edits there went unchecked:`;
+  return `Rules could not fully check ${which}:`;
 }
 
 const placeKey = place => JSON.stringify([place.path ?? "", place.reason]);

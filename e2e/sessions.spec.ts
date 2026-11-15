@@ -53,7 +53,7 @@ test.describe("History by session", () => {
     await expect(headerId(page)).toHaveAttribute("title", target);
   });
 
-  test("mature: a session whose turn end could not check part of the repository lists each place with why, and counts them", async ({ page, rerail }) => {
+  test("mature: a session whose turn end could not fully check part of the repository lists each place with why, and counts them", async ({ page, rerail }) => {
     const { manifest } = await rerail.scenario("mature");
     const url = new URL(await rerail.dashboard("mature", { hash: "sessions" }));
     const open = async (id: string): Promise<void> => {
@@ -66,18 +66,18 @@ test.describe("History by session", () => {
     const end = page.locator("#content .tl > .bound").last();
     await open(manifest.sessionIds[0]!);
 
-    await expect(places.locator("p")).toHaveText("Rules could not check these places, so shell edits there went unchecked:");
+    await expect(places.locator("p")).toHaveText("Rules could not fully check these places:");
     await expect(places.locator("li")).toHaveText([
       "src/vendor/locked · EACCES: permission denied, opendir '/work/storefront/src/vendor/locked'",
       "data/catalog.json · Source exceeds 1000000 byte policy limit",
       "../storefront-hotfix/src/cache · EACCES: permission denied, opendir '/work/storefront-hotfix/src/cache'",
     ]);
     await expect(places.locator("li code").first()).toHaveText("src/vendor/locked");
-    await expect(end).toContainText("rules could not check part of the repository (3 places)");
+    await expect(end).toContainText("rules could not fully check part of the repository (3 places)");
 
     // A session whose walks checked everything lists nothing.
     await open(manifest.sessionIds[1]!);
-    await expect(end).not.toContainText("could not check");
+    await expect(end).not.toContainText("could not fully check");
     await expect(places).toBeHidden();
   });
 
