@@ -1858,6 +1858,19 @@ const cloneIdsChanged: Array<{ what: string; arrange: (root: string, app: string
     },
   },
   {
+    what: "the database records it under another clone, and a checkout of the started repository under the clone id it holds",
+    arrange: (root, app, started) => ({
+      folder: join(app, "src"),
+      change: () => inDatabase(database => {
+        const cloneId = readFileSync(cloneIdFile(app), "utf8").trim();
+        const startedKey = recordCheckout(database, started).repositoryKey;
+        database.$client.prepare("UPDATE checkouts SET clone_id = 'git:another-clone' WHERE checkout_path = ?").run(realpathSync.native(app));
+        database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 0, 0)")
+          .run(join(root, "elsewhere"), startedKey, cloneId);
+      }),
+    }),
+  },
+  {
     what: "Git no longer takes its .git, so the daemon places it outside Git, whose clone id file names the started repository's",
     arrange: (root, app, started) => ({
       folder: app,
@@ -2206,6 +2219,56 @@ describe("the hook start check", () => {
     }
     expect({ copy: readFileSync(copy, "utf8"), link: lstatSync(file).isSymbolicLink(), whole: wholeKeptAnswer(readFileSync(file, "utf8")) })
       .toEqual({ copy: before, link: false, whole: true });
+  });
+
+  it.each([
+    { what: "the folder of kept answers", at: (home: string): string => join(home, "stopped-answers") },
+    { what: "this daemon's folder of kept answers", at: (home: string): string => join(home, "stopped-answers", `${process.pid}-1`) },
+  ])("writes nothing through a link in place of $what where the daemon answers stopped in time, and leaves what it leads to", async ({ at }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const target = join(root, "target");
+    mkdirSync(target);
+    writeFileSync(join(target, "canary.txt"), "canary");
+    const link = at(process.env.RERAIL_HOME!);
+    mkdirSync(dirname(link), { recursive: true });
+    folderLink(target, link);
+    const host = await startCheckHost();
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await daemon.close();
+    }
+    expect({ target: readdirSync(target), canary: readFileSync(join(target, "canary.txt"), "utf8") }).toEqual({ target: ["canary.txt"], canary: "canary" });
+  });
+
+  it.runIf(process.platform === "win32")("keeps no answer for a stopped checkout reached as a share of this machine (\\\\localhost\\<drive>$), and waits for the daemon there", async ({ skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const local = realpathSync.native(app);
+    const share = `\\\\localhost\\${local[0]!.toLowerCase()}$${local.slice(2)}`;
+    if (!existsSync(share)) skip("this machine shares no drive to this user as <letter>$");
+    const host = await startCheckHost();
+    // A daemon whose Git reads the share names the checkout there, as the hook spells the folder it asks about.
+    const repositoryKey = host.daemonScope(app)!.repositoryKey;
+    const scopeOf = (folder: string): DaemonScope => ({ repositoryKey, checkoutPath: folder });
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped", undefined, { scopeOf });
+    try {
+      expect(await host.hookRerailStarted("claude-code", share, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await prompt.close();
+    }
+    const late = await daemonAnsweringAfterProof(host, "started", { scopeOf });
+    try {
+      host.proofs.nextCheck();
+      expect({
+        kept: existsSync(join(process.env.RERAIL_HOME!, "stopped-answers")), started: await host.hookRerailStarted("claude-code", share),
+        checked: host.proofs.found.at(-1), asked: [...prompt.asked, ...late.asked].map(folder => (folder.startsWith("\\\\") ? "the share" : folder)),
+      }).toEqual({ kept: false, started: true, checked: false, asked: ["the share", "the share"] });
+    } finally {
+      await late.close();
+    }
   });
 
   it("keeps a new daemon's first answer and removes nothing of the folders the daemons before it kept, which the daemon removes once it runs", async () => {

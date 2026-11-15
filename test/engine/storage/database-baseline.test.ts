@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { LazyReadonlyRerailDatabase, openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { LazyReadonlyRerailDatabase, openRerailDatabase, openRerailDatabaseAsIs } from "../../../src/engine/storage/database.js";
 import {
   RERAIL_BASELINE_SCHEMA_VERSION,
   RERAIL_MIGRATIONS,
@@ -686,5 +686,36 @@ describe("a writer's delete", () => {
     deleting.$client.close();
 
     expect(readFileSync(path).toString("latin1")).not.toContain(secret);
+  });
+});
+
+describe("an open as it is beside a running daemon", () => {
+  // A daemon's open connection keeps the WAL and the WAL's index beside the file; the last connection's close takes
+  // both away, so each case puts back the one it keeps.
+  it.each([
+    { missing: "-wal", kept: "-shm" },
+    { missing: "-shm", kept: "-wal" },
+  ])("refuses a database whose $missing is gone from beside it, naming it, before SQLite would make it again", async ({ missing, kept }) => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    await writeFile(`${path}${kept}`, "");
+    expect(existsSync(`${path}${missing}`)).toBe(false);
+    expect(() => openRerailDatabaseAsIs(path, { besideDaemon: true })).toThrow(new Error(`${path}${missing} is missing beside the database a daemon holds open`));
+    expect(existsSync(`${path}${missing}`)).toBe(false);
+  });
+
+  it("opens one beside the daemon's own connection, which keeps both", async () => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    const daemon = new Database(path);
+    daemon.prepare("SELECT count(*) FROM sqlite_master").get();
+    try {
+      const database = openRerailDatabaseAsIs(path, { besideDaemon: true });
+      const tables = database.$client.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table'").get() as { count: number };
+      database.$client.close();
+      expect(tables.count).toBeGreaterThan(0);
+    } finally {
+      daemon.close();
+    }
   });
 });
