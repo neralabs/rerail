@@ -163,9 +163,19 @@ checkout, with the edit made here and its file pushed through the mirror (`scrip
 
 This machine spends nothing but the push: the JIT, the 6–7 GB live process and the 7.2 GB
 `target/relax` store are the M3's. It is also faster than the same session here (2–9 s at a load
-of 60–90), because the M3 is idle. What it needs to be the everyday loop: a watcher here that
-pushes each saved file to the host (the push is the mirror's `put`; this run pushed by hand), and
-`relax test --live` started on the host by a script, with its verdicts read back over ssh.
+of 60–90), because the M3 is idle.
+
+`scripts/dev/live-test-remote` makes it one command:
+
+```
+RELAX=<relax binary> RELAX_STD=<its std> scripts/dev/live-test-remote rerail-engine --lib -- <filter>
+```
+
+It sends the checkout and Relax to the first `"mirror"` host, starts the live session there, and
+watches this checkout (FSEvents), sending each saved file; the host's verdicts print here, each
+with the time since the save. Ctrl-C, a kill or a closed terminal stops the session on the host.
+Measured with it: a restart with the host's store warm, 4–11 s to the first verdict; a panic
+added to `start`, failed 1.6 s after the save; undone, passed 0.9 s after.
 
 ### What it costs
 
