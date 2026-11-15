@@ -11,6 +11,7 @@ use super::{AtomId, Cell, RelId};
 /// such cell's atom a relation id.
 pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
+    ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
     ("native_roots", &[1, 2]),
     ("native_match", &[1, 2]),

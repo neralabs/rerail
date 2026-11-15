@@ -30,6 +30,8 @@ headless = ["napi-derive/noop"]
 dump-cli = []
 python-syntax-error = []
 tape-cache = []
+# E7: counts of the tape parts readers take (`tape::reads`).
+tape-reads = []
 system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []

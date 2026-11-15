@@ -11,6 +11,9 @@ pub(super) struct Input {
     pub tape_hits: u64,
     pub tape_misses: u64,
     pub late_candidate_rewrite: bool,
+    /// Per-node source attributes made for every node though they can be answered on request (decision 0174):
+    /// the attribute and the lowering's reason (`<a> on request`).
+    pub eager_attributes: Vec<(String, String)>,
 }
 #[derive(Default, Debug)]
 pub(super) struct Span {
@@ -92,6 +95,16 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
             action,
         })
     };
+    for (attr, why) in &i.eager_attributes {
+        add(
+            "EAGER_NODE_ATTRIBUTE",
+            "observed",
+            format!("input relation {attr}"),
+            None,
+            format!("made for every node: {why}"),
+            "Bind the node by other literals in that reader (or read the attribute positively, outside an aggregate), so the attribute is answered on request (decision 0174).",
+        );
+    }
     let scalar: u64 = i.projections.iter().map(|p| p.scalar_nodes).sum();
     let nodes: u64 = i.projections.iter().map(|p| p.nodes).sum();
     let strings: u64 = i.projections.iter().map(|p| p.strings).sum();

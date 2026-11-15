@@ -78,7 +78,10 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
-    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212).
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212). And each
+    /// relation's as its frame keeps them (`typed`, by the columns' domains), as `load` reads them back: without, the
+    /// engine's declared types, a kind's or a field's `sym` column typed `s`, which `load` refuses as kept under other
+    /// types, and a forked process's writer maps as atoms.
     types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
@@ -107,6 +110,15 @@ impl<'s> Kept<'s> {
             written_rows: 0,
             strata: None,
         }
+    }
+
+    /// Kept under `prog`'s frame types (`retain::types_of`), as `load` reads them: a kind or field column is no atom.
+    /// An input's types given to `new` stand.
+    pub(in crate::code_rule_dsl) fn typed(mut self, prog: &crate::code_rule_dsl::logic::front::Program, domains: &super::lower::Domains) -> Self {
+        for rel in prog.decls.keys() {
+            self.types.entry(rel.to_string()).or_insert_with(|| super::retain::types_of(prog, domains, rel));
+        }
+        self
     }
 
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
@@ -196,6 +208,7 @@ impl KeptStrata for Kept<'_> {
                 if self.was.get(rel).is_some_and(|w| w.digest == digest && w.reads == reads) {
                     return;
                 }
+                let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
                 self.values += rows.len();
                 self.written_rows += n;
                 self.puts.push(FramePut { rel: frame, part: 0, digest, reads, rows: FrameRows { types, rows, n } });

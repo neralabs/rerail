@@ -1153,6 +1153,44 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
+/// nodes its other literals bind, less those that read the text; a relation that reads `node_text` is read through
+/// its widened copy; a negation asks for the nodes it tests. A reader that binds its node by nothing else keeps it an
+/// input, for every node.
+/// Made for every node, a module's text, each class's in it and each function's in those were all interned (390 MB of
+/// atoms from 69 MB of source).
+#[test]
+fn node_text_answered_on_request() {
+    let decls = ".decl node(d: number, n: node, k: symbol, a: number, b: number)\n.decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl node_text(n: node, s: symbol)\n.input node, child, field, node_text\n.decl out(s: symbol)\n.output out\n.decl named(n: node, s: symbol)\n";
+    let requests = |body: &str| -> Option<Vec<String>> {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{body}\n")).unwrap();
+        if program.inputs.iter().any(|i| i == "node_text") {
+            return None;
+        }
+        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel == "rr_node_text_req" || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
+        out.sort();
+        Some(out)
+    };
+    let one = |body: &str, want: &[&str]| assert_eq!(requests(body), Some(want.iter().map(|s| s.to_string()).collect()), "{body}");
+    one("out(s) :- node(_, m, \"module\", _, _), node_text(m, s).", &["rr_node_text_req(m) :- node(_, m, \"module\", _, _)."]);
+    one("out(s) :- field(_, \"type\", y), node_text(y, s).", &["rr_node_text_req(y) :- field(_, \"type\", y)."]);
+    // A literal that reads the text is left out; the rest that binds the node is the request.
+    one("out(s) :- field(p, \"name\", y), node_text(y, s), node(_, q, \"call\", _, _), field(q, \"function\", f), node_text(f, s), child(p, x, 0).", &[
+        "rr_node_text_req(f) :- node(_, q, \"call\", _, _), field(q, \"function\", f).",
+        "rr_node_text_req(y) :- field(p, \"name\", y), child(p, x, 0).",
+    ]);
+    // A node bound by a relation that reads node_text: through its widened copy, on the columns it binds without it.
+    one("named(n, s) :- node(_, n, \"identifier\", _, _), node_text(n, s).\nout(t) :- named(n, \"x\"), field(n, \"name\", m), node_text(m, t).", &[
+        "rr_node_text_req(m) :- rr_wide_node_text_named(n), field(n, \"name\", m).",
+        "rr_node_text_req(n) :- node(_, n, \"identifier\", _, _).",
+        "rr_wide_node_text_named(n) :- node(_, n, \"identifier\", _, _).",
+    ]);
+    // A negation asks for the nodes it tests.
+    one("out(s) :- node(_, n, \"call\", _, _), !node_text(n, \"x\"), s = \"y\".", &["rr_node_text_req(n) :- node(_, n, \"call\", _, _)."]);
+    // Every node: eager, as before.
+    assert_eq!(requests("out(s) :- node_text(_, s)."), None);
+}
+
 /// What an edit changes of `node_order` (measured for the stable order keys): over `ORDER_PAIRS` (lines `step\told
 /// file\tnew file`, Python), the rows deleted plus inserted under each key: the preorder index (today's), a granule
 /// run's rank and the index inside the granule (no state: the same for a full run), and the floor, the nodes whose

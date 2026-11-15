@@ -748,6 +748,14 @@ lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f
 
 /// A program and what it was read from, compared field by field: the first difference.
 fn difference(a: &front::Program, b: &front::Program) -> Option<String> {
+    // Inputs as a set: the lowering declares `node_order` in `finish`, after the requests it makes (decision 0174),
+    // where the `.rdl` reads it from the start.
+    let sorted = |p: &front::Program| {
+        let mut p = p.clone();
+        p.inputs.sort();
+        p
+    };
+    let (a, b) = (&sorted(a), &sorted(b));
     macro_rules! field {
         ($f:ident) => {
             if a.$f != b.$f {
@@ -817,6 +825,11 @@ fn normalized(mut p: front::Program) -> front::Program {
             p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: [Literal::Atom(atom("node", args.to_vec()))].into() });
             at += 1;
         }
+    }
+    // The node attributes answered on request (decision 0174, `lower::sources_on_request`): an input the `.rdl`
+    // reads is the lowering's requests, answers and widened copies.
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut p, round);
     }
     p
 }
@@ -3441,7 +3454,28 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                     p.outputs.push(rel.to_owned());
                 }
             }
-            let p = front::prune(p);
+            let mut p = front::prune(p);
+            // A widened copy (`rr_wide_<attr>_<r>`, decision 0174) whose kept rules are `r`'s own: a reader that
+            // binds through `r` only in an unreached clause made the copy, which is `r` once that clause's requests
+            // are pruned. It is read as `r`.
+            let copies: Vec<(String, String)> = p.decls.keys().filter_map(|w| {
+                let r = ["rr_wide_token_", "rr_wide_node_text_"].iter().find_map(|pre| w.strip_prefix(pre))?;
+                let renamed = |x: &front::Rule| { let mut x = x.clone(); x.head.rel = r.into(); x };
+                let same = p.rules.iter().filter(|x| x.head.rel == w.as_str()).all(|x| p.rules.iter().any(|y| y.head.rel == r && y.head.args.len() == x.head.args.len() && format!("{y:?}") == format!("{:?}", renamed(x))));
+                same.then(|| (w.to_string(), r.to_owned()))
+            }).collect();
+            for (w, r) in &copies {
+                p.rules.retain(|x| x.head.rel != w.as_str());
+                p.decls.remove(w.as_str());
+                for x in &mut p.rules {
+                    for l in x.body.make_mut().iter_mut() {
+                        if let Literal::Atom(a) = l && a.rel == w.as_str() {
+                            a.rel = r.as_str().into();
+                        }
+                    }
+                }
+            }
+            let kept = p.rules.clone();
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let mut renumber = |s: &str| -> String {
                 helper.replace_all(s, |c: &regex::Captures| {
@@ -3472,13 +3506,30 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
-            (rules, decls, natives, outputs, inputs)
+            ((rules, decls, natives, outputs, inputs), kept)
         };
-        let (a, b) = (shape(less), shape(whole));
+        let ((a, kept_less), (b, kept_whole)) = (shape(less), shape(whole));
         if a != b {
+            // The first relation only the whole keeps, and the kept rules that read it, back to an output.
+            let heads = |rules: &[front::Rule]| rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<String>>();
+            let less_heads = heads(&kept_less);
+            let mut chain: Vec<String> = Vec::new();
+            if let Some(extra) = kept_whole.iter().map(|r| r.head.rel.to_string()).find(|h| !less_heads.contains(h) && !helper.is_match(h)) {
+                let mut at = extra;
+                while chain.len() < 12 && !chain.contains(&at) {
+                    chain.push(at.clone());
+                    match kept_whole.iter().find(|r| r.head.rel != at.as_str() && r.body.iter().filter_map(Literal::atom).any(|l| l.rel == at.as_str())) {
+                        Some(r) => {
+                            chain.push(format!("{r}"));
+                            at = r.head.rel.to_string()
+                        }
+                        None => break,
+                    }
+                }
+            }
             let only = |x: &Vec<String>, y: &Vec<String>| x.iter().filter(|r| !y.contains(r)).take(3).cloned().collect::<Vec<_>>();
             panic!(
-                "{}: its pruned program changed with its unreached clauses dropped\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
+                "{}: its pruned program changed with its unreached clauses dropped\n read by: {chain:?}\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
                 path.display(), only(&a.0, &b.0), only(&b.0, &a.0), only(&a.1, &b.1), only(&b.1, &a.1), a.2, b.2, a.3, b.3,
                 (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4))
             );

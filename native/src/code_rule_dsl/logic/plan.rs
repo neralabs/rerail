@@ -4004,7 +4004,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
-        "value" | "static_value" => &[&["n"], &["v", "n"]],
+        "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
         "value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
@@ -4035,7 +4035,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
-        "token" => &[&["p", "i"], &["start"]],
+        "token" | "rr_token_anon" => &[&["p", "i"], &["start"]],
+        "rr_token_named" => &[&["p", "i"], &["c"], &["start"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],

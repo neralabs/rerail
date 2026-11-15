@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refuses a commit that adds a cache beside the engine's facts (decision 0104).
 
-Reads the lines a commit adds (the index against HEAD; with --all, the working tree against HEAD) and refuses:
+Reads the lines a commit adds (the index against HEAD, and in a merge against every parent; with --all, the working tree against HEAD) and refuses:
 
 - a `static` behind a lock or a cell that holds more than a number, a flag or an instant (what
   `logic::facts_only::maps` finds), in the engine's run path, unless `facts_only.rs` lists it;
@@ -45,16 +45,27 @@ def is_test(path):
 def main():
     every = "--all" in sys.argv
     command = sys.argv[sys.argv.index("--command") + 1] if "--command" in sys.argv else ""
-    diff = git("diff", "HEAD" if every else "--cached", "-U0", "--no-color", "--", "native/src")
-    added = {}  # path -> [new line numbers]
-    path = None
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
-        elif line.startswith("@@") and path:
-            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
-            start, count = int(m.group(1)), int(m.group(2) or "1")
-            added.setdefault(path, []).extend(range(start, start + count))
+    # A merge adds only the lines no parent has: what the merged branch brings was checked where it was made.
+    try:
+        parents = ["HEAD", *git("rev-parse", "-q", "--verify", "MERGE_HEAD").split()]
+    except subprocess.CalledProcessError:
+        parents = ["HEAD"]
+    added = None  # path -> {new line numbers}
+    for parent in parents:
+        diff = git("diff", *([parent] if every else ["--cached", parent]), "-U0", "--no-color", "--", "native/src")
+        lines_added = {}
+        path = None
+        for line in diff.splitlines():
+            if line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else None
+            elif line.startswith("@@") and path:
+                m = re.search(r"\+(\d+)(?:,(\d+))?", line)
+                start, count = int(m.group(1)), int(m.group(2) or "1")
+                lines_added.setdefault(path, set()).update(range(start, start + count))
+        added = lines_added if added is None else {
+            p: added[p] & lines_added[p] for p in added.keys() & lines_added.keys() if added[p] & lines_added[p]
+        }
+    added = {p: sorted(n) for p, n in added.items()}
     if not added:
         return 0
 

@@ -5336,7 +5336,7 @@ fn run_observed(
             }
             let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let cone_types = cone_inputs.iter().filter_map(|(r, _)| Some((r.clone(), decl_types.get(r)?.clone()))).collect();
-            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, prepared_key, &cone_inputs, cone_types));
+            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, prepared_key, &cone_inputs, cone_types).typed(&lowered_load.program, &lowered_load.domains));
             // Strata kept for the next run keep each relation's whole rows, as a session's cross-file part does: one
             // computed only for the keys its readers reached (the negation split, a corpus run's choice) would miss a
             // key a later run demands (an edited library's new import) whose derivation no delta touches (spike O125,
@@ -7286,7 +7286,7 @@ fn run_observed(
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
                     // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
-                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), prepared_key, &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&cross.program, &cross.domains, r))).collect()));
+                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), prepared_key, &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&cross.program, &cross.domains, r))).collect()).typed(&cross.program, &cross.domains));
                     let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {
@@ -7598,7 +7598,7 @@ fn run_observed(
         let text = || kinds.iter().map(|(k, n, b, c)| format!("{k}: {n} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect::<Vec<_>>().join("; ");
         crate::code_rule_dsl::logic::profile::decision("write-back by kind, this process so far (decision 0102)", text);
         if std::env::var_os("RERAIL_WRITES").is_some() {
-            eprintln!("RERAIL_WRITES {}", text());
+            eprintln!("RERAIL_WRITES queue peak {:.1} MB, producers held {} times ({:.3} s); {}", peak as f64 / 1048576.0, held.0, held.1, text());
         }
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }

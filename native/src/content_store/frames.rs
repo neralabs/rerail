@@ -1594,6 +1594,35 @@ mod tests {
         assert!(count.load(Ordering::Relaxed) <= 4, "257 relations must use at most three batches plus schema admission, got {}", count.load(Ordering::Relaxed));
     }
 
+    /// A frame is queued encoded, as the store keeps it: the queue counts its encoded bytes (the raw rows were five
+    /// times that), and it reads the same before and after the writer stores it.
+    #[test]
+    fn frames_are_queued_encoded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let r = rel("span_within", 1);
+        let values: Vec<i64> = (0..20_000i64).flat_map(|i| [(7 << 32) | (i + 1), (7 << 32) | (i / 4)]).collect();
+        let put = || Put { rel: r.clone(), part: 3, digest: 9, reads: vec![], rows: Rows { types: vec![b'i', b'i'], rows: values.clone(), n: 20_000 } };
+        let encoded = super::super::cross_rows::encode(2, &values).len();
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let (release, blocked) = std::sync::mpsc::channel::<()>();
+            store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+            store.queue_frames([1; 32], vec![put()], vec![], None);
+            let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
+            assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
+            assert_eq!(queued[&r].encoded_bytes(), encoded);
+            release.send(()).unwrap();
+            store.written().unwrap();
+            let (by, _, _) = store.written_by_what();
+            let frames = by.iter().find(|w| w.0 == "frames").expect("the frames' job");
+            assert_eq!(frames.2, encoded, "the queue counts the encoded bytes, not {} raw", values.len() * 8);
+            assert!(encoded * 4 < values.len() * 8, "{encoded} encoded of {} raw", values.len() * 8);
+        }
+        let store = ContentStore::open(&path).unwrap();
+        assert_eq!(store.frame_rows(&[1; 32], &r, 3).unwrap().unwrap().rows, values, "stored: the same rows");
+    }
+
     #[test]
     fn queued_frames_are_read_without_waiting_for_the_writer() {
         use std::sync::mpsc;

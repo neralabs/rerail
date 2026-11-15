@@ -28,7 +28,7 @@
 use super::front::Name;
 use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
@@ -119,6 +119,9 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
+        // `asked_by`: the k-th rule of each request relation, one row for each relation whose readers it serves
+        // (decision 0174).
+        ("asked", &["p:sym", "req:sym", "k:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
@@ -412,6 +415,13 @@ impl Writer<'_> {
         for (req, by) in &prog.answers {
             for (i, b) in by.iter().enumerate() {
                 self.row("answer", vec![s(req), n(i), s(b)]);
+            }
+        }
+        for (req, rules) in &prog.asked_by {
+            for (k, readers) in rules.iter().enumerate() {
+                for b in readers {
+                    self.row("asked", vec![s(req), n(k), s(b)]);
+                }
             }
         }
         for (span, text) in &prog.rx_spans {
@@ -821,6 +831,15 @@ impl<'a, C: Cell> Reader<'a, C> {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
         }
         prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
+        for row in self.get("asked") {
+            let (req, k, by) = (text(&row[0])?, int(&row[1])?, text(&row[2])?);
+            let k = usize::try_from(k).map_err(|_| format!("asked: rule {k}"))?;
+            let rules = prog.asked_by.entry(req).or_default();
+            if rules.len() <= k {
+                rules.resize_with(k + 1, BTreeSet::new);
+            }
+            rules[k].insert(by);
+        }
         Ok(prog)
     }
 
