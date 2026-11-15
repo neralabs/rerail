@@ -1,0 +1,52 @@
+# 0260: a small run's fixed cost
+
+Status: built in part (2026-11-15). Amends the cost statistics (decision 0100 §14) and the checkout's finding
+(`source_tree`, decision 0224).
+
+## Intro
+
+A corpus run over one file still did 6.0 to 7.8 G instructions (0.34 to 0.42 s CPU, debug engine) on `dl1`, whose
+one file the policy's scope leaves out: nothing was parsed or evaluated. All of that was fixed cost, paid by every
+run, and by every test that starts one. The profile accounted for 0.10 s of the 0.55 s CPU it saw: the rest was on
+threads that opened no span, and between spans on the main thread.
+
+The user asked that this fixed cost be found and removed (2026-11-15).
+
+## What a Time Profiler trace showed
+
+A trace of one run (`xctrace record --template 'Time Profiler' --launch`), 770 ms sampled:
+
+| Where | ms | Why |
+|---|---|---|
+| `rerail-costs read`: `read_samples` | 323 | Of the shared `costs.sqlite`'s 500,356 samples, 488,666 have no units (`strata`). Binaries from before such jobs kept no sample still write them. The read of the newest priced samples went down `samples_by_machine` and read each row to test `units > 0`: half a million rows. So did each lane and form's newest, under `strata`'s group |
+| main: `source_tree::image` (`dladdr`) | 84 | `dladdr` finds the symbol nearest the address too, a search of the 415 MB debug engine's symbols. Only the file name was wanted, and `root()` asked it each time |
+| main: the matchers compiled | 38 | `compile_matchers`, with the token tests' grammar read from its `grammar.json` (`TokenGrammar::from_json`, 20 ms) |
+| main: the whole-run cutoff's check (`reuse::reused`) | 61 | |
+| main: phase 0's derive, less the above | ~60 | |
+
+## Decision
+
+- **The priced samples have indexes of their own.** `samples_priced (machine, at)` and `samples_priced_by_form
+  (machine, lane, forms, at)`, both `WHERE units > 0`, made once by the writer's `open`. Every query of the read
+  tests `units > 0`, so each is a seek down them: the newest priced 20,000 in 1 ms, not 86, and the groups walked
+  are the 5 with priced samples. The unpriced rows are still written by older binaries and trimmed as before;
+  no read steps through them.
+- **The image is found from the loader's list, once.** On macOS, the image whose segments hold the address
+  (`_dyld_get_image_header`, its `LC_SEGMENT_64` commands, slid), not `dladdr`. It is the process's to the end, so
+  it is found once (`OnceLock`). Elsewhere `dladdr` stays, found once too.
+
+Measured on `dl1` (`layer-violations.rr`, cutoff off, warm store): 6.0 to 7.8 G instructions before, 2.8 to 3.0 G
+after; with the statistics off, 2.3 to 2.9 G.
+
+## Open
+
+- The matchers compiled each process (38 ms, with 20 ms of reading a grammar's JSON).
+- The cutoff's check and phase 0's derive on a run that reads no file (60 ms each).
+- Building the partial indexes on the shared file the first time took about a second, once.
+
+## Tests
+
+- `the_samples_read_are_found_by_the_priced_indexes` (logic): a store of mostly unpriced samples gives the priced
+  ones, each form's included, and each query's plan names the priced indexes.
+- `the_image_is_the_one_the_loader_names` (store): the image found is the test binary, in under 5 ms, and an
+  address no image holds finds none.

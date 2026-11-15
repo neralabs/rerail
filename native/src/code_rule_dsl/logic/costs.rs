@@ -76,6 +76,11 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            cold INTEGER, ok INTEGER, load REAL);
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);
          CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
+         -- The priced samples (units > 0), which alone are read (`read_samples`). Binaries from before jobs with no
+         -- units kept none still write them to the shared file: 488,666 of its 500,356 (2026-11-15), so a read down
+         -- the indexes above stepped through all of them, a third of a 1-file run's CPU (decision 0260).
+         CREATE INDEX IF NOT EXISTS samples_priced ON samples(machine, at) WHERE units > 0;
+         CREATE INDEX IF NOT EXISTS samples_priced_by_form ON samples(machine, lane, forms, at) WHERE units > 0;
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
          CREATE TABLE IF NOT EXISTS kernel_forms(
            machine TEXT, kind TEXT, key TEXT, name TEXT, interpreted INTEGER, compiled INTEGER, compile_seconds REAL,
@@ -181,23 +186,23 @@ fn write() {
 /// of each), oldest first.
 pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
     let machine = machine();
-    // The newest overall, then each lane and form's newest (an index search each: `samples_by_form`). A job with
+    // The newest overall, then each lane and form's newest (an index search each: `samples_priced_by_form`). A job with
     // no units (a stream's, as `strata`) prices nothing, so none is read: stored by binaries from before they were
     // left out (`score`), they were 489k of the newest 500k.
     let mut ids: std::collections::BTreeSet<i64> = db
         .prepare("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY at DESC LIMIT ?2")?
         .query_map(rusqlite::params![machine, limit], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    // The lanes and forms, by a seek each down `samples_by_form` (a skip scan): `DISTINCT` read every one of the
+    // The lanes and forms with priced samples, by a seek each down `samples_priced_by_form` (a skip scan): `DISTINCT` read every one of the
     // machine's index entries, half a million, 0.03-0.2 s of a process's first run.
     let groups: Vec<(String, String)> = db
         .prepare(
             "WITH RECURSIVE g(id) AS (
-                 SELECT (SELECT rowid FROM samples WHERE machine = ?1 ORDER BY lane, forms LIMIT 1)
+                 SELECT (SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY lane, forms LIMIT 1)
                  UNION ALL
                  SELECT (SELECT coalesce(
-                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane = p.lane AND s.forms > p.forms ORDER BY s.forms LIMIT 1),
-                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane > p.lane ORDER BY s.lane, s.forms LIMIT 1))
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.units > 0 AND s.lane = p.lane AND s.forms > p.forms ORDER BY s.forms LIMIT 1),
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.units > 0 AND s.lane > p.lane ORDER BY s.lane, s.forms LIMIT 1))
                    FROM samples p WHERE p.rowid = g.id)
                  FROM g WHERE g.id IS NOT NULL)
              SELECT lane, forms FROM g JOIN samples ON samples.rowid = g.id",
@@ -693,6 +698,37 @@ pub mod tests {
         assert_eq!(job.due(), Due::No, "trained: not due");
         let saved: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM models", [], |r| r.get(0)).unwrap();
         assert_eq!(saved as usize, rerail_accel::cost_model::current().is_some() as usize, "saved when it won");
+    }
+
+    /// The read steps through priced samples alone: a store of mostly unpriced ones (no units, as older binaries
+    /// still write) is read down the partial indexes, and gives the priced ones, each lane and form's included.
+    #[test]
+    fn the_samples_read_are_found_by_the_priced_indexes() {
+        let dir = std::env::temp_dir().join(format!("rerail-costs-priced-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        let db = super::open(&path).unwrap();
+        let machine = super::machine();
+        let mut ins = db.prepare("INSERT INTO samples VALUES (?1, ?2, 1, 'cpu', ?3, 1, ?4, 0, 0, 0, 0, 0, '', 0, 1, 1)").unwrap();
+        for i in 0..1000 {
+            ins.execute(rusqlite::params![i as f64, machine, "strata", 0.0]).unwrap();
+        }
+        for (i, form) in ["a", "b", "a"].iter().enumerate() {
+            ins.execute(rusqlite::params![2000.0 + i as f64, machine, form, 5.0]).unwrap();
+        }
+        drop(ins);
+        let samples = super::read_samples(&db, 2, 10).unwrap();
+        let forms: Vec<&str> = samples.iter().map(|s| s.forms.as_str()).collect();
+        assert_eq!(forms, ["a", "b", "a"], "the priced samples, oldest first; the newest two and each form's");
+        let plan = |sql: &str| -> String {
+            db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map([&machine], |r| r.get::<_, String>(3)).unwrap().map(Result::unwrap).collect::<Vec<_>>().join("; ")
+        };
+        let newest = plan("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY at DESC LIMIT 2");
+        assert!(newest.contains("samples_priced "), "{newest}");
+        let first = plan("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY lane, forms LIMIT 1");
+        assert!(first.contains("samples_priced_by_form"), "{first}");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A warm run may write its cost statistics (`profile::WARM_WRITES_ALLOWED`, approved 2026-11-15): a child
