@@ -1,8 +1,8 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  chmodSync, closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync,
-  symlinkSync, writeFileSync,
+  chmodSync, closeSync, copyFileSync, cpSync, existsSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync,
+  rmSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -1803,6 +1803,20 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
   },
 ];
 
+/**
+ * Writes `text` over the file at `path` in place, as an editor that keeps the file does, so it keeps its file id. Through
+ * an open of the file as it is: Windows refuses to create one over a hidden file, as Git leaves a `.git` file there.
+ */
+function rewrittenInPlace(path: string, text: string): void {
+  const descriptor = openSync(path, "r+");
+  try {
+    ftruncateSync(descriptor, 0);
+    writeSync(descriptor, text, 0);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /** The clone id file of the Git checkout `checkout`, whose `.git` is a folder (`repositoryIdentityLocation`). */
 function cloneIdFile(checkout: string): string {
   return join(checkout, ".git", "rerail-repository-id");
@@ -2098,8 +2112,7 @@ describe("the hook start check", () => {
       if (codeOf(error) === "EPERM") skip("this user may not make a symbolic link");
       throw error;
     }
-    // Written in place, as an editor that keeps the file does: the .git file is the same on disk.
-    writeFileSync(join(worktree, ".git"), `gitdir: ${join(root, "linked", ".git", "worktrees", "wt")}\n`);
+    rewrittenInPlace(join(worktree, ".git"), `gitdir: ${join(root, "linked", ".git", "worktrees", "wt")}\n`);
     const daemon = await daemonAnsweringAfterProof(host, daemonSays);
     try {
       host.proofs.nextCheck();
