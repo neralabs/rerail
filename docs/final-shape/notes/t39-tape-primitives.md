@@ -1443,7 +1443,7 @@ At 50 files (data-layer, the warm run profiled, which evaluates again): 74.8 M r
 4,970 joins over 2,643 strata, 5.8 s of CPU in the joins out of 15.7 s for the process. The shares
 hold: bound 28%, scope 21%, base 18%, cmp 14%; `kind` 4.0 M rows in, `text` 1.8 M, `src_line`
 1.6 M, `within` 0.9 M, `docof` 0.8 M, `child` 0.8 M; the median rule 155k rows. The GPU was rated
-cheaper for 490 strata there, and took none.
+cheaper for 490 strata there (447 lacking no form); the run was the CPU's (below).
 
 Text functions by rows in: python's are `@equals` (37k), `@cat`, `@contains`, `@suffix`, `@prefix`;
 data-layer's `@glob` (16k), `@rr_node_text`, `@rx` (14k), `@contains`, `@equals`, `@replace_all`.
@@ -1454,9 +1454,14 @@ file-local joins into the chunks: 0.9–1.2 s), lowering the rules, bounding the
 (0.2–0.7 s), and the store writer's frames and programs. Warm, with the program and frames kept,
 the same runs take 1.6–2.9 s of CPU.
 
-**Placement.** No stratum ran on the GPU. The cost model rated it cheaper for 111 (python) and 59
-(data-layer) strata, which it cannot take: they need a computed term (104 and 253 strata) or a
-string join (9 and 17).
+**Placement.** The runs above are the CPU's: `logic` puts strata on the device only with `--metal`
+(`RERAIL_DEVICE` is read by other commands), and the profile names "the run's binding is the CPU"
+for nearly every stratum. Run again with `--metal` (`ARGS=--metal run.sh`, same findings), 92 of
+3,486 python strata and 89 of 2,351 data-layer strata ran on the GPU, out of 110 and 131 the cost
+model rated cheaper there. Of the cheaper ones, 18 and 42 stay on the CPU because the device lacks
+a form: a computed term (`@rr_node_text` in a comparison above all, then `@concat`, `@cat` or
+`@nfkc` in a head, `@rx_group`) or a string join. On these samples those strata cost under 0.1 s of
+CPU in all; the rest are cheaper on the CPU by price.
 
 **What this says for costing the tape.**
 - The tape's reads are `kind` first, by far: 11% of every row a python join reads, 6% of the
@@ -1472,7 +1477,8 @@ string join (9 and 17).
 - The python mix is wide and shallow: 253 rules with strata of their own, the median at 104 rows.
   The data-layer mix is narrow and deep: 68 rules, the median at 7,267 rows. A mix for costing
   should keep both shapes.
-- The GPU's blockers are the computed term and the string join, not the tape.
+- What keeps work off the GPU is mostly price (small strata), then the computed term and the
+  string join; not the tape.
 
 **Engine fixes the runs needed.** The packs as they stand did not run strict on this branch:
 - the module images of 0246 stage 2 were written on the run's thread (833b39446);
