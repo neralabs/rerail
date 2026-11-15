@@ -108,9 +108,11 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> Masks {
         let word = S::to_bitmask(S::or(S::test(c, S::splat(C_WORD)), is(b'$')));
         let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
         let backslash = is(b'\\');
-        let stop = S::to_bitmask(S::or(S::or(S::test(c, S::splat(C_EOL | C_QUOTE)), is(b'`')), S::or(backslash, is(b'$'))));
+        // A NUL stops a string's and a regular expression's scan: tree-sitter's lexer reads none
+        // in either.
+        let stop = S::to_bitmask(S::or(S::or(S::or(S::test(c, S::splat(C_EOL | C_QUOTE)), is(b'`')), S::or(backslash, is(b'$'))), is(0)));
         let star = S::to_bitmask(S::or(eol, is(b'*')));
-        let regex = S::to_bitmask(S::or(S::or(eol, is(b'/')), S::or(backslash, S::or(is(b'['), is(b']')))));
+        let regex = S::to_bitmask(S::or(S::or(S::or(eol, is(b'/')), S::or(backslash, S::or(is(b'['), is(b']')))), is(0)));
         let jsx = S::to_bitmask(S::or(S::or(S::or(is(b'<'), is(b'>')), S::or(is(b'{'), is(b'}'))), S::or(is(b'&'), is(b'\n'))));
         [word, blank, S::to_bitmask(eol), stop, star, regex, jsx]
     }
@@ -243,9 +245,9 @@ mod tests {
                 o[WORD] |= bit(c.is_ascii_alphanumeric() || c == b'_' || c == b'$');
                 o[BLANK] |= bit(matches!(c, b' ' | b'\t' | 0x0b | 0x0c));
                 o[EOL] |= bit(eol);
-                o[STOP] |= bit(eol || matches!(c, b'\'' | b'"' | b'`' | b'\\' | b'$'));
+                o[STOP] |= bit(eol || matches!(c, b'\'' | b'"' | b'`' | b'\\' | b'$' | 0));
                 o[STAR] |= bit(eol || c == b'*');
-                o[REGEX] |= bit(eol || matches!(c, b'/' | b'\\' | b'[' | b']'));
+                o[REGEX] |= bit(eol || matches!(c, b'/' | b'\\' | b'[' | b']' | 0));
                 o[JSX] |= bit(matches!(c, b'<' | b'>' | b'{' | b'}' | b'&' | b'\n'));
             }
         }
@@ -255,7 +257,7 @@ mod tests {
     #[test]
     fn every_backend_gives_the_byte_tests_masks() {
         let mut x = 0x9e37_79b9_7f4a_7c15u64;
-        let alphabet = b"aZ_9$ \t\x0b\n\r\x0c'\"`\\{}#.(@[]/*<>&\x7f";
+        let alphabet = b"aZ_9$ \t\x0b\n\r\x0c'\"`\\{}#.(@[]/*<>&\x7f\0";
         for len in [0usize, 1, 63, 64, 65, 200, 1000] {
             for _ in 0..20 {
                 let src: Vec<u8> = (0..len)

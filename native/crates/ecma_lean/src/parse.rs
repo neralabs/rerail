@@ -524,13 +524,35 @@ impl<'a> P<'a> {
         self.bump()
     }
 
-    /// The next token as a leaf.
+    /// The next token as a leaf. A name tree-sitter reserves is refused as an identifier: its
+    /// grammar has no reading of `var if` but an error.
     #[inline(always)]
     fn leaf(&mut self, kind: K, field: u8, class: u8) -> R<N> {
+        if matches!(kind, K::Identifier | K::StatementIdentifier | K::ShorthandPropertyIdentifier | K::ShorthandPropertyIdentifierPattern)
+            && {
+                let word = self.tok().word;
+                self.reserves(word)
+            }
+        {
+            return self.refuse();
+        }
         let t = self.bump()?;
         let at = self.w.push(key(kind, field, class, false), t.start);
         self.w.close(at, t.end);
         Ok(N { at, kind })
+    }
+
+    /// Whether the dialect's grammar reserves `word` (tree-sitter-javascript's `reserved.global`):
+    /// no identifier is spelled so.
+    fn reserves(&self, word: u8) -> bool {
+        self.dialect == Dialect::JavaScript
+            && matches!(
+                word,
+                w::BREAK | w::CASE | w::CATCH | w::CLASS | w::CONST | w::CONTINUE | w::DEBUGGER | w::DEFAULT | w::DELETE | w::DO | w::ELSE
+                    | w::EXPORT | w::EXTENDS | w::FALSE | w::FINALLY | w::FOR | w::FUNCTION | w::IF | w::IMPORT | w::IN | w::INSTANCEOF | w::NEW
+                    | w::NULL | w::RETURN | w::SUPER | w::SWITCH | w::THIS | w::THROW | w::TRUE | w::TRY | w::TYPEOF | w::VAR | w::VOID | w::WHILE
+                    | w::WITH
+            )
     }
 
     fn leaf_in(&mut self, kind: K, s: Slot) -> R<N> {
@@ -1021,7 +1043,8 @@ impl<'a> P<'a> {
         // `#!` on the first line.
         let mut hash_bang = None;
         if self.src.starts_with(b"#!") {
-            let end = self.src.iter().position(|&c| c == b'\n' || c == b'\r').unwrap_or(self.src.len());
+            // tree-sitter's `#!.*` runs to the line feed: a carriage return alone is in it.
+            let end = self.lx.line_feed(0);
             hash_bang = Some(end as u32);
             self.next = end;
         }
@@ -2139,6 +2162,11 @@ impl<'a> P<'a> {
             self.string(slot(f::SOURCE, Ctx::Bare))?;
         }
         if self.is_word(w::WITH) && self.peek_at(1).kind == T::LBrace {
+            // On a line of its own, `with` follows the automatic semicolon tree-sitter's scanner
+            // gives before it: a `with` statement, and `{` is not its parenthesis.
+            if self.tok().nl {
+                return self.refuse();
+            }
             self.import_attribute()?;
         } else if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
             return self.refuse();
@@ -2226,6 +2254,9 @@ impl<'a> P<'a> {
                     if self.is_word_at(1, w::AS) {
                         self.module_export_name(K::ImportSpecifier, f::NAME)?;
                         self.bump()?;
+                        if self.peek() != T::Name {
+                            return self.refuse();
+                        }
                         self.leaf(K::Identifier, f::ALIAS, C_NONE)?;
                     } else if self.peek() == T::Name {
                         self.leaf(K::Identifier, f::NAME, C_NONE)?;
@@ -2369,6 +2400,11 @@ impl<'a> P<'a> {
         self.tk(K::ExportStatement, K::TFrom, f::NONE)?;
         self.string(slot(f::SOURCE, Ctx::Bare))?;
         if self.is_word(w::WITH) && self.peek_at(1).kind == T::LBrace {
+            // On a line of its own, `with` follows the automatic semicolon tree-sitter's scanner
+            // gives before it: a `with` statement, and `{` is not its parenthesis.
+            if self.tok().nl {
+                return self.refuse();
+            }
             self.import_attribute()?;
         } else if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
             return self.refuse();
@@ -2537,6 +2573,10 @@ impl<'a> P<'a> {
             self.tk(K::ArrowFunction, K::TAsync, f::NONE)?;
         }
         if self.peek() == T::Name {
+            // `yield => …` is an error in tree-sitter's grammar (`(yield) => …` is not).
+            if self.is_word(w::YIELD) {
+                return self.refuse();
+            }
             self.leaf(K::Identifier, f::PARAMETER, C_NONE)?;
         } else {
             self.signature()?;
@@ -2568,6 +2608,10 @@ impl<'a> P<'a> {
         self.tk(K::YieldExpression, K::TYield, f::NONE)?;
         self.after = V_NO_LT;
         let t = self.tok();
+        // `yield /…`: tree-sitter's lexer reads `/` there as division, not a pattern's start.
+        if !t.nl && matches!(t.kind, T::Slash | T::SlashEq) {
+            return self.refuse();
+        }
         if t.kind == T::Star && !t.nl {
             self.tk(K::YieldExpression, K::TStar, f::NONE)?;
             self.assignment(EXPR)?;

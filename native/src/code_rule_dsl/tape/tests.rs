@@ -2920,7 +2920,14 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "async function f() { await (a)(); await (a).b; await (a)[0]; await (a)?.b; await (a)`t`; await (a)++; await (a)\n++b; await (a); f()++ }\n",
     ];
     // Arguments no expression reads: a call of `await` in JavaScript, errors in TypeScript.
-    let js = ["async function f() { await (...a); await (); await (a, b)() }\n"];
+    // U+0085 is no blank: a name's character.
+    let common = [common.as_slice(), &["x =\u{85}1\ny = a\u{85}b\nz = 1;\u{85}\n"]].concat();
+    let js = [
+        "async function f() { await (...a); await (); await (a, b)() }\n",
+        // A hashbang ends at `\n` only.
+        "#!/usr/bin/env node\r\nx = 1\n",
+        "#! a\r{\n",
+    ];
     let jsx = [
         "const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n",
         // A tag's comments are in it, before its `>` or `/>`.
@@ -3000,7 +3007,15 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         }
         // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
         // has one behavior: tree-sitter's tape, or a refusal.
-        for invalid in ["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2", "import {b} from"] {
+        let mut invalid = vec!["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2", "import {b} from"];
+        // A NUL in a string.
+        invalid.push("x = 'a\0b'\n");
+        if dialect == Dialect::JavaScript {
+            // tree-sitter-javascript's reserved words are no names; `yield` is no arrow's parameter
+            // and takes no `/` after it.
+            invalid.extend(["var var = 1;\n", "import { default } from 'a'\n", "x = yield => 1\n", "function* g() { yield / 2 }\n"]);
+        }
+        for invalid in invalid {
             assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
             assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err(), "{dialect:?} accepted {invalid:?}");
         }

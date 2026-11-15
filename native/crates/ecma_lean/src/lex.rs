@@ -186,7 +186,8 @@ fn wide_space(src: &[u8], at: usize) -> (usize, bool) {
         Some(c) => c,
         None => return (0, false),
     };
-    let space = matches!(c.0, 0x85 | 0xa0 | 0x1680 | 0x2000..=0x200b | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x2060 | 0x3000 | 0xfeff);
+    // U+0085 is not white space to tree-sitter's lexer.
+    let space = matches!(c.0, 0xa0 | 0x1680 | 0x2000..=0x200b | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x2060 | 0x3000 | 0xfeff);
     if space { (c.1, matches!(c.0, 0x2028 | 0x2029)) } else { (0, false) }
 }
 
@@ -527,6 +528,17 @@ impl<'s> Lexer<'s> {
         Ok(i)
     }
 
+    /// The first line feed from `at` (a carriage return passed), or the text's end.
+    pub fn line_feed(&self, mut at: usize) -> usize {
+        loop {
+            at = self.blocks.eol(at);
+            if at >= self.src.len() || self.src[at] == b'\n' {
+                return at.min(self.src.len());
+            }
+            at += 1;
+        }
+    }
+
     /// A string's end from its quote at `s`: past its closing quote. A line end inside it (but
     /// after `\`) is refused, as is a string the text ends in.
     fn string_end(&self, s: usize) -> R<usize> {
@@ -537,6 +549,7 @@ impl<'s> Lexer<'s> {
             match self.at(i) {
                 _ if i >= self.src.len() => return Err(Refusal::Lex(s as u32)),
                 c if c == q => return Ok(i + 1),
+                0 => return Err(Refusal::Lex(i as u32)),
                 b'\\' => i += if self.at(i + 1) == b'\r' && self.at(i + 2) == b'\n' { 3 } else { 2 },
                 b'\n' | b'\r' => return Err(Refusal::Lex(i as u32)),
                 _ => i += 1,
@@ -619,6 +632,7 @@ impl<'s> Lexer<'s> {
                     match self.at(i) {
                         _ if i >= self.src.len() => return Err(Refusal::Lex(at as u32)),
                         b'`' | b'\\' => return Ok((Piece::Chars, i)),
+                        0 => return Err(Refusal::Lex(i as u32)),
                         b'$' if self.at(i + 1) == b'{' => return Ok((Piece::Chars, i)),
                         _ => i += 1,
                     }
@@ -637,7 +651,7 @@ impl<'s> Lexer<'s> {
             i = self.blocks.regex_stop(i);
             match self.at(i) {
                 _ if i >= self.src.len() => return refuse,
-                b'\n' => return refuse,
+                b'\n' | 0 => return refuse,
                 b'\r' => i += 1,
                 b'\\' => {
                     if matches!(self.at(i + 1), b'\n') || i + 1 >= self.src.len() {
