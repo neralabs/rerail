@@ -63,13 +63,30 @@ fn plan() -> FactsPlanSet {
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
 
-/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded.
+/// The alias the entry of texts `key` ships under in the engine's bundle (decision 0264): its schema, plan and key.
+fn shipped_key(key: &[u8; 32]) -> HashKey {
+    HashKey::sha256(&[format!("rerail combined entry {SCHEMA}\0").as_bytes(), plan().plans[0].as_slice(), key.as_slice()].concat())
+}
+
+/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
+/// where the store has none, the one the engine ships (decision 0264).
 pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<Program>> {
-    let Some(source) = store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
-    let set = plan();
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
-    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    let entry = match store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
+        Some(source) => {
+            let set = plan();
+            let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
+            let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
+            std::borrow::Cow::Owned(result.entry.clone())
+        }
+        None => match rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
+            Some(bytes) => {
+                crate::code_rule_dsl::prof::count("corpus.combined_shipped", 1);
+                std::borrow::Cow::Borrowed(bytes)
+            }
+            None => return Ok(None),
+        },
+    };
+    let Ok(facts) = program_facts::decode(&entry) else { return Ok(None) };
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
         [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path.as_str()), sha256: unhex(digest) }),
         _ => None,
@@ -115,6 +132,13 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     };
     let set = plan();
     let entry = program_facts::encode(&facts);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry and its program's image.
+    if std::env::var_os("RERAIL_EXPORT_IMAGES").is_some() {
+        rr::images::export(shipped_key(key), &entry);
+        if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(program) {
+            rr::images::export(program_text::image_key(&digest), &bytes);
+        }
+    }
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
     // No manifest names the entry until the run that combined it records its own, and the run's hold comes after the
     // combine. Meanwhile a collection (a batch's earlier run's, started once that run's manifest was written) took it:
