@@ -2491,6 +2491,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
                 crate::code_rule_dsl::logic::profile::set(false);
             }
         }
+        // The profile is the process's: held for this test (`one_run`), so a run in another test cannot reset the
+        // decisions it reads (`no longer needed` went missing when one ran beside it). Dropped after `Off`.
+        let _one = crate::code_rule_dsl::logic::profile::one_run();
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
