@@ -1332,3 +1332,52 @@ loop's register pressure.
 | Numbers | 183 | 176 | 107 |
 
 Other kinds did not change.
+
+## A short comment calls nothing
+
+**Intro.** A lexer reads a comment by searching for its closer from
+where the comment starts. The comment reader's function searched the
+closer's mask in the comment's own 64-byte block. It called that
+block's window function, so it saved six registers for every comment.
+A comment that crossed into the next block was found a block later.
+
+**The change.** A reader gets a short function too
+(`RuleMode::Short`), as a run does. Its closer's first word is made
+inline from the 64 bytes after the opener's byte (`Bytewise::word`
+at `s + 1`), not from the aligned block. A comment shorter than that
+is found without a call. A longer one returns the whole function's
+call. The short function is kept where every call it makes is to its
+whole function: one a reader's arm.
+
+The window may start anywhere in the file. The batch pads each file
+with zeros to its last block's end, and `word` cuts the bits past
+the file's end, so its reads stay inside the batch.
+
+A first try took the closer's word from the aligned block, as the
+whole function does. Half of these comments cross a block's edge, and
+each of them paid for the short try and then the whole read:
+comments 306 → 317.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Comments | 306 | 271 | 193 |
+
+Other kinds did not change.
+`a_short_tokens_function_calls_only_its_whole` checks that a number
+and a comment each have one.
+
+## A refused read is still its reader's token
+
+**Intro.** A block comment open at the file's end refuses the file.
+The interpreter still records the comment's first byte as a token of
+the reader: tagged as a comment, with the reader rule's tests run on
+it. The CPU recorded it as a `/` and ran no tests. The file is
+refused either way, but the CPU's records must be the interpreter's.
+
+**The change.** A reader with no closer and no other way out
+(`ReadNone::Refuse`) goes on to the rule's tests with its token one
+byte long, its tag, and the refusal. The tests' entry block takes a
+refusal in for this, zero everywhere else.
+`the_cpus_records_are_the_interpreters` now has comments whose
+closer lies 59 to 65 bytes after the opener, and comments the file
+ends in, at five offsets in their block. These cases found the bug.

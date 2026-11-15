@@ -2635,6 +2635,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let (ended, done) = (f.create_block(), f.create_block());
     f.append_block_param(ended, types::I64);
     f.append_block_param(ended, types::I64);
+    // And a refusal (`read_none`'s: a reader with no closer).
+    f.append_block_param(ended, types::I64);
     f.append_block_param(done, types::I64);
     f.append_block_param(done, types::I64);
     f.append_block_param(done, types::I64);
@@ -2720,7 +2722,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         } else {
             let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
-            f.ins().jump(to, &[l_sel.into(), untag.into()]);
+            f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
         }
         f.switch_to_block(table);
     }
@@ -2778,7 +2780,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // the token, as a lexer checks the token it reads.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(c, _)| usize::from(c.rule) == k).map(|(c, &b)| (*c, b)).collect();
         // A short run's token is 16 bytes at most (`RuleMode::Short`).
-        let short = matches!((mode, rule), (RuleMode::Short(_), EndRule::Run(o)) if rd.bytewise(o));
+        let short = matches!((mode, rule), (RuleMode::Short(_), EndRule::Run(o)) if rd.bytewise(o)) && rd.calls.iter().any(|x| x.0 == LONG_CALL | k as u16);
         let most = short.then_some(16);
         let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, heads) };
         match rule {
@@ -2788,14 +2790,14 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             // bytes, one load of the set.
             EndRule::Next(i) => {
                 let l = next_last(f, t, c, s, raw, entry, i);
-                f.ins().jump(ended, &[l.into(), untag.into()]);
+                f.ins().jump(ended, &[l.into(), untag.into(), nohits.into()]);
             }
             EndRule::Pair(o) => {
                 let x = word_at(f, q0, o, heads);
                 let bit = f.ins().ushr(x, sh);
                 let bit = f.ins().band_imm(bit, 1);
                 let l = f.ins().iadd(s, bit);
-                f.ins().jump(ended, &[l.into(), untag.into()]);
+                f.ins().jump(ended, &[l.into(), untag.into(), nohits.into()]);
             }
             EndRule::Run(o) => {
                 let limit = rd.limit(o, limit);
@@ -2820,7 +2822,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.set_cold_block(edge);
                         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                         let load = f.create_block();
-                        inside_or_past(f, inside, load, limit, ended, &[s.into(), untag.into()]);
+                        inside_or_past(f, inside, load, limit, ended, &[s.into(), untag.into(), nohits.into()]);
                         f.switch_to_block(load);
                         f.set_cold_block(load);
                         let x = word_at(f, q, o, heads);
@@ -2839,7 +2841,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
                             let l = f.ins().iadd(s, ones);
                             let long = f.create_block();
-                            f.ins().brif(short, ended, &[l.into(), untag.into()], long, &[]);
+                            f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], long, &[]);
                             f.switch_to_block(long);
                             f.set_cold_block(long);
                             // The short function's long run: its whole function's, returned.
@@ -2854,7 +2856,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             }
                         }
                         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
-                        inside_or_past(f, inside, first_word, limit, ended, &[s.into(), untag.into()]);
+                        inside_or_past(f, inside, first_word, limit, ended, &[s.into(), untag.into(), nohits.into()]);
                         f.switch_to_block(first_word);
                         word_at(f, q, o, heads)
                     }
@@ -2866,7 +2868,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, left);
                 let l = f.ins().iadd(s, ones);
                 let w1 = f.ins().iadd_imm(q, 1);
-                f.ins().brif(short, ended, &[l.into(), untag.into()], next, &[]);
+                f.ins().brif(short, ended, &[l.into(), untag.into(), nohits.into()], next, &[]);
                 f.switch_to_block(next);
                 f.set_cold_block(next);
                 f.ins().jump(more, &[w1.into()]);
@@ -2878,7 +2880,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
                 let w64 = f.ins().ishl_imm(w, 6);
                 let at_end = f.ins().iadd_imm(w64, -1);
-                inside_or_past(f, inside, whole, limit, ended, &[at_end.into(), untag.into()]);
+                inside_or_past(f, inside, whole, limit, ended, &[at_end.into(), untag.into(), nohits.into()]);
                 f.switch_to_block(whole);
                 f.set_cold_block(whole);
                 let x = word_at(f, w, o, heads);
@@ -2888,7 +2890,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = f.ins().iadd(w64, ones);
                 let l = f.ins().iadd_imm(l, -1);
                 let w1 = f.ins().iadd_imm(w, 1);
-                f.ins().brif(full, more, &[w1.into()], ended, &[l.into(), untag.into()]);
+                f.ins().brif(full, more, &[w1.into()], ended, &[l.into(), untag.into(), nohits.into()]);
             }
             EndRule::Read(i) => {
                 // A reader (`records::read_last`): the first region whose opener holds at `s`,
@@ -2926,7 +2928,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         let marks = f.ins().band_imm(got, i64::MAX);
                         f.ins().jump(rest, &[l.into(), tag.into(), refuse.into(), marks.into()]);
                         f.switch_to_block(none);
-                        read_none(f, a.none, c, s, tag, untag, nohits, ended, done);
+                        read_none(f, a.none, c, s, tag, nohits, ended);
                         f.switch_to_block(not);
                         continue;
                     }
@@ -2938,12 +2940,24 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                     inside_or_past(f, inside, first_word, limit, none, &[]);
                     f.switch_to_block(first_word);
-                    let x = word_at(f, q, a.closer, heads);
-                    let fb = f.ins().band_imm(from, 63);
-                    let ones = f.ins().iconst(types::I64, -1);
-                    let m = f.ins().ishl(ones, fb);
-                    let x = f.ins().band(x, m);
-                    let base = f.ins().ishl_imm(q, 6);
+                    // A short reader's (`RuleMode::Short`): its closer's 64 bytes from the token's
+                    // second inline, as a lexer's search from where it is, and a region past them
+                    // its whole function's call, returned.
+                    let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer))) {
+                        (RuleMode::Short(_), Some(bytes)) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
+                        _ => None,
+                    };
+                    let (x, base) = match whole {
+                        Some((_, (b, file))) => (b.word(f, &file, a.closer, from, heads), from),
+                        None => {
+                            let x = word_at(f, q, a.closer, heads);
+                            let fb = f.ins().band_imm(from, 63);
+                            let ones = f.ins().iconst(types::I64, -1);
+                            let m = f.ins().ishl(ones, fb);
+                            (f.ins().band(x, m), f.ins().ishl_imm(q, 6))
+                        }
+                    };
+                    let whole = whole.map(|(w, _)| w);
                     let tz = f.ins().ctz(x);
                     let at = f.ins().iadd(base, tz);
                     let q1 = f.ins().iadd_imm(q, 1);
@@ -2951,6 +2965,22 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // A word at a time past the first: a string or a comment over blocks.
                     f.switch_to_block(more);
                     f.set_cold_block(more);
+                    if let Some((_, id, sig)) = whole {
+                        let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+                        let signature = f.import_signature(sig.clone());
+                        let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+                        let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                        let got = f.inst_results(call).to_vec();
+                        f.ins().return_(&got);
+                        f.switch_to_block(found);
+                        let at = f.block_params(found)[0];
+                        let l = f.ins().iadd_imm(at, i64::from(a.off));
+                        f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
+                        f.switch_to_block(none);
+                        read_none(f, a.none, c, s, tag, nohits, ended);
+                        f.switch_to_block(not);
+                        continue;
+                    }
                     heads.push((more, Step::Word));
                     let w = f.block_params(more)[0];
                     let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
@@ -2967,9 +2997,9 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     f.switch_to_block(found);
                     let at = f.block_params(found)[0];
                     let l = f.ins().iadd_imm(at, i64::from(a.off));
-                    f.ins().jump(ended, &[l.into(), tag.into()]);
+                    f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
                     f.switch_to_block(none);
-                    read_none(f, a.none, c, s, tag, untag, nohits, ended, done);
+                    read_none(f, a.none, c, s, tag, nohits, ended);
                     f.switch_to_block(not);
                 }
                 // No opener: the byte's other rule, or the file refused.
@@ -2997,7 +3027,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = f.ins().iadd(base, tz);
                 let w1 = f.ins().iadd_imm(q0, 1);
                 let next = f.create_block();
-                f.ins().brif(x, ended, &[l.into(), untag.into()], next, &[]);
+                f.ins().brif(x, ended, &[l.into(), untag.into(), nohits.into()], next, &[]);
                 f.switch_to_block(next);
                 f.set_cold_block(next);
                 f.ins().jump(more, &[w1.into()]);
@@ -3009,7 +3039,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 // None found: with the loop's starts (`records::walk`), the first byte alone;
                 // else `s - 1`, which the order check refuses.
                 let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
-                inside_or_past(f, inside, look, limit, ended, &[none.into(), untag.into()]);
+                inside_or_past(f, inside, look, limit, ended, &[none.into(), untag.into(), nohits.into()]);
                 f.switch_to_block(look);
                 f.set_cold_block(look);
                 let x = word_at(f, w, o, heads);
@@ -3017,14 +3047,14 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let tz = f.ins().ctz(x);
                 let l = f.ins().iadd(w64, tz);
                 let w1 = f.ins().iadd_imm(w, 1);
-                f.ins().brif(x, ended, &[l.into(), untag.into()], more, &[w1.into()]);
+                f.ins().brif(x, ended, &[l.into(), untag.into(), nohits.into()], more, &[w1.into()]);
             }
         }
     }
     f.switch_to_block(ended);
-    let (l, tag) = (f.block_params(ended)[0], f.block_params(ended)[1]);
+    let (l, tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(done, &[l.into(), zero.into(), tag.into(), zero.into()]);
+    f.ins().jump(done, &[l.into(), no.into(), tag.into(), zero.into()]);
     f.switch_to_block(done);
     (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2], f.block_params(done)[3], fused_exit)
 }
@@ -3181,23 +3211,25 @@ fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Val
     f.ins().iadd(s, bit)
 }
 
-/// A reader's arm with no closer after its opener (`ReadNone`): refused (on to `done`), or its
-/// last on to `ended`, its tests'.
-#[allow(clippy::too_many_arguments)]
-fn read_none(f: &mut FunctionBuilder<'_>, none: crate::records::ReadNone, c: &FileCols, s: Value, tag: Value, untag: Value, nohits: Value, ended: cranelift_codegen::ir::Block, done: cranelift_codegen::ir::Block) {
+/// A reader's arm with no closer after its opener (`ReadNone`): its last on to `ended`, its
+/// tests', and where refused, the refusal with it.
+fn read_none(f: &mut FunctionBuilder<'_>, none: crate::records::ReadNone, c: &FileCols, s: Value, tag: Value, nohits: Value, ended: cranelift_codegen::ir::Block) {
     use crate::records::ReadNone;
     match none {
+        // The opener held: the token is the reader's, its first byte alone, tagged and tested,
+        // as `records::pass` tags it by its opener's bit (`Records::retags`) and tests it
+        // (`records::walk`); and the file refused.
         ReadNone::Refuse => {
             let refuse = f.ins().iconst(types::I64, -1);
-            f.ins().jump(done, &[s.into(), refuse.into(), untag.into(), nohits.into()]);
+            f.ins().jump(ended, &[s.into(), tag.into(), refuse.into()]);
         }
         ReadNone::End => {
             let l = f.ins().iadd_imm(c.len, -1);
-            f.ins().jump(ended, &[l.into(), tag.into()]);
+            f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
         }
         ReadNone::Bytes(m) => {
             let l = f.ins().iadd_imm(s, i64::from(m) - 1);
-            f.ins().jump(ended, &[l.into(), tag.into()]);
+            f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
         }
     }
 }
@@ -3345,8 +3377,9 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
     f.append_block_param(ended, types::I64);
+    f.append_block_param(ended, types::I64);
     f.switch_to_block(ended);
-    let (mut l, mut tag) = (f.block_params(ended)[0], f.block_params(ended)[1]);
+    let (mut l, mut tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
     let mut q0 = f.ins().ushr_imm(s, 6);
     let mut sh = f.ins().band_imm(s, 63);
@@ -3361,7 +3394,8 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         crate::records::CheckThen::At(k) => (r, h | 1i64 << k),
         crate::records::CheckThen::After(k) => (r, h | 1i64 << (crate::records::AFTER_SHIFT + u32::from(k))),
     });
-    let mut refuse = f.ins().iconst(types::I64, always.0);
+    // A refusal in (`read_none`), and the always tests'.
+    let mut refuse = if always.0 == 0 { no } else { f.ins().iconst(types::I64, always.0) };
     let mut hits = f.ins().iconst(types::I64, always.1);
     // The count tests, fused into one call (`tests_fn`) where the loop has it.
     let rule = tests.first().map_or(0, |(t, _)| t.rule);
@@ -5158,15 +5192,17 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
             rule_fn(&mut func, rec, t, &bytewise, made.outputs.len(), RuleMode::Only(k), &ids, &carry_names)?;
-            // A run's short function (`RuleMode::Short`), where it calls nothing but its whole
-            // one: the loop calls it, a lexer's short number with no register saved.
+            // A run's or a reader's short function (`RuleMode::Short`), where it calls nothing
+            // but its whole one: the loop calls it, a lexer's short number or comment with no
+            // register saved.
             let mut short = None;
-            if matches!(rec.rules[k], crate::records::EndRule::Run(o) if bytewise.can(o)) {
+            if matches!(rec.rules[k], crate::records::EndRule::Run(_) | crate::records::EndRule::Read(_)) {
                 let mut with = ids.clone();
                 with.push((LONG_CALL | k as u16, id, sig.clone()));
                 let mut sfunc = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig.clone());
                 rule_fn(&mut sfunc, rec, t, &bytewise, made.outputs.len(), RuleMode::Short(k), &with, &carry_names)?;
-                if calls_of(&sfunc) == [id.as_u32()] {
+                let made = calls_of(&sfunc);
+                if !made.is_empty() && made.iter().all(|&x| x == id.as_u32()) {
                     let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
                     sfunc.name = cranelift_codegen::ir::UserFuncName::user(0, sid.as_u32());
                     short = Some((sid, sfunc));

@@ -106,21 +106,22 @@ fn a_bitmask_is_pairwise_adds() {
     assert!(src.contains("vcombine_u8(d, d)"), "no bitmask reduced by halves");
 }
 
-/// A number's short function (`native_cpu_block::RuleMode::Short`): a rule's function whose
-/// one call is its whole function's, of its own signature (a run past 16 bytes), so its way
-/// for a short number calls nothing, as a lexer reads a few digits.
+/// A short token's function (`native_cpu_block::RuleMode::Short`): a rule's function whose
+/// calls are all its whole function's, of its own signature (a number's run past 16 bytes, a
+/// comment past its first closer word), so its way for a short token calls nothing, as a lexer
+/// reads a few digits or a line comment. A number's and a comment's at least.
 #[test]
-fn a_short_numbers_function_calls_only_its_whole() {
+fn a_short_tokens_function_calls_only_its_whole() {
     use rerail_compiler::native_cpu_stream;
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules).expect("compiles");
     let ir = &c.parser.tier1.ir;
     let calls = rerail_compiler::native_cpu_block::calls_of;
-    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && f.signature.returns.len() == 4).filter(|(_, f)| match calls(f)[..] {
-        [one] => ir.iter().any(|(id, g)| *id == one && g.signature == f.signature),
-        _ => false,
+    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && f.signature.returns.len() == 4).filter(|(_, f)| {
+        let made = calls(f);
+        made.first().is_some_and(|&one| made.iter().all(|&x| x == one) && ir.iter().any(|(id, g)| *id == one && g.signature == f.signature))
     });
-    assert_eq!(short.count(), 1, "the number rule's short function");
+    assert!(short.count() >= 2, "a number's and a comment's short functions");
 }
 
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU

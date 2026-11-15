@@ -1715,6 +1715,17 @@ pub mod tests {
         for pad in [59usize, 60, 61, 62, 63] {
             inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
         }
+        // A comment's closer about 64 bytes after its opener, where a short reader's window
+        // (`RuleMode::Short`) ends, at each offset in its block; one the file ends in.
+        for n in [0usize, 59, 60, 61, 62, 63, 64, 65] {
+            for pad in [0usize, 1, 31, 62, 63] {
+                let body = "c".repeat(n);
+                inputs.push(format!("{}a(x). //{body}\nb(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}*/ b(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). //{body}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}", " ".repeat(pad)).into_bytes());
+            }
+        }
         // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
         // across the windows' edges, the run before a window found back to its start; a
         // string or comment over many blocks; the escape at the opener's byte.
