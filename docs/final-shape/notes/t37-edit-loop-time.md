@@ -239,6 +239,20 @@ it rebuilds them. macOS's syspolicyd then could not read the file by the name it
 ("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
 Malware rejection").
 
+Hub code under Relax (2026-11-15). Relax rejected `ColMap::of_rel` (plan/table.rs) with E0310, which
+rustc accepts. The reduction: an edition 2024 `impl Iterator` returned from `fn f(&self, _r: &str)`
+(so it captures both lifetimes) that holds a closure built inside another closure, which captures
+`self`. Relax gives each region slot of a closure type an identity, and a slot that is one of the
+parent's own regions is mapped to that region when the nested body's requirements are applied,
+so the nested body propagates nothing for it. The parent's instantiation of the closure type had
+a fresh variable there that nothing else constrained when the slot was in the signature: the inner
+closure's borrow reached the hidden type free, and between `'a` and `'b` (unrelated) member
+constraints chose `'static`. rerail.patch ties those signature slots to the parent's regions
+(borrowck/root_cx.rs `tie_inherited_slots`; upvar slots are left alone, since an or-pattern's binding
+records only one of its regions, and tying it rejected `chunked.rs` `combine`). Relax's 272 borrowck
+tests pass, the hub's session test passes under Relax, and the reduction is a test that fails
+without the tie.
+
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
 

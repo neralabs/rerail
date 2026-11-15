@@ -2,7 +2,9 @@
 # Builds the Relax this repository uses (docs/final-shape/notes/t37, §3): makepad/relax at COMMIT,
 # with std.patch (the std items the engine needs that Relax's std lacked) and rerail.patch (an Open
 # run shares sealed crates' code under RELAX_SHARED_OPEN=1; a stubbed build script is a script,
-# not a hard link of Relax: see the patch). It installs to ~/.local/share/rerail-relax, outside
+# not a hard link of Relax; a closure built in a closure no longer fails E0310 behind an impl
+# Trait capturing two lifetimes: see the patch). rerail.patch is the fork's commits, kept on
+# the `rerail` branch of a Relax checkout (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
 # every worktree:
 #
 #   v/<version>/   the patched source tree of one version, never changed once built. The binary

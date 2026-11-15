@@ -46,3 +46,112 @@ index 20d9fcc4..11d21c50 100644
                  }
              }
          } else if *kind == "dep-info" {
+diff --git a/libs/relax/types/src/borrowck/mir_source_tests.rs b/libs/relax/types/src/borrowck/mir_source_tests.rs
+index 6f202315..4584cd12 100644
+--- a/libs/relax/types/src/borrowck/mir_source_tests.rs
++++ b/libs/relax/types/src/borrowck/mir_source_tests.rs
+@@ -1079,3 +1079,44 @@ fn a_closures_higher_ranked_signature_regions_survive_normalization_under_the_bi
+     assert!(unchecked.is_empty(), "{unchecked:?}");
+     assert!(errors.is_empty(), "{errors:?}");
+ }
++
++#[test]
++fn a_closure_built_in_a_closure_returned_through_an_impl_capturing_two_lifetimes_borrows_self() {
++    // rerail: edition 2024's `impl Trait` captures both `&self` and `_r`; the inner closure's
++    // captured borrow sits in the outer closure's signature, in a slot whose identity is the fn's
++    // `'a` (root_cx.rs tie_inherited_slots). It was left free, member constraints chose `'static`
++    // for it, and `T: 'static` failed (E0310). rustc accepts it.
++    let (errors, _) = borrowck_source_in("
++        pub struct S<T>(pub Vec<Option<T>>);
++        impl<T> S<T> {
++            pub fn f(&self, _r: &str) -> impl Iterator<Item = &T> {
++                let o = move || (0..1usize).filter_map(move |c| self.0[c].as_ref());
++                o()
++            }
++        }
++        #[derive(Clone, Copy)]
++        pub enum View<'a> { A(&'a [u32]), B(&'a [u64]) }
++        impl View<'_> { pub fn has(&self, v: u32) -> bool { match self { View::A(x) => x.contains(&v), View::B(x) => x.contains(&(v as u64)) } } }
++        pub fn combine(out: &mut Vec<u32>, a: View<'_>, b: View<'_>) {
++            match (a, b) {
++                (View::A(x), m @ View::B(_)) | (m @ View::B(_), View::A(x)) => out.extend(x.iter().copied().filter(|&v| m.has(v))),
++                _ => {}
++            }
++        }
++        fn main() {}", 2024);
++    assert!(errors.is_empty(), "{errors:?}");
++}
++
++#[test]
++fn a_closure_built_in_a_closure_cannot_return_a_shorter_borrow_through_an_impl() {
++    // rerail: the case above with a borrow of a shorter lifetime: rustc rejects it (E0621), and
++    // tying the signature's slots to the parent's regions must not hide that.
++    let (errors, _) = borrowck_source_in("
++        pub fn g<'a>(x: &'a String, y: &String) -> impl Iterator<Item = &'a String> + 'a {
++            let _ = x;
++            let o = move || std::iter::once(()).map(move |_| y);
++            o()
++        }
++        fn main() {}", 2024);
++    assert!(errors.iter().any(|e| e.contains("E0621") || e.contains("lifetime")), "{errors:?}");
++}
+diff --git a/libs/relax/types/src/borrowck/root_cx.rs b/libs/relax/types/src/borrowck/root_cx.rs
+index eeb69f2d..9be81c76 100644
+--- a/libs/relax/types/src/borrowck/root_cx.rs
++++ b/libs/relax/types/src/borrowck/root_cx.rs
+@@ -203,6 +203,7 @@ impl BorrowCheckRootCtxt<'_> {
+     /// body with the regions it is created with. This adds new outlives obligations to existing
+     /// region variables of the parent, blamed on the nested body's original constraint.
+     fn apply_closure_requirements(&self, parent: &mut RootBody<'_>, child: &NestedInfo, requirements: Option<&ClosureRequirements>, use_: &DeferredClosureRequirement) {
++        self.tie_inherited_slots(parent, child, use_);
+         let Some(requirements) = requirements else { return };
+         let mapping = self.closure_mapping(parent, child, requirements.num_external_vids, use_);
+         let tys = &self.tcx.tys;
+@@ -230,6 +231,47 @@ impl BorrowCheckRootCtxt<'_> {
+         }
+     }
+ 
++    /// rerail: a region of the closure type that is one of the parent's own universal regions (its
++    /// slot's identity, `closure_slots`) is that region in the parent. The nested body maps its
++    /// requirements on such a region to the parent's region itself (closure_mapping), so it
++    /// propagates none for the slot; the parent's instantiation of the closure type has a fresh
++    /// variable there, which nothing else constrains when the slot is in the signature. Equate the two. Without this, a closure built
++    /// in a closure and returned through an `impl Trait` capturing two lifetimes left the inner
++    /// closure's captured borrow free, member constraints chose `'static` for it, and E0310 followed.
++    fn tie_inherited_slots(&self, parent: &mut RootBody<'_>, child: &NestedInfo, use_: &DeferredClosureRequirement) {
++        let (ClauseOwner::Closure(id) | ClauseOwner::Coroutine(id)) = use_.def else { return };
++        let tys = &self.tcx.tys;
++        let kind = if matches!(use_.def, ClauseOwner::Closure(_)) { AggregateKind::Closure(id, use_.args.clone()) } else { AggregateKind::Coroutine(id, use_.args.clone()) };
++        let ty = parent.infcx.rvalue_query_ty(parent.body, &Rvalue::Aggregate(Box::new(kind), vec![]));
++        let instantiated: Vec<RegionVid> = free_regions_in_order(self.tcx, ty).into_iter().map(|r| parent.infcx.to_region_vid(r)).collect();
++        // Only the signature's slots: an upvar's region is constrained where the closure is built
++        // (the captured operand's type flows into it), and its recorded identity is one of the
++        // regions that flowed in (an or-pattern's binding of two arguments names either), not
++        // necessarily the region itself.
++        let crate::types::TyKind::Closure(_, _, args) = tys.kind(ty).clone() else { return };
++        let before = free_regions_in_order(self.tcx, args.parent_args).len() + free_regions_in_order(self.tcx, args.closure_kind_ty).len();
++        let sig = before..before + free_regions_in_order(self.tcx, args.closure_sig_as_fn_ptr_ty).len();
++        if instantiated.len() != child.closure_slots.len() { return; }
++        let point = use_.locations.from_location().map(|l| LocationMap::new(parent.body).point(l));
++        let span = use_.locations.span(parent.body);
++        let universals = &parent.typeck.universals;
++        let mut ties = vec![];
++        for (slot, &identity) in child.closure_slots.iter().enumerate() {
++            if !sig.contains(&slot) { continue; }
++            if identity == RegionId::ERASED { continue; }
++            let Some(&instance) = instantiated.get(slot) else { continue };
++            let own = if tys.region_kind(identity) == RegionKind::ReStatic { Some(universals.fr_static) }
++                else { universals.indices.iter().find(|(r, _)| *r == identity).map(|&(_, v)| v) };
++            if let Some(own) = own { ties.push((own, instance)); }
++        }
++        for (own, instance) in ties {
++            for (sup, sub) in [(own, instance), (instance, own)] {
++                parent.typeck.constraints.outlives_constraints.push(OutlivesConstraint {
++                    sup, sub, location: point, span, category: super::constraints::ConstraintCategory::Boring, from_closure: true });
++            }
++        }
++    }
++
+     /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
+     /// external universal regions (global first, then external) stand for. Those the nested body
+     /// inherits are the parent's own universal regions; the others sit in the regions of the closure
