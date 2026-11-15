@@ -35,12 +35,14 @@ whose copy or run failed there: it runs here instead, and only that run's output
 |---|---|
 | `rustc-wrapper` | cargo's `RUSTC_WRAPPER` |
 | `farm-rustc` | the compiler the farm's sccache runs on a miss |
-| `farm.py` | both of them |
+| `farm-cc` | build scripts' C and C++ compiler (`CC`; `farm-c++` for `CXX`): clang through the farm's sccache |
+| `farm.py` | all of them |
 | `remote-rustc` | runs one compile on a remote Mac (copy and shared modes) |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host |
 | `setup` | installs all of it, and `remote-rustc` on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
+| `sccache-patches/` | the farm's patch on sccache, on top of #3021 and #3022 |
 | `hosts.example.json` | the hosts, copied to `~/.config/rerail-farm/hosts.json` |
 
 ## Setup
@@ -50,7 +52,11 @@ scripts/build/farm/setup path/to/patched/sccache
 ```
 
 The sccache is upstream main with PRs #3021 (`SCCACHE_BASEDIRS_REMAP_PATHS`) and #3022
-(`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) merged in. Each host needs ssh without a password (its name in
+(`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) merged in, and `sccache-patches/` applied. The patch caches
+the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
+engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
+`--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
+file that uses `__TIME__` (mimalloc's) is cached. Each host needs ssh without a password (its name in
 `hosts.json` is a name ssh connects to: a `Host` entry of `~/.ssh/config`), the
 toolchain of `rust-toolchain.toml`, and a copy of `~/.cargo/registry/src` at the same path:
 
@@ -64,7 +70,14 @@ Then point cargo at the wrapper, in a `.cargo/config.toml` in a directory above 
 ```toml
 [build]
 rustc-wrapper = "<home>/.local/share/rerail-farm/rustc-wrapper"
+
+[env]
+CC = "<home>/.local/share/rerail-farm/farm-cc"
+CXX = "<home>/.local/share/rerail-farm/farm-c++"
 ```
+
+Without `CC` and `CXX` every new target directory compiles the build scripts' C again (SQLite's
+alone takes 90 s at a load of 80).
 
 `JEMALLOC_OVERRIDE` set to a prebuilt `libjemalloc_pic.a` saves `tikv-jemalloc-sys`'s 3-minute
 configure-and-make in every new target directory; its build script is never cached.

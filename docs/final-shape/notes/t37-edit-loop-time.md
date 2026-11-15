@@ -219,9 +219,25 @@ which runs every other compile.
   `f9fb75060` those archives are byte-identical across checkouts (`-ffile-prefix-map`,
   `SOURCE_DATE_EPOCH`). Rerun: 378 of 378 hits, 142 s wall and 366 s CPU here (273 + 93) against
   170 s and 402 s.
-- What a fully cached build still compiles is what sccache never caches: 61 build-script binaries,
-  21 proc macros and the final binary. That, and the link, is the rest of its 142 s. The farm
-  could cache build scripts and proc macros itself, since their outputs are now path-free (open).
+- 142 s with every Rust crate a hit was still too long. `cargo --timings` showed where it went,
+  and each step below was measured on the same pair of worktrees (cache filled by the first; load
+  20–80):
+
+  | Change | Second worktree, wall | What was still on the critical path |
+  |---|---|---|
+  | every Rust crate a hit | 142 s | 61 build scripts' C, uncached (SQLite 90 s); the engine's cdylib, uncached (47 s); 21 proc macros |
+  | build scripts' C through the cache (`farm-cc`) | 114 s | the cdylib; the proc macros; the grammars' build script (23 s) |
+  | crate types that link cached (`SCCACHE_CACHE_LINKED`) | 54 s | the grammars' build script; mimalloc (its C uses `__TIME__`) |
+  | the grammars built a thread each, `SOURCE_DATE_EPOCH` kept | **28 s** | none: 562 of 562 compiles hit |
+
+  Mistakes found on the way, each of which made a crate key differently per checkout or per run:
+  a linker argument holding the target directory's path where sccache does not strip it, `xcrun`'s
+  error text (with a time and pid) in the linker's identity, sccache dropping `SOURCE_DATE_EPOCH`,
+  and the threaded grammars printing their link libraries in a different order each run. The CLI
+  built from cached parts gives the same bytes on the smoke corpus as a plain cargo build.
+- What is left of the 28 s is throughput: 521 units at about 0.9 s each, 36 at a time. A hit
+  still starts the wrapper, hashes the sources and dependencies and writes the outputs, and each
+  build script runs again, probing its compiler.
 - Remote compiles cut this machine's CPU by 42% on a cold cache, but not the wall time under this
   load. Small crates pay ssh and tar per compile, and the workspace crates on the critical path
   compile here when the hosts are full.
