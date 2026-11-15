@@ -96,6 +96,15 @@ impl Interner {
         (i < held.ends.len()).then(|| held.str(i))
     }
 
+    /// The hash of `s`'s string (`hash_str`), if this process holds it: kept with each atom, so no string is read.
+    fn hash_of(&self, s: Sym) -> Option<u64> {
+        if s >= self.base {
+            return self.hashes.get((s - self.base) as usize).copied();
+        }
+        let (first, held) = self.held.range(..=s).next_back()?;
+        held.hashes.get((s - first) as usize).copied()
+    }
+
     /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
     /// without reading an atom.
     fn tag(h: u64) -> u32 {
@@ -679,6 +688,9 @@ impl Atoms {
             flushed.store(false, Ordering::Relaxed);
             let (hook, held) = (Arc::clone(&flushed), Arc::clone(&atoms));
             connection.commit_hook(Some(move || {
+                // This hook replaces the one every connection is given for the warm check (`RERAIL_WARM`).
+                // SAFETY: called by SQLite on this connection's thread, inside its commit hook.
+                unsafe { super::hazards::warm_commit(handle as *mut ffi::sqlite3) };
                 let flushed = hook.swap(false, Ordering::AcqRel);
                 if flushed || !held.pending() {
                     return false;
@@ -768,6 +780,49 @@ impl Atoms {
     /// 0111 §2): it no longer means "not interned".
     pub fn get(&self, value: &str) -> Option<Sym> {
         self.lookup(value).ok().flatten()
+    }
+
+    /// The atom `intern` would give `value` without making one: in memory, or found where interning finds a stored
+    /// atom (outside a run's provisional ids, decision 0160, and before a fork, 0170). Inside a run, or forked,
+    /// interning reads nothing and a string not held gets a new id, which no row holds: so `None` there, and no read.
+    pub fn existing(&self, value: &str) -> Option<Sym> {
+        if let Some(atom) = self.state.read().atoms.get(value) {
+            return Some(atom);
+        }
+        if self.provisional() || self.forked() {
+            return None;
+        }
+        self.lookup(value).ok().flatten()
+    }
+
+    /// Each of `ids` (atoms) replaced by its content key: its string's hash (`hash_str`), the same in every process
+    /// whichever id it gave the string (decision 0212). A digest of rows that hold atoms reads them so: by id, a
+    /// process that numbered a string otherwise (a fork, decision 0170) digested the same rows otherwise, and every
+    /// frame it kept was stale to the next. Under one read of the atoms; an atom not held (none, where every row a run
+    /// holds names held atoms) is read with its segment. A value that is no atom here (an in-memory store's test
+    /// rows) keys as itself.
+    pub fn content_keys(&self, ids: &mut [i64]) {
+        let mut missed: Vec<usize> = Vec::new();
+        {
+            let state = self.state.read();
+            for (i, v) in ids.iter_mut().enumerate() {
+                match u32::try_from(*v).ok().and_then(|s| state.atoms.hash_of(s)) {
+                    Some(h) => *v = h as i64,
+                    None => missed.push(i),
+                }
+            }
+        }
+        if missed.is_empty() {
+            return;
+        }
+        let wanted: Vec<Sym> = missed.iter().filter_map(|&i| u32::try_from(ids[i]).ok()).collect();
+        let _ = self.read_atoms(&wanted);
+        let state = self.state.read();
+        for i in missed {
+            if let Some(h) = u32::try_from(ids[i]).ok().and_then(|s| state.atoms.hash_of(s)) {
+                ids[i] = h as i64;
+            }
+        }
     }
 
     /// `f` of atom `atom`'s string, if the database or this process holds it: a stored atom not held yet is read
@@ -946,7 +1001,7 @@ impl Atoms {
                     // of its own: the strings the store holds then are left out (found by key, never stored twice).
                     if let Ok(donor) = std::env::var("RERAIL_TEST_FORK_FROM") {
                         let path = path.clone();
-                        let appended = std::thread::spawn(move || -> rusqlite::Result<(usize, i64)> {
+                        let appended = rerail_accel::exec::service("rerail-test-fork append", None, move || -> rusqlite::Result<(usize, i64)> {
                             super::hazards::behind_the_run();
                             let strings = |c: &rusqlite::Connection, schema: &str| -> rusqlite::Result<Vec<String>> {
                                 let mut st = c.prepare(&format!("SELECT ends, bytes FROM {schema}.atom_segment ORDER BY first"))?;
@@ -982,6 +1037,7 @@ impl Atoms {
                             c.execute_batch("COMMIT")?;
                             Ok((fresh.len(), end))
                         })
+                        .expect("the test fork's thread")
                         .join();
                         match appended {
                             Ok(Ok((n, end))) => eprintln!("rerail: test fork after {k} ids: {n} strings of another store appended, the store ends at {end}"),
@@ -1004,7 +1060,7 @@ impl Atoms {
                 // Waited for, so the ids just given are still pending when the store moves; but not on the writer's
                 // batch thread, whose transaction the append waits for.
                 if super::connection::in_batch() {
-                    std::thread::spawn(append);
+                    let _ = rerail_accel::exec::service("rerail-test-fork", None, append);
                 } else {
                     append();
                 }
@@ -1313,7 +1369,7 @@ impl Atoms {
     }
 
     /// `advance_holding`, under `state`'s lock held.
-    pub(super) fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
+    fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
         if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }
@@ -1627,7 +1683,8 @@ impl super::ContentStore {
         let ids = self.atoms.intern_all(values)?;
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {
-            if self.atoms.due_now() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
+            // Due, and with atoms a flush would write (not only those a component reserves, `Atoms::pending`).
+            if self.atoms.due_now() && self.atoms.pending() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
                 self.queue_atoms_flush();
             }
         } else if self.atoms.due() {

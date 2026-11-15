@@ -885,6 +885,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
+        "end_point" => &["n", "p"],
         "tree_digest" | "def_digest" => &["n", "s"],
         // core.rr's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],

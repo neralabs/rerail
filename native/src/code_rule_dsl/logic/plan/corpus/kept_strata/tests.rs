@@ -17,7 +17,7 @@
             inputs.push((format!("input{i}"), native::component::columns_source(vec!["c0".into()], vec![Some(vec![i])])));
         }
         let prog = rr::parse(&text).unwrap();
-        let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref()))).collect();
+        let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(s.columns().len())))).collect();
         let (_, part) = load(&store, dir.path(), [7;32], &prog, &Default::default(), &st(&prog), &inputs, &now).unwrap();
         let puts: Vec<_> = part.frames.iter().map(|(name, (rel, _))| {
             let i: usize = name.trim_start_matches("input").trim_start_matches("result").parse().unwrap();
@@ -63,7 +63,7 @@
                 let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
                 let prog = rr::parse(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
                 let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(vec![42])]))];
-                let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref()))]);
+                let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(inputs[0].1.columns().len())))]);
                 let (_, part) = load(&store, dir.path(), [7; 32], &prog, &Default::default(), &st(&prog), &inputs, &now).unwrap();
                 let puts: Vec<_> = part.frames.iter().map(|(name,(rel,_))| FramePut {
                     rel:rel.clone(),part:0,digest:now["input"],
@@ -102,7 +102,7 @@
             let db = rusqlite::Connection::open(&path).unwrap();
             native::register(&db).unwrap();
             native::register_symbols(&db).unwrap();
-            let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]);
+            let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new());
             let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
                 Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
             let counts = kept.strata.unwrap();
@@ -127,7 +127,7 @@
         let put = |v| FramePut { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![],
             rows: FrameRows { types: vec![0], rows: vec![v], n: 1 } };
         store.keep_frames(&[42; 32], &[put(1)], &[], None).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]);
+        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new());
         kept.program(&HashMap::from([("r".into(), [1; 32])]));
         assert!(kept.has_rows("r"));
         store.keep_frames(&[42; 32], &[put(2)], &[], None).unwrap();
@@ -149,7 +149,7 @@
         )
         .unwrap();
         let domains = lower::domains(&p).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]).typed(&p, &domains);
+        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new()).typed(&p, &domains);
         kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
         kept.ran("kinded", Some((7, vec![b's', b's', b's'], vec![1, 1132, 5], 1, vec![])));
         assert_eq!(kept.puts[0].rows.types, b"iis", "the node and the kind are no atoms, the text is");

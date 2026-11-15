@@ -122,7 +122,6 @@ fn collect_counts(
         | AstMatcher::Call(_)
         | AstMatcher::Semantic(_)
         | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -174,7 +173,6 @@ fn collect_binds(
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -293,7 +291,6 @@ fn binds_and_reads(
         AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             (Names::new(), Names::new())
         }
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => (Names::new(), Names::new()),
     }
 }
@@ -380,7 +377,6 @@ fn collect_mentions(
             }
         }
         AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -457,7 +453,6 @@ fn collect_in(
                 }
             }
         }
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {

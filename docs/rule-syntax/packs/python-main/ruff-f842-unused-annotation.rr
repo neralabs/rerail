@@ -11,7 +11,7 @@
 // F842(n): a finding at node n, from clause `unused-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F842(at: node, n: loc) "Local variable `{n}` is annotated but never used"
+.violation F842(at: node, n_mv: loc) "Local variable `{n_mv}` is annotated but never used"
     suppress noqa "F842"
 F842(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
     main_form(b1, "annotation"),

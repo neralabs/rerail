@@ -51,8 +51,8 @@ ytt102_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // splat_target(n): the JSON util `splat-target`, used where the JSON says `matches: "splat-target"`
 .decl ytt102_splat_target(n: node)
 ytt102_splat_target(n) :-
-    ( kind(n, "attribute"), field(n, "object", c1), kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"), sym_of(c2, "sys"), field(n, "attribute", c3), glob("version", c3)
-    ; kind(n, "list_splat"), child(n, c4, _), kind(c4, "identifier"), sym_of(c4, "sys.version")
+    ( kind(n, "attribute"), field(n, "object", c1), kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"), sym_of(c2, "sys"), ytt102_tok_has_2(n)
+    ; kind(n, "list_splat"), child(n, c3, _), kind(c3, "identifier"), sym_of(c3, "sys.version")
     ),
     ytt102_subscripted(n).
 
@@ -66,6 +66,18 @@ ytt102_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
 ytt102_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
 ytt102_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^version$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt102_tok_has_2(n: node)
+.stored ytt102_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt102_tok_has_2(n) :- field(n, "attribute", c3), glob("version", c3).
+ytt102_tok_has_2(n) :- op(n, t4), match("version", t4).
+ytt102_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
+ytt102_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
+ytt102_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:version)(?:\\W.*)?)$", g5).
 
 // counted_1(n): the siblings the JSON `nthChild.ofRule` counts
 .decl ytt102_counted_1(n: node)

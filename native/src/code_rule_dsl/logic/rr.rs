@@ -26,7 +26,7 @@ pub mod from_tape;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
-pub use rerail_rr::code_rule_dsl::logic::rr::print;
+pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
@@ -50,7 +50,7 @@ pub mod tape_type {
     use crate::code_rule_dsl::logic::front::Error;
 }
 pub mod token_reads;
-pub use rerail_rr::code_rule_dsl::logic::rr::translate;
+pub use rerail_rr::code_rule_dsl::logic::rr::translate::{self};
 
 // cratify: `tape_tests` is rerail-engine's (it mounts it)
 // cratify: `tests` is rerail-engine's (it mounts it)
@@ -82,7 +82,9 @@ pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
     std::env::var_os("RERAIL_RR_LIB")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/lib"))
+        // Below the checkout's root, with no `..` in it: a path the engine reads is named one way, so the file observer
+        // keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
+        .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:

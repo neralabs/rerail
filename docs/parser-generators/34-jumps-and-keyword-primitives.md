@@ -1117,8 +1117,9 @@ The other four, the largest rules, would need more than their own size in copies
 Their loops get one entry instead: a dispatch,
 which the edges into the loop reach with a small label (`match d`).
 
-`cargo run -p rerail-rr-aot-gen` writes the source;
-the `rerail-rr-aot` crate runs it on the JIT's harness,
+The `rerail-rr-aot` crate's build script writes the source
+(its `generated` feature; until 2026-11-15 a separate `rerail-rr-aot-gen` wrote it into the tree);
+the crate runs it on the JIT's harness,
 and refuses if the JIT's program no longer translates to it.
 On the 1,362 corpus files, tier 1 writes the JIT's masks, positions and counts,
 and the two tiers the JIT's tape.

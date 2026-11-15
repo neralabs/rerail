@@ -57,7 +57,7 @@ impl Corpus {
     }
 
     #[cfg(all(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
-    pub(super) fn preparation_counts(&self) -> (u64, usize) {
+    pub fn preparation_counts(&self) -> (u64, usize) {
         let guard = self.state.lock();
         let state = guard.as_ref().unwrap();
         let decoded = state.writer.readers.0.lock().counters.decoded_nodes;

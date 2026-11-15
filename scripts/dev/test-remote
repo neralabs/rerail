@@ -1,0 +1,150 @@
+#!/usr/bin/python3
+"""Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
+is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
+
+    scripts/dev/test-remote [--host NAME] [--dir native] [--remote-only] -- COMMAND...
+
+e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
+`scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
+
+The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
+with a free test slot, most cores first; with none free, the first usable one, once its run ends.
+What changed of this checkout is sent through the farm's mirror, after the host is asked again
+what it holds (it may have been cleaned). COMMAND runs there at `nice -n 10`, from the checkout's
+`native/` (or `--dir`), in a warm target directory of the host's own
+(`~/Library/Caches/rerail-test-remote/<checkout>`: the mirror owns `<checkout>/target` there), and
+its output is printed here.
+
+With no usable host, or when the host is lost during the run (asleep, off the network: ssh exits
+255), COMMAND runs here instead, at `nice -n 19`; `--remote-only` exits 69 instead. The exit
+status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host too.
+"""
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import time
+
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+sys.path.insert(0, os.path.join(CHECKOUT, "scripts/build/farm"))
+import farm  # noqa: E402
+import mirror  # noqa: E402
+
+UNAVAILABLE = 69
+
+
+def say(message):
+    print(f"test-remote: {message}", file=sys.stderr, flush=True)
+
+
+def stop_on_signals():
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
+
+
+def here(argv, directory, why, remote_only):
+    if remote_only:
+        say(f"{why}; --remote-only: not run")
+        sys.exit(UNAVAILABLE)
+    say(f"{why}: running it here, at nice 19")
+    proc = subprocess.Popen(["nice", "-n", "19"] + argv, cwd=os.path.join(CHECKOUT, directory))
+    try:
+        sys.exit(proc.wait())
+    except KeyboardInterrupt:
+        proc.terminate()
+        sys.exit(proc.wait())
+
+
+def choose(named):
+    """A usable host and its test slot (held until exit), or (None, None, why)."""
+    if named:
+        host = next((h for h in farm.hosts() if h["name"] == named), None)
+        if host is None:
+            return None, None, f"{named} is not in the farm's configuration"
+        h = farm.health(host, fresh=True)
+        if not h.get("ok"):
+            return None, None, f"{named} is not usable: {h.get('why')}"
+        candidates = [host]
+    else:
+        candidates = farm.usable("tests")
+        if not candidates:
+            reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
+            return None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
+    for host in candidates:
+        slot = farm.Lock(farm.state("tests", host["name"] + ".lock"), blocking=False)
+        if slot.held:
+            return host, slot, None
+        slot.release()
+    say(f"every usable host runs another test command: waiting for {candidates[0]['name']}")
+    return candidates[0], farm.Lock(farm.state("tests", candidates[0]["name"] + ".lock")), None
+
+
+def main(argv):
+    named, directory, remote_only = None, "native", False
+    while argv and argv[0] in ("--host", "--dir", "--remote-only"):
+        if argv[0] == "--remote-only":
+            remote_only, argv = True, argv[1:]
+            continue
+        if argv[0] == "--host":
+            named = argv[1]
+        else:
+            directory = argv[1]
+        argv = argv[2:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    if not argv:
+        sys.exit(__doc__)
+    stop_on_signals()
+
+    started = time.time()
+    host, slot, why = choose(named)
+    if host is None:
+        here(argv, directory, why, remote_only)
+    name = host["name"]
+    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]], "files": [], "verify": True,
+                            "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
+    if reply is None or reply.get("code") != 0:
+        slot.release()
+        here(argv, directory, f"the checkout could not be sent to {name}: {(reply or {}).get('why') or 'no mirror daemon'}", remote_only)
+    t = reply.get("times", {})
+    say(f"{name}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
+
+    # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target directory
+    # outside the mirrored tree. The mirror writes this machine's files at this machine's paths, and a compile sent
+    # from here brings its dependencies' `.rmeta` files into `<checkout>/target` on the host. In a target the host's
+    # cargo built, such an `.rmeta` sits beside the host's own `.rlib` of the same name with another SVH, and rustc
+    # takes neither (E0463 "can't find crate"). Each checkout keeps its own directory, warm from run to run.
+    target = "$HOME/Library/Caches/rerail-test-remote/" + shlex.quote(os.path.basename(CHECKOUT))
+    command = f"RUSTC_WRAPPER= CARGO_TARGET_DIR={target} exec nice -n 10 " + " ".join(shlex.quote(a) for a in argv)
+    # Without a terminal the host's sshd does not stop a command whose connection closed: the
+    # command stops when its input (this connection) ends.
+    # An ssh command starts with macOS's 256 open files: a `cargo test` process whose tests each open a store runs
+    # out (EMFILE), where a terminal's shell has more.
+    remote = f"cd {shlex.quote(os.path.join(CHECKOUT, directory))} && export PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH && " \
+             f"ulimit -n 10240 2>/dev/null; " \
+             f"( {command} ) & p=$!; ( cat >/dev/null; kill $p 2>/dev/null ) & wait $p"
+    proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
+    try:
+        code = proc.wait()
+    except KeyboardInterrupt:
+        say(f"stopping it on {name}")
+        proc.stdin.close()
+        try:
+            code = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            code = 130
+        sys.exit(code)
+    say(f"{name}: exit {code} after {time.time() - started:.0f} s")
+    if code == 255:
+        farm.mark_down(name, "lost during a test run")
+        slot.release()
+        here(argv, directory, f"the connection to {name} was lost", remote_only)
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

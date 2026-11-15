@@ -19,7 +19,7 @@ SIM101(n, P, T) :- kind(n, "boolean_operator"), sim101_or_op(n),
 
 // or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
 .decl sim101_or_op(n: node)
-sim101_or_op(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1).
+sim101_or_op(n) :- kind(n, "boolean_operator"), sim101_tok_has_1(n).
 
 // isinstance_a(n): the JSON util `isinstance-a`, used where the JSON says `matches: "isinstance-a"`
 //   A: metavariable this relation binds for the calling rule
@@ -28,7 +28,7 @@ sim101_isinstance_a(n, A) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "argum
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
     field(n, "function", c3), sim101_isinstance_ref(c3), field(n, "arguments", c4),
-    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_1(c5), sim101_target_a(c5, A).
+    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_2(c5), sim101_target_a(c5, A).
 sim101_isinstance_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c13, _),
     sim101_isinstance_a(c13, A).
 
@@ -44,7 +44,7 @@ sim101_isinstance_t(n, T) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "argum
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
     field(n, "function", c3), sim101_isinstance_ref(c3), field(n, "arguments", c4),
-    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_1(c5), sim101_target_t(c5, T).
+    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_2(c5), sim101_target_t(c5, T).
 sim101_isinstance_t(n, T) :- kind(n, "parenthesized_expression"), child(n, c13, _),
     sim101_isinstance_t(c13, T).
 
@@ -62,7 +62,7 @@ sim101_isinstance_b(n, B) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "argum
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
     field(n, "function", c3), sim101_isinstance_ref(c3), field(n, "arguments", c4),
-    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_1(c5), sim101_target_b(c5, B).
+    kind(c4, "argument_list"), child(c4, c5, _), sim101_tok_follows_2(c5), sim101_target_b(c5, B).
 sim101_isinstance_b(n, B) :- kind(n, "parenthesized_expression"), child(n, c13, _),
     sim101_isinstance_b(c13, B).
 
@@ -101,14 +101,26 @@ sim101_last_is_b(n, B) :- sim101_or_op(n), field(n, "right", c1), sim101_isinsta
 sim101_run_start(n, P, T) :- sim101_adjacent_pair(n, _, T), node(_, n, _, _, _), P = n,
     count : { field(n, "left", c1), sim101_or_op(c1), field(c1, "left", c2), sim101_last_is_b(c2, B), value(B, t3), value(T, t3) } = 0.
 
-// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim101_tok_follows_1(n: node)
-.stored sim101_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim101_tok_follows_1(n) :- next_sibling(s6, n), glob("(", s6).
-sim101_tok_follows_1(n) :- structural_before(n, g8), match("\\s*", g8), child(p9, n, _),
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim101_tok_has_1(n: node)
+.stored sim101_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim101_tok_has_1(n) :- field(n, "operator", c1), glob("or", c1).
+sim101_tok_has_1(n) :- op(n, t2), match("or", t2).
+sim101_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim101_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim101_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim101_tok_follows_2(n: node)
+.stored sim101_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim101_tok_follows_2(n) :- next_sibling(s6, n), glob("(", s6).
+sim101_tok_follows_2(n) :- structural_before(n, g8), match("\\s*", g8), child(p9, n, _),
     node(_, n, _, st11, _), o10 = st11 - strlen(g8), token(p9, _, t7, _, o10),
     match("\\(", t7).
-sim101_tok_follows_1(n) :- structural_before(n, g8), match("(?s)^(?:.*(?:\\()\\s*)$", g8).
+sim101_tok_follows_2(n) :- structural_before(n, g8), match("(?s)^(?:.*(?:\\()\\s*)$", g8).
 
 // stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim101_stop_2(n: node)

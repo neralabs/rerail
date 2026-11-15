@@ -23,9 +23,8 @@ UP026(n, "from `unittest.mock` instead of `mock`; `from mock import mock` become
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation UP026_mock_attribute(at: loc, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
     suppress noqa "UP026"
-UP026_mock_attribute(M, n) :- kind(n, "attribute"), node(_, n, _, _, _), M = n, up026_seen(n),
-    field(n, "attribute", c1), glob("mock", c1), field(n, "object", c2),
-    match("[(\\s]*mock[\\s)]*", c2), up026_up_1(n, p3), field(_, "object", n).
+UP026_mock_attribute(M, n) :- kind(n, "attribute"), node(_, n, _, _, _), M = n, up026_seen(n), up026_tok_has_1(n),
+    up026_tok_has_2(n), up026_up_1(n, p17), field(p17, "object", f18), (f18 = n ; within(n, f18)).
 UP026_mock_attribute(M, n) :- up026_in_string(n, M), up026_anywhere(n).
 
 // mock_import(n): the JSON util `mock-import`, used where the JSON says `matches: "mock-import"`
@@ -59,11 +58,11 @@ up026_seen(n) :- within(n, p1), precedes(s2, p1),
     ).
 
 up026_seen(n) :- up026_anywhere(n),
-    ( inside(n, p1, "lambda"), field(_, "body", n), node(_, p1, _, _, _)
+    ( inside(n, p1, "lambda"), field(p1, "body", f1), (f1 = n ; within(n, f1)), node(_, p1, _, _, _)
     ; inside(n, p2, "type"), up026_alt_6(p2)
     ).
 
-up026_seen(n) :- within(n, p9), up026_body(p9),
+up026_seen(n) :- within(n, p10), up026_body(p10),
     ( inside(n, p1, "module"), within_stop(c1, p1, up026_stop_10), up026_mock_import(c1)
     ; within(n, p2), precedes(s1, p2), up026_alt_11(s1)
     ; within(n, p3), up026_body(p3), within(p3, p4), up026_body(p4), inside(n, p5, "module"), within_stop(c2, p5, up026_stop_10), up026_fn_import(c2)
@@ -76,6 +75,30 @@ up026_seen(n) :- within(n, p9), up026_body(p9),
 up026_in_string(n, M) :- up026_demand_in_string(n),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), up026_alt_20(c2, M).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^mock$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up026_tok_has_1(n: node)
+.stored up026_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up026_tok_has_1(n) :- field(n, "attribute", c1), glob("mock", c1).
+up026_tok_has_1(n) :- op(n, t2), match("mock", t2).
+up026_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:mock)(?:\\W.*)?)$", g3).
+up026_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:mock)(?:\\W.*)?)$", g3).
+up026_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:mock)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[(\\s]*mock[\\s)]*$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up026_tok_has_2(n: node)
+.stored up026_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up026_tok_has_2(n) :- field(n, "object", c9), match("[(\\s]*mock[\\s)]*", c9).
+up026_tok_has_2(n) :- op(n, t10), match("[(\\s]*mock[\\s)]*", t10).
+up026_tok_has_2(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:.*(?:[(\\s]*mock[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+up026_tok_has_2(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:.*(?:[(\\s]*mock[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+up026_tok_has_2(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:.*(?:[(\\s]*mock[\\s)]*)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
 
 // demand_alt_20: the nodes alt_20 is asked at (its recursion looks at every descendant)
 .decl up026_demand_alt_20(n: node)
@@ -90,7 +113,8 @@ up026_demand_in_string(n) :- up026_demand_alt_20(n).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl up026_up_1(n: node, p: node)
-up026_up_1(n, p) :- up026_seen(n), within_stop(n, p, up026_stop_21), kind(p, "attribute").
+up026_up_1(n, p) :- up026_seen(n), up026_tok_has_1(n), up026_tok_has_2(n), within_stop(n, p, up026_stop_21),
+    kind(p, "attribute").
 
 // stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up026_stop_10(kind: symbol)

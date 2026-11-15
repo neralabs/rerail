@@ -25,9 +25,33 @@ ruf043_raises(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // match_slot(n): the JSON util `match-slot`, used where the JSON says `matches: "match-slot"`
 .decl ruf043_match_slot(n: node)
-ruf043_match_slot(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
-    field(p1, "name", c2), glob("match", c2),
-    count : { precedes(s3, p1), kind(s3, "keyword_argument"), field(s3, "name", c4), glob("match", c4) } = 0,
-    child(p5, p1, _), kind(p5, "argument_list"), field(p6, "arguments", p5),
-    kind(p6, "call"), field(p6, "function", c7), ruf043_raises(c7).
-ruf043_match_slot(n) :- child(p8, n, _), kind(p8, "parenthesized_expression"), ruf043_match_slot(p8).
+ruf043_match_slot(n) :- field(p1, "value", n), kind(p1, "keyword_argument"), ruf043_tok_has_1(p1),
+    count : { precedes(s10, p1), kind(s10, "keyword_argument"), ruf043_tok_has_2(s10) } = 0,
+    child(p19, p1, _), kind(p19, "argument_list"), field(p20, "arguments", p19),
+    kind(p20, "call"), field(p20, "function", c21), ruf043_raises(c21).
+ruf043_match_slot(n) :- child(p22, n, _), kind(p22, "parenthesized_expression"),
+    ruf043_match_slot(p22).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf043_tok_has_1(n: node)
+.stored ruf043_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf043_tok_has_1(n) :- field(n, "name", c2), glob("match", c2).
+ruf043_tok_has_1(n) :- op(n, t3), match("match", t3).
+ruf043_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+ruf043_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+ruf043_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf043_tok_has_2(n: node)
+.stored ruf043_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf043_tok_has_2(n) :- field(n, "name", c11), glob("match", c11).
+ruf043_tok_has_2(n) :- op(n, t12), match("match", t12).
+ruf043_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).
+ruf043_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).
+ruf043_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g13).

@@ -138,7 +138,7 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl visit_index(n: node, i: number)
-.input doc, node, line, syntax_error, field, child, text, op, value, strprefix, name, value_type_of, visit_index
+.input doc, node, line, syntax_error, field, child, text, op, strprefix, name, value_type_of, visit_index, value
 .output violation
 connection_analysis_path("impl/sqlite/connection.py").
 connection_analysis_path("impl/postgres/connection.py").

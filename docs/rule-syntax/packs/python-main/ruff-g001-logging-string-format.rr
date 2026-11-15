@@ -39,9 +39,8 @@ g001_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001
 .decl g001_log_tail(n: node)
 g001_log_tail(n) :- kind(n, "identifier"),
     match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", n).
-g001_log_tail(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", c1).
-g001_log_tail(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_log_tail(c2).
+g001_log_tail(n) :- kind(n, "attribute"), g001_tok_has_1(n).
+g001_log_tail(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), g001_log_tail(c9).
 
 // logger(n): the JSON util `logger`, used where the JSON says `matches: "logger"`
 .decl g001_logger(n: node)
@@ -52,19 +51,19 @@ g001_logger(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_log
 
 // level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
 .decl g001_level_callee(n: node)
-g001_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("{debug,critical,error,exception,info,warn,warning}", c1),
-    field(n, "object", c2), g001_logger(c2).
-g001_level_callee(n) :- kind(n, "identifier"), sym_of(n, q3), g001_set_1(q3).
-g001_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    g001_level_callee(c4).
+g001_level_callee(n) :- kind(n, "attribute"), g001_tok_has_2(n), field(n, "object", c9),
+    g001_logger(c9).
+g001_level_callee(n) :- kind(n, "identifier"), sym_of(n, q10), g001_set_1(q10).
+g001_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    g001_level_callee(c11).
 
 // log_callee(n): the JSON util `log-callee`, used where the JSON says `matches: "log-callee"`
 .decl g001_log_callee(n: node)
-g001_log_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("log", c1),
-    field(n, "object", c2), g001_logger(c2).
+g001_log_callee(n) :- kind(n, "attribute"), g001_tok_has_3(n), field(n, "object", c9),
+    g001_logger(c9).
 g001_log_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.log").
-g001_log_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), g001_log_callee(c3).
+g001_log_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    g001_log_callee(c10).
 
 // msg(n): the JSON util `msg`, used where the JSON says `matches: "msg"`
 //   X: metavariable this relation binds for the calling rule
@@ -74,10 +73,10 @@ g001_msg(n, X) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_msg
 
 // format_attr(n): the JSON util `format-attr`, used where the JSON says `matches: "format-attr"`
 .decl g001_format_attr(n: node)
-g001_format_attr(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("format", c1),
-    field(n, "object", c2), g001_literal(c2).
-g001_format_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    g001_format_attr(c3).
+g001_format_attr(n) :- kind(n, "attribute"), g001_tok_has_4(n), field(n, "object", c9),
+    g001_literal(c9).
+g001_format_attr(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    g001_format_attr(c10).
 
 // literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
 .decl g001_literal(n: node)
@@ -87,6 +86,58 @@ g001_literal(n) :- kind(n, "string"),
 g001_literal(n) :- kind(n, "concatenated_string"),
     count : { child(n, c3, _), kind(c3, "string"), child(c3, c4, _), kind(c4, "string_start"), glob("**[fFtT]**", c4) } = 0.
 g001_literal(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), g001_literal(c5).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g001_tok_has_1(n: node)
+.stored g001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g001_tok_has_1(n) :- field(n, "attribute", c1),
+    match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", c1).
+g001_tok_has_1(n) :- op(n, t2),
+    match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", t2).
+g001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(?:log|LOG)).*|.*(?:(?:logger|logging|LOGGER|LOGGING)).*)$", g3).
+g001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(?:log|LOG)).*|.*(?:(?:logger|logging|LOGGER|LOGGING)).*)$", g3).
+g001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(?:log|LOG)).*|.*(?:(?:logger|logging|LOGGER|LOGGING)).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:debug|critical|error|exception|info|warn|warning)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g001_tok_has_2(n: node)
+.stored g001_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g001_tok_has_2(n) :- field(n, "attribute", c1),
+    glob("{debug,critical,error,exception,info,warn,warning}", c1).
+g001_tok_has_2(n) :- op(n, t2),
+    match("(?:debug|critical|error|exception|info|warn|warning)", t2).
+g001_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?)$", g3).
+g001_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?)$", g3).
+g001_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:debug)(?:\\W.*)?|(?:.*\\W)?(?:critical)(?:\\W.*)?|(?:.*\\W)?(?:error)(?:\\W.*)?|(?:.*\\W)?(?:exception)(?:\\W.*)?|(?:.*\\W)?(?:info)(?:\\W.*)?|(?:.*\\W)?(?:warn)(?:\\W.*)?|(?:.*\\W)?(?:warning)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^log$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g001_tok_has_3(n: node)
+.stored g001_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g001_tok_has_3(n) :- field(n, "attribute", c1), glob("log", c1).
+g001_tok_has_3(n) :- op(n, t2), match("log", t2).
+g001_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+g001_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+g001_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:log)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^format$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g001_tok_has_4(n: node)
+.stored g001_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g001_tok_has_4(n) :- field(n, "attribute", c1), glob("format", c1).
+g001_tok_has_4(n) :- op(n, t2), match("format", t2).
+g001_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
+g001_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
+g001_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:format)(?:\\W.*)?)$", g3).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl g001_args_plain(l: node, a: node, i: number)

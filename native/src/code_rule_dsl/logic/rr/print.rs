@@ -202,8 +202,18 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
     })
 }
 
-/// The program's `.rr` text.
+/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
+/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
 pub fn print(prog: &Program) -> Result<String, Error> {
+    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
+        let mut written = prog.clone();
+        super::lower::undo_on_request(&mut written);
+        return print_written(&written);
+    }
+    print_written(prog)
+}
+
+fn print_written(prog: &Program) -> Result<String, Error> {
     // Keep the public schema when printing frontend unit columns back to rule source.
     let mut logical;
     let prog = if prog.nullary.is_empty() { prog } else {

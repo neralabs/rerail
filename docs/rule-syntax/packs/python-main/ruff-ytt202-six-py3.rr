@@ -44,7 +44,19 @@ ytt202_pattern_target(n) :- kind(n, "dotted_name"), inside(n, p1, "case_clause")
 .decl ytt202_splat_target(n: node)
 ytt202_splat_target(n) :- kind(n, "attribute"), field(n, "object", c1),
     kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"),
-    sym_of(c2, "six"), field(n, "attribute", c3), glob("PY3", c3).
+    sym_of(c2, "six"), ytt202_tok_has_1(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^PY3$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt202_tok_has_1(n: node)
+.stored ytt202_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt202_tok_has_1(n) :- field(n, "attribute", c3), glob("PY3", c3).
+ytt202_tok_has_1(n) :- op(n, t4), match("PY3", t4).
+ytt202_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:PY3).*)$", g5).
+ytt202_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:PY3).*)$", g5).
+ytt202_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:PY3).*)$", g5).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule

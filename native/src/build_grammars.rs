@@ -13,8 +13,23 @@ pub fn build_all(native: &Path, omitted: &[String]) {
     // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; locked_version reads LF lines.
     let generator = locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
     let skipped = vendored_of(&root.join("languages"), omitted);
-    for grammar in GRAMMARS.iter().filter(|grammar| !skipped.contains(&grammar.name.to_owned())) {
-        build_grammar(native, grammar, &generator);
+    // A grammar a thread: in a new target directory each generates its parser and compiles it, which
+    // one after another was this build script's 20 s on the build's critical path. Their directives
+    // print in GRAMMARS' order: the link libraries' order is in the crate's rustc command, and so in
+    // its key in a compiler cache.
+    let directives: Vec<Vec<String>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = GRAMMARS
+            .iter()
+            .filter(|grammar| !skipped.contains(&grammar.name.to_owned()))
+            .map(|grammar| {
+                let generator = &generator;
+                scope.spawn(move || build_grammar(native, grammar, generator))
+            })
+            .collect();
+        threads.into_iter().map(|thread| thread.join().expect("a grammar's build panicked")).collect()
+    });
+    for line in directives.into_iter().flatten() {
+        println!("{line}");
     }
 }
 
@@ -152,6 +167,37 @@ pub const GRAMMARS: &[VendoredGrammar] = &[
         ],
         committed_parser: false,
     },
+    // tree-sitter-md 0.5.4's block grammar (grammars/tree-sitter-markdown/LICENSE), unpatched.
+    VendoredGrammar {
+        name: "markdown",
+        source: "grammars/tree-sitter-markdown/markdown/src",
+        headers: "grammars/tree-sitter-markdown/markdown/src",
+        version: (0, 5, 4),
+        inputs: &[
+            "grammars/tree-sitter-markdown/markdown/src/grammar.json",
+            "grammars/tree-sitter-markdown/markdown/src/scanner.c",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/array.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/parser.h",
+        ],
+        committed_parser: false,
+    },
+    // tree-sitter-md 0.5.4's inline grammar, unpatched: the content of the block grammar's `inline` and
+    // `pipe_table_cell` nodes, read as guests (decision 0238).
+    VendoredGrammar {
+        name: "markdown-inline",
+        source: "grammars/tree-sitter-markdown/markdown-inline/src",
+        headers: "grammars/tree-sitter-markdown/markdown-inline/src",
+        version: (0, 5, 4),
+        inputs: &[
+            "grammars/tree-sitter-markdown/markdown-inline/src/grammar.json",
+            "grammars/tree-sitter-markdown/markdown-inline/src/scanner.c",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/array.h",
+            "grammars/tree-sitter-markdown/markdown-inline/src/tree_sitter/parser.h",
+        ],
+        committed_parser: false,
+    },
 ];
 
 /// The committed generated parser of a `committed_parser` grammar, in its source directory: gzip
@@ -185,7 +231,8 @@ fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
         &mut Vec::new(),
     )
     .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
-    assert_eq!(generated, name);
+    // A grammar's own name has `_` where its vendored name has `-` (`markdown_inline`).
+    assert_eq!(generated, name.replace('-', "_"));
     parser
 }
 
@@ -193,11 +240,17 @@ fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
 /// grammar.json at this version by this tree-sitter-generate. Anything else fails the build with
 /// the command that regenerates it, rather than spending half an hour generating it here; with
 /// GENERATE_PARSERS set, it is generated and written back.
-fn committed_parser(base: &Path, grammar: &VendoredGrammar, json: &str, generator: &str) -> String {
+fn committed_parser(
+    base: &Path,
+    grammar: &VendoredGrammar,
+    json: &str,
+    generator: &str,
+    out: &mut Vec<String>,
+) -> String {
     use std::io::{Read, Write};
     let path = base.join(format!("{}/{COMMITTED_PARSER}", grammar.source)).display().to_string();
-    println!("cargo:rerun-if-changed={path}");
-    println!("cargo:rerun-if-env-changed={GENERATE_PARSERS}");
+    out.push(format!("cargo:rerun-if-changed={path}"));
+    out.push(format!("cargo:rerun-if-env-changed={GENERATE_PARSERS}"));
     let expected = generated_from(grammar, json, generator);
     if std::env::var_os(GENERATE_PARSERS).is_some_and(|value| value == "1") {
         let parser = format!("{expected}{}", generate_parser(grammar, json));
@@ -235,9 +288,11 @@ fn committed_parser(base: &Path, grammar: &VendoredGrammar, json: &str, generato
 pub const LFS_POINTER: &[u8] = b"version https://git-lfs";
 pub const LFS_REMEDY: &str = "git lfs install && git lfs pull";
 
-pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
+/// Builds one grammar's library; returns its cargo directives, for the caller to print.
+pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) -> Vec<String> {
+    let mut out = Vec::new();
     for input in grammar.inputs {
-        println!("cargo:rerun-if-changed={}", base.join(input).display());
+        out.push(format!("cargo:rerun-if-changed={}", base.join(input).display()));
     }
     let name = grammar.name;
     let source = base.join(grammar.source).display().to_string();
@@ -246,7 +301,7 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
     if grammar.committed_parser {
-        let parser = committed_parser(base, grammar, &json, generator);
+        let parser = committed_parser(base, grammar, &json, generator, &mut out);
         std::fs::write(&parser_path, parser).expect("generated parser is writable");
     } else {
         // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
@@ -275,7 +330,7 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
     let scanner = format!("{source}/scanner.c");
     let mut inputs = Sha256::new();
     for variable in ["TARGET", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "CC", "CFLAGS"] {
-        println!("cargo:rerun-if-env-changed={variable}");
+        out.push(format!("cargo:rerun-if-env-changed={variable}"));
         inputs.update(variable.as_bytes());
         inputs.update(std::env::var(variable).unwrap_or_default().as_bytes());
     }
@@ -298,17 +353,34 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
         inputs.update(std::fs::read(&path).expect("grammar C input is readable"));
     }
     let key = hex(&inputs.finalize());
+    let link = [
+        format!("cargo:rustc-link-search=native={}", out_dir.display()),
+        format!("cargo:rustc-link-lib=static={library}"),
+    ];
     if archive.is_file() && std::fs::read_to_string(&compiled_stamp).ok().as_deref() == Some(&key) {
-        println!("cargo:rustc-link-search=native={}", out_dir.display());
-        println!("cargo:rustc-link-lib=static={library}");
-        return;
+        out.extend(link);
+        return out;
     }
     let mut build = cc::Build::new();
     if reuse_allocator {
         build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
     }
+    // The library is the same in every checkout: its objects' names and debug info name no checkout.
+    // A compiler cache shared by the worktrees (scripts/build/farm) hashes each static library a
+    // crate bundles. Paths under the repository become relative to it, those under OUT_DIR (in the
+    // target directory, which may be elsewhere) relative to OUT_DIR.
+    let root = base.parent().expect("the repository holds native/");
+    build.source_root(root);
+    for (from, to) in [(root, "."), (out_dir.as_path(), "out")] {
+        build.flag_if_supported(format!("-ffile-prefix-map={}={to}", from.display()));
+    }
+    // cc's own directives (the library, its search path, the variables it read) would print from
+    // this thread, in no fixed order: the same ones go through `out`.
+    build.cargo_metadata(false);
     build.include(base.join(grammar.headers)).file(parser_path).file(scanner).warnings(false).compile(&library);
     std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
+    out.extend(link);
+    out
 }
 
 pub fn collect_sources(directory: &Path, sources: &mut Vec<PathBuf>) {

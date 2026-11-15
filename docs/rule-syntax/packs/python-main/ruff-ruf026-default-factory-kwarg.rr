@@ -37,14 +37,26 @@ ruf026_non_callable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 ruf026_bad_call(n) :- kind(n, "call"), field(n, "function", c1), ruf026_callee(c1),
     field(n, "arguments", c2), kind(c2, "argument_list"),
     count : { child(c2, c3, _), ruf026_positional(c3) } = 0, child(c2, c4, _),
-    kind(c4, "keyword_argument"), field(c4, "name", c5), glob("default_factory", c5),
-    field(c4, "value", c6), !ruf026_non_callable(c6).
+    kind(c4, "keyword_argument"), ruf026_tok_has_1(c4), field(c4, "value", c13),
+    !ruf026_non_callable(c13).
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
 .decl ruf026_in_string(n: node, c: loc)
 ruf026_in_string(n, C) :- kind(n, "string"), count : { contains("\\", n) } = 0,
     parsed(n, "annotation", r1), within(c2, r1), ruf026_alt_3(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^default_factory$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf026_tok_has_1(n: node)
+.stored ruf026_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf026_tok_has_1(n) :- field(n, "name", c5), glob("default_factory", c5).
+ruf026_tok_has_1(n) :- op(n, t6), match("default_factory", t6).
+ruf026_tok_has_1(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:default_factory)(?:\\W.*)?)$", g7).
+ruf026_tok_has_1(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:default_factory)(?:\\W.*)?)$", g7).
+ruf026_tok_has_1(n) :- node_text(n, g7), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:default_factory)(?:\\W.*)?)$", g7).
 
 // set_2: node kinds from a JSON `any`
 .decl ruf026_set_2(v: symbol)

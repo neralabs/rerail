@@ -182,7 +182,7 @@ fn read_directory(
 
 /// The vendored tree-sitter grammars (`native/grammars/`): the engine's build script compiles them (its `GRAMMARS`
 /// lists the same names, and checks it), and every registry is generated against them.
-pub const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript"];
+pub const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript", "markdown", "markdown-inline"];
 
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
 /// `lang-<id>` (`CARGO_FEATURE_LANG_<ID>` in the build script running this). `languages` is `languages/`.
@@ -357,16 +357,17 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
         !entry.dialects.is_empty(),
         "{name}: a language has at least one dialect"
     );
+    // A dialect with no suffix is read only as a guest grammar (decision 0238): its language has another.
+    assert!(
+        entry.dialects.iter().any(|dialect| !dialect.suffixes.is_empty()),
+        "{name}: no dialect lists a file suffix"
+    );
     let supported = entry.status == Status::Supported;
     for dialect in &entry.dialects {
         let label = &dialect.label;
         assert!(
             is_name(label),
             "{name}: dialect label `{label}` is not lowercase letters, digits and dashes"
-        );
-        assert!(
-            !dialect.suffixes.is_empty(),
-            "{name}: dialect {label} lists no file suffix"
         );
         for suffix in &dialect.suffixes {
             assert!(
@@ -983,6 +984,8 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     let _ = writeln!(out, "        {body}\n    }}\n}}\n");
 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
+    // A crate that includes the registry but holds no adapters (rerail-lang) expands it nowhere.
+    out.push_str("#[allow(unused_macros)]\n");
     out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
     for (family, _, ids) in &families {
         // the adapter by its module (`adapter::python::Python`): a crate whose `adapter` re-exports the modules,
@@ -1193,7 +1196,7 @@ mod tests {
     #[test]
     fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
+        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"];
         let out = Registry::new("omitted", &[]);
         generate(&root.join("../languages"), None, &vendored, &["php".to_owned(), "sql".to_owned()], &out.0.join("out"));
         let generated = std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
@@ -1213,7 +1216,7 @@ mod tests {
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
+        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"];
         let planned_ids = planned_ids(&root.join("../languages"));
         let planned = quoted(&planned_ids);
         let tested_planned = quoted(&[planned_ids, vec!["exemplar".to_owned()]].concat());
@@ -1260,7 +1263,7 @@ mod tests {
             generate(
                 &root.join("../languages"),
                 test_directory,
-                &["python", "sql", "typescript", "tsx", "javascript", "vue"],
+                &["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"],
                 &[],
                 &out.0.join("out"),
             )

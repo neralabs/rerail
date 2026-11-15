@@ -275,6 +275,10 @@ pub struct Program {
     /// Relations run as one component though no rule makes them one (decision 0101 §3, `maintain::together`): a
     /// maintained stratum's pieces at one level, ordered inside it by unit gates (`gates`), each in one set.
     pub together: Vec<BTreeSet<String>>,
+    /// The rules lowering made to ask for a node's attribute (decision 0174's `rr_node_text_req` …), by request
+    /// relation: for each of its rules, in order, the relations whose readers it serves. `prune` keeps a request
+    /// rule only while one of them is reached, as a reader's request is kept with the reader.
+    pub asked_by: BTreeMap<String, Vec<BTreeSet<String>>>,
     /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
     /// made from them.
     pub shapes: Vec<Shape>,

@@ -63,11 +63,10 @@ up018_literal_of(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_exp
 // signed_case gives the strings each copy had.
 .decl up018_signed(n: node, key: symbol)
 up018_signed(n, q1) :- up018_literal_of_case(q1), up018_literal_of(n, q1).
-up018_signed(n, q1) :- up018_literal_of_case(q1), kind(n, "unary_operator"),
-    field(n, "operator", c1), glob("[+-]", c1), field(n, "argument", c2),
-    up018_literal_of(c2, q1).
+up018_signed(n, q1) :- up018_literal_of_case(q1), kind(n, "unary_operator"), up018_tok_has_1(n),
+    field(n, "argument", c9), up018_literal_of(c9, q1).
 up018_signed(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_expression"),
-    child(n, c3, _), up018_signed(c3, q1).
+    child(n, c10, _), up018_signed(c10, q1).
 
 // unnested_call(n): the JSON util `unnested-call`, used where the JSON says `matches: "unnested-call"`
 .decl up018_unnested_call(n: node)
@@ -94,13 +93,13 @@ up018_callee_builtin(n) :- up018_callee_of(n, "complex").
 
 // kw_object_str(n): the JSON util `kw-object-str`, used where the JSON says `matches: "kw-object-str"`
 .decl up018_kw_object_str(n: node)
-up018_kw_object_str(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("object", c1), field(n, "value", c2), up018_literal_str(c2).
+up018_kw_object_str(n) :- kind(n, "keyword_argument"), up018_tok_has_2(n), field(n, "value", c9),
+    up018_literal_str(c9).
 
 // kw_real_complex(n): the JSON util `kw-real-complex`, used where the JSON says `matches: "kw-real-complex"`
 .decl up018_kw_real_complex(n: node)
-up018_kw_real_complex(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("real", c1), field(n, "value", c2), up018_signed(c2, "complex").
+up018_kw_real_complex(n) :- kind(n, "keyword_argument"), up018_tok_has_3(n), field(n, "value", c9),
+    up018_signed(c9, "complex").
 
 // empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
 .decl up018_empty_call(n: node)
@@ -135,6 +134,42 @@ up018_empty_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_s
 .decl up018_literal_call_in_string(n: node, c: loc)
 up018_literal_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up018_alt_7(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up018_tok_has_1(n: node)
+.stored up018_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up018_tok_has_1(n) :- field(n, "operator", c1), glob("[+-]", c1).
+up018_tok_has_1(n) :- op(n, t2), match("[+-]", t2).
+up018_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+up018_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+up018_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^object$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up018_tok_has_2(n: node)
+.stored up018_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up018_tok_has_2(n) :- field(n, "name", c1), glob("object", c1).
+up018_tok_has_2(n) :- op(n, t2), match("object", t2).
+up018_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+up018_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+up018_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:object)(?:\\W.*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^real$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up018_tok_has_3(n: node)
+.stored up018_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up018_tok_has_3(n) :- field(n, "name", c1), glob("real", c1).
+up018_tok_has_3(n) :- op(n, t2), match("real", t2).
+up018_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:real)(?:\\W.*)?)$", g3).
+up018_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:real)(?:\\W.*)?)$", g3).
+up018_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:real)(?:\\W.*)?)$", g3).
 
 // demand_nested_fstring: the nodes nested_fstring is asked at (it looks at every ancestor of every node)
 .decl up018_demand_nested_fstring(n: node)

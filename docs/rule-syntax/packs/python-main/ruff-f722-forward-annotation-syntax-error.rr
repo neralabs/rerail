@@ -62,7 +62,7 @@ f722_semantic_error(n, E) :- f722_demand_semantic_error(n), f722_semantic_error_
     suppress noqa "F722"
 F722_forward_annotation_await_outside_function(A, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     f722_await_outside_function(n, A),
-    count : { within_stop(n, p1, "class_definition"), field(_, "body", n), kind(p1, "function_definition") } = 0,
+    count : { within_stop(n, p1, "class_definition"), field(p1, "body", f2), (f2 = n ; within(n, f2)), kind(p1, "function_definition") } = 0,
     !f722_alt(n, "6").
 
 // await_outside_function_within(n): the JSON util `await-outside-function-within`, used where the JSON says `matches: "await-outside-function-within"`

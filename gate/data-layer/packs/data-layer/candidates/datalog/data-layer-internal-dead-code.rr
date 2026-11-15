@@ -174,7 +174,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl unreachable_word_ok(w: node)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, name, source, tape_line, col, node_text, reference_edge, node_order
+.input doc, syntax_error, node, field, child, text, line, name, source, tape_line, col, reference_edge, node_order, node_text, value
 .output violation
 option_on("sourceGate").
 unreachable_base_k("identifier").

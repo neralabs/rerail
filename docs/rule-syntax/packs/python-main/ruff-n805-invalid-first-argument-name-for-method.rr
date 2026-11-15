@@ -62,8 +62,7 @@ n805_builtin_type_family(n, q1) :- n805_builtin_type_family_case(q1, s1, s2),
 
 // local_meta(n): the JSON util `local-meta`, used where the JSON says `matches: "local-meta"`
 .decl n805_local_meta(n: node)
-n805_local_meta(n) :- kind(n, "identifier"), ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
-    n805_meta_class(st2),
+n805_local_meta(n) :- kind(n, "identifier"), ref_site(n, b1), st2 = b1, n805_meta_class(st2),
     count : { within(st2, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")) } = 0.
 n805_local_meta(n) :- kind(n, "attribute"), field(n, "attribute", c4), node(_, c4, _, _, _), MATTR = c4,
     field(n, "object", c5), kind(c5, "identifier"), ref_site(c5, b6),
@@ -94,19 +93,19 @@ n805_ann(n, q1) :- n805_ann_case(q1),
 
 // metaclass_new(n): the JSON util `metaclass-new`, used where the JSON says `matches: "metaclass-new"`
 .decl n805_metaclass_new(n: node)
-n805_metaclass_new(n) :- kind(n, "function_definition"), field(n, "name", c1),
-    glob("__new__", c1), field(n, "parameters", c2), kind(c2, "parameters"),
-    k4 = count : { child(c2, c3, _), n805_param(c3) }, k4 >= 5, k4 <= 5,
-    count : { child(c2, c5, _), n805_alt_12(c5) } = 0, child(c2, c7, _),
-    ( kind(c7, "dictionary_splat_pattern")
-    ; kind(c7, "typed_parameter"), child(c7, c4, _), kind(c4, "dictionary_splat_pattern")
+n805_metaclass_new(n) :- kind(n, "function_definition"), n805_tok_has_1(n),
+    field(n, "parameters", c9), kind(c9, "parameters"),
+    k11 = count : { child(c9, c10, _), n805_param(c10) }, k11 >= 5, k11 <= 5,
+    count : { child(c9, c12, _), n805_alt_12(c12) } = 0, child(c9, c14, _),
+    ( kind(c14, "dictionary_splat_pattern")
+    ; kind(c14, "typed_parameter"), child(c14, c1, _), kind(c1, "dictionary_splat_pattern")
     ),
-    child(c2, c9, _), n805_ann(c9, "str"), child(p10, c9, _), n805_counted(c9),
-    k12 = count : { child(p10, s11, _), precedes(s11, c9), n805_counted(s11) }, k12 = 1,
-    child(c2, c13, _), n805_ann(c13, "tuple"), child(p14, c13, _), n805_counted(c13),
-    k16 = count : { child(p14, s15, _), precedes(s15, c13), n805_counted(s15) }, k16 = 2,
-    child(c2, c17, _), n805_ann(c17, "dict"), child(p18, c17, _), n805_counted(c17),
-    k20 = count : { child(p18, s19, _), precedes(s19, c17), n805_counted(s19) }, k20 = 3.
+    child(c9, c16, _), n805_ann(c16, "str"), child(p17, c16, _), n805_counted(c16),
+    k19 = count : { child(p17, s18, _), precedes(s18, c16), n805_counted(s18) }, k19 = 1,
+    child(c9, c20, _), n805_ann(c20, "tuple"), child(p21, c20, _), n805_counted(c20),
+    k23 = count : { child(p21, s22, _), precedes(s22, c20), n805_counted(s22) }, k23 = 2,
+    child(c9, c24, _), n805_ann(c24, "dict"), child(p25, c24, _), n805_counted(c24),
+    k27 = count : { child(p25, s26, _), precedes(s26, c24), n805_counted(s26) }, k27 = 3.
 
 // metaclass_signature(n): the JSON util `metaclass-signature`, used where the JSON says `matches: "metaclass-signature"`
 .decl n805_metaclass_signature(n: node)
@@ -126,8 +125,7 @@ n805_possibly_meta(n) :- n805_metaclass_signature(n).
 // method(n): the JSON util `method`, used where the JSON says `matches: "method"`
 .decl n805_method(n: node)
 n805_method(n) :- kind(n, "function_definition"), within_stop(n, p1, n805_stop_18),
-    kind(p1, "class_definition"), !n805_possibly_meta(p1),
-    count : { field(n, "name", c2), glob("__{new,init_subclass,class_getitem}__", c2) } = 0,
+    kind(p1, "class_definition"), !n805_possibly_meta(p1), !n805_tok_has_2(n),
     !n805_decorated_static_or_class(n).
 
 // method_parameters(n): the JSON util `method-parameters`, used where the JSON says `matches: "method-parameters"`
@@ -187,6 +185,31 @@ N805_typed_default_first_parameter(PARAM, n, NAME) :- kind(n, "typed_default_par
     child(p4, n, _), n805_method_parameters(p4),
     match("(?s)(?P<PARAM>(?:==|[<>!:]=?|[^=<>!:\\[\\]()\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=(?:[^=]|\\z).*", n),
     field(n, "name", c5), n805_first_param_name(c5, NAME).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^__new__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl n805_tok_has_1(n: node)
+.stored n805_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+n805_tok_has_1(n) :- field(n, "name", c1), glob("__new__", c1).
+n805_tok_has_1(n) :- op(n, t2), match("__new__", t2).
+n805_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+n805_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+n805_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__new__).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^__(?:new|init_subclass|class_getitem)__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl n805_tok_has_2(n: node)
+.stored n805_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+n805_tok_has_2(n) :- field(n, "name", c2),
+    glob("__{new,init_subclass,class_getitem}__", c2).
+n805_tok_has_2(n) :- op(n, t3), match("__(?:new|init_subclass|class_getitem)__", t3).
+n805_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:__(?:new|init_subclass|class_getitem)__).*)$", g4).
+n805_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:__(?:new|init_subclass|class_getitem)__).*)$", g4).
+n805_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__(?:new|init_subclass|class_getitem)__).*)$", g4).
 
 // stop_9: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl n805_stop_9(kind: symbol)

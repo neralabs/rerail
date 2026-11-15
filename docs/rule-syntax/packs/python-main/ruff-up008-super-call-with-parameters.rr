@@ -87,8 +87,7 @@ up008_slots_dataclass(n) :- kind(n, "class_definition"), child(p1, n, _),
     child(c2, c3, _), kind(c3, "call"), field(c3, "function", c4),
     (kind(c4, "identifier") ; kind(c4, "attribute")),
     sym_of(c4, "dataclasses.dataclass"), field(c3, "arguments", c5), child(c5, c6, _),
-    kind(c6, "keyword_argument"), field(c6, "name", c7), glob("slots", c7),
-    field(c6, "value", c8), up008_true_p(c8).
+    kind(c6, "keyword_argument"), up008_tok_has_1(c6), field(c6, "value", c15), up008_true_p(c15).
 
 // bare_super_p(n): the JSON util `bare-super-p`, used where the JSON says `matches: "bare-super-p"`
 .decl up008_bare_super_p(n: node)
@@ -123,6 +122,18 @@ up008_cell_name(n) :- kind(n, "identifier"), glob("{super,__class__}", n), !up00
 //   CC, K, KN, PC, SEG: metavariables this relation binds for the calling rule
 .decl up008_chain(n: node, c: node, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
 up008_chain(n, C, CC, K, KN, PC, SEG) :- up008_demand_chain(n), up008_alt_14(n, C, CC, K, KN, PC, SEG).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^slots$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up008_tok_has_1(n: node)
+.stored up008_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up008_tok_has_1(n) :- field(n, "name", c7), glob("slots", c7).
+up008_tok_has_1(n) :- op(n, t8), match("slots", t8).
+up008_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:slots)(?:\\W.*)?)$", g9).
+up008_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:slots)(?:\\W.*)?)$", g9).
+up008_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:slots)(?:\\W.*)?)$", g9).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl up008_args_plain(l: node, a: node, i: number)
@@ -214,9 +225,10 @@ up008_demand_alt_35(p22, T0) :- within_stop(n, p9, "class_definition"),
 
 // demand_alt_13: the nodes alt_13 is asked at (its recursion looks at every descendant)
 .decl up008_demand_alt_13(n: node)
-up008_demand_alt_13(n) :- node(_, C, _, _, _), up008_demand_alt_14(n), up008_alt_12(n, SEG),
-    inside(n, p3, "class_definition"), node(_, p3, _, _, _), K = p3, text(K, t4), text(C, t4),
-    field(p3, "name", c6), node(_, c6, _, _, _), KN = c6, text(KN, t7), text(SEG, t7), @doc(K) = @doc(C), @doc(KN) = @doc(SEG).
+up008_demand_alt_13(n) :- up008_demand_alt_14(n), up008_alt_12(n, SEG),
+    inside(n, p3, "class_definition"), node(_, p3, _, _, _), K = p3, node(_, K, _, _, _),
+    node(_, C, _, _, _), K = C, field(p3, "name", c6), node(_, c6, _, _, _), KN = c6, text(KN, t7),
+    text(SEG, t7), @doc(KN) = @doc(SEG).
 
 // demand_alt_14: the nodes alt_14 is asked at (its recursion looks at every descendant)
 .decl up008_demand_alt_14(n: node)
@@ -224,10 +236,10 @@ up008_demand_alt_14(n) :- up008_demand_chain(n).
 
 // demand_chain: the nodes chain is asked at (its recursion looks at every descendant)
 .decl up008_demand_chain(n: node)
-up008_demand_chain(c9) :- node(_, C, _, _, _), up008_demand_alt_13(n), kind(n, "attribute"),
+up008_demand_chain(c9) :- up008_demand_alt_13(n), kind(n, "attribute"),
     inside(n, p5, "class_definition"), node(_, p5, _, _, _), PC = p5,
     within_stop(c6, p5, "class_definition"), kind(c6, "class_definition"), node(_, c6, _, _, _), CC = c6,
-    text(CC, t7), text(C, t7), field(n, "object", c9), @doc(CC) = @doc(C).
+    node(_, CC, _, _, _), node(_, C, _, _, _), CC = C, field(n, "object", c9).
 up008_demand_chain(c1) :- up008_demand_alt_14(n), kind(n, "parenthesized_expression"),
     child(n, c1, _).
 up008_demand_chain(c11) :- within_stop(n, p9, "class_definition"),
@@ -294,12 +306,12 @@ up008_alt_12(n, SEG) :- kind(n, "attribute"), field(n, "attribute", c1), node(_,
 //   CC, PC: metavariables this relation binds for the calling rule
 .decl up008_alt_13(n: node, c: loc, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
 // CC, PC: not bound by this rule, so empty (unset) here, as in ast-grep.
-up008_alt_13(n, C, CC, K, KN, PC, SEG) :- node(_, C, _, _, _),up008_demand_alt_13(n),kind(n, "identifier"),inside(n, p1, "class_definition"),node(_, p1, _, _, _),K2 = p1,text(K2, t2),text(C, t2),count : { inside(p1, p4, "class_definition"), node(_, p4, _, _, _) } = 0,unset(CC),unset(PC),@doc(K2) = @doc(C), unset(K), unset(KN), unset(SEG).
-up008_alt_13(n, C, CC, K, KN, PC, SEG) :- node(_, C, _, _, _), up008_demand_alt_13(n),
-    kind(n, "attribute"), inside(n, p5, "class_definition"), node(_, p5, _, _, _), PC = p5,
+up008_alt_13(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_13(n),kind(n, "identifier"),inside(n, p1, "class_definition"),node(_, p1, _, _, _),K2 = p1,node(_, K2, _, _, _),node(_, C, _, _, _),K2 = C,count : { inside(p1, p4, "class_definition"), node(_, p4, _, _, _) } = 0,unset(CC),unset(PC), unset(K), unset(KN), unset(SEG).
+up008_alt_13(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_13(n), kind(n, "attribute"),
+    inside(n, p5, "class_definition"), node(_, p5, _, _, _), PC = p5,
     within_stop(c6, p5, "class_definition"), kind(c6, "class_definition"), node(_, c6, _, _, _), CC = c6,
-    text(CC, t7), text(C, t7), field(n, "object", c9),
-    up008_chain(c9, PC, CC, K, KN, PC, SEG), @doc(CC) = @doc(C).
+    node(_, CC, _, _, _), node(_, C, _, _, _), CC = C, field(n, "object", c9),
+    up008_chain(c9, PC, CC, K, KN, PC, SEG).
 
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable of the calling rule, passed in (bound by the caller)
@@ -309,9 +321,9 @@ up008_alt_14(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n),
     kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
     up008_chain(c1, C, CC, K, KN, PC, SEG).
 up008_alt_14(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n), up008_alt_12(n, SEG),
-    inside(n, p3, "class_definition"), node(_, p3, _, _, _), K = p3, text(K, t4), text(C, t4),
-    field(p3, "name", c6), node(_, c6, _, _, _), KN = c6, text(KN, t7), text(SEG, t7),
-    up008_alt_13(n, C, CC, K, KN, PC, SEG), @doc(K) = @doc(C), @doc(KN) = @doc(SEG).
+    inside(n, p3, "class_definition"), node(_, p3, _, _, _), K = p3,
+    node(_, K, _, _, _), node(_, C, _, _, _), K = C, field(p3, "name", c6), node(_, c6, _, _, _), KN = c6,
+    text(KN, t7), text(SEG, t7), up008_alt_13(n, C, CC, K, KN, PC, SEG), @doc(KN) = @doc(SEG).
 
 // stop_17(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up008_stop_17(n: node)

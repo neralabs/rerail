@@ -50,7 +50,7 @@ struct Block {
 /// A file's ESLint directives that disable or enable rules, as ESLint 10.11.0's
 /// `getDisableDirectives` and `applyDisableDirectives` read them.
 #[derive(Debug, Default)]
-pub(crate) struct EslintDirectives {
+pub struct EslintDirectives {
     /// Block directives, in source order.
     blocks: Vec<Block>,
     /// Line directives: the line each applies to, and the rule ids it names.

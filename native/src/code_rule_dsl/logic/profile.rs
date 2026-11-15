@@ -529,7 +529,11 @@ fn live_threads() -> Vec<(u32, String)> {
         let mut list: libc::thread_act_array_t = std::ptr::null_mut();
         let mut count: libc::mach_msg_type_number_t = 0;
         // SAFETY: the task's own threads; the list and each port's right are given back below.
-        let task = unsafe { libc::mach_task_self() };
+        unsafe extern "C" {
+            // What `mach_task_self()` reads: the task's own port, set as the process starts.
+            static mach_task_self_: libc::mach_port_t;
+        }
+        let task = unsafe { mach_task_self_ };
         if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
             return Vec::new();
         }
@@ -668,9 +672,13 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        if on && (all || std::thread::current().name() == Some("main")) {
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
         }
         return Span(false);
     }
@@ -834,6 +842,11 @@ pub fn run_begins() -> impl Drop {
     Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
 }
 
+/// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
+pub fn may_read_store() -> bool {
+    !waves_here()
+}
+
 /// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
 fn waves_here() -> bool {
     match STAGE.with(std::cell::Cell::get) {
@@ -856,6 +869,134 @@ pub fn inside_waves() -> bool {
 pub fn strict() -> bool {
     static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// `RERAIL_WARM`, a development check for a run that is truly warm: one over a store that already holds everything
+/// the run computes, under rules and inputs that have not changed since. Such a run should only read. Each of
+/// these is then a recomputation, and a fault:
+///
+/// - a write to SQLite: any transaction that commits a write, on any connection of the process (the store's, the
+///   run's, an in-memory one), the store writer's included;
+/// - a write queued for the store's writer (`ContentStore::write_back`): what a cache miss computed, kept;
+/// - the whole-run cutoff (`corpus::reuse`) asked for and not applying: a rule file, a document or a read changed,
+///   or no run left a record;
+/// - a maintained run's non-empty delta: an input's or a stratum's rows gone or new (`__minus`, `__plus`), or a
+///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
+///
+/// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
+/// every fault and goes on, a line each as it happens (the first 60 with their stacks), and ends the process with
+/// status 3 if there was one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
+/// out (`reuse::NOT_OUTPUTS`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Warm {
+    Off,
+    Fail,
+    List,
+}
+
+pub fn warm_mode() -> Warm {
+    // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
+    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+        Err(_) | Ok("" | "0" | "off") => 0,
+        Ok("list") => 2,
+        Ok(_) => 1,
+    }) {
+        0 => Warm::Off,
+        2 => Warm::List,
+        _ => Warm::Fail,
+    }
+}
+
+/// Whether the warm check is on (`warm_mode`).
+pub fn warm() -> bool {
+    warm_mode() != Warm::Off
+}
+
+/// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
+/// `what`), and why each is allowed: locks against another process's collection, and the timestamps by which
+/// collection judges recency. Nothing else is exempt from the warm check.
+///
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// and refuses a commit that changes one without the other.
+pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
+    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
+    ("the run's hold released", "a lock: the lease's release"),
+    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
+    ("the combined program's pins released", "a lock: the release of the combined program's leases"),
+    ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+    ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
+];
+
+/// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
+pub fn warm_write_allowed(what: &str) -> bool {
+    WARM_WRITES_ALLOWED.iter().any(|(w, _)| *w == what)
+}
+
+thread_local! {
+    /// On the store's writer: whether a transaction is open for listed jobs (`warm_scope`), and whether every job
+    /// it ran so far is listed (`warm_job`).
+    static WARM_SCOPE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// While it lives, the commits on this thread are a listed write's (`WARM_WRITES_ALLOWED`) if every job named to
+/// `warm_job` inside it is listed; they are not a fault then. The store's writer holds one around each transaction.
+pub struct WarmScope(Option<bool>);
+
+pub fn warm_scope() -> WarmScope {
+    WarmScope(WARM_SCOPE.with(|s| s.replace(Some(true))))
+}
+
+impl Drop for WarmScope {
+    fn drop(&mut self) {
+        WARM_SCOPE.with(|s| s.set(self.0));
+    }
+}
+
+/// The store's writer runs the job called `what` in the open `warm_scope`.
+pub fn warm_job(what: &str) {
+    if warm() && !warm_write_allowed(what) {
+        WARM_SCOPE.with(|s| s.set(s.get().map(|_| false)));
+    }
+}
+
+/// How many faults a `RERAIL_WARM=list` run has had so far: its exit status is 3 if any.
+static WARM_FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A recomputation in a warm run (`warm_mode`): `kind` is what happened (a SQLite write, a queued write, ...),
+/// `detail` which one. Nothing without `RERAIL_WARM`. Safe inside SQLite's callbacks: it aborts, never unwinds.
+pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    let mode = warm_mode();
+    if mode == Warm::Off {
+        return;
+    }
+    let mut detail = detail();
+    if detail.len() > 600 {
+        detail.truncate(detail.floor_char_boundary(600));
+        detail.push('…');
+    }
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    if mode == Warm::Fail {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+        std::process::abort();
+    }
+    // Each fault is a line as it happens (`sort | uniq -c` groups them), the first 60 with their stacks.
+    let n = WARM_FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    #[cfg(not(windows))]
+    if n == 1 {
+        extern "C" fn report() {
+            eprintln!("rerail: RERAIL_WARM: {} recomputations in a warm run", WARM_FAULTS.load(std::sync::atomic::Ordering::Relaxed));
+            // SAFETY: ends the process with the warm check's status, after its other exit handlers ran.
+            unsafe { libc::_exit(3) };
+        }
+        // SAFETY: registers a function without arguments, run once as the process exits.
+        unsafe { libc::atexit(report) };
+    }
+    if n <= 60 {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+    } else {
+        eprintln!("rerail: RERAIL_WARM: {kind}: {detail} (thread {thread}, span {})", current());
+    }
 }
 
 /// Whether the store's connections trace their statements: for the profile, or the strict mode.
@@ -906,8 +1047,45 @@ fn violation(when: &str, what: &str) -> ! {
     std::process::abort();
 }
 
+/// A write transaction committing on connection `db`: a fault of the warm check (`warm_fault`), naming the database
+/// and the statement that commits it. SQLite calls a commit hook for a transaction that wrote (or took the write
+/// lock, `BEGIN IMMEDIATE`), never for a read.
+///
+/// # Safety
+/// `db` is an open connection, and this runs on its thread inside its commit hook.
+pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    use rusqlite::ffi;
+    if !warm() || WARM_SCOPE.with(|s| s.get() == Some(true)) {
+        return;
+    }
+    // SAFETY: the caller's connection.
+    let file = unsafe {
+        let file = ffi::sqlite3_db_filename(db, c"main".as_ptr());
+        if file.is_null() { String::new() } else { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    };
+    let kind = if file.is_empty() { "a SQLite write committed in memory" } else { "a SQLite write committed to a file" };
+    warm_fault(kind, || {
+        // SAFETY: the caller's connection; its statements are listed under its mutex, which the hook holds.
+        unsafe {
+            let mut statement = String::new();
+            let mut s = ffi::sqlite3_next_stmt(db, std::ptr::null_mut());
+            while !s.is_null() {
+                if ffi::sqlite3_stmt_busy(s) != 0 {
+                    let sql = ffi::sqlite3_sql(s);
+                    if !sql.is_null() {
+                        statement = std::ffi::CStr::from_ptr(sql).to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" ");
+                    }
+                }
+                s = ffi::sqlite3_next_stmt(db, s);
+            }
+            format!("{}: {statement}", if file.is_empty() { "(in memory)" } else { file.as_str() })
+        }
+    });
+}
+
 /// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
-/// sets a trace of its own (the store's, the run's) checks them there.
+/// sets a trace of its own (the store's, the run's) checks them there. In the warm mode (`warm`), each checks its
+/// commits (`warm_commit`).
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
@@ -918,12 +1096,25 @@ pub fn strict_on_every_connection() {
         }
         0
     }
+    unsafe extern "C" fn committed(db: *mut std::ffi::c_void) -> std::ffi::c_int {
+        // SAFETY: the connection SQLite commits on, passed as the hook's argument, on its thread.
+        unsafe { warm_commit(db.cast()) };
+        0
+    }
     unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
         // SAFETY: SQLite calls this with a connection it has just opened.
-        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe {
+            if strict() {
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+            }
+            // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
+            if warm() {
+                ffi::sqlite3_commit_hook(db, Some(committed), db.cast());
+            }
+        }
         ffi::SQLITE_OK
     }
-    if strict() {
+    if strict() || warm() {
         // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
         unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
     }
@@ -1168,16 +1359,6 @@ pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
 }
 
-/// Decisions a reused step made when it ran (`decisions_since`), stated for this run.
-pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
-    if !on() {
-        return;
-    }
-    let mut state = state();
-    for (k, n) in made {
-        *state.decisions.entry(k.clone()).or_default() += n;
-    }
-}
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).

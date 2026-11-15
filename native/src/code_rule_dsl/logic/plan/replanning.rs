@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 struct Version {
     value: u64,
     readers: Vec<usize>,
-    priced: Option<(Vec<f64>, Option<HashMap<Constant, i64>>)>,
+    priced: Option<(Vec<f64>, Option<std::sync::Arc<HashMap<Constant, i64>>>)>,
 }
 
 pub struct Watch {
@@ -55,6 +55,13 @@ impl Watch {
             }
         }
         watch
+    }
+
+    /// Probe `p` is planned again at the next round, whatever moved (a slow join's, decision 0203 §3).
+    pub fn force(&mut self, p: usize) {
+        if let Some(d) = self.dirty.get_mut(p) {
+            *d = true;
+        }
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

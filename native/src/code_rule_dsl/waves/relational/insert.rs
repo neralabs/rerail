@@ -209,7 +209,7 @@ fn write_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     for row in rows {
         if limits.charge_rows
             && work
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                     left.checked_sub(1)
                 })
                 .is_err()

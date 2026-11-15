@@ -121,7 +121,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"
         | "tree_digest" | "def_digest" | "spread" | "str_part_start" | "structural_before" | "structural_after" => (&[0], &[]),
-        "first_token" | "last_token" | "token_before" | "token_after" => (&[0, 1], &[]),
+        "first_token" | "last_token" | "token_before" | "token_after" | "end_point" => (&[0, 1], &[]),
         _ => (&[], &[]),
     }
 }

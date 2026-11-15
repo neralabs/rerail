@@ -90,6 +90,9 @@ window_name("global"). window_name("window"). window_name("globalThis").
 // top-level this is undefined. A class's `extends` clause is strict code, as its body is.
 .decl global_this(t: node)
 global_this(t) :- this_owner(t, p), program(d, p), top_this_global(d).
+// global_this_top(t): only the top level's (main's `this: "global"` without `sloppyFunctions`).
+.decl global_this_top(t: node)
+global_this_top(t) :- this_owner(t, p), program(d, p), top_this_global(d).
 global_this(t) :- this_owner(t, f), kind(f, k), function_kind(k), !strict_scope(f), !inside(f, _, "class_heritage"),
     default_this(f).
 // top_this_global(d): ESLint's isTopLevelOfScript: any file that is not a module, unless the parser's globalReturn

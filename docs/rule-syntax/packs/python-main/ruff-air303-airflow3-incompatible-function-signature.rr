@@ -87,8 +87,7 @@ AIR303_dataset_extra(F, n) :- kind(n, "call"), field(n, "function", c1),
     air303_dataset_callee(c1, F), field(n, "arguments", c2), kind(c2, "argument_list"),
     child(c2, c3, _), air303_dict_arg(c3), precedes_stop(s4, c3, air303_stop_10), glob("\\,", s4),
     precedes_stop(s5, s4, air303_stop_10), !kind(s5, "list_splat"),
-    !kind(s5, "dictionary_splat"), !kind(s5, "keyword_argument"),
-    precedes_stop(s6, s5, air303_stop_10), glob("(", s6).
+    !kind(s5, "dictionary_splat"), !kind(s5, "keyword_argument"), air303_tok_follows_6(s5).
 
 // dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
 .decl air303_dict_expr(n: node)
@@ -165,8 +164,7 @@ AIR303_get_link(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1)
 
 // link_name(n): the JSON util `link-name`, used where the JSON says `matches: "link-name"`
 .decl air303_link_name(n: node)
-air303_link_name(n) :- kind(n, "attribute"), field(n, "attribute", c1),
-    glob("BaseOperatorLink", c1).
+air303_link_name(n) :- kind(n, "attribute"), air303_tok_has_7(n).
 air303_link_name(n) :- kind(n, "identifier"),
     ( ref_site(n, b1), (st1 = b1 ; within(b1, st1)), kind(st1, "aliased_import"), field(st1, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob("BaseOperatorLink", c2), count : { precedes(c2, s1), kind(s1, "identifier") } = 0
     ; glob("BaseOperatorLink", n), count : { ref_site(n, b2), (st2 = b2, kind(st2, "aliased_import") ; inside(b2, st2, "aliased_import")) } = 0
@@ -193,9 +191,9 @@ air303_pos_param(n) :-
 .decl air303_ti_key(n: node)
 air303_ti_key(n) :- kind(n, "identifier"), glob("ti_key", n).
 air303_ti_key(n) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
-    field(n, "name", c1), glob("ti_key", c1).
-air303_ti_key(n) :- kind(n, "typed_parameter"), child(n, c2, _), kind(c2, "identifier"),
-    glob("ti_key", c2).
+    air303_tok_has_8(n).
+air303_ti_key(n) :- kind(n, "typed_parameter"), child(n, c9, _), kind(c9, "identifier"),
+    glob("ti_key", c9).
 
 // valid_signature(n): the JSON util `valid-signature`, used where the JSON says `matches: "valid-signature"`
 .decl air303_valid_signature(n: node)
@@ -395,6 +393,39 @@ air303_tok_precedes_5(n) :- structural_after(n, g16),
 air303_tok_precedes_5(n) :- precedes(n, o18), structural_after(o18, g16),
     match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
 
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_follows_6(n: node)
+.stored air303_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_follows_6(n) :- next_sibling(s6, n), glob("(", s6).
+air303_tok_follows_6(n) :- structural_before(n, g8), match("\\s*", g8), child(p9, n, _),
+    node(_, n, _, st11, _), o10 = st11 - strlen(g8), token(p9, _, t7, _, o10),
+    match("\\(", t7).
+air303_tok_follows_6(n) :- structural_before(n, g8), match("(?s)^(?:.*(?:\\()\\s*)$", g8).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^BaseOperatorLink$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_has_7(n: node)
+.stored air303_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_has_7(n) :- field(n, "attribute", c1), glob("BaseOperatorLink", c1).
+air303_tok_has_7(n) :- op(n, t2), match("BaseOperatorLink", t2).
+air303_tok_has_7(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:BaseOperatorLink)(?:\\W.*)?)$", g3).
+air303_tok_has_7(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:BaseOperatorLink)(?:\\W.*)?)$", g3).
+air303_tok_has_7(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:BaseOperatorLink)(?:\\W.*)?)$", g3).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^ti_key$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_has_8(n: node)
+.stored air303_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_has_8(n) :- field(n, "name", c1), glob("ti_key", c1).
+air303_tok_has_8(n) :- op(n, t2), match("ti_key", t2).
+air303_tok_has_8(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:ti_key)(?:\\W.*)?)$", g3).
+air303_tok_has_8(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:ti_key)(?:\\W.*)?)$", g3).
+air303_tok_has_8(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:ti_key)(?:\\W.*)?)$", g3).
+
 // demand_collector: the nodes collector is asked at (its recursion looks at every descendant)
 .decl air303_demand_collector(n: node)
 air303_demand_collector(c4) :- air303_demand_collector(n), kind(n, "parenthesized_expression"),
@@ -477,14 +508,13 @@ air303_alt_7(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
     ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
     ).
 
-air303_alt_7(n) :- ref_site(n, b6), binding_value(b6, x7), air303_dict_init(x7),
-    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+air303_alt_7(n) :- ref_site(n, b6), binding_value(b6, x7), air303_dict_init(x7), st8 = b6,
+    count : { child(st8, c9, _), kind(c9, "type") } = 0.
 air303_alt_7(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
     kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
     child(st11, c13, _), air303_dict_init(c13), air303_tok_precedes_5(c13), child(st11, c21, _),
     kind(c21, "as_pattern_target"), child(c21, c22, _), air303_plain_target(c22).
-air303_alt_7(n) :- ref_site(n, b23), site_annotation(b23, o24), air303_dict_ann(o24),
-    (st25 = b23 ; within(b23, st25)),
+air303_alt_7(n) :- ref_site(n, b23), site_annotation(b23, o24), air303_dict_ann(o24), st25 = b23,
     count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
 air303_alt_7(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
     kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),

@@ -748,6 +748,14 @@ lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f
 
 /// A program and what it was read from, compared field by field: the first difference.
 fn difference(a: &front::Program, b: &front::Program) -> Option<String> {
+    // Inputs as a set: the lowering declares `node_order` in `finish`, after the requests it makes (decision 0174),
+    // where the `.rdl` reads it from the start.
+    let sorted = |p: &front::Program| {
+        let mut p = p.clone();
+        p.inputs.sort();
+        p
+    };
+    let (a, b) = (&sorted(a), &sorted(b));
     macro_rules! field {
         ($f:ident) => {
             if a.$f != b.$f {
@@ -817,6 +825,11 @@ fn normalized(mut p: front::Program) -> front::Program {
             p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: [Literal::Atom(atom("node", args.to_vec()))].into() });
             at += 1;
         }
+    }
+    // The node attributes answered on request (decision 0174, `lower::sources_on_request`): an input the `.rdl`
+    // reads is the lowering's requests, answers and widened copies.
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut p, round);
     }
     p
 }
@@ -2321,6 +2334,65 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == "0"), "{counted:?}");
 }
 
+/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rr`, decision 0238): a script's text is
+/// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
+/// `raw_text`, so its nodes have the file's lines.
+#[test]
+fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"text/template\"><b>x</b></script>\n<script type=\"module\">g(2)</script>\n<script type=\"application/ld+json\">{\"a\": 1}</script>\n<style>\np { color: red; }\n</style>\n";
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl calls(x: symbol, l: number)
+calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+.decl decls(x: symbol, l: number)
+decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+.decl pairs(x: symbol, l: number)
+pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
+.decl guests(g: symbol, r: symbol)
+guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
+.output calls, decls, pairs, guests
+"#;
+    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"])).unwrap();
+    assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
+    assert_eq!(decls, ["color: red;\t9"]);
+    assert_eq!(pairs, ["\"a\": 1\t7"]);
+    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+}
+
+/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rr`, decision
+/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
+/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+#[test]
+fn markdown_inline_content_is_a_guest_at_its_host_places() {
+    let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
+    let rule = r#"
+.language markdown
+#include "markdown/embeds.rr"
+.decl at(k: symbol, x: symbol, l: number, c: number)
+at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
+.decl roles(r: symbol)
+roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
+.output at, roles
+"#;
+    let [at, roles] = <[Vec<String>; 2]>::try_from(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"])).unwrap();
+    assert_eq!(
+        at,
+        [
+            "code_span\t`c`\t8\t2",
+            "code_span\t`two`\t4\t5",
+            "emphasis\t*b*\t1\t4",
+            "emphasis\t*text*\t3\t7",
+            "link_destination\tu\t3\t27",
+            "strong_emphasis\t**b**\t6\t6",
+        ]
+    );
+    assert_eq!(roles, ["fragment"]);
+}
+
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
 /// normalized text, `str`), with its own lines; `@unparse(t)` gives a tape's text back; `@splice(t, n, t2)` is t with
 /// node n's text replaced by t2's, parsed again. A value document is hidden from rules that do not reach it.
@@ -3382,7 +3454,28 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                     p.outputs.push(rel.to_owned());
                 }
             }
-            let p = front::prune(p);
+            let mut p = front::prune(p);
+            // A widened copy (`rr_wide_<attr>_<r>`, decision 0174) whose kept rules are `r`'s own: a reader that
+            // binds through `r` only in an unreached clause made the copy, which is `r` once that clause's requests
+            // are pruned. It is read as `r`.
+            let copies: Vec<(String, String)> = p.decls.keys().filter_map(|w| {
+                let r = ["rr_wide_token_", "rr_wide_node_text_"].iter().find_map(|pre| w.strip_prefix(pre))?;
+                let renamed = |x: &front::Rule| { let mut x = x.clone(); x.head.rel = r.into(); x };
+                let same = p.rules.iter().filter(|x| x.head.rel == w.as_str()).all(|x| p.rules.iter().any(|y| y.head.rel == r && y.head.args.len() == x.head.args.len() && format!("{y:?}") == format!("{:?}", renamed(x))));
+                same.then(|| (w.to_string(), r.to_owned()))
+            }).collect();
+            for (w, r) in &copies {
+                p.rules.retain(|x| x.head.rel != w.as_str());
+                p.decls.remove(w.as_str());
+                for x in &mut p.rules {
+                    for l in x.body.make_mut().iter_mut() {
+                        if let Literal::Atom(a) = l && a.rel == w.as_str() {
+                            a.rel = r.as_str().into();
+                        }
+                    }
+                }
+            }
+            let kept = p.rules.clone();
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let mut renumber = |s: &str| -> String {
                 helper.replace_all(s, |c: &regex::Captures| {
@@ -3413,13 +3506,30 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
-            (rules, decls, natives, outputs, inputs)
+            ((rules, decls, natives, outputs, inputs), kept)
         };
-        let (a, b) = (shape(less), shape(whole));
+        let ((a, kept_less), (b, kept_whole)) = (shape(less), shape(whole));
         if a != b {
+            // The first relation only the whole keeps, and the kept rules that read it, back to an output.
+            let heads = |rules: &[front::Rule]| rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<String>>();
+            let less_heads = heads(&kept_less);
+            let mut chain: Vec<String> = Vec::new();
+            if let Some(extra) = kept_whole.iter().map(|r| r.head.rel.to_string()).find(|h| !less_heads.contains(h) && !helper.is_match(h)) {
+                let mut at = extra;
+                while chain.len() < 12 && !chain.contains(&at) {
+                    chain.push(at.clone());
+                    match kept_whole.iter().find(|r| r.head.rel != at.as_str() && r.body.iter().filter_map(Literal::atom).any(|l| l.rel == at.as_str())) {
+                        Some(r) => {
+                            chain.push(format!("{r}"));
+                            at = r.head.rel.to_string()
+                        }
+                        None => break,
+                    }
+                }
+            }
             let only = |x: &Vec<String>, y: &Vec<String>| x.iter().filter(|r| !y.contains(r)).take(3).cloned().collect::<Vec<_>>();
             panic!(
-                "{}: its pruned program changed with its unreached clauses dropped\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
+                "{}: its pruned program changed with its unreached clauses dropped\n read by: {chain:?}\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
                 path.display(), only(&a.0, &b.0), only(&b.0, &a.0), only(&a.1, &b.1), only(&b.1, &a.1), a.2, b.2, a.3, b.3,
                 (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4))
             );
@@ -3474,6 +3584,22 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
 }
 
 
+/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
+/// name (the scope code reads the same table, `scope::options::EsGlobals`).
+#[test]
+fn es_globals_match_the_engines_table() {
+    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
+    let latest = table["latest"].as_u64().unwrap().to_string();
+    let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
+    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
+    let got: std::collections::BTreeSet<String> = rows
+        .lines()
+        .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
+        .collect();
+    assert!(!want.is_empty());
+    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+}
+
 /// What only the engine reads is reached: a library's request rule, whose head nothing reads but whose body reads
 /// the file system (`py_listed(d) :- py_file_at(_, _, d, _), dir_entry(d, _, _)`), and a rule deriving one of the
 /// engine's relations (`load(f, q, "python")`). Dropped, a run loading modules listed no directory and loaded
@@ -3489,4 +3615,29 @@ fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
     assert!(heads.contains("load"), "load's rule is kept");
     assert!(heads.contains("py_listed"), "the request rule is kept");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two programs run as one: each one's `has` over a guest's nodes still finds them. The merge names kind sets by
+/// their kinds; it renamed `inside`'s axis to the shared set but left `has`'s on the program's own set name, which
+/// guest hiding then could not name in the guest's grammar: no row.
+#[test]
+fn has_over_a_guest_holds_with_two_programs() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("has2");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(db):\n    db.execute(\"SELECT name FROM users\")\n").unwrap();
+    let text = |clause: &str, body: &str| {
+        let path = dir.join(format!("{clause}.rr"));
+        std::fs::write(&path, format!(
+            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+        )).unwrap();
+        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+    };
+    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let other = text("calls", "kind(n, \"call\")");
+    let out = dir.join("out");
+    let options = serde_json::json!({ "memo": "off" });
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[has.as_str(), other.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+    let rows = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
 }

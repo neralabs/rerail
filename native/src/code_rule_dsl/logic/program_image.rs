@@ -53,7 +53,7 @@ pub mod strings;
 mod tree;
 pub mod version;
 
-pub use about::{About, LatticeRef, NativeKind, NativeRef};
+pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
 pub use analyses::{Edges, Strata};
 pub use build::{Builder, Rel, Rewrite, RuleBuilder, Site, T};
 pub use extents::Extents;

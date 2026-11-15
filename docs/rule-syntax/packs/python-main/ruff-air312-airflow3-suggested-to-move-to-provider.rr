@@ -74,39 +74,40 @@ air312_guarded_import(n) :- air312_alt_2(n, REAL), within_stop(n, p10, air312_st
     ( air312_import_error_type(c13)
     ; kind(c13, "as_pattern"), child(c13, c1, _), air312_import_error_type(c1)
     ),
-    has(p11, c15, "dotted_name"), field(_, "body", c15), node(_, c15, _, _, _), REAL = c15,
-    air312_statement_name(c15, q16),
-    ( q16 = "airflow.providers.standard.hooks.filesystem.FSHook"
-    ; q16 = "airflow.providers.standard.hooks.package_index.PackageIndexHook"
-    ; q16 = "airflow.providers.standard.hooks.subprocess.SubprocessHook"
-    ; q16 = "airflow.providers.standard.operators.bash.BashOperator"
-    ; q16 = "airflow.providers.standard.operators.datetime.BranchDateTimeOperator"
-    ; q16 = "airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator"
-    ; q16 = "airflow.providers.standard.operators.empty.EmptyOperator"
-    ; q16 = "airflow.providers.standard.operators.latest_only.LatestOnlyOperator"
-    ; q16 = "airflow.providers.standard.operators.python.BranchPythonOperator"
-    ; q16 = "airflow.providers.standard.operators.python.PythonOperator"
-    ; q16 = "airflow.providers.standard.operators.python.PythonVirtualenvOperator"
-    ; q16 = "airflow.providers.standard.operators.python.ShortCircuitOperator"
-    ; q16 = "airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator"
-    ; q16 = "airflow.providers.standard.sensor.bash.BashSensor"
-    ; q16 = "airflow.providers.standard.sensors.date_time.DateTimeSensor"
-    ; q16 = "airflow.providers.standard.sensors.date_time.DateTimeSensorAsync"
-    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskMarker"
-    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensor"
-    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink"
-    ; q16 = "airflow.providers.standard.sensors.filesystem.FileSensor"
-    ; q16 = "airflow.providers.standard.sensors.python.PythonSensor"
-    ; q16 = "airflow.providers.standard.sensors.time.TimeSensor"
-    ; q16 = "airflow.providers.standard.sensors.time.TimeSensorAsync"
-    ; q16 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensor"
-    ; q16 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync"
-    ; q16 = "airflow.providers.standard.sensors.weekday.DayOfWeekSensor"
-    ; q16 = "airflow.providers.standard.triggers.external_task.DagStateTrigger"
-    ; q16 = "airflow.providers.standard.triggers.external_task.WorkflowTrigger"
-    ; q16 = "airflow.providers.standard.triggers.file.FileTrigger"
-    ; q16 = "airflow.providers.standard.triggers.temporal.DateTimeTrigger"
-    ; q16 = "airflow.providers.standard.triggers.temporal.TimeDeltaTrigger"
+    has(p11, c15, "dotted_name"),
+    field(p11, "body", f16), (f16 = c15 ; within(c15, f16)), node(_, c15, _, _, _), REAL = c15,
+    air312_statement_name(c15, q17),
+    ( q17 = "airflow.providers.standard.hooks.filesystem.FSHook"
+    ; q17 = "airflow.providers.standard.hooks.package_index.PackageIndexHook"
+    ; q17 = "airflow.providers.standard.hooks.subprocess.SubprocessHook"
+    ; q17 = "airflow.providers.standard.operators.bash.BashOperator"
+    ; q17 = "airflow.providers.standard.operators.datetime.BranchDateTimeOperator"
+    ; q17 = "airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator"
+    ; q17 = "airflow.providers.standard.operators.empty.EmptyOperator"
+    ; q17 = "airflow.providers.standard.operators.latest_only.LatestOnlyOperator"
+    ; q17 = "airflow.providers.standard.operators.python.BranchPythonOperator"
+    ; q17 = "airflow.providers.standard.operators.python.PythonOperator"
+    ; q17 = "airflow.providers.standard.operators.python.PythonVirtualenvOperator"
+    ; q17 = "airflow.providers.standard.operators.python.ShortCircuitOperator"
+    ; q17 = "airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator"
+    ; q17 = "airflow.providers.standard.sensor.bash.BashSensor"
+    ; q17 = "airflow.providers.standard.sensors.date_time.DateTimeSensor"
+    ; q17 = "airflow.providers.standard.sensors.date_time.DateTimeSensorAsync"
+    ; q17 = "airflow.providers.standard.sensors.external_task.ExternalTaskMarker"
+    ; q17 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensor"
+    ; q17 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink"
+    ; q17 = "airflow.providers.standard.sensors.filesystem.FileSensor"
+    ; q17 = "airflow.providers.standard.sensors.python.PythonSensor"
+    ; q17 = "airflow.providers.standard.sensors.time.TimeSensor"
+    ; q17 = "airflow.providers.standard.sensors.time.TimeSensorAsync"
+    ; q17 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensor"
+    ; q17 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync"
+    ; q17 = "airflow.providers.standard.sensors.weekday.DayOfWeekSensor"
+    ; q17 = "airflow.providers.standard.triggers.external_task.DagStateTrigger"
+    ; q17 = "airflow.providers.standard.triggers.external_task.WorkflowTrigger"
+    ; q17 = "airflow.providers.standard.triggers.file.FileTrigger"
+    ; q17 = "airflow.providers.standard.triggers.temporal.DateTimeTrigger"
+    ; q17 = "airflow.providers.standard.triggers.temporal.TimeDeltaTrigger"
     ).
 
 
@@ -120,8 +121,9 @@ air312_guarded_attribute(n, ATTR) :- air312_demand_guarded_attribute(n, ATTR),
     ( air312_attribute_error_type(c4)
     ; kind(c4, "as_pattern"), child(c4, c1, _), air312_attribute_error_type(c1)
     ),
-    has(p2, c6, "attribute"), field(_, "body", c6), field(c6, "attribute", c7),
-    node(_, c7, _, _, _), PATTR = c7, sym_of(c6, q8), air312_set_7(q8), text(PATTR, t9), text(ATTR, t9), @doc(PATTR) = @doc(ATTR).
+    has(p2, c6, "attribute"), field(p2, "body", f7), (f7 = c6 ; within(c6, f7)),
+    field(c6, "attribute", c8), node(_, c8, _, _, _), PATTR = c8, sym_of(c6, q9), air312_set_7(q9),
+    text(PATTR, t10), text(ATTR, t10), @doc(PATTR) = @doc(ATTR).
 
 // guarded_local(n): the JSON util `guarded-local`, used where the JSON says `matches: "guarded-local"`
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
@@ -232,8 +234,8 @@ air312_demand_alt_2(n, REAL) :- within_stop(n, p10, air312_stop_3), kind(p10, "e
     ( air312_import_error_type(c13)
     ; kind(c13, "as_pattern"), child(c13, c1, _), air312_import_error_type(c1)
     ),
-    has(p11, c15, "dotted_name"), field(_, "body", c15), node(_, c15, _, _, _), REAL = c15,
-    air312_statement_name(c15, q16).
+    has(p11, c15, "dotted_name"), field(p11, "body", f16),
+    (f16 = c15 ; within(c15, f16)), node(_, c15, _, _, _), REAL = c15, air312_statement_name(c15, q17).
 
 // demand_guarded_attribute: the rows of guarded_attribute its callers ask for (the metavariable columns they pass in)
 .decl air312_demand_guarded_attribute(n: node, attr: loc)
@@ -396,7 +398,7 @@ air312_alt_17(n, ATTR) :- air312_string_attribute(n, ATTR).
 .decl air312_alt_19(n: node)
 air312_alt_19(n) :- air312_aug_target(n).
 air312_alt_19(n) :- air312_del_target(n).
-air312_alt_19(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air312_guarded_import(st2).
+air312_alt_19(n) :- ref_site(n, b1), st2 = b1, air312_guarded_import(st2).
 
 // alt_20(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule

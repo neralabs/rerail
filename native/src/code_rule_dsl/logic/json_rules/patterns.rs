@@ -73,12 +73,18 @@ pub struct Patterns {
     pub engine_dialect_unbound_test: Regex,
     pub engine_dialect_agg_open: Regex,
     pub engine_dialect_stop_axis: Regex,
+    /// A literal's variables: identifiers not called, not `@` functions (`demand::vars_of`).
+    pub demand_var: Regex,
+    /// A pattern's metavariables, `$F2` (`demand::vars_of`).
+    pub demand_mv: Regex,
 }
 
 impl Patterns {
     pub fn new() -> Self {
         Patterns {
             text_ticks: re(r"`+[^`]*`+"),
+            demand_var: re(r"(?<![\w@$])[A-Za-z_][A-Za-z0-9_]*\b(?!\s*\()"),
+            demand_mv: re(r"\$+([A-Z_][A-Z0-9_]*)"),
             text_string: re(r#""(?:[^"\\]|\\.)*""#),
             text_upper: re(r#"(?<![\w$"@])([A-Z][A-Z0-9_]*)\b(?!\s*\()"#),
             text_mv_ref: re(r"\$\$?\$?([A-Z_][A-Z0-9_]*)"),

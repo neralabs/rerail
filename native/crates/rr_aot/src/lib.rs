@@ -1,12 +1,28 @@
 //! The `.rr` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
-//! from Rust that `rerail-rr-aot-gen` writes: tier 1's the JIT's own functions (their Cranelift
-//! IR, `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a
-//! function a rule, as the lean parser's.
+//! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
+//! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
+//! rule, as the lean parser's.
 //!
-//! Build it optimized (`--profile profiling`): a dev build leaves this crate unoptimized.
+//! The generated tiers are the `generated` feature's; without it `aot` refuses. Build it optimized
+//! (`cargo test -p rerail-rr-aot --features generated --profile profiling`): a dev build leaves
+//! this crate unoptimized.
 
-mod tier1_aot;
-mod tier2_aot;
+#[cfg(feature = "generated")]
+#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, clippy::all)]
+mod tier1_aot {
+    include!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
+}
+#[cfg(feature = "generated")]
+#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, clippy::all)]
+mod tier2_aot {
+    include!(concat!(env!("OUT_DIR"), "/tier2_aot.rs"));
+}
+
+#[cfg(feature = "generated")]
+
+// Each of tier 1's functions is structured control, as rustc lays out a hand-written loop: none
+// is the irreducible fallback, a loop over a `match` (`clif_rust`).
+const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
 
 use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
 
@@ -18,8 +34,9 @@ pub struct Tiers {
 }
 
 /// The grammar compiled as `rerail_rr_parser::compile_with` does, the tiers of `tiers` running
-/// the ahead-of-time build; or why not: the JIT's program no longer translates to the source
-/// (run `cargo run -p rerail-rr-aot-gen` again).
+/// the ahead-of-time build; or why not: the JIT's program does not translate to the source the
+/// build script wrote.
+#[cfg(feature = "generated")]
 pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules)?;
@@ -28,7 +45,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     let two = rust_stream::rust_source_at(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?, widths, tag)?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
     if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) {
-        return Err("the ahead-of-time source is of another program: run `cargo run -p rerail-rr-aot-gen`".into());
+        return Err("the ahead-of-time source is of another program than the JIT compiles".into());
     }
     c.parser.tier1.ir.clear();
     c.parser.tier2.ir.clear();
@@ -51,11 +68,18 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     Ok(c)
 }
 
+/// Without the generated tiers there is no ahead-of-time build.
+#[cfg(not(feature = "generated"))]
+pub fn aot(_: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
+    Err("built without the `generated` feature (`--features generated`)".into())
+}
+
 /// The generated entry, on the harness's `Ctx`.
+#[cfg(feature = "generated")]
 unsafe extern "C" fn entry(ctx: *const native_cpu_stream::Ctx) -> u64 {
     // SAFETY: the harness's contract (`CompiledStream::call`).
     unsafe { tier2_aot::tier2_entry(ctx as u64) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "generated"))]
 mod tests;

@@ -41,6 +41,9 @@ pub fn engine_tape(src: &str) -> Vec<tape::Node> {
     parser.into_tape().0
 }
 
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_rr_syntax;
 #[path = "../../../src/code_rule_dsl"]
