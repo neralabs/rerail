@@ -701,7 +701,21 @@ describe("source-scoped steers", () => {
       }
     }, 60_000);
 
-    it(`records no place past the session's ${MAX_TOLD_GAPS} after the session reopens, nor after a restart, and counts the places recorded and that it met more`, async () => {
+    /**
+     * How many times the store is asked to record places (`recordDiscoveryGaps`) while `run` runs: none from a bridge that
+     * read, as the session opened, that the record holds all it takes.
+     */
+    async function recordCalls(run: () => Promise<unknown>): Promise<number> {
+      const record = vi.spyOn(SqliteSessionStore.prototype, "recordDiscoveryGaps");
+      try {
+        await run();
+        return record.mock.calls.length;
+      } finally {
+        record.mockRestore();
+      }
+    }
+
+    it(`records no place past the session's ${MAX_TOLD_GAPS} after the session reopens, nor after a restart, asks the store for none, and counts the places recorded and that it met more`, async () => {
       const root = await realpath(await temporaryDirectory());
       const store = await realpath(await temporaryDirectory());
       const folders = Array.from({ length: 1_500 }, (_, index) => join(root, `f${String(index).padStart(4, "0")}`));
@@ -721,8 +735,11 @@ describe("source-scoped steers", () => {
         expect(gapRows(store).at(-1)?.payload).toEqual(untold);
         for (const folder of earlier) denied.set(folder, "EACCES");
         await first.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
-        await opened(first, root, "start-again");
-        await turnEnd(first, 20);
+        // The reopened session's bridge reads that the record holds all it takes: it asks the store for nothing more.
+        expect(await recordCalls(async () => {
+          await opened(first, root, "start-again");
+          await turnEnd(first, 20);
+        })).toBe(0);
         expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
       } finally {
         await first.dispose();
@@ -730,8 +747,10 @@ describe("source-scoped steers", () => {
       const second = gapRuntime(root, store);
       const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
       try {
-        await opened(second, root, "start-after-restart");
-        for (let turn = 21; turn <= 22; turn += 1) await turnEnd(second, turn);
+        expect(await recordCalls(async () => {
+          await opened(second, root, "start-after-restart");
+          for (let turn = 21; turn <= 22; turn += 1) await turnEnd(second, turn);
+        })).toBe(0);
         expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
         // The record that says the walks met more is no place: the count is of the places recorded, the first met.
         expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: MAX_TOLD_GAPS, discoveryGapsMore: true });
