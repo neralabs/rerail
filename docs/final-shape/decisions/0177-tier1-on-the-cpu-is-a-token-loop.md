@@ -922,3 +922,32 @@ dropped: the unpacking costs what the memory round trip does.
 Open: numbers are 379 a token against 107. Their run's word is a
 window function's call at each token, and their tests' gate is the
 short one.
+
+## Three rare paths nearer the lean lexer's (2026-11-15)
+
+- **A string's gate by offset.** The tests' needs were one byte set
+  over a range of offsets: a control byte or a `\` from the byte before
+  the token to its last. A newline before a string's quote then opened
+  the gate. `native_cpu_bytes::needs_by_offset` keeps a set for each
+  offset (a `\` before, a control byte at), and the gate checks each
+  set over the token's bytes at its own offset (`counts_need_by_offset`).
+- **A number's run by one vector.** A run whose word is not in the
+  loop's registers read a 64-byte window at each token. Now its first
+  16 bytes come from one vector (`Bytewise::short_word`, a one-part
+  `bitmask`), as a lexer reads a number's few digits. A run on past
+  them takes the word's path (cold).
+- **A punctuation's code from its entry.** The code was a second load
+  beside the entry's. The compiler places the codes in the entry's free
+  bits, by their widths, past the kind's bits
+  (`RecordTables::punct_in_entry`), where they fit; else the table
+  stays. rr's fit: the one-byte code's 23 bits, the two-byte code's 4.
+
+Mutations of the run's bound and of the gate's offsets each fail a
+named test.
+
+| | Before | After | Lean |
+|---|---|---|---|
+| Strings | 430 | 349 | 241 |
+| Numbers | 379 | 256 | 107 |
+| Punctuation | 69 | 66 | 54 |
+| Corpus, a node | 149 | 146 | 109 |

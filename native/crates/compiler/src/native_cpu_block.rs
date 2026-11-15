@@ -151,6 +151,12 @@ impl CompiledBlock {
         self.records.as_ref().map_or_else(Vec::new, |t| (0..=255u8).filter(|&b| t.words[t.token / 8 + usize::from(b)] >> TOKEN_PUNCT & 1 == 1).collect())
     }
 
+    /// Whether the punctuation's codes are in their first bytes' entries
+    /// (`RecordTables::punct_in_entry`).
+    pub fn punct_in_entry(&self) -> bool {
+        self.records.as_ref().is_some_and(|t| t.punct_in_entry.is_some())
+    }
+
     /// The record pass's tables' words, as its code reads them.
     pub fn tables_words(&self) -> Option<&[u64]> {
         self.records.as_ref().map(|t| &t.words[..])
@@ -1699,6 +1705,11 @@ pub struct RecordTables {
     /// Where each first byte's punctuation codes are (`TOKEN_PUNCT`), 8 bytes each: the code
     /// bits of its one-byte token, then of its two-byte one, as the word table gives them.
     pub punct: usize,
+    /// Where every punctuation's two codes fit the entry (`TOKEN_PUNCT_ONE`): the one-byte
+    /// code's width there, past the kind's bits, the two-byte one's after it. Then its code is
+    /// the entry's, no load beside it, as the lean lexer's `TOKEN` gives a punctuation's kind
+    /// and length by one load.
+    pub punct_in_entry: Option<u32>,
 }
 
 /// The records' layout the compiler chooses for a program (decision 0231): rows where the
@@ -1743,6 +1754,11 @@ const TOKEN_FUSED_RUN: i64 = 33;
 /// byte and the length alone (`RecordTables::punct`): no word looked up, as the lean lexer's
 /// `TOKEN` gives a punctuation's kind.
 const TOKEN_PUNCT: i64 = 34;
+
+/// A punctuation's codes in its entry (`RecordTables::punct_in_entry`), past the kind's bits
+/// (none set in a code): its one-byte token's from this bit, its two-byte one's after it, to
+/// the entry's last.
+const TOKEN_PUNCT_ONE: u32 = 36;
 
 impl RecordTables {
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1829,6 +1845,11 @@ impl RecordTables {
                 }
             }
         }
+        let kb = crate::records::KIND_BITS;
+        let width = |x: u64| 64 - (x >> kb).leading_zeros();
+        let low = punct_codes.iter().all(|&(one, two, _)| (one | two) & ((1 << kb) - 1) == 0);
+        let (w1, w2) = punct_codes.iter().fold((0, 0), |(a, b), &(one, two, _)| (a.max(width(one)), b.max(width(two))));
+        let punct_in_entry = (low && TOKEN_PUNCT_ONE + w1 + w2 <= 64 && TOKEN_PUNCT_ONE + w1 < 64).then_some(w1);
         let mut entries = [0u64; 256];
         for (b, e) in entries.iter_mut().enumerate() {
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
@@ -1842,11 +1863,14 @@ impl RecordTables {
             let tests = sets.iter().filter(|(_, n, k)| n.has(b as u8) && *k == rule).fold(0u32, |a, &(k, _, _)| a | 1 << k);
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
             *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
+            if let (Some(w1), true) = (punct_in_entry, punct_codes[b].2) {
+                *e |= (punct_codes[b].0 >> kb) << TOKEN_PUNCT_ONE | (punct_codes[b].1 >> kb) << (TOKEN_PUNCT_ONE + w1);
+            }
         }
         words.extend(entries);
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct })
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry })
     }
 }
 
@@ -2272,16 +2296,20 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     let close = f.ins().iadd(at, tz);
     let l = f.ins().iadd_imm(close, i64::from(a.off));
     let call = f.create_block();
-    if let Some(n) = counts_need(bw.native, tests) {
-        // A token whose bytes (and the few its masks look past) are 64 at most, none of them
-        // one the tests need: no hits, and no test's mask made.
+    if let Some(ns) = counts_need_by_offset(bw.native, tests) {
+        // A token of 64 bytes at most none of whose bytes, at each offset, is one the tests
+        // need there: no hits, and no test's mask made.
         let (vec, quiet) = (f.create_block(), f.create_block());
         let n1 = f.ins().isub(l, s);
-        let span = f.ins().iadd_imm(n1, i64::from(n.hi - n.lo) + 1);
+        let span = f.ins().iadd_imm(n1, 1);
         let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
         f.ins().brif(fits, vec, &[], call, &[]);
         f.switch_to_block(vec);
-        let some = needs_wide(&mut f, &n, bytes, s, span);
+        let mut some = zero;
+        for n in &ns {
+            let x = needs_wide(&mut f, n, bytes, s, span);
+            some = f.ins().bor(some, x);
+        }
         f.ins().brif(some, call, &[], quiet, &[]);
         f.switch_to_block(quiet);
         f.ins().return_(&[close, zero]);
@@ -2769,6 +2797,20 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         f.block_params(first_word)[0]
                     }
                     None => {
+                        // From the bytes: the run's first 16 from `s + 1` by one vector
+                        // (`Bytewise::short_word`), as a lexer reads a number's few digits;
+                        // the run on past them, the word's way below (cold).
+                        if let Some((b, file)) = rd.bytes.filter(|(b, _)| b.can(o)) {
+                            let x = b.short_word(f, &file, o, i, heads);
+                            let y = f.ins().bnot(x);
+                            let ones = f.ins().ctz(y);
+                            let short = f.ins().icmp_imm(IntCC::UnsignedLessThan, ones, 16);
+                            let l = f.ins().iadd(s, ones);
+                            let long = f.create_block();
+                            f.ins().brif(short, ended, &[l.into(), untag.into()], long, &[]);
+                            f.switch_to_block(long);
+                            f.set_cold_block(long);
+                        }
                         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                         inside_or_past(f, inside, first_word, limit, ended, &[s.into(), untag.into()]);
                         f.switch_to_block(first_word);
@@ -3091,6 +3133,24 @@ fn read_none(f: &mut FunctionBuilder<'_>, none: crate::records::ReadNone, c: &Fi
 fn counts_need(native: &crate::block_native::BlockNative, tests: &[crate::records::TokenCheck]) -> Option<crate::native_cpu_bytes::Needs> {
     let n = tests.iter().map(|t| crate::native_cpu_bytes::needs(native, t.o)).try_fold(None, |a: Option<crate::native_cpu_bytes::Needs>, n| n.map(|n| Some(a.map_or(n, |a| a.union(n)))))??;
     (n.lo >= -8 && n.hi <= 8 && (1..=4).contains(&n.ranges().len())).then_some(n)
+}
+
+/// What a rule's count tests need of the bytes, offset by offset (`native_cpu_bytes::
+/// needs_by_offset`), each offset's set a `Needs` at that offset alone: a token has none of
+/// them where, at no offset `d`, a byte `s + d ..= l + d` is in its set. Two offsets at most,
+/// each within 8 bytes and four runs of bytes, so the check is a few vectors.
+fn counts_need_by_offset(native: &crate::block_native::BlockNative, tests: &[crate::records::TokenCheck]) -> Option<Vec<crate::native_cpu_bytes::Needs>> {
+    let mut all: std::collections::BTreeMap<i32, [u64; 4]> = std::collections::BTreeMap::new();
+    for t in tests {
+        for (d, set) in crate::native_cpu_bytes::needs_by_offset(native, t.o)? {
+            let e = all.entry(d).or_insert([0; 4]);
+            for (w, v) in e.iter_mut().zip(set) {
+                *w |= v;
+            }
+        }
+    }
+    let v: Vec<crate::native_cpu_bytes::Needs> = all.into_iter().map(|(d, set)| crate::native_cpu_bytes::Needs { set, lo: d, hi: d }).collect();
+    (!v.is_empty() && v.len() <= 2 && v.iter().all(|n| (-8..=8).contains(&n.lo) && (1..=4).contains(&n.ranges().len()))).then_some(v)
 }
 
 /// Whether the bytes `s + n.lo` on, `span` of them (16 at most), have one of `n`'s
@@ -3909,11 +3969,20 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let is_p = f.ins().band_imm(entry, 1 << TOKEN_PUNCT);
         f.ins().brif(is_p, punct, &[], rest, &[]);
         f.switch_to_block(punct);
-        let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
         let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
-        let hi = f.ins().ushr_imm(pc, 32);
-        let lo = f.ins().band_imm(pc, 0xffff_ffff);
-        let bits = f.ins().select(two, hi, lo);
+        let bits = if let Some(w1) = t.punct_in_entry {
+            let kb = i64::from(crate::records::KIND_BITS);
+            let hi = f.ins().ushr_imm(entry, i64::from(TOKEN_PUNCT_ONE + w1));
+            let lo = f.ins().ushr_imm(entry, i64::from(TOKEN_PUNCT_ONE));
+            let lo = f.ins().band_imm(lo, (1i64 << w1) - 1);
+            let x = f.ins().select(two, hi, lo);
+            f.ins().ishl_imm(x, kb)
+        } else {
+            let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
+            let hi = f.ins().ushr_imm(pc, 32);
+            let lo = f.ins().band_imm(pc, 0xffff_ffff);
+            f.ins().select(two, hi, lo)
+        };
         let code = f.ins().bor(kind, bits);
         f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
         f.switch_to_block(rest);
@@ -5379,7 +5448,16 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
 
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.
 pub fn bitmask(f: &mut FunctionBuilder<'_>, parts: &[Value], weights: Value) -> Value {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(target_arch = "aarch64") && parts.len() == 1 {
+        // One vector's 16 bits: weight, three pairwise adds, its low two bytes.
+        let w = f.ins().band(parts[0], weights);
+        let s = f.ins().iadd_pairwise(w, w);
+        let s = f.ins().iadd_pairwise(s, s);
+        let s = f.ins().iadd_pairwise(s, s);
+        let lanes = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(Endianness::Little), s);
+        let x = f.ins().extractlane(lanes, 0);
+        f.ins().band_imm(x, 0xffff)
+    } else if cfg!(target_arch = "aarch64") {
         // simdjson's arm64 `to_bitmask`: weight, then pairwise adds: 4 `and`, 4 `addp`, 1 `umov`.
         let w: Vec<Value> = parts.iter().map(|&p| f.ins().band(p, weights)).collect();
         let s0 = f.ins().iadd_pairwise(w[0], w[1]);

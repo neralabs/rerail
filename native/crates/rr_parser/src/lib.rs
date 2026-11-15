@@ -1536,6 +1536,8 @@ pub mod tests {
         let (kn, _) = t.fused.expect("the fused rules");
         let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == kn) && b != b'<').collect();
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
+        // Their codes fit their entries: no load beside the entry's.
+        assert!(c.parser.tier1.punct_in_entry());
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
         assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");

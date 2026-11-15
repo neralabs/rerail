@@ -38,10 +38,12 @@ pub struct Bytewise<'a> {
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
 /// the carries out made.
+/// And whether the window is its first 16 bytes alone (`Bytewise::short_word`).
 #[derive(Default)]
 struct Carry {
     ins: Vec<(usize, Value)>,
     outs: Vec<(usize, Value)>,
+    short: bool,
 }
 
 /// Where the reads are: the file's first byte and length, and the body's constants.
@@ -152,7 +154,7 @@ impl<'a> Bytewise<'a> {
     /// the bytes; and each one's carry out, at `p + 64` (simdjson's add overflow), in `cins`'
     /// order: a loop of windows 64 bytes apart passes it on, as the lean lexer's reader does.
     pub fn words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
-        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new() };
+        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new(), short: false };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let rem = f.ins().isub(at.len, p);
@@ -177,6 +179,28 @@ impl<'a> Bytewise<'a> {
             .collect();
         let outs = cins.iter().map(|&(a, _)| carry.outs.iter().find(|o| o.0 == a).expect("a carried run's carry out (`carried_runs`)").1).collect();
         (words, outs)
+    }
+
+    /// Output `o`'s bits for the file's bytes `p .. p + 16` (`p` at least 0), none past its end:
+    /// `word`'s first 16, from one vector of the bytes, as a lexer reads a short token's bytes
+    /// and no more.
+    pub fn short_word(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        let mut carry = Carry { short: true, ..Carry::default() };
+        let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
+        let mut memo = HashMap::new();
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i64::from(self.native.output_delays[usize::from(o)]);
+        let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
+        // The bits of the file's bytes: `len - p` of them, at most 16.
+        let rem = f.ins().isub(at.len, p);
+        let zero = f.ins().iconst(types::I64, 0);
+        let sixteen = f.ins().iconst(types::I64, 16);
+        let rem = f.ins().smax(rem, zero);
+        let rem = f.ins().smin(rem, sixteen);
+        let one = f.ins().iconst(types::I64, 1);
+        let low = f.ins().ishl(one, rem);
+        let low = f.ins().iadd_imm(low, -1);
+        f.ins().band(m, low)
     }
 
     /// The runs whose `escaped` outputs `os` read at their window's start, no `prev` or delay
@@ -260,7 +284,7 @@ impl<'a> Bytewise<'a> {
                 let base = f.ins().iadd(at.bytes, pos);
                 Lanes::window(f, self.native, &self.plan, base, pos, at.len, at.nibble)
             });
-            let parts: Vec<_> = (1..=4).map(|c| lanes.get(f, x, c)).collect();
+            let parts: Vec<_> = (1..=if carry.short { 1 } else { 4 }).map(|c| lanes.get(f, x, c)).collect();
             match lanes.mask(f, &parts, at.weights) {
                 Sym::Known(k) => f.ins().iconst(types::I64, k as i64),
                 Sym::Value(v, false) => v,
@@ -649,5 +673,52 @@ fn needs_at(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Nee
         _ => None,
     };
     memo.insert(x, n);
+    n
+}
+
+/// What an output needs of the bytes, offset by offset (`needs`'s, unmerged): a bit at `p`
+/// only where, for some `(d, set)`, the byte at `p + d` is in `set`. Where `needs` merges two
+/// tests at two offsets into one set over both (a control byte or a `\` before, so a newline
+/// before a string's quote), this keeps each set at its own offset.
+pub fn needs_by_offset(native: &BlockNative, o: u16) -> Option<Vec<(i32, [u64; 4])>> {
+    let x = usize::from(*native.outputs.get(usize::from(o))?);
+    let d = i32::from(native.output_delays[usize::from(o)]);
+    let mut memo = HashMap::new();
+    by_offset(native, x, &mut memo).map(|m| m.into_iter().map(|(k, s)| (k + d, s)).collect())
+}
+
+type Offsets = std::collections::BTreeMap<i32, [u64; 4]>;
+
+fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Offsets>>) -> Option<Offsets> {
+    if let Some(n) = memo.get(&x) {
+        return n.clone();
+    }
+    let one = |n: Needs| -> Offsets { (n.lo..=n.hi).map(|k| (k, n.set)).collect() };
+    let width = |m: &Offsets| m.values().map(|s| s.iter().map(|w| w.count_ones()).sum::<u32>()).sum::<u32>();
+    let shift = |m: Offsets, k: i32| -> Offsets { m.into_iter().map(|(d, s)| (d + k, s)).collect() };
+    let n = match native.insts[x] {
+        BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } | BlockInst::Const(0) => needs_at(native, x, &mut HashMap::new()).map(one),
+        BlockInst::And(a, b) => match (by_offset(native, usize::from(a), memo), by_offset(native, usize::from(b), memo)) {
+            (Some(p), Some(q)) => Some(if width(&q) < width(&p) { q } else { p }),
+            (p, q) => p.or(q),
+        },
+        BlockInst::AndNot(a, _) => by_offset(native, usize::from(a), memo),
+        BlockInst::Or(a, b) => match (by_offset(native, usize::from(a), memo), by_offset(native, usize::from(b), memo)) {
+            (Some(mut p), Some(q)) => {
+                for (d, s) in q {
+                    let e = p.entry(d).or_insert([0; 4]);
+                    for (w, v) in e.iter_mut().zip(s) {
+                        *w |= v;
+                    }
+                }
+                Some(p)
+            }
+            _ => None,
+        },
+        BlockInst::Prev(a, k) => by_offset(native, usize::from(a), memo).map(|m| shift(m, -i32::from(k))),
+        BlockInst::Escaped(a) => by_offset(native, usize::from(a), memo).map(|m| shift(m, -1)),
+        _ => None,
+    };
+    memo.insert(x, n.clone());
     n
 }
