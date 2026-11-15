@@ -1538,6 +1538,12 @@ pub mod tests {
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
         // Their codes fit their entries: no load beside the entry's.
         assert!(c.parser.tier1.punct_in_entry());
+        // Its starts are the lean lexer's (`lean_starts`): a word's or a pair's token clears its
+        // own start alone. Its pairs chain (`=>=`), read left to right. `#` (`#include`), whose
+        // run starts after it, takes the general tail.
+        let (kn, kr) = t.fused.expect("the fused rules");
+        assert_eq!(rerail_compiler::native_cpu_block::lean_starts(r, &c.native, r.skip.expect("starts by the loop"), kn, kr), Some(true));
+        assert_eq!(t.lean, Some(true));
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
         assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");
@@ -1594,6 +1600,18 @@ pub mod tests {
         for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {
             inputs.push(t.as_bytes().to_vec());
             inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
+        }
+        // The lean lexer's starts (`lean_starts`): no start in a run after its first byte, nor
+        // at a pair's second. Another rule's token ending where they left one out (a word right
+        // after a number or a string, pairs right after a string, in a run of them), and runs of
+        // pairs across the blocks' edges.
+        for t in ["#include \"x\"\na(1).", "#includex#y", "a(12abc).", "a(\"x\"b).", "a(\"=\"=>=b).", "a(\"x\":-=>=).", "a(1.5x, 2y).", "a(\"<\"<:<=:b)."] {
+            for pad in [0usize, 57, 58, 59, 60, 61, 62, 63] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        for pad in [59usize, 60, 61, 62, 63] {
+            inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
         }
         // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
         // across the windows' edges, the run before a window found back to its start; a

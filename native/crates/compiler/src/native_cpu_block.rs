@@ -1689,9 +1689,10 @@ pub struct RecordTables {
     /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
     /// (`Records::nexts`).
     pub pairs: Vec<(usize, usize)>,
-    /// Where each first byte's entry is, four bytes each (`TOKEN_*`): its kind, its end rule,
+    /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
-    /// `TOKEN`.
+    /// `TOKEN`. Where the codes are in the entries (`punct_in_entry`), 512 of them, as the lean
+    /// lexer's: by the first byte and (`+ 256`) whether it starts a pair.
     pub token: usize,
     /// Each token test's bit in the entries (`TOKEN_TESTS`), where its first byte says whether
     /// it can hold (`test_filter`): set for the first bytes it can.
@@ -1705,11 +1706,15 @@ pub struct RecordTables {
     /// Where each first byte's punctuation codes are (`TOKEN_PUNCT`), 8 bytes each: the code
     /// bits of its one-byte token, then of its two-byte one, as the word table gives them.
     pub punct: usize,
-    /// Where every punctuation's two codes fit the entry (`TOKEN_PUNCT_ONE`): the one-byte
-    /// code's width there, past the kind's bits, the two-byte one's after it. Then its code is
-    /// the entry's, no load beside it, as the lean lexer's `TOKEN` gives a punctuation's kind
-    /// and length by one load.
+    /// Where every punctuation's codes fit the entry (`TOKEN_PUNCT_ONE`), the field's width:
+    /// the one-byte token's in the first byte's entry, the two-byte one's in its pair's (`+
+    /// 256`). Then its code is the entry's, no load beside it and no choice by the length, as
+    /// the lean lexer's `TOKEN` gives a punctuation's kind and length by one load. Where the
+    /// pair rule's word is the loop's (`pair_nibbles`), whose bit chooses the entry.
     pub punct_in_entry: Option<u32>,
+    /// The loop's starts are the lean lexer's (`lean_starts`), for the fused rules (`fused`):
+    /// whether pairs chain. The run rule's fused bit is then on its run bytes alone.
+    pub lean: Option<bool>,
 }
 
 /// The records' layout the compiler chooses for a program (decision 0231): rows where the
@@ -1755,9 +1760,8 @@ const TOKEN_FUSED_RUN: i64 = 33;
 /// `TOKEN` gives a punctuation's kind.
 const TOKEN_PUNCT: i64 = 34;
 
-/// A punctuation's codes in its entry (`RecordTables::punct_in_entry`), past the kind's bits
-/// (none set in a code): its one-byte token's from this bit, its two-byte one's after it, to
-/// the entry's last.
+/// A punctuation's code in its entry (`RecordTables::punct_in_entry`), past the kind's bits
+/// (none set in a code): from this bit to the entry's last.
 const TOKEN_PUNCT_ONE: u32 = 36;
 
 impl RecordTables {
@@ -1848,10 +1852,26 @@ impl RecordTables {
         let kb = crate::records::KIND_BITS;
         let width = |x: u64| 64 - (x >> kb).leading_zeros();
         let low = punct_codes.iter().all(|&(one, two, _)| (one | two) & ((1 << kb) - 1) == 0);
-        let (w1, w2) = punct_codes.iter().fold((0, 0), |(a, b), &(one, two, _)| (a.max(width(one)), b.max(width(two))));
-        let punct_in_entry = (low && TOKEN_PUNCT_ONE + w1 + w2 <= 64 && TOKEN_PUNCT_ONE + w1 < 64).then_some(w1);
-        let mut entries = [0u64; 256];
-        for (b, e) in entries.iter_mut().enumerate() {
+        let w = punct_codes.iter().fold(0, |a, &(one, two, _)| a.max(width(one)).max(width(two)));
+        // The pair's entry by the pair rule's word (`pair_nibbles`), as the loop has it.
+        let paired = fused.is_some_and(|(kn, _)| match r.rules[kn] {
+            crate::records::EndRule::Next(i) => r.nexts.get(usize::from(i)).is_some_and(|pt| pair_nibbles(r, pt, kn).is_some()),
+            _ => false,
+        });
+        let punct_in_entry = (low && paired && TOKEN_PUNCT_ONE + w <= 64).then_some(w);
+        // The lean lexer's starts (`lean_starts`): the run rule's first bytes that are no run
+        // byte left to the general tail.
+        let lean = match (fused, r.skip) {
+            (Some((kn, kr)), Some(skip)) => lean_starts(r, made, skip, kn, kr),
+            _ => None,
+        };
+        let run_word = fused.and_then(|(_, kr)| match r.rules[kr] {
+            crate::records::EndRule::Run(o) => Some(o),
+            _ => None,
+        });
+        let mut entries = [0u64; 512];
+        for (at, e) in entries.iter_mut().enumerate() {
+            let (b, two) = (at & 255, at >= 256);
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
             let wordy = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
             let row = match r.rules.get(usize::from(rule)) {
@@ -1862,15 +1882,16 @@ impl RecordTables {
             // that more than one rule takes (`rule_last`'s fused rules).
             let tests = sets.iter().filter(|(_, n, k)| n.has(b as u8) && *k == rule).fold(0u32, |a, &(k, _, _)| a | 1 << k);
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
+            let fr = fr && (lean.is_none() || run_word.is_some_and(|o| run_fused(made, o, b as u8)));
             *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
-            if let (Some(w1), true) = (punct_in_entry, punct_codes[b].2) {
-                *e |= (punct_codes[b].0 >> kb) << TOKEN_PUNCT_ONE | (punct_codes[b].1 >> kb) << (TOKEN_PUNCT_ONE + w1);
+            if let (Some(_), true) = (punct_in_entry, punct_codes[b].2) {
+                *e |= (if two { punct_codes[b].1 } else { punct_codes[b].0 } >> kb) << TOKEN_PUNCT_ONE;
             }
         }
         words.extend(entries);
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry })
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -3042,6 +3063,38 @@ fn fused_of(r: &crate::records::Records, filters: &[Option<i64>], native: Option
     kn.zip(kr).filter(|&(a, b)| no_extra([a, b]))
 }
 
+/// Whether the loop's starts can be the lean lexer's (decision 0177): every byte not the skip's,
+/// but a run's bytes after its first (`word & word << 1`) and a pair's second byte. Then a token
+/// of the fused rules (`fused_rules`, the pair rule `kn`, the run rule `kr`) covers no start
+/// after its own, and the loop clears its bit alone. It holds where the words are the bytes'
+/// alone and: no first byte of `kn`, nor a second of its pairs, is a run byte (a pair ends no
+/// run, starts none); a pair's second byte and a run byte are no skip's and no zero (the bytes
+/// past the file), so a start put back after another rule's token (`record_tokens`) is one.
+/// A first byte of `kr` that is no run byte (`#` of `#include`: the run from the byte after
+/// it starts there) is then not fused (`run_fused`): its token takes the rules' general tail.
+///
+/// Some(whether a pair's second byte can start one, `=>=`), as the lean lexer's
+/// `left_to_right`; none where the starts cannot be the lean lexer's.
+pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::BlockNative, skip: u16, kn: usize, kr: usize) -> Option<bool> {
+    use crate::records::EndRule;
+    let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { return None };
+    let pt = r.nexts.get(usize::from(pi))?;
+    let alone = |o: u16| crate::native_cpu_bytes::needs(native, o).filter(|n| n.lo == 0 && n.hi == 0);
+    let (word, space) = (alone(o)?, alone(skip)?);
+    let of = |x: u8, k: usize| r.ends.get(usize::from(x)).is_some_and(|&e| usize::from(e) == k);
+    let pairs_apart = (0..=255u8).filter(|&a| of(a, kn)).all(|a| !word.has(a) && (0..=255u8).filter(|&b| pt.holds(a, b)).all(|b| !word.has(b) && !space.has(b) && b != 0));
+    let words_start = !word.has(0) && (0..=255u8).all(|x| !word.has(x) || !space.has(x));
+    let starts_pair = |a: u8| of(a, kn) && (0..=255u8).any(|b| pt.holds(a, b));
+    let chained = (0..=255u8).filter(|&a| starts_pair(a)).any(|a| (0..=255u8).any(|b| pt.holds(a, b) && starts_pair(b)));
+    (pairs_apart && words_start).then_some(chained)
+}
+
+/// Whether first byte `b` of the fused run rule (word `o`) takes the fused rules' path where
+/// the starts are the lean lexer's (`lean_starts`): it is a run byte, its token the run from it.
+fn run_fused(native: &crate::block_native::BlockNative, o: u16, b: u8) -> bool {
+    crate::native_cpu_bytes::needs(native, o).is_some_and(|n| n.has(b))
+}
+
 /// Whether output `o` is never set at a first byte of rules `ks`: it needs the byte alone
 /// (`native_cpu_bytes::needs`) and none of the rules' first bytes has it.
 fn never_at(r: &crate::records::Records, native: Option<&crate::block_native::BlockNative>, o: u16, ks: [usize; 2]) -> bool {
@@ -3672,6 +3725,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let fused_ks = if rd.bytes.is_some() { fused_rules(r, t, &rd, &runs) } else { None };
     let runs: Vec<u16> = runs.into_iter().chain(pairs.map(|_| PAIR_WORD)).collect();
     let outs: Vec<u16> = runs.iter().copied().filter(|&o| o != PAIR_WORD).collect();
+    // The lean lexer's starts (`lean_starts`): the run word's and the pair word's places in the
+    // registers, and whether pairs chain.
+    let lean: Option<(usize, usize, bool)> = match (walked, fused_ks, pairs, rd.bytes) {
+        (Some(_), Some((kn, kr)), Some(_), Some(_)) if t.fused == Some((kn, kr)) => t.lean.and_then(|chained| {
+            let crate::records::EndRule::Run(wo) = r.rules[kr] else { return None };
+            Some((runs.iter().position(|&k| k == wo)?, runs.iter().position(|&k| k == PAIR_WORD)?, chained))
+        }),
+        _ => None,
+    };
     if walked.is_some() {
         for _ in 0..1 + runs.len() {
             f.append_block_param(head, types::I64);
@@ -3682,6 +3744,21 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let stores = MemFlags::new().with_notrap();
     let zero = f.ins().iconst(types::I64, 0);
     let tables = c.tables;
+    // The file's last block and its bytes' bits (`valid`), once a file, as the lean lexer's
+    // `valid`: the refill cuts its starts by them, no token compares its start with the length.
+    let file_end = walked.map(|_| {
+        let ones = f.ins().iconst(types::I64, -1);
+        let l1 = f.ins().iadd_imm(c.len, -1);
+        let last_q = f.ins().ushr_imm(l1, 6);
+        let tail = f.ins().band_imm(c.len, 63);
+        let cut = f.ins().irsub_imm(tail, 64);
+        let cut = f.ins().band_imm(cut, 63);
+        let last_valid = f.ins().ushr(ones, cut);
+        let l63 = f.ins().iadd_imm(c.len, 63);
+        let file_blocks = f.ins().ushr_imm(l63, 6);
+        let blocks = f.ins().umin(c.blocks, file_blocks);
+        (last_q, last_valid, blocks)
+    });
     // With end rules (decision 0177) the lasts are this pass's: as many as the starts.
     let ruled = !r.rules.is_empty();
     let (differ, n) = if walked.is_some() {
@@ -3788,7 +3865,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 (h[3], h[4])
             };
             // From the bytes, the block's words wait on no block (`Reads`).
-            let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, refill_limit));
+            // From the bytes, no block past the file's last.
+            let to = match (refill_limit, file_end) {
+                (None, Some((_, _, blocks))) => blocks,
+                _ => bound(c, refill_limit),
+            };
+            let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, to);
             let (look, next) = (f.create_block(), f.create_block());
             inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), pend_q.into(), if folded { h[4] } else { from_q }.into()]);
             f.switch_to_block(look);
@@ -3803,6 +3885,51 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let x = f.ins().bnot(x);
             let x = f.ins().band(x, m);
             let q64 = f.ins().ishl_imm(q, 6);
+            // None past the file's last byte, once a block, as the lean lexer's `valid`: no
+            // token compares its start with the file's length.
+            let valid = match (refill_limit, file_end) {
+                (None, Some((last_q, last_valid, _))) => {
+                    let last = f.ins().icmp(IntCC::Equal, q, last_q);
+                    f.ins().select(last, last_valid, ones)
+                }
+                _ => {
+                    // The words may go on past the file's block (none of its bytes in them).
+                    let rem = f.ins().isub(c.len, q64);
+                    let rem = f.ins().smax(rem, zero);
+                    let one = f.ins().iconst(types::I64, 1);
+                    let below = f.ins().ishl(one, rem);
+                    let below = f.ins().iadd_imm(below, -1);
+                    let whole = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, rem, 64);
+                    f.ins().select(whole, ones, below)
+                }
+            };
+            let mut x = f.ins().band(x, valid);
+            // The lean lexer's starts: but a run's bytes after its first (from the cursor), and
+            // but a pair's second byte, pairs read left to right where they chain.
+            if let Some((wi, pi, chained)) = lean {
+                let w = words[wi];
+                let wm = f.ins().band(w, m);
+                let wl = f.ins().ishl_imm(wm, 1);
+                let inner = f.ins().band(w, wl);
+                x = f.ins().band_not(x, inner);
+                let mut p = f.ins().band(words[pi], x);
+                if chained {
+                    // Each run of pairs' first bytes keeps its bits an even way from its first:
+                    // a run from an even place its even bits, from an odd place its odd ones.
+                    let pl = f.ins().ishl_imm(p, 1);
+                    let edges = f.ins().band_not(p, pl);
+                    let even = f.ins().iconst(types::I64, 0x5555_5555_5555_5555);
+                    let from_even = f.ins().band(edges, even);
+                    let sum = f.ins().iadd(p, from_even);
+                    let runs_even = f.ins().band_not(p, sum);
+                    let keep_e = f.ins().band(runs_even, even);
+                    let odd_runs = f.ins().band_not(p, runs_even);
+                    let keep_o = f.ins().band_not(odd_runs, even);
+                    p = f.ins().bor(keep_e, keep_o);
+                }
+                let seconds = f.ins().ishl_imm(p, 1);
+                x = f.ins().band_not(x, seconds);
+            }
             let tz = f.ins().ctz(x);
             let s1 = f.ins().iadd(q64, tz);
             // Whether the block has a gap mark's bit (`GAP_FLAG`), in the marks so far.
@@ -3847,13 +3974,13 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
             let fw = f.block_params(from_word).to_vec();
+            // Every start is inside the file (the refill's `valid`).
             let s = fw[0];
-            let more = f.ins().icmp(IntCC::UnsignedLessThan, s, c.len);
             regs = Some(BlockRegs { cand: fw[1], runs: runs.iter().copied().zip(fw[2..2 + runs.len()].iter().copied()).collect() });
             if folded {
                 (pending_in, from_in) = (fw[2 + runs.len()], fw[3 + runs.len()]);
             }
-            f.ins().brif(more, token, &[s.into()], finish, &[h[2].into(), h[0].into(), pending_in.into(), from_in.into()]);
+            f.ins().jump(token, &[s.into()]);
         }
         None => {
             let end = c.cursor(f, n);
@@ -3879,6 +4006,20 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let from = f.ins().iadd(c.bytes, s);
     let raw = f.ins().load(types::I64, fl, from, 0);
     let first = f.ins().band_imm(raw, 0xff);
+    // With the codes in the entries (`punct_in_entry`), the pair's entry where the byte starts
+    // one: the pair word's bit, as the lean lexer's `TOKEN[c | pair << 8]`.
+    let pair_reg = regs.as_ref().and_then(|g| g.runs.iter().find(|&&(k, _)| k == PAIR_WORD)).map(|&(_, v)| v);
+    let by_pair = t.punct_in_entry.and(pair_reg);
+    let first = match by_pair {
+        Some(p) => {
+            let sh = f.ins().band_imm(s, 63);
+            let bit = f.ins().ushr(p, sh);
+            let bit = f.ins().band_imm(bit, 1);
+            let bit = f.ins().ishl_imm(bit, 8);
+            f.ins().bor(first, bit)
+        }
+        None => first,
+    };
     let ea = f.ins().ishl_imm(first, 3);
     let ea = f.ins().iadd(tables, ea);
     let entry = f.ins().load(types::I64, ro, ea, t.token as i32);
@@ -3942,7 +4083,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     f.switch_to_block(on);
     // The loop goes on past the token's first byte at least, whatever its rule found: a
     // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
-    let next_after = if walked.is_some() {
+    // A fused rule's last is at its start at least (`rule_last`): no max.
+    let next_after = if walked.is_some() && common {
+        f.ins().iadd_imm(l, 1)
+    } else if walked.is_some() {
         let past = f.ins().smax(l, s);
         f.ins().iadd_imm(past, 1)
     } else {
@@ -3969,15 +4113,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let is_p = f.ins().band_imm(entry, 1 << TOKEN_PUNCT);
         f.ins().brif(is_p, punct, &[], rest, &[]);
         f.switch_to_block(punct);
-        let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
-        let bits = if let Some(w1) = t.punct_in_entry {
-            let kb = i64::from(crate::records::KIND_BITS);
-            let hi = f.ins().ushr_imm(entry, i64::from(TOKEN_PUNCT_ONE + w1));
-            let lo = f.ins().ushr_imm(entry, i64::from(TOKEN_PUNCT_ONE));
-            let lo = f.ins().band_imm(lo, (1i64 << w1) - 1);
-            let x = f.ins().select(two, hi, lo);
-            f.ins().ishl_imm(x, kb)
+        let bits = if by_pair.is_some() {
+            // The entry is the token's own: its pair's where it is two bytes.
+            let x = f.ins().ushr_imm(entry, i64::from(TOKEN_PUNCT_ONE));
+            f.ins().ishl_imm(x, i64::from(crate::records::KIND_BITS))
         } else {
+            let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
             let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
             let hi = f.ins().ushr_imm(pc, 32);
             let lo = f.ins().band_imm(pc, 0xffff_ffff);
@@ -4221,14 +4362,43 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.
     if let Some(g) = &regs {
-        let ones = f.ins().iconst(types::I64, -1);
-        let sh = f.ins().band_imm(cv[1], 63);
-        let m = f.ins().ishl(ones, sh);
-        let left = f.ins().band(g.cand, m);
-        let qa = f.ins().ushr_imm(cv[1], 6);
-        let qs = f.ins().ushr_imm(s, 6);
-        let same = f.ins().icmp(IntCC::Equal, qa, qs);
-        let left = f.ins().select(same, left, zero);
+        let left = if let (true, Some(_)) = (common, lean) {
+            // A fused rule's token covers no start after its own (`lean_starts`): its bit
+            // cleared alone, as the lean lexer's `run &= run - 1`. One past its block leaves
+            // none, for a refill.
+            let less = f.ins().iadd_imm(g.cand, -1);
+            f.ins().band(g.cand, less)
+        } else {
+            let ones = f.ins().iconst(types::I64, -1);
+            let sh = f.ins().band_imm(cv[1], 63);
+            let m = f.ins().ishl(ones, sh);
+            let mut left = f.ins().band(g.cand, m);
+            if let Some((wi, pi, chained)) = lean {
+                // Another rule's token may end where the starts left out the byte after it (a
+                // run's byte after a run's, a pair's second): the byte put back, a start.
+                let (w, p) = (g.runs[wi].1, g.runs[pi].1);
+                let wl = f.ins().ishl_imm(w, 1);
+                let inner = f.ins().band(w, wl);
+                let pl = f.ins().ishl_imm(p, 1);
+                let left_out = f.ins().bor(inner, pl);
+                let one = f.ins().iconst(types::I64, 1);
+                let bit = f.ins().ishl(one, sh);
+                let back = f.ins().band(left_out, bit);
+                let put = f.ins().bor(left, back);
+                left = if chained {
+                    // A run of pairs across the token's end: their order is read again from the
+                    // byte after it, by a refill.
+                    let across = f.ins().band(pl, bit);
+                    f.ins().select(across, zero, put)
+                } else {
+                    put
+                };
+            }
+            let qa = f.ins().ushr_imm(cv[1], 6);
+            let qs = f.ins().ushr_imm(s, 6);
+            let same = f.ins().icmp(IntCC::Equal, qa, qs);
+            f.ins().select(same, left, zero)
+        };
         back.push(left.into());
         back.extend(g.runs.iter().map(|&(_, v)| BlockArg::from(v)));
     }

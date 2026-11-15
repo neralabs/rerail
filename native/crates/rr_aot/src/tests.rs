@@ -281,8 +281,10 @@ fn tier1_by_kind() {
             continue;
         }
         let text = line.repeat(65536 / line.len());
-        // Lean counts no comment's token: a comment a line there.
-        let tokens = rr::lean::token_count(&text).max(text.lines().count());
+        // Lean's count has no comment (it keeps them apart, read all the same): each comment
+        // counted too, for both.
+        let comments = text.matches("//").count() + text.matches("/*").count();
+        let tokens = rr::lean::token_count(&text) + comments;
         if only.is_some() {
             let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
             let t0 = thread_cpu();

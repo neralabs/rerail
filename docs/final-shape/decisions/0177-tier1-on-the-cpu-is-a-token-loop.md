@@ -951,3 +951,55 @@ named test.
 | Numbers | 379 | 256 | 107 |
 | Punctuation | 69 | 66 | 54 |
 | Corpus, a node | 149 | 146 | 109 |
+
+## The lean lexer's starts (2026-11-15)
+
+**The problem.** After each token the loop cleared the starts inside
+it: a shift, a mask, and a check that the token ended in its block
+(5 instructions). The lean lexer clears one bit (`run &= run - 1`).
+Its starts already leave out the bytes no token starts at. Every
+token also compared its start with the file's length.
+
+**The change.** The refill builds the lean lexer's starts:
+
+- no byte past the file (`valid`, made once a file);
+- no run byte after a run byte (`word & word << 1`, from the cursor);
+- no pair's second byte (`pairs << 1`), pairs read left to right
+  where they chain (`=>=`), by a carry: a run of first bytes keeps
+  every other bit from its first.
+
+A fused token (`fused_rules`) then covers no start after its own, and
+its tail clears its bit alone. No token compares its start with the
+length.
+
+`lean_starts` proves when this holds, from the bytes' sets:
+
+- no pair byte is a run byte;
+- a pair's second byte and a run byte are no space and no zero;
+- the run rule's first bytes that are no run byte (`#` of
+  `#include`) leave the fused path (`run_fused`).
+
+Another rule's token (a string, a number) may end where a start was
+left out (`12abc`, `"="=>=`). Its tail puts the byte after it back,
+or refills where a chain of pairs runs across its end.
+
+**A punctuation's entry by its pair.** There are now 512 entries, by
+first byte and pair bit, as the lean lexer's `TOKEN[c | pair << 8]`.
+A punctuation's code is one field of its entry, with no choice by its
+length. A fused token's next start needs no max with its first.
+
+Taking out the put-back, or the chain's order, each fails
+`the_cpus_records_are_the_interpreters`. Its new inputs cover these
+cases at the blocks' edges.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Punctuation | 66 | 57 | 54 |
+| Words | 107 | 103 | 98 |
+| Mixed code | 69 | 61 | 63 |
+| Strings | 349 | 368 | 241 |
+| Numbers | 256 | 272 | 107 |
+| Corpus, a node | 146 | 140 | 109 |
+
+Strings and numbers pay for the put-back on the rules' general tail.
+`tier1_by_kind` now counts comments as tokens, for both lexers.
