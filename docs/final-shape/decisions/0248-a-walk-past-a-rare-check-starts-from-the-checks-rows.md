@@ -56,10 +56,5 @@ Planner 128 and engine 52 pass.
   - Left: the check's pass share at the key (a lookahead through the check), or a wider walk in the idle job.
 - **The walks read low** (0.71 to 0.90 of the work). The choice compares walks with the walk of the order that ran,
   so a bias they share cancels; one they do not share remains.
-- **The walks and trials read the rule's tree** (since the merge of Typing-support's handles, t36 item 7).
-  - Moved to handles: the planner's pricing (`decide`, `explore`, `plan_for_rows`, `price_for_delta`), exact
-    statistics, heavy values and the driver. They take `Fields`, `Body` and `RuleKey`.
-  - Still on the tree: `WalkSnap`, `Walker`, `heavy_parts`, `split_spike` and the trials.
-    - They read a tree that `Run::tree` decodes once at a cut or a search request, never per row.
-    - The search request keeps the run's versions, not a copy of the program, so `shared_program` is gone.
-  - Open: port them to `Body`, as the rest of the planner is.
+- **The walks and trials read the rule's tree.** Done in [0256](0256-the-walks-read-the-rules-body.md): they read the
+  body.

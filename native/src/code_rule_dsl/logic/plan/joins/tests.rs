@@ -350,6 +350,8 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
     let rule = &p.rules[0];
+    let rule_v = body::alone(rule).unwrap();
+    let rb = body::nth(&rule_v, 0);
     // Two functions of 30 nodes: 3 calls (kind 1), 2 returns (kind 2), the rest identifiers (kind 3). Function 1's
     // calls have an edge to every node; function 2's, one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -390,7 +392,7 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
         }
         work
     };
-    let walker = Walker::new(rule, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
+    let walker = Walker::new(&rb, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
     for f in [1i64, 2] {
         let start = [f * 1000 + 3, 2];
         assert_eq!(walker.work(&order, &[start.to_vec()]), run(start), "function {f}");
@@ -399,13 +401,13 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     // The same size and calls; the difference is the edges the triangle's atom passes: 90 in function 1, 3 in 2.
     assert_eq!((w1, w2), (215.0, 128.0), "the triangle's edges, measured at the key");
     // A narrow walk (16 bindings a step, of up to 90) is unbiased: its mean over walks is the work.
-    let narrow = Walker::new(rule, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
+    let narrow = Walker::new(&rb, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
     let walks = 400;
     let est = (0..walks).map(|_| narrow.work(&order, &[vec![1003, 2]])).sum::<f64>() / walks as f64;
     assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
     // Decision 0236: narrower still (2 bindings a step, 32 before checks), the triangle's 90 edges pass the probes'
     // limit and are drawn by position (`InRel::probe_sample`); the mean is still the work.
-    let thin = Walker::new(rule, 3, 2, &|n| rels.get(n).cloned(), &|_| None);
+    let thin = Walker::new(&rb, 3, 2, &|n| rels.get(n).cloned(), &|_| None);
     let est = (0..2000).map(|_| thin.work(&order, &[vec![1003, 2]])).sum::<f64>() / 2000.0;
     assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
 }
@@ -446,6 +448,8 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
     let rule = &p.rules[0];
+    let rule_v = body::alone(rule).unwrap();
+    let rb = body::nth(&rule_v, 0);
     // The triangle's functions (decision 0232's test): 30 nodes each, 3 calls, 2 returns; function 1's calls have an
     // edge to every node, function 2's one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -490,7 +494,7 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     let (good, poor) = ([3usize, 2, 0, 1, 4, 5, 6], [0usize, 5, 6, 4, 2, 3, 1]);
     // And the good order with its lead and first check swapped: from every node, the returns' check first.
     let checked = [2usize, 3, 0, 1, 4, 5, 6];
-    let found = snap.walk(rule, None, &steps(&poor), vec![(steps(&poor), 1.0), (steps(&good), 100.0), (steps(&checked), 50.0)], &|| false);
+    let found = snap.walk(&rb, None, &steps(&poor), vec![(steps(&poor), 1.0), (steps(&good), 100.0), (steps(&checked), 50.0)], &|| false);
     let of = |o: &[usize]| found.orders.iter().find(|w| w.0 == steps_of(o)).map(|w| w.1);
     assert_eq!(of(&checked), Some(run(&checked)), "from the lead's rows past its check, with the check's work");
     let (ran, best) = (found.walked.expect("walked"), found.orders.iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("orders"));
@@ -510,6 +514,8 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     // From the calls: each call's function, then the function's nodes, then their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- k(n, 1), r(f, n), r(f, m), k(m, 2).\n.output h\n").unwrap();
     let rule = &p.rules[0];
+    let rule_v = body::alone(rule).unwrap();
+    let rb = body::nth(&rule_v, 0);
     // 1,000 functions of 30 nodes with 5 calls, and 2 of 2,000 nodes with 50: 2% of the calls, 56% of the work.
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     let mut add = |f: i64, nodes: i64, calls: i64| for i in 0..nodes {
@@ -525,15 +531,15 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let heavy: Vec<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: [(("r".to_owned(), 0), heavy)].into_iter().collect() };
     let order: Vec<Step> = [0usize, 1, 2, 3].iter().map(|&at| Step { at, mode: None }).collect();
-    let st = snap.starts(rule, &order, None).expect("measured");
+    let st = snap.starts(&rb, &order, None).expect("measured");
     let (hot, n) = st.hot.as_ref().expect("split by the function's heavy values");
     // The heavy values' calls: the large functions' 100, and 5 for each of the 10 others.
     assert!((n / 150.0 - 1.0).abs() < 0.15, "{n} hot calls, {} drawn", hot.len());
     assert!(hot.len() >= 64, "{} hot rows to walk", hot.len());
-    let found = snap.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false);
+    let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
     let walked = found.walked.expect("walked");
     let plain = WalkSnap { heavy: HashMap::new(), ..snap };
-    let unsplit = plain.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
+    let unsplit = plain.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
     // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0247 thinned by each step's size).
     assert!((walked / truth - 1.0).abs() < 0.15, "{walked} against {truth}");
     assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
@@ -547,6 +553,8 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     // From every node, a check on a kind 10 nodes of 30,000 have, then the function's nodes and their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 9), r(f, m), k(m, 2).\n.output h\n").unwrap();
     let rule = &p.rules[0];
+    let rule_v = body::alone(rule).unwrap();
+    let rb = body::nth(&rule_v, 0);
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     for f in 1..=1000i64 {
         for i in 0..30 {
@@ -560,9 +568,37 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     let order: Vec<Step> = [0usize, 1, 2, 3].iter().map(|&at| Step { at, mode: None }).collect();
     // Decision 0248: the draw of 8,192 rows finds about 3 past the check, too few to measure; through the check's 10
     // rows, every lead row past it is found.
-    let found = snap.walk(rule, None, &order, vec![(order.clone(), 1.0)], &|| false);
+    let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
     // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each.
     assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0));
+}
+
+#[test]
+fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
+    use std::collections::HashMap;
+    // 100 functions of 10 nodes; half the nodes have a kind, whatever it is (`k(n, _)`).
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, m: number)\nh(f, m) :- r(f, n), k(n, _), r(f, m).\n.output h\n").unwrap();
+    let rule = &p.rules[0];
+    let rule_v = body::alone(rule).unwrap();
+    let rb = body::nth(&rule_v, 0);
+    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    for f in 1..=100i64 {
+        for i in 0..10 {
+            let n = f * 100 + i;
+            r.push([f, n]);
+            if i < 5 { k.push([n, 7 + i]); }
+        }
+    }
+    let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
+    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
+    let order: Vec<Step> = [0usize, 1, 2].iter().map(|&at| Step { at, mode: None }).collect();
+    // The check reads every node and passes half; the function's step reads those 500. Probed with the wildcard's
+    // column keyed by a value, no node passed it.
+    let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
+    // Weighted bindings sum in floating point.
+    assert!(found.walked.is_some_and(|w| (w - 1_500.0).abs() < 1e-6), "{:?}", found.walked);
 }
 
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {
