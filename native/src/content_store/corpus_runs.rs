@@ -152,6 +152,9 @@ fn process_gone(pid: i32) -> bool {
     }
 }
 
+/// The least a memo pack holds before it is compacted: below it, its unnamed bytes are left.
+const MEMO_PACK_FLOOR: u64 = 64 << 20;
+
 /// Memo rows of dead plans deleted per pass.
 const PLAN_ROWS_PER_PASS: i64 = 4096;
 
@@ -798,6 +801,7 @@ impl ContentStore {
                     let mut frames_gone = 0;
                     if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
                         let space = super::frames::local_space(&digest);
+                        frames_gone += super::frames::drop_memo_space(tx, &space)?;
                         let frames: i64 = tx.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
                         if frames > 0 {
                             frames_gone = tx.execute_cached("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
@@ -819,6 +823,8 @@ impl ContentStore {
             budget = budget.saturating_sub(n);
         }
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
+        // The memo's pack, once the entries collected left most of it unnamed (decision 0240 §4).
+        pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }

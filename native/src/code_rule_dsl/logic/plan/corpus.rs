@@ -3940,7 +3940,7 @@ fn run_observed(
         let (entries, entry_bytes, admitted) = match memo {
             Some(memo::Memo::Stored(_)) if memoised => {
                 let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
-                store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|f, out| memo_plan.syms.read(f, out)).map_err(|e| Error::Plan(e.to_string()))?
+                store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|b| memo::hold(store, b)).map_err(|e| Error::Plan(e.to_string()))?
             }
             _ => (0, 0, None),
         };

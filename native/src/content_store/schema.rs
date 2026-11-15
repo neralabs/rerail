@@ -727,6 +727,15 @@ CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL,
 -- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
+-- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
+-- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
+-- content's SHA-256 and its document key. A path's contents are ordered by where they were appended.
+CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
+    digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
+    raw INTEGER NOT NULL, PRIMARY KEY (space, part)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
+-- The packs the entries are in: the newest is appended to.
+CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
 "#;
 
 impl ContentStore {

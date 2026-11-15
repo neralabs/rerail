@@ -150,6 +150,24 @@ impl Builder {
             self.rels.push((name, Vec::new(), usize::from(!rows.is_empty()), Vec::new()));
         }
     }
+    /// A relation of `types` from its rows, flat, in the order and number given (a memo entry's, decision 0240 §4:
+    /// replayed as it was made). Readers of the run's outputs ask for `rows`, which sorts them.
+    pub fn rows_as_is(&mut self, name: &str, types: &[u8], rows: Vec<i64>) {
+        let name = self.text(name);
+        let k = types.len();
+        if k == 0 {
+            self.rels.push((name, Vec::new(), 0, Vec::new()));
+            return;
+        }
+        let n = rows.len() / k;
+        let mut cols = vec![0i64; n * k];
+        for (i, row) in rows.chunks_exact(k).enumerate() {
+            for (c, &v) in row.iter().enumerate() {
+                cols[c * n + i] = v;
+            }
+        }
+        self.rels.push((name, types.to_vec(), n, cols));
+    }
     /// A relation from the lines a run gathered for it (tab-separated, as `decoded_outputs` makes them): a column is
     /// a node column where `nodes` says and every value is an integer, an int column where `ints` says and every value
     /// is one as it is written, otherwise text. A node column holding any other value is held as the text the writer
@@ -584,6 +602,13 @@ impl Image {
         }
         Ok(out)
     }
+    /// One image held in `words` (its first `len` bytes), checked and read in place: no copy.
+    pub fn own(words: Vec<u128>, len: usize) -> Result<Image, String> {
+        if len > words.len() * 16 {
+            return Err(bad("an image longer than its buffer"));
+        }
+        Image::at(&std::sync::Arc::new(words), 0, len)
+    }
     /// One image, base or overlay, read alone (the image a run just made).
     pub fn one(bytes: &[u8]) -> Result<Image, String> {
         let mut words = vec![0u128; bytes.len().div_ceil(16)];
@@ -712,6 +737,14 @@ impl Image {
     /// The relations it holds, by name.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.u64s(R::Rels).chunks_exact(5).map(|r| self.string(r[0] as u32))
+    }
+    /// The relations it holds, with their names, in the order they were put.
+    pub fn relations(&self) -> impl Iterator<Item = (&str, Rel<'_>)> {
+        (0..self.u64s(R::Rels).len() / 5).map(|i| (self.string(self.u64s(R::Rels)[i * 5] as u32), self.rel_at(i)))
+    }
+    /// How many strings it holds.
+    pub fn strings(&self) -> usize {
+        self.u32s(R::Ends).len()
     }
     /// Relation `name`, if it holds it.
     pub fn rel(&self, name: &str) -> Option<Rel<'_>> {

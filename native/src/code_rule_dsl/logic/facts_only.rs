@@ -55,6 +55,10 @@ const FACT_STORE: &[&str] = &[
     "frame_part_used",
     "frame_program_used",
     "frame_used",
+    // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
+    // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
+    "memo_entries",
+    "memo_packs",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.

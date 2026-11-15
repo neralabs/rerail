@@ -4,8 +4,8 @@
 //!
 //! The rows are replayable as they are because their values are stable across runs: a document's key is a function
 //! of its path (`doc_keys`), a node is `key << 32 | index` in its tape (a function of the content and the grammar),
-//! a kind is its grammar code, and a symbol is an atom of the persistent store, which never gives one out again
-//! (decision 0049): the run interns into it. The plan names everything else the rows depend on: the engine build, the
+//! a kind is its grammar code, and a symbol is stored as its string (decision 0240 §4, `image`), and read as the
+//! reading process's atom of it. The plan names everything else the rows depend on: the engine build, the
 //! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
 //! it (decision 0053); the document key is in the entry, and an entry under another key is a miss.
 
@@ -13,13 +13,12 @@ use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreRes
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-mod numbering;
-use numbering::Stored;
+mod image;
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
-const SCHEMA: u32 = crate::content_store::live_fact_schema(7);
+const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
 
 /// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
 /// file hands on its base rows as an evaluated one does.
@@ -84,7 +83,7 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
 /// its atoms included).
 pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local/v3\0");
+    hash.update(b"rerail.corpus-local/v4\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
@@ -283,19 +282,6 @@ impl Syms {
         self.0.get(key).cloned()
     }
 
-    /// The store's ids an entry's frame names in its symbol columns, as the frame holds them: those its reader holds
-    /// before a run's waves (`ContentStore::hold_frame_symbols`), so a wave decodes an entry another process stored
-    /// without reading the store.
-    pub(super) fn read(&self, frame: &crate::content_store::AdmittedFrame, out: &mut Vec<i64>) -> StoreResult<()> {
-        let Ok(entry) = Stored::decoded(&frame.rows()?, &|_| true) else { return Ok(()) };
-        for (key, (w, rows)) in entry.rows() {
-            let Some(cols) = self.columns(key, *w) else { continue };
-            for row in rows.chunks_exact((*w).max(1)) {
-                out.extend(row.iter().zip(&cols).filter(|(_, s)| **s).map(|(v, _)| *v));
-            }
-        }
-        Ok(())
-    }
 }
 
 /// A memo's program (its key, `plan_digest`'s input) with its symbol columns: what reads and writes its entries.
@@ -338,78 +324,6 @@ fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(Stri
     None
 }
 
-/// Maps the symbols of `entries`' rows with `f` (decision 0170), by a memo plan's columns (`syms`), in one call: every
-/// symbol of the batch gathered, mapped, and put back. `strict` (forked): an entry read without its plan's columns, or
-/// of a relation it does not declare, is refused, its rows may name ids of the other numbering; else such rows are
-/// left as they are.
-fn map_entries(entries: &mut [Entry], syms: Option<&Syms>, strict: bool, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
-    // The refusal names what was not mapped: a key whose columns the plan does not register is a miss of every
-    // entry holding it, for as long as the run is forked.
-    let refused = |what: &str| StoreError::Invalid(format!("{} ({what})", crate::content_store::atoms::DIVERGED_TEXT));
-    let Some(syms) = syms else {
-        return if strict { Err(refused("read without the plan's symbol columns")) } else { Ok(()) };
-    };
-    // Each key's symbol columns, in the entries' order, gathered once and put back in the same order.
-    let mut columns: Vec<Option<Vec<usize>>> = Vec::new();
-    let mut values: Vec<i64> = Vec::new();
-    for entry in entries.iter() {
-        for (key, (w, rows)) in entry.rows.iter() {
-            let Some(cols) = syms.columns(key, *w) else {
-                if strict {
-                    return Err(refused(&format!("{key}, {w} wide: no registered columns")));
-                }
-                columns.push(None);
-                continue;
-            };
-            if cols.len() != *w {
-                return Err(refused(&format!("{key}: {w} wide, its columns {}", cols.len())));
-            }
-            let at: Vec<usize> = (0..*w).filter(|&c| cols[c]).collect();
-            if *w > 0 {
-                for row in rows.chunks_exact(*w) {
-                    values.extend(at.iter().map(|&c| row[c]));
-                }
-            }
-            columns.push(Some(at));
-        }
-    }
-    if values.is_empty() {
-        return Ok(());
-    }
-    f(&mut values)?;
-    let (mut columns, mut values) = (columns.into_iter(), values.into_iter());
-    for entry in entries.iter_mut() {
-        for (_, (w, rows)) in entry.rows.iter_mut() {
-            let Some(at) = columns.next().expect("one a key") else { continue };
-            if *w > 0 {
-                for row in rows.chunks_exact_mut(*w) {
-                    for &c in &at {
-                        row[c] = values.next().expect("one a symbol");
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The memo's relation in its plan's space: one frame per entry (decision 0146).
-pub(super) fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
-    crate::content_store::FrameRel { name: "local".to_owned(), ident: *plan }
-}
-
-/// Where an entry's outputs are kept beside it, under the same part (decision 0117 step 1): its nodes, its tree
-/// counts (`own:` rows) and its lines. A run whose kept inputs hold an unchanged file's export and base rows reads
-/// only this, not the entry's rows.
-fn outputs_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
-    crate::content_store::FrameRel { name: "local_out".to_owned(), ident: *plan }
-}
-
-/// An entry's outputs (`outputs_rel`): its nodes, its tree counts and its lines.
-fn outputs_of(e: &Entry) -> Entry {
-    Entry { key: e.key, nodes: e.nodes, rows: e.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, v)| (r.clone(), v.clone())).collect(), lines: e.lines.clone() }
-}
-
 /// The part an entry of content `digest` at `path` is kept under (0103 §8's `local_key(d, h, p)`, its `p` the space).
 fn part_of(digest: &[u8; 32], path: &str) -> i64 {
     let mut hash = Sha256::new();
@@ -420,36 +334,20 @@ fn part_of(digest: &[u8; 32], path: &str) -> i64 {
     i64::from_le_bytes(h[..8].try_into().expect("8 bytes")) & i64::MAX
 }
 
-/// What an entry's frame says it was derived from (its `reads`): its path, with its document key, and its content.
-fn frame_reads(path: &str, key: i64, digest: &[u8; 32]) -> Vec<(String, u64)> {
-    let mut reads = vec![(path.to_owned(), key as u64)];
-    reads.extend(digest.chunks_exact(8).map(|c| ("sha256".to_owned(), u64::from_le_bytes(c.try_into().expect("8 bytes")))));
-    reads
-}
-
-/// A memo entry as its stored frame holds it, not decoded: the document's path and key, and its content's digest.
+/// A memo entry as stored, not decoded: the document's path and key, its content's digest, and its bytes.
 #[derive(Clone)]
 pub struct Frame {
     pub path: String,
-    /// The symbol columns of the memo plan whose entry it is (`Program`); none read outside a run (`read_run`).
-    syms: Option<Syms>,
     key: i64,
     digest: [u8; 32],
-    frame: std::sync::Arc<crate::content_store::AdmittedFrame>,
+    blob: std::sync::Arc<crate::content_store::MemoBlob>,
+    /// The atoms its symbols are read as: its reader's store's.
+    atoms: std::sync::Arc<crate::content_store::atoms::Atoms>,
 }
 
 impl Frame {
-    fn of(frame: std::sync::Arc<crate::content_store::AdmittedFrame>, syms: Option<Syms>) -> Option<Frame> {
-        let reads = &frame.stored.reads;
-        let (path, key) = reads.first()?.clone();
-        if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
-            return None;
-        }
-        let mut digest = [0u8; 32];
-        for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
-            c.copy_from_slice(&v.to_le_bytes());
-        }
-        Some(Frame { path, syms, key: key as i64, digest, frame })
+    fn of(blob: std::sync::Arc<crate::content_store::MemoBlob>, atoms: std::sync::Arc<crate::content_store::atoms::Atoms>) -> Frame {
+        Frame { path: blob.path.clone(), key: blob.key, digest: blob.digest, blob, atoms }
     }
 
     fn entry(&self) -> StoreResult<Entry> {
@@ -457,10 +355,13 @@ impl Frame {
     }
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-        // Read from the store (decision 0170): its symbols are the store's, this process's once mapped (another
-        // process's past this one's end, or any once forked).
-        Stored::decoded(&self.frame.rows()?, keep)?.to_process(self.syms.as_ref(), self.key, self.frame.store_atoms().as_deref())
+        Ok(Entry { key: self.key, ..image::decode(&self.blob.bytes, self.blob.raw, keep, &self.atoms)? })
     }
+}
+
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
+pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
+    image::hold(&blob.bytes, blob.raw, &store.atoms_handle())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -470,10 +371,11 @@ pub fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMa
     let Some((plan, sources, relations)) = store.corpus_run_of(root)? else { return Ok(None) };
     let ids: Vec<SourceId> = sources.into_iter().map(SourceId::from_raw).collect();
     let contents: HashSet<[u8; 32]> = store.source_digests(&ids)?.into_iter().flatten().collect();
+    let atoms = store.atoms_handle();
     let mut frames: Vec<Frame> = store
-        .admit_all_parts(&crate::content_store::local_space(&plan), &entry_rel(&plan))?
-        .into_iter()
-        .filter_map(|(_, f)| Frame::of(f, None))
+        .all_memo_entries(&crate::content_store::local_space(&plan))?
+        .into_values()
+        .map(|b| Frame::of(b, std::sync::Arc::clone(&atoms)))
         .filter(|f| contents.contains(&f.digest))
         .collect();
     frames.sort_by(|a, b| a.path.cmp(&b.path));
@@ -520,21 +422,9 @@ impl Found {
         self.projected(key, &|_| true)
     }
 
-    /// The whole entry this was found for, when it is a frame of its outputs (`Memo::found_outputs_all`): its frame
-    /// of rows, by its content's digest, read from the store. A held entry is whole already. It is asked only when the
-    /// kept inputs were not taken, inside the waves; the waves' snapshot holds no entry of a file looked up before
-    /// them (`admit_memo_entries`), so a read of the snapshot found none ("its memo entry is gone").
-    pub(super) fn whole(&self, store: &ContentStore, program: &Program) -> StoreResult<Option<Found>> {
-        match self {
-            Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
-            // From the store, inside the waves too: a hit read for its outputs alone was looked up before the first
-            // wave, and the snapshot holds no entry of a path looked up then (`admit_memo_entries`). Read from the
-            // snapshot, its entry was always missing when the kept inputs were not taken (O-store-single-program).
-            Found::Frame(f) => {
-                let plan = plan_digest(program);
-                Ok(by_digest_from(store, program, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
-            }
-        }
+    /// The whole entry this was found for: an entry is found whole (decision 0240 §4: no frame of its outputs alone).
+    pub(super) fn whole(&self, _store: &ContentStore, _program: &Program) -> StoreResult<Option<Found>> {
+        Ok(Some(self.clone()))
     }
 
     /// Decode only demanded relations. Skipped relations' rows are checked, not kept.
@@ -543,18 +433,7 @@ impl Found {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
                 lines: e.lines.clone() },
-            // Forked (decision 0170), an entry whose symbols cannot be mapped (its relation's columns not
-            // registered) is a miss: its rows may name the other numbering's ids.
-            Found::Frame(f) => match f.projected(keep) {
-                Err(e) if e.to_string().contains(crate::content_store::atoms::DIVERGED_TEXT) => {
-                    static SAID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
-                        eprintln!("rerail: memo entry of {} refused: {e}", f.path);
-                    }
-                    return Ok(None);
-                }
-                entry => entry?,
-            },
+            Found::Frame(f) => f.projected(keep)?,
         };
         Ok(Some(entry).filter(|e| e.key == key))
     }
@@ -577,45 +456,29 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
     Ok(out)
 }
 
-/// The frames of `wanted`, each `(at, content digest)` of the document at `paths[at]`: a frame's part is its
-/// content's and path's, and the frame names both. No source is read: in the waves, the frames are in memory.
+/// The entries of `wanted`, each `(at, content digest)` of the document at `paths[at]`: an entry's part is its
+/// content's and path's, and the entry names both. No source is read. Before the waves, from the store (the
+/// snapshot holds a run's entries only for what its waves look up: `admit_memo_entries`); in them, from the
+/// snapshot, in memory. A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept
+/// manifest names its content (`collect_unreachable_frames`), not by the runs that read it.
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
-    by_digest_in(store, program, paths, wanted, entry_rel(&plan_digest(program)))
-}
-
-/// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
-fn by_digest_in(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
-    let plan = &plan_digest(program);
-    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
-    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
-    let stored = rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves();
-    by_digest_from(store, program, paths, wanted, rel, stored)
-}
-
-/// `by_digest_in`, from the store (`stored`) or from the run's snapshot.
-fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
-    let plan = &plan_digest(program);
+    let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
+    let space = crate::content_store::local_space(&plan_digest(program));
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
-    let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
-    let space = crate::content_store::local_space(plan);
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    let mut frames = if stored {
-        // Read from the store, its entries' symbols are held as they are read (decision 0170): a wave decodes them
-        // without reading the store. The snapshot's are held as they are admitted (`admit_memo_entries`).
-        let frames = store.admit_parts_stored(&space, &rel, &parts)?;
-        store.hold_frame_symbols(frames.values(), &|f, out| program.syms.read(f, out))?;
-        frames
-    } else {
-        store.admit_parts_of(&space, &rel, &parts)?
-    };
-    // A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept manifest names its
-    // content (`collect_unreachable_frames`), not by the runs that read it.
+    let mut blobs = store.memo_entries(&space, &parts, stored)?;
+    if stored {
+        for blob in blobs.values() {
+            hold(store, blob)?;
+        }
+    }
+    let atoms = store.atoms_handle();
     let mut out = Vec::new();
     for (i, digest, part) in wanted {
-        let Some(frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
+        let Some(blob) = blobs.remove(&part) else { continue };
         // A part another content or path collides into is a miss.
-        if frame.digest == digest && frame.path == docs[i].1 {
-            out.push((i, Found::Frame(frame)));
+        if blob.digest == digest && blob.path == paths[i] {
+            out.push((i, Found::Frame(Frame::of(blob, std::sync::Arc::clone(&atoms)))));
         }
     }
     Ok(out)
@@ -661,14 +524,14 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
     Ok(found)
 }
 
-/// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their frames in
-/// one transaction (decision 0146). Queued behind the run (decision 0102): encoded and written by the store's
+/// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their bytes in one
+/// append to the store's pack and their rows in one transaction (decision 0240 §4). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
     off();
     let plan = plan_digest(program);
-    // The atom table the entries' symbols are numbered by: the writer maps them with it, or refuses them (below).
+    // The atom table the entries' symbols are numbered by: the writer reads their strings from it.
     let made_under = store.atoms_handle();
     let atoms = made_under.len();
     if let Some((key, v)) = foreign_symbol(&entries.iter().map(|e| &e.3).collect::<Vec<_>>(), &program.syms, atoms) {
@@ -704,29 +567,17 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
     }
     let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
     let syms = program.syms.clone();
+    // Its rows hold no atom's id: each symbol is written as its string (decision 0240 §4).
     store.write_back_syms(
-        crate::content_store::write_back::Syms::Mapped,
+        crate::content_store::write_back::Syms::None,
         "the memo's entries",
         bytes,
         keys,
         Box::new(move |store| {
-            // The entries' symbols are of the table they were made under: mapped by another (a second table of this
-            // store in the process), they would name other strings, or no atom (`symbol 4291 is no atom of this
-            // process's (it holds 2765)`, seen twice in concurrent cold runs). Refused, never mapped by the wrong one.
-            let writes_with = store.atoms_handle();
-            if !std::sync::Arc::ptr_eq(&made_under, &writes_with) {
-                return Err(StoreError::Invalid(format!(
-                    "the memo's entries were made under another atom table of this store than its writer's ({} atoms, forked {}; the writer's {} atoms, forked {})",
-                    made_under.len(), made_under.forked(), writes_with.len(), writes_with.forked()
-                )));
-            }
             let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
             let mut stored = store.source_digests(&ids)?.into_iter();
-            // Each entry's symbols as the store numbers them, in the writer's transaction (decision 0170): every
-            // entry's in one call, where this process forked from the store.
-            let mapped = numbering::to_store(&held.iter().map(|(_, _, e)| &**e).collect::<Vec<_>>(), &syms, store)?;
             let mut puts = Vec::with_capacity(held.len());
-            for ((content, path, _), e) in held.iter().zip(&mapped) {
+            for (content, path, e) in &held {
                 let digest = match content {
                     Content::Stored(_) => stored.next().flatten(),
                     Content::Unstored(d) => Some(*d),
@@ -734,27 +585,21 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
                 };
                 // A source collected since the run found it leaves the entry unwritten: the next run misses it.
                 let Some(digest) = digest else { continue };
-                let part = part_of(&digest, path);
-                puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.encode() });
-                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.outputs().encode() });
+                // Each symbol as its string, read from the table the entry was made under: no numbering to map,
+                // forked or not, and no other table of the store to misread it by.
+                let (bytes, raw) = image::encode(e, &syms, &made_under)?;
+                puts.push(crate::content_store::MemoPut { part: part_of(&digest, path), path: path.clone(), digest, key: e.key, bytes, raw });
             }
-            let space = crate::content_store::local_space(&plan);
-            store.keep_frames(&space, &puts, &[], None)?;
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
             // one file of the 20, was kept 32 runs: 450 MB of one space).
-            let mut keys: Vec<u64> = puts.iter().map(|p| p.digest).collect();
-            keys.sort_unstable();
-            keys.dedup();
-            for rel in [entry_rel(&plan), outputs_rel(&plan)] {
-                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS, &keys)?;
-            }
-            Ok(())
+            store.put_memo_entries(&crate::content_store::local_space(&plan), puts, MEMO_CONTENTS)
         }),
     );
     Ok(())
 }
 
 impl Entry {
+    /// The bytes the entry holdsimpl Entry {
     /// The bytes the entry holds (its rows and lines), about.
     fn bytes(&self) -> usize {
         self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
@@ -911,23 +756,11 @@ impl Memo<'_> {
         }
     }
 
-    /// `found_all`, of the entries' outputs alone (`outputs_rel`): a stored memo's frames of them, else (a held
-    /// entry, queued by this process or a session's) the entry. `None` where the store keeps no outputs frame (an
-    /// entry written before them): the caller finds the whole entry.
+    /// `found_all`, for a file whose outputs alone are read (decision 0117 step 1): an entry is read whole, its
+    /// other relations not decoded (`Found::projected`). Its outputs were a frame of their own (`local_out`), a
+    /// second copy of them written with every entry; decision 0240 §4.
     pub(super) fn found_outputs_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
-        let Memo::Stored(store) = self else { return self.found_all(program, docs) };
-        off();
-        let plan = plan_digest(program);
-        let mut out: Vec<Option<Found>> = docs.iter().map(|(c, p)| queued_content(*c, p, program).and_then(|k| store.pending::<Entry>(&k)).map(Found::Held)).collect();
-        let stored: Vec<usize> = (0..docs.len()).filter(|i| out[*i].is_none() && matches!(docs[*i].0, Content::Stored(_))).collect();
-        let digests = store.source_digests(&stored.iter().map(|i| docs[*i].0.stored().expect("stored")).collect::<Vec<_>>())?;
-        let mut wanted: Vec<(usize, [u8; 32])> = stored.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
-        wanted.extend((0..docs.len()).filter(|i| out[*i].is_none()).filter_map(|i| match docs[i].0 { Content::Unstored(d) => Some((i, d)), _ => None }));
-        let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
-        for (i, f) in by_digest_in(store, program, &paths, wanted, outputs_rel(&plan))? {
-            out[i] = Some(f);
-        }
-        Ok(out)
+        self.found_all(program, docs)
     }
 
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
@@ -987,26 +820,18 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn projection_preserves_outputs_and_validates_skipped_payloads() {
+    fn a_held_entry_is_projected_and_keyed() {
         let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
-        entry.rows.insert("wanted".into(), (2, vec![5,9]));
-        entry.rows.insert("unused".into(), (2, vec![1;2000]));
+        entry.rows.insert("wanted".into(), (2, vec![5, 9]));
+        entry.rows.insert("unused".into(), (2, vec![1; 2000]));
         entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
         let keep = |r: &str| r == "wanted";
-        let rows = Stored::unmapped(entry.clone()).encode();
-        let entry_copy = entry.clone();
-        let projected = Entry { key: 5, ..Stored::decoded(&rows, &keep).unwrap().into_unmapped() };
-        assert_eq!(projected.rows.len(),1);
-        assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
-        assert_eq!(projected.lines,entry.lines);
-        assert_eq!(projected.nodes,100);
-        let held = Found::Held(std::sync::Arc::new(entry));
-        assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
-        assert!(held.projected(6,&keep).unwrap().is_none());
-        let mut cut = Stored::unmapped(entry_copy.clone()).encode();
-        cut.rows.truncate(cut.rows.len() - 1);
-        assert!(Stored::decoded(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
-        assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
+        let held = Found::Held(std::sync::Arc::new(entry.clone()));
+        let projected = held.projected(5, &keep).unwrap().unwrap();
+        assert_eq!(projected.rows.keys().collect::<Vec<_>>(), ["wanted"]);
+        assert_eq!((projected.lines, projected.nodes), (entry.lines, 100));
+        assert!(held.projected(6, &keep).unwrap().is_none());
+        assert_ne!(with_tree_demand([0; 32], false), with_tree_demand([0; 32], true), "wider consumers cannot hit narrower frames");
     }
 
     /// An entry symbol past the process's atoms is refused where the entry is made (decision 0170): a read gave the
@@ -1040,28 +865,11 @@ pub mod tests {
         assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
         let mut entry = Entry { key: 1, ..Entry::default() };
         entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));
-        map_entries(std::slice::from_mut(&mut entry), Some(&syms), true, |v| {
-            v.iter_mut().for_each(|x| *x += 100);
-            Ok(())
-        })
-        .expect("a posting's columns are known");
-        assert_eq!(entry.rows["own:postings:field:f"].1, vec![65_555, 10], "not mapped");
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "nor taken for an atom");
+        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "not taken for an atom");
     }
 
     #[test]
-    fn an_entry_round_trips_and_keys_are_stable() {
-        let mut entry = Entry { key: 5, nodes: 7, ..Entry::default() };
-        entry.rows.insert("fl1_violation_at".into(), (3, vec![5, 1, 2, 5, 3, 4]));
-        entry.lines.insert("violation".into(), (vec![1], vec!["r\t21474836480\tx".into()]));
-        entry.rows.insert("wide".into(), (11, (0..22).collect()));
-        entry.rows.insert("empty".into(), (2, Vec::new()));
-        entry.lines.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], vec![String::new(), "ünïcode".into()]));
-        let all = |_: &str| true;
-        assert_eq!(Stored::decoded(&Stored::unmapped(entry.clone()).encode(), &all).map(|e| Entry { key: 5, ..e.into_unmapped() }).unwrap(), entry);
-        let mut cut = Stored::unmapped(entry.clone()).encode();
-        cut.rows.truncate(cut.rows.len() - 1);
-        assert!(Stored::decoded(&cut, &all).is_err());
+    fn keys_are_stable() {
         let paths = ["a.py".to_owned(), "b/c.py".to_owned()];
         let keys = doc_keys(&paths);
         assert_eq!(keys, doc_keys(&paths));
