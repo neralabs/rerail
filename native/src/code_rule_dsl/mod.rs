@@ -5023,8 +5023,6 @@ pub(crate) fn install_languages() {
     logic::strings::install_functors(functors::register_functors);
     // The run's executors, by binding.
     facts::core::install_executors(logic::lanes::executor_for);
-    // The store a run's documents are numbered in, which the long texts are held under.
-    facts::vtab::syntax::install_text_store(logic::plan::corpus::tape_cache_path);
     // A tape's prefilter rows, which the push path derives.
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
