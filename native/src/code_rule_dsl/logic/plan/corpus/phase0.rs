@@ -161,6 +161,16 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     Ok(found.into_iter().map(|g| g.expect("each seed's graph")).collect())
 }
 
+/// The include graphs of program files `paths`, derived by one run of `bootstrap.rr` and kept: files read one by one
+/// after it find theirs (`rr::read_file`, `parse_file`), as a pack's programs do in a run (`settings::program_texts`).
+/// Read one by one with none kept, each file is a run of its own: a test over a pack's programs was hundreds of corpus
+/// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
+/// to its read, which derives its graph again and reports the error.
+pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonicalize().ok()).map(Seed::File).collect();
+    let _ = graphs(&seeds);
+}
+
 /// Keeps the graph of a text made from a program file (`tools::program_texts`), taken from the file's graph rather
 /// than from another run of `bootstrap.rr`: each name the text includes is a library module the file's graph holds,
 /// found as `bootstrap.rr` finds a text's names (the library alone). The graph is the one that run would give, so

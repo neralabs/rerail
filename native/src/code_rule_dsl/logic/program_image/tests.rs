@@ -66,7 +66,9 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 
 /// Every seventh pack program, as the text's test samples them.
 fn pack_programs() -> Vec<(std::path::PathBuf, Program)> {
-    pack_files().into_iter().step_by(7).filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file(&p).ok()?))).collect()
+    let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
+    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file(&p).ok()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written.
@@ -939,7 +941,7 @@ fn fields_agree(p: &Program) {
 #[test]
 fn a_versions_fields_say_what_the_tree_says() {
     let mut n = 0;
-    for (path, prog) in pack_programs() {
+    for (_, prog) in pack_programs() {
         if encode(&prog).is_err() {
             continue;
         }

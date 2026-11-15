@@ -3316,6 +3316,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
         .filter(|p| p.extension().is_some_and(|e| e == "rr"))
         .collect();
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
     let (mut read, mut differ) = (0, Vec::new());
     for path in paths.iter().skip(k).step_by(n) {
         let Ok((program, _)) = super::read_file(path) else { continue };
@@ -3420,6 +3421,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     }
     // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p));
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
