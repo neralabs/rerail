@@ -118,8 +118,67 @@ Failures seen in this worktree:
 
 - the stack overflow above, which is real;
 - `language::adapter::kit::shared_walks_read_the_kinds_they_named` and
-  `slice::tests::the_backends_find_the_same_keys_on_real_files`, not yet classified;
+  `slice::tests::the_backends_find_the_same_keys_on_real_files`, classified below;
 - the rest need the pack test data, which a fresh worktree lacks (`npm run fixtures:pull`).
+
+### Two tiers, and the gate on another Mac (2026-11-15)
+
+cargo-nextest runs each test in a process of its own, and reports each test's time. The stack
+overflow then fails one test, not the run, and a process-wide session no longer queues the
+session tests. `.config/nextest.toml` sets two tiers:
+
+```
+cargo nextest run --lib                   # the quick tier: all but the slow tests
+cargo nextest run --lib --profile gate    # everything (a phase gate)
+```
+
+The slow tier is the tests that took 20 s or more each in a full run: 45 tests, named by family
+in the config. A filter on the command line narrows a tier; `--ignore-default-filter` runs a slow
+test by name.
+
+`scripts/dev/test-remote` sends this checkout to a farm host through the mirror and runs a command
+there (`scripts/dev/test-remote -- cargo nextest run --lib --profile gate`). The host builds in
+its own warm `target/`, so the suite spends the host's CPU, not this machine's. On an M3 Max at
+`-j 16`:
+
+| Run | Tests | Wall |
+|---|---|---|
+| The gate | 2,639 | 234 s |
+| The quick tier | 2,594 | 87 s |
+
+In the gate's run the tests took 3,460 test-seconds in all:
+
+| Per-test time | Tests | Their total time |
+|---|---|---|
+| under 1 s | 2,319 | 252 s |
+| 1–5 s | 216 | 469 s |
+| 5–20 s | 61 | 587 s |
+| 20–60 s | 30 | 960 s |
+| 60 s or more | 13 | 1,191 s |
+
+The longest test, `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` at 227 s,
+bounds the gate's wall time. The next is `rr::tests::dropping_unreached_clauses_…_script_packs`
+at 136 s.
+
+The gate's 14 failures:
+
+- **11 need the pack test data**, which neither machine has: the ruff, sqlfluff and eslint-plugin-vue
+  locks were rewritten after the data moved to S3 (#177, #191), so git history cannot restore it,
+  and a pull needs S3 access. These are the `python_shortcuts_change_no_pack_result_*` tests,
+  `reproduces_sqlfluff_rf01_and_al05`, `vue::view::tests::corpus`, the three that read
+  `pyflakes/F601.py`, and three more that read the pack's upstream files and found few or none:
+  `the_backends_find_the_same_keys_on_real_files` ("1 files"), `the_gate_catches_a_widened_walk`
+  and `spilled_walks_find_the_cpus_roots`.
+- **1 needed `node`**, which the host's ssh PATH lacked (`sql_sessions_use_shared_explain_profiles…`);
+  `test-remote` now puts Homebrew's bin on it, and the test passes there.
+- **2 were real, and are fixed:**
+  - `executors_are_shared`: the MSL compile thread (`metal/src/runtime.rs`) and the cost model's
+    reader (`logic/costs.rs`) made their threads themselves; both are `exec::service` threads now.
+    The build script's grammar threads (`build_grammars.rs`) are an exception: they run in cargo,
+    not in the engine.
+  - `shared_walks_read_the_kinds_they_named`: the brace-format tree names a kind `attribute` (a
+    field's `.name`), and the format family's scope is refused. The walk kinds are now checked only
+    for families with scopes.
 
 ## 3. Relax
 
