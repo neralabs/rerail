@@ -166,3 +166,58 @@ fn a_fused_first_step_cut_leaves_the_rows_after_its_row() {
     assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
     closure::semi_naive_here(false);
 }
+
+/// A first step that scans many rows is walked in morsels on the pool (`run_join_in_each`'s `morsels`): the same
+/// fixpoint and step counts as one walk's. Under a budget, each morsel stops at its share of it: the cut's rows done
+/// and left are all the delta's, and the wave going on from the rows left reaches the same fixpoint.
+#[test]
+fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
+    if crate::threads::max() < 2 {
+        return;
+    }
+    // Chains of three: 0 → 1 → 2, 3 → 4 → 5, …: 40,000 edges, each node reaching at most two others.
+    let edges: Vec<String> = (0..60_000).filter(|i| i % 3 != 2).map(|i| format!("({i}, {})", i + 1)).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    closure::semi_naive_here(true);
+    let spec = format!("name mors\nrel path ii\njoin 0 0 {}", hex(&format!("pos d0 v0 v1\npos {input} v1 v2\nhead v0 v2")));
+    let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };
+    let unlimited = |whole: bool| {
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        let before = morsels_walked();
+        let go = || run(&db, "mors", 0).unwrap();
+        let report = if whole { walks_whole(go) } else { go() };
+        assert_eq!(report.split_whitespace().last(), Some("1"), "{report}");
+        let walked = morsels_walked() - before;
+        let counts = step_counts(&db, "mors").unwrap();
+        close(&db, "mors").unwrap();
+        (rows(&db), counts, walked)
+    };
+    let (one, one_counts, none) = unlimited(true);
+    let (many, many_counts, walked) = unlimited(false);
+    assert_eq!(none, 0, "under walks_whole, no morsels");
+    assert!(walked > 0, "the first wave's scan of 40,000 rows is walked in morsels");
+    assert_eq!(many, one, "the same fixpoint");
+    assert_eq!(one.len(), 60_000, "each chain's three pairs");
+    assert_eq!(many_counts, one_counts, "the same step counts");
+    // Under a budget: cut, the morsels' rows left read on, to the same fixpoint.
+    let db = connection();
+    setup(&db);
+    open(&db, &spec).unwrap();
+    set_budgets(&db, "mors", &[(0, Some(30_000))]).unwrap();
+    let before = morsels_walked();
+    let report = run(&db, "mors", 1).unwrap();
+    assert_eq!(report.split_whitespace().last(), Some("5"), "cut: {report}");
+    assert!(morsels_walked() > before, "the cut walk ran in morsels");
+    let cut = take_cut(&db, "mors").unwrap().expect("a cut");
+    assert!(cut.led && cut.done > 0 && cut.left > 0 && cut.done + cut.left == 40_000, "{cut:?}");
+    set_budgets(&db, "mors", &[(0, None)]).unwrap();
+    assert_eq!(run(&db, "mors", 0).unwrap().split_whitespace().last(), Some("1"));
+    close(&db, "mors").unwrap();
+    assert_eq!(rows(&db), one, "the fixpoint is the unlimited run's");
+    closure::semi_naive_here(false);
+}

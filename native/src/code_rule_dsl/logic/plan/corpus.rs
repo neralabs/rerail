@@ -5336,7 +5336,8 @@ fn run_observed(
                 // A panic is the chunk's error: the main thread waits for its slot.
                 let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     taken.map_or_else(open_worker, Ok).and_then(|(wdb, wmodules)| {
-                        let r = evaluate(task, &wdb, &wmodules, None);
+                        // Beside the other chunks: its joins walk whole, the pool is busy with chunks.
+                        let r = crate::code_rule_dsl::logic::native::setfix::walks_whole(|| evaluate(task, &wdb, &wmodules, None));
                         worker_conns.lock().push((wdb, wmodules));
                         r
                     })

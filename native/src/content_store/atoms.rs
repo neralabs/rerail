@@ -400,20 +400,22 @@ static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BT
 ///
 /// Only atoms made in `arena` (the component's scope's) are reserved: another run's work this thread helps with
 /// while its component waits makes its atoms pending as usual.
+///
+/// Reservations nest: a component this thread runs while its own waits (a job the wait runs, such as another
+/// component's, while a join's morsels finish) reserves its atoms as its own, and the waiting one's reservation
+/// goes on when it ends.
 pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
-    RESERVING.with_borrow_mut(|r| {
-        assert!(r.is_none(), "one reservation per thread at a time");
-        *r = Some((Arc::as_ptr(arena) as usize, Vec::new()));
-    });
-    Reservation(())
+    Reservation(RESERVING.with_borrow_mut(|r| r.replace((Arc::as_ptr(arena) as usize, Vec::new()))))
 }
 
-/// A thread's reservation in progress (`reserving`): `end` gives what it made.
-pub struct Reservation(());
+/// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
+/// made inside, which goes on when it ends.
+pub struct Reservation(Option<(usize, Vec<(usize, Vec<Sym>)>)>);
 
 impl Reservation {
-    pub fn end(self) -> Reserved {
-        let made = RESERVING.with_borrow_mut(Option::take).map(|r| r.1).unwrap_or_default();
+    pub fn end(mut self) -> Reserved {
+        let outer = self.0.take();
+        let made = RESERVING.with_borrow_mut(|r| std::mem::replace(r, outer)).map(|r| r.1).unwrap_or_default();
         std::mem::forget(self);
         Reserved(made)
     }
@@ -421,7 +423,8 @@ impl Reservation {
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        drop(Reserved(RESERVING.with_borrow_mut(Option::take).map(|r| r.1).unwrap_or_default()));
+        let outer = self.0.take();
+        drop(Reserved(RESERVING.with_borrow_mut(|r| std::mem::replace(r, outer)).map(|r| r.1).unwrap_or_default()));
     }
 }
 
@@ -826,6 +829,31 @@ impl Atoms {
 
     /// `f` of atom `atom`'s string, if the database or this process holds it: a stored atom not held yet is read
     /// with its segment.
+    /// Whether a text not held in memory has no atom `existing` would find (it reads nothing then): inside a run's
+    /// provisional ids, forked, or every stored atom held while this process holds the lease. Atomic loads only, no
+    /// lock: a walk in morsels asks it for each text it misses.
+    pub fn misses_are_final(&self) -> bool {
+        self.provisional() || self.forked() || (self.complete.load(Ordering::Acquire) && self.leased.load(Ordering::Acquire))
+    }
+
+    /// `a . "." . b` as a join's `@cat` makes it, under one read of the arena (not one per text and one for the
+    /// lookup: on a walk in morsels, each read is one more write of the lock's word that every thread shares).
+    /// `Some(Ok(Some(atom)))`: the text's atom; `Some(Ok(None))`: none held in memory, the text left in `buf`;
+    /// `Some(Err(()))`: `a`'s text is empty, so the text is `b`'s; `None`: a text not in memory (read as before).
+    pub fn cat_held(&self, a: Sym, b: Sym, buf: &mut String) -> Option<Result<Option<Sym>, ()>> {
+        let state = self.state.read();
+        let x = state.atoms.str(a)?;
+        if x.is_empty() {
+            return Some(Err(()));
+        }
+        let y = state.atoms.str(b)?;
+        buf.clear();
+        buf.push_str(x);
+        buf.push('.');
+        buf.push_str(y);
+        Some(Ok(state.atoms.get(buf)))
+    }
+
     pub fn with_str<R>(&self, atom: Sym, f: impl FnOnce(&str) -> R) -> Option<R> {
         {
             let state = self.state.read();

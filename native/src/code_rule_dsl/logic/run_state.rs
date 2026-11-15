@@ -81,6 +81,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native/setfix.rs", "WHOLE", Carried, ""),
+    ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
@@ -279,6 +281,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::placement::carried,
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
+    super::native::setfix::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

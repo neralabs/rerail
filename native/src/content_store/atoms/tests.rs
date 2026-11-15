@@ -416,6 +416,27 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     assert_eq!(r.end().len(), 0);
 }
 
+/// A reservation made while another is open on the thread (a component's job run by another's wait) holds its own
+/// atoms; the outer one goes on when it ends, holding its own before and after.
+#[test]
+fn a_reservation_inside_another_holds_its_own_atoms() {
+    let path = path("nested");
+    let store = ContentStore::open(&path).unwrap();
+    let arena = std::sync::Arc::clone(&store.atoms);
+    let outer = super::reserving(&arena);
+    arena.intern_all(&["outer-1"]).unwrap();
+    let inner = super::reserving(&arena);
+    arena.intern_all(&["inner-1", "inner-2"]).unwrap();
+    let inner = inner.end();
+    arena.intern_all(&["outer-2"]).unwrap();
+    let outer = outer.end();
+    assert_eq!((inner.len(), outer.len()), (2, 2));
+    assert!(!store.atoms.pending(), "both still reserved");
+    drop(inner);
+    assert!(store.atoms.pending(), "the inner one retired: its atoms are pending");
+    drop(outer);
+}
+
 /// A commit's pending atoms are written in segments of a bounded size, so neither a copy of them nor SQLite's
 /// record of one holds a whole run's atoms at once; once stored, the arena holds their bytes once.
 #[test]
