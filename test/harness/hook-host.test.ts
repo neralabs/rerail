@@ -999,7 +999,7 @@ function keptAt(folder: string, at: number): void {
 function wholeKeptAnswer(text: string): boolean {
   try {
     const kept = JSON.parse(text) as Record<string, unknown>;
-    return kept.v === 1 && ["repository", "folder", "checkout", "git"].every(field => typeof kept[field] === "string")
+    return kept.v === 2 && ["repository", "cloneId", "folder", "checkout", "git"].every(field => typeof kept[field] === "string")
       && typeof kept.depth === "number" && typeof kept.at === "number";
   } catch {
     return false;
@@ -1819,8 +1819,8 @@ function mirrorOver(source: string, dest: string): void {
  * Changes after the daemon answered stopped in a folder of `app`, a repository stopped as a whole, that keep the folder,
  * the checkout's top and its `.git` the same on disk but have the daemon read the checkout's clone id as `started`'s, a
  * started repository with a `src` folder: it then places the checkout in that repository by its clone id and answers
- * started, since `lookupAt` reads the clone id file again on every answer and the checkout has no on/off of its own.
- * `arrange` names the folder the hooks run in and gives the change.
+ * that Rerail runs there (`not-set-up`: started, not set up), since `lookupAt` reads the clone id file again on every
+ * answer and the checkout has no on/off of its own. `arrange` names the folder the hooks run in and gives the change.
  */
 const cloneIdsChanged: Array<{ what: string; arrange: (root: string, app: string, started: string) => { folder: string; change: () => void } }> = [
   {
@@ -2007,7 +2007,7 @@ describe("the hook start check", () => {
     }
   });
 
-  it.each(cloneIdsChanged)("waits for a late daemon where it last answered stopped in a repository stopped as a whole, once $what, and takes its answer of started", async ({ arrange }) => {
+  it.each(cloneIdsChanged)("waits for a late daemon where it last answered stopped in a repository stopped as a whole, once $what, and takes its answer that Rerail runs there", async ({ arrange }) => {
     const root = await temporaryDirectory({ started: false });
     const started = startedApp(join(root, "started"));
     mkdirSync(join(started, "src"));
@@ -2025,7 +2025,7 @@ describe("the hook start check", () => {
       expect({
         daemonReads: host.daemonReads(realpathSync.native(folder)), started: await host.hookRerailStarted("claude-code", folder),
         checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended(),
-      }).toEqual({ daemonReads: "started", started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+      }).toEqual({ daemonReads: "not-set-up", started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
     } finally {
       await daemon.close();
     }
@@ -2092,7 +2092,7 @@ describe("the hook start check", () => {
         await rm(keptAnswerFile(app), { force: true });
         const hooks = Array.from({ length: 8 }, () => host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
         expect(await Promise.all(hooks)).toEqual(Array.from({ length: 8 }, () => false));
-        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 1, depth: 0 });
+        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 2, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
         expect(readdirSync(dirname(keptAnswerFile(app)))).toEqual([basename(keptAnswerFile(app))]);
       }
     } finally {

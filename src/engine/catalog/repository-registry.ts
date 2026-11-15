@@ -371,13 +371,13 @@ export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "che
 }
 
 /**
- * Whether the checkout recorded at `checkoutPath` is still one of `repositoryKey` and Rerail is stopped there, as
- * {@link checkoutStatus} reads it. False where no checkout is recorded at that path: a checkout only its clone id or its
- * remote names is placed there only with Git's help.
+ * Whether a lookup that reads the clone id `cloneId` for the checkout at `checkoutPath` places it, by the checkout
+ * recorded there, in `repositoryKey` (`lookupAt`'s own rule, {@link recordedRepositoryAt}), and Rerail is stopped there,
+ * as {@link checkoutStatus} reads it. False where no checkout is recorded at that path, or the one recorded there is
+ * another clone's: such a checkout is placed by its clone id or its remote, which only the daemon's lookup reads.
  */
-export function recordedCheckoutStopped(db: Reader, checkoutPath: string, repositoryKey: RepositoryKey): boolean {
-  const recorded = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  return recorded?.key === repositoryKey && !statusAt(db, { checkoutPath, repositoryKey }).started;
+export function recordedCheckoutStopped(db: Reader, checkoutPath: string, repositoryKey: RepositoryKey, cloneId: string): boolean {
+  return recordedRepositoryAt(db, checkoutPath, cloneId) === repositoryKey && !statusAt(db, { checkoutPath, repositoryKey }).started;
 }
 
 /**

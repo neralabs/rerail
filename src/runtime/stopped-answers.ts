@@ -3,26 +3,29 @@
  * folder can repeat it while the daemon is slow to answer (`hookRerailStarted`).
  *
  * The daemon places a folder in a checkout once, with Git, and keeps that placement for its life
- * (`createCheckoutResolver`); each answer after that reads the database again. A hook cannot place a folder as Git does
- * from the disk alone, so it never decides stopped by itself: it repeats the daemon's own answer, and only while each
- * thing it can check still agrees with what was kept. Each check can only turn a kept stopped into not known, and the
- * hook then waits for the daemon as it always did.
+ * (`createCheckoutResolver`); each answer after that reads the checkout's clone id file and the database again
+ * (`lookupAt`). A hook cannot place a folder as Git does from the disk alone, so it never decides stopped by itself: it
+ * repeats the daemon's own answer, and only while each thing it can check still agrees with what was kept, the clone id
+ * the daemon reads and its rule for it among them. Each check can only turn a kept stopped into not known, and the hook
+ * then waits for the daemon as it always did.
  *
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
- * home. It holds no path: the repository key the database records, how many folders up the checkout's top is, the
- * device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon places every
- * folder again, so a hook that writes an answer from it removes the folders of the daemons before it. A link in place
- * of the file or of either folder above it is never followed.
+ * home. It holds no path: the repository key and the clone id the database records, how many folders up the checkout's
+ * top is, the device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon
+ * places every folder again, so a hook that writes an answer from it removes the folders of the daemons before it. A
+ * link in place of the file or of either folder above it is never followed.
  */
 import { createHash } from "node:crypto";
 import {
-  closeSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, type BigIntStats,
+  closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, rmSync, statSync,
+  type BigIntStats,
 } from "node:fs";
 import { rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { storedPath } from "../engine/catalog/checkout-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
+import { readCloneIdAt } from "../engine/catalog/repository-identity.js";
 import { recordedCheckoutStopped } from "../engine/catalog/repository-registry.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { openNoFollowSync } from "../engine/no-follow.js";
@@ -43,6 +46,17 @@ const KEPT_FOR_MS = 30 * 60_000;
 /** A hook whose daemon answered in time writes the answer again only once the kept one is this old, so most such hooks write nothing. */
 const REWRITE_AFTER_MS = 60_000;
 
+/** The clone id file in Git's common folder, and the one a folder the daemon places outside Git keeps (`repositoryIdentityLocation`). */
+const CLONE_ID_FILE = "rerail-repository-id";
+const OUTSIDE_GIT_ID_FOLDER = ".rerail";
+const OUTSIDE_GIT_ID_FILE = "repository-id";
+
+/** The most a `.git` file or a `commondir` file may hold here: Git writes one short line in each. */
+const MAX_POINTER_BYTES = 4_096;
+
+/** Opens a file without waiting for a writer where the OS can, so a pipe planted at a `.git` file's name cannot hold the hook. */
+const AT_ONCE = constants.O_NONBLOCK ?? 0;
+
 /** The daemon's answer to a hook's start check, with what it rests on (`readStartAnswer`). */
 export interface StartAnswer {
   readonly state: RepositoryStartState;
@@ -60,8 +74,9 @@ interface DaemonIdentity {
 }
 
 const keptSchema = z.object({
-  v: z.literal(1),
+  v: z.literal(2),
   repository: z.string(),
+  cloneId: z.string(),
   depth: z.number().int().nonnegative(),
   folder: z.string(),
   checkout: z.string(),
@@ -69,11 +84,20 @@ const keptSchema = z.object({
   at: z.number(),
 });
 
-/** What is kept of one answer of stopped. `folder`, `checkout` and `git` are `<device>:<inode>`. */
+/**
+ * What is kept of one answer of stopped. `cloneId` is the clone id the checkout's Git folder held when it was kept;
+ * `folder`, `checkout` and `git` are `<device>:<inode>`.
+ */
 type KeptAnswer = z.infer<typeof keptSchema>;
 
 /** Where the checkout's top is from the folder, and the device and inode of the folder, the top and the top's own `.git`. */
 type Placement = Pick<KeptAnswer, "depth" | "folder" | "checkout" | "git">;
+
+/** What is kept of an answer of stopped but its clone id, which is read only when the answer is written, and the checkout's top. */
+interface Placed {
+  readonly kept: Omit<KeptAnswer, "cloneId">;
+  readonly top: string;
+}
 
 const daemonSchema = z.object({ pid: z.number().int(), startedAt: z.number(), databasePath: z.string() });
 
@@ -88,8 +112,8 @@ type RecordedDaemon = z.infer<typeof daemonSchema>;
 export async function keepStartAnswer(answer: StartAnswer, now = Date.now()): Promise<void> {
   const file = keptFile(answer.daemon, answer.workspace);
   if (onServer(answer.workspace) || !inFoldersOfItsOwn(file)) return;
-  const kept = answer.state === "stopped" ? keptOf(answer, now) : undefined;
-  await (kept === undefined ? rm(file, { force: true }) : rewritten(file, kept, now)).catch(() => undefined);
+  const placed = answer.state === "stopped" ? placedOf(answer, now) : undefined;
+  await (placed === undefined ? rm(file, { force: true }) : rewritten(file, placed, now)).catch(() => undefined);
 }
 
 /**
@@ -108,13 +132,15 @@ export function repeatsStoppedAnswer(workspace: string, now = Date.now()): boole
 }
 
 /**
- * Whether `kept` still holds for `folder`: it is recent; the folder, the checkout's top and the top's `.git` are the
- * same things on disk, with no `.git` between the folder and the top; the daemon holds no file of its database that is
- * gone from the disk; and the database, read whole and at once, still reads that checkout stopped.
+ * Whether `kept` still holds for `folder`: it is recent; the folder, the checkout's top and the top's `.git` have the
+ * same device and file ids, with no `.git` between the folder and the top; the top holds the clone id that was kept,
+ * where the daemon reads it; the daemon holds no file of its database that is gone from the disk; and the database,
+ * read whole and at once, still places the checkout by that clone id in the kept repository and reads it stopped.
  */
 function stillHolds(kept: KeptAnswer, folder: string, daemon: RecordedDaemon, now: number): boolean {
   const top = folderUp(folder, kept.depth);
-  return isRecent(kept, now) && sameOnDisk(kept, folder, top) && !daemonFileGone(daemon) && stillStopped(daemon.databasePath, top, kept.repository);
+  return isRecent(kept, now) && sameOnDisk(kept, folder, top) && sameCloneId(top, kept.cloneId) && !daemonFileGone(daemon)
+    && stillStopped(daemon.databasePath, top, kept);
 }
 
 /** Kept less than `KEPT_FOR_MS` ago; one kept "later" than now, as after the clock was set back, is not. */
@@ -128,14 +154,14 @@ function sameOnDisk(kept: KeptAnswer, folder: string, top: string): boolean {
 }
 
 /**
- * What is kept of the stopped `answer`: undefined where the daemon placed the folder in no checkout, where the folder is
- * not that checkout's top or a folder in it as spelled, and where the top has no `.git` of its own. The daemon places a
- * folder outside Git again on every answer, so an answer resting on one is not kept.
+ * What is kept of the stopped `answer`, but its clone id: undefined where the daemon placed the folder in no checkout,
+ * where the folder is not that checkout's top or a folder in it as spelled, and where the top has no `.git` of its own.
+ * The daemon places a folder outside Git again on every answer, so an answer resting on one is not kept.
  */
-function keptOf({ workspace, scope }: StartAnswer, now: number): KeptAnswer | undefined {
+function placedOf({ workspace, scope }: StartAnswer, now: number): Placed | undefined {
   if (scope === null || scope.checkoutPath === null) return undefined;
   const placement = placementOf(workspace, scope.checkoutPath);
-  return placement === undefined ? undefined : { v: 1, repository: scope.repositoryKey, ...placement, at: now };
+  return placement === undefined ? undefined : { kept: { v: 2, repository: scope.repositoryKey, ...placement, at: now }, top: scope.checkoutPath };
 }
 
 /** Where `top` is from `folder` and what each is on disk; undefined where `top` is not `folder` or above it, or one cannot be read. */
@@ -145,20 +171,26 @@ function placementOf(folder: string, top: string): Placement | undefined {
   return depth === undefined || own === undefined || checkout === undefined || git === undefined ? undefined : { depth, folder: own, checkout, git };
 }
 
-/** Writes `kept` at `file`, unless what is there says the same and is younger than `REWRITE_AFTER_MS`. */
-async function rewritten(file: string, kept: KeptAnswer, now: number): Promise<void> {
+/**
+ * Writes the answer `placed` names at `file`, with the clone id the checkout's top holds now, unless what is there says
+ * the same of the folder's placement and is younger than `REWRITE_AFTER_MS`, or the top holds no clone id this hook can
+ * read, which no later hook could check.
+ */
+async function rewritten(file: string, { kept, top }: Placed, now: number): Promise<void> {
   if (keptAlready(readKept(file), kept, now)) return;
+  const cloneId = cloneIdAt(top);
+  if (cloneId === undefined) return;
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   removeEarlierDaemons(dirname(file));
-  await replaceFile(file, JSON.stringify(kept), { mode: 0o600, retryMs: 0 });
+  await replaceFile(file, JSON.stringify({ ...kept, cloneId }), { mode: 0o600, retryMs: 0 });
 }
 
-function keptAlready(before: KeptAnswer | undefined, kept: KeptAnswer, now: number): boolean {
+function keptAlready(before: KeptAnswer | undefined, kept: Placed["kept"], now: number): boolean {
   return before !== undefined && sameAnswer(before, kept) && now >= before.at && now - before.at < REWRITE_AFTER_MS;
 }
 
 /** Whether `left` and `right` say the same of the folder's placement: the repository where both name one, and the depth and the disk ids. */
-function sameAnswer(left: Placement & { repository?: string }, right: KeptAnswer): boolean {
+function sameAnswer(left: Placement & { repository?: string }, right: Placement & { repository: string }): boolean {
   return (left.repository === undefined || left.repository === right.repository) && left.depth === right.depth
     && left.folder === right.folder && left.checkout === right.checkout && left.git === right.git;
 }
@@ -187,16 +219,113 @@ function removeIfItCan(path: string): void {
  * yet: Rerail makes them, so a link in their place, which can reach a server that does not answer, is never followed.
  */
 function inFoldersOfItsOwn(file: string): boolean {
-  return [dirname(dirname(file)), dirname(file)].every(folder => entryKind(folder) !== "other");
+  return [dirname(dirname(file)), dirname(file)].every(folder => FOLDER_OR_NOTHING.has(entryKind(folder)));
 }
 
-/** What is at `path`, not followed through a link: nothing, a folder, or anything else, a look that fails included. */
-function entryKind(path: string): "none" | "folder" | "other" {
+const FOLDER_OR_NOTHING: ReadonlySet<string> = new Set(["none", "folder"]);
+
+/** What is at `path`, not followed through a link: nothing, a folder, a plain file, or anything else, a look that fails included. */
+function entryKind(path: string): "none" | "folder" | "file" | "other" {
   try {
     const stats = lstatSync(path, { throwIfNoEntry: false });
-    return stats === undefined ? "none" : stats.isDirectory() ? "folder" : "other";
+    if (stats === undefined) return "none";
+    return stats.isDirectory() ? "folder" : stats.isFile() ? "file" : "other";
   } catch {
     return "other";
+  }
+}
+
+/**
+ * Whether the checkout's top `top` holds the clone id `cloneId` where the daemon reads it on every answer
+ * (`lookupAt`): in the clone id file of the Git common folder its `.git` names ({@link cloneIdAt}), and, for a folder
+ * whose `.git` the daemon's Git does not take and which it then places outside Git, in `.rerail/repository-id`, which
+ * may be missing or unreadable, as `lookupAt` reads it then as no id, or name the same clone.
+ */
+function sameCloneId(top: string, cloneId: string): boolean {
+  return cloneIdAt(top) === cloneId && outsideGitIdAgrees(top, cloneId);
+}
+
+function outsideGitIdAgrees(top: string, cloneId: string): boolean {
+  const folder = join(top, OUTSIDE_GIT_ID_FOLDER);
+  const kind = entryKind(folder);
+  if (kind !== "folder") return kind === "none";
+  const id = readCloneIdAt(join(folder, OUTSIDE_GIT_ID_FILE));
+  return id === undefined || id === cloneId;
+}
+
+/**
+ * The clone id in the clone id file of the Git common folder that `top`'s own `.git` names, read as the daemon reads it
+ * (`readCloneIdAt`) and found as Git finds it, without running Git: `.git` is that Git folder, or a file whose `gitdir:`
+ * line names it, and the folder's `commondir` names the common folder where it has one. Undefined where a look fails, a
+ * link or a path on a server is on the way, which is never followed, or the file holds no clone id.
+ */
+function cloneIdAt(top: string): string | undefined {
+  const common = commonFolderOf(gitFolderOf(top));
+  return common === undefined ? undefined : readCloneIdAt(join(common, CLONE_ID_FILE));
+}
+
+/** `top`'s Git folder: its `.git` folder, or the folder its `.git` file names (Git's `read_gitfile`). */
+function gitFolderOf(top: string): string | undefined {
+  const dotGit = join(top, ".git");
+  const kind = entryKind(dotGit);
+  if (kind === "folder") return dotGit;
+  const text = kind === "file" ? pointerText(dotGit) : undefined;
+  return typeof text === "string" && text.startsWith("gitdir: ") ? namedFolder(top, text.slice("gitdir: ".length)) : undefined;
+}
+
+/** The common folder of the Git folder `git` (Git's `get_common_dir`): the folder its `commondir` file names, else `git`. */
+function commonFolderOf(git: string | undefined): string | undefined {
+  if (git === undefined) return undefined;
+  const text = pointerText(join(git, "commondir"));
+  if (text === null) return git;
+  return text === undefined ? undefined : namedFolder(git, text);
+}
+
+/**
+ * The folder the line `text` of a `.git` or `commondir` file names, its line end cut off and resolved against `base`, as
+ * Git reads it; undefined where it names none, or where it or a folder above it is a link, is not a folder, or is on a
+ * server. Each is looked at from the top down, so no look passes through a link, which can lead to a server that does
+ * not answer.
+ */
+function namedFolder(base: string, text: string): string | undefined {
+  const named = text.replace(/[\r\n]+$/u, "");
+  const folder = resolve(base, named);
+  return named !== "" && !onServer(folder) && foldersDownTo(folder).every(each => entryKind(each) === "folder") ? folder : undefined;
+}
+
+/** The folders from just below `path`'s root down to `path`, the topmost first. */
+function foldersDownTo(path: string): string[] {
+  const folders: string[] = [];
+  for (let at = path; dirname(at) !== at; at = dirname(at)) folders.unshift(at);
+  return folders;
+}
+
+/**
+ * The text of the small file at `path`, a `.git` file or a `commondir`, read without following a link at its name or
+ * waiting on a pipe there: null where nothing is there, undefined where it cannot be opened or read whole.
+ */
+function pointerText(path: string): string | null | undefined {
+  let descriptor: number;
+  try {
+    descriptor = openNoFollowSync(path, constants.O_RDONLY | AT_ONCE);
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT" ? null : undefined;
+  }
+  try {
+    return plainFileText(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** The text of the open file `descriptor`, where it is a plain file of at most `MAX_POINTER_BYTES`; undefined otherwise. */
+function plainFileText(descriptor: number): string | undefined {
+  try {
+    const buffer = Buffer.alloc(MAX_POINTER_BYTES + 1);
+    const length = fstatSync(descriptor).isFile() ? readSync(descriptor, buffer, 0, buffer.length, 0) : buffer.length;
+    return length > MAX_POINTER_BYTES ? undefined : buffer.subarray(0, length).toString("utf8");
+  } catch {
+    return undefined;
   }
 }
 
@@ -323,11 +452,11 @@ function linkTarget(path: string): string {
 
 /**
  * Whether the database at `databasePath`, opened as it is beside the daemon (`besideDaemon`: never written, never
- * waiting on a lock, refused where its WAL or the WAL's index is gone), still reads the checkout recorded at `top` as a
- * stopped checkout of `repository` (`recordedCheckoutStopped`). False where it cannot be opened so; SQLite's error for
- * one it opened and could not read is thrown.
+ * waiting on a lock, refused where its WAL or the WAL's index is gone), still places the checkout recorded at `top` by
+ * the kept clone id in the kept repository and reads it stopped (`recordedCheckoutStopped`, the daemon's own rule). False
+ * where it cannot be opened so; SQLite's error for one it opened and could not read is thrown.
  */
-function stillStopped(databasePath: string, top: string, repository: string): boolean {
+function stillStopped(databasePath: string, top: string, { repository, cloneId }: KeptAnswer): boolean {
   let database: RerailDatabase;
   try {
     database = openRerailDatabaseAsIs(databasePath, { besideDaemon: true });
@@ -335,7 +464,7 @@ function stillStopped(databasePath: string, top: string, repository: string): bo
     return false;
   }
   try {
-    return recordedCheckoutStopped(database, top, repository);
+    return recordedCheckoutStopped(database, top, repository, cloneId);
   } finally {
     database.$client.close();
   }
