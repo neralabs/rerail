@@ -374,6 +374,8 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     (lib.rs:329), rerail-w (lib.rs:27, 237) and rerail-device-metal (lib.rs:720), and two unfulfilled lint
     expectations in blade/forte/ast.rs (52, 100). None is from the roll-up's merges. tape16's bench-pack.sh now
     exempts only its native build (rr-align's form).
+  - The Native-and-GPU-strata merge (645070bce) takes its generator-made mounts (`tools/cratify/mounts.py`): the
+    engine's library and test builds compile with no warning but the linker's `__eh_frame` note.
 
 ### Q14. Plan-time switches and the plan cache
 
