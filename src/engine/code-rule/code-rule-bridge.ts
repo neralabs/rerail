@@ -653,9 +653,14 @@ function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): str
 }
 /**
  * The most gaps one bridge tells `onDiscoveryGaps` of. Past it, one more gap says the walks could not check more than that
- * (`UNTOLD_GAPS`): a tree of unreadable files records a bounded number of rows, at the boundary that first meets them.
+ * (`UNTOLD_GAPS`): a tree of unreadable files records a bounded number of rows.
  */
 export const MAX_TOLD_GAPS = 1_000;
+/**
+ * The most gaps one checkpoint tells, in path order; later checkpoints tell the next ones. Writing 1,000 rows held a
+ * turn end 90 to 160 ms past main's on Windows; 100 hold it a few.
+ */
+export const MAX_TOLD_AT_ONCE = 100;
 const UNTOLD_GAPS = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
 /**
  * `gap` as the bridge tells it, keyed by its path and its reason's kind: the error code that opens a filesystem error's
@@ -967,8 +972,8 @@ export class CodeRuleBridge {
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
       /**
        * Told of the gaps of the walks (`DiscoveryGap`) a checkpoint answers with that it has not told before, each once per
-       * key while the bridge lives, at most `MAX_TOLD_GAPS` of them, all of a checkpoint in one call, so they can be
-       * written together; a walk still to finish is `onDiscoveryPending`'s.
+       * key while the bridge lives, at most `MAX_TOLD_GAPS` of them and `MAX_TOLD_AT_ONCE` a checkpoint, in one call, so
+       * they can be written together; a walk still to finish is `onDiscoveryPending`'s.
        */
       onDiscoveryGaps?(gaps: readonly DiscoveryGap[]): void;
       /** Told of each file a finished tool edit wrote that no rule checked because Git ignores it. */
@@ -1499,18 +1504,25 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Tells `onDiscoveryGaps` the gaps of `gaps` not yet told (`#untold`), all in one call, best-effort too: it never fails
-   * the checkpoint. They are told once the call returned; when it throws, the next checkpoint tells them again, so a
-   * database that refuses writes costs one failed write and one log line a boundary.
+   * Tells `onDiscoveryGaps` the first `MAX_TOLD_AT_ONCE` gaps of `gaps` not yet told (`#untold`), in one call,
+   * best-effort too: it never fails the checkpoint. They are told once the call returned; when it throws, the next
+   * checkpoint tells them again, so a database that refuses writes costs one failed write and one log line a boundary.
    */
   #tellGaps(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): void {
+    const untold = this.#untoldOf(boundary, gaps);
+    if (untold.size === 0 || !reportBestEffort(() => this.#onDiscoveryGaps?.([...untold.values()]))) return;
+    for (const key of untold.keys()) this.#toldGaps.add(key);
+  }
+
+  /** The first `MAX_TOLD_AT_ONCE` of `gaps` not yet told (`#untold`), by key. */
+  #untoldOf(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): Map<string, DiscoveryGap> {
     const untold = new Map<string, DiscoveryGap>();
     for (const gap of gaps) {
+      if (untold.size === MAX_TOLD_AT_ONCE) break;
       const told = this.#untold(toldGap(boundary, gap), untold);
       if (told !== undefined) untold.set(told.key, told);
     }
-    if (untold.size === 0 || !reportBestEffort(() => this.#onDiscoveryGaps?.([...untold.values()]))) return;
-    for (const key of untold.keys()) this.#toldGaps.add(key);
+    return untold;
   }
 
   /**

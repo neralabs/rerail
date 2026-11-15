@@ -16,6 +16,7 @@ import {
   generatedEditPaths,
   isCommandTool,
   ledgerPreimage,
+  MAX_TOLD_AT_ONCE,
   MAX_TOLD_GAPS,
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
@@ -890,7 +891,7 @@ describe("CodeRuleBridge", () => {
       expect(onDiscoveryGaps).not.toHaveBeenCalled();
     }, 60_000);
 
-    it(`tells at most ${MAX_TOLD_GAPS} places, then once that the rest are not recorded, while the checkpoint says them all`, async () => {
+    it(`tells at most ${MAX_TOLD_AT_ONCE} places a checkpoint and ${MAX_TOLD_GAPS} in all, then once that the rest are not recorded, while the checkpoint says them all`, async () => {
       const root = await workspace();
       const folders = Array.from({ length: MAX_TOLD_GAPS + 5 }, (_, index) => join(root, "src", `f${String(index).padStart(4, "0")}`));
       for (const folder of folders) {
@@ -903,10 +904,11 @@ describe("CodeRuleBridge", () => {
 
       const [failure] = (await bridge.checkpoint("turn")).failures;
       expect(failure?.message.split("; ")).toHaveLength(MAX_TOLD_GAPS + 5);
-      await bridge.checkpoint("turn");
-      // One call: the places of a checkpoint are written together.
-      expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
-      const told = onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as Array<{ path?: string; reason: string }>);
+      for (let turn = 0; turn <= MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE; turn += 1) await bridge.checkpoint("turn");
+      // One call a checkpoint, its places written together, at most MAX_TOLD_AT_ONCE of them, the next ones at the next.
+      const calls = onDiscoveryGaps.mock.calls.map(([gaps]) => gaps as Array<{ path?: string; reason: string }>);
+      expect(calls.map(gaps => gaps.length)).toEqual([...Array.from({ length: MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE }, () => MAX_TOLD_AT_ONCE), 1]);
+      const told = calls.flat();
       expect(told).toHaveLength(MAX_TOLD_GAPS + 1);
       expect(told.slice(0, MAX_TOLD_GAPS).map(gap => gap.path)).toEqual(folders.slice(0, MAX_TOLD_GAPS).map(folder => `src/${basename(folder)}`));
       expect(told.at(-1)).toEqual({
