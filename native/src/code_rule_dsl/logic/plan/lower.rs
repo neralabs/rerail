@@ -323,6 +323,8 @@ pub struct Lowered {
     /// `program`'s version, where the caller made it from another's (a split's part, decision 0244): `plan::run`
     /// reads it in place of an image made of `program`. `None` once `program` is edited, and for a program made here.
     pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    /// A maintained program's parts beside `version` (decision 0215): `None` for every other program.
+    pub(in crate::code_rule_dsl) maint: Option<std::sync::Arc<super::body::Maint>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
@@ -336,12 +338,43 @@ impl Lowered {
     }
     /// The version `plan::run` reads: `version`, else an image made of `program` (`Placed::of_program`).
     pub fn placed(&self) -> super::Result<super::body::Placed> {
-        match &self.version {
-            Some(v) if self.program.again.is_empty() && self.program.together.is_empty() => {
-                Ok(super::body::Placed::whole(v.clone()))
-            }
-            _ => super::body::Placed::of_program(&self.program),
+        let placed = match &self.version {
+            Some(v) if self.program.again.is_empty() && self.program.together.is_empty() => super::body::Placed::whole(v.clone()),
+            Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()),
+            _ => return super::body::Placed::of_program(&self.program),
+        };
+        // A version made from another's is stated beside the tree until the run reads no tree (t36 item 7): in a debug
+        // build (every test's), it is checked to be the tree's program, so the two statements cannot drift apart unseen.
+        #[cfg(debug_assertions)]
+        self.same_as_tree(&placed)?;
+        Ok(placed)
+    }
+
+    /// Panics unless `placed`, made from `version`, is the program `program` is: each read back through an image (the
+    /// image's normal form), with the maintained parts.
+    #[cfg(debug_assertions)]
+    fn same_as_tree(&self, placed: &super::body::Placed) -> super::Result<()> {
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let of = super::body::Placed::of_program(&self.program)?;
+        let got = placed.v.program(&lists).map_err(super::Error::Plan)?;
+        let want = of.v.program(&lists).map_err(super::Error::Plan)?;
+        let maint = (placed.maint.as_ref().map(|m| m.to_tree(&lists)), of.maint.as_ref().map(|m| m.to_tree(&lists)));
+        use crate::code_rule_dsl::logic::program_facts::debug_digest as digest;
+        if digest(&(&got, &maint.0)) != digest(&(&want, &maint.1)) {
+            let rule = got.rules.iter().zip(&want.rules).position(|(a, b)| a != b);
+            let mut fields = got.clone();
+            fields.rules = want.rules.clone();
+            panic!(
+                "a version made from another's is not its tree's program: {} rules against {}; first rule that differs: {rule:?} ({:?} against {:?}); fields {}; maintained parts {}",
+                got.rules.len(),
+                want.rules.len(),
+                rule.map(|k| got.rules[k].to_string()),
+                rule.map(|k| want.rules[k].to_string()),
+                if digest(&fields) == digest(&want) { "the same" } else { "differ" },
+                if digest(&maint.0) == digest(&maint.1) { "the same" } else { "differ" },
+            );
         }
+        Ok(())
     }
 }
 
@@ -528,7 +561,7 @@ pub fn lower(
         }
     }
     let ops = [names["+"], names["-"], names["*"]];
-    Ok(Lowered { program: out, version: None, domains, ops, dialect })
+    Ok(Lowered { program: out, version: None, maint: None, domains, ops, dialect })
 }
 
 impl Lowered {

@@ -37,9 +37,13 @@ pub fn produced(prog: &Program) -> BTreeMap<&str, &str> {
 
 /// Gates the negations inside each component that holds a request (module docs). A program without answers is
 /// unchanged.
-pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
+///
+/// Returns the edit it made, where it made one: for each of the program's rules after it, in order, the rule it was
+/// before (its index) where it is that rule unchanged, else `None` (a rule rewritten or made: an `ask`, a `done`). The
+/// declarations and gates it adds follow the program's. A version of the program is made from this (`gated`).
+pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<Option<Vec<Option<usize>>>, Error> {
     if prog.answers.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let produced: BTreeMap<String, String> = produced(prog).into_iter().map(|(p, r)| (p.to_owned(), r.to_owned())).collect();
     let mut nodes: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
@@ -59,14 +63,17 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
     let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.as_str(), i))).collect();
     let answered: BTreeSet<usize> = prog.answers.keys().filter_map(|r| comp.get(r.as_str()).copied()).filter(|&c| sccs[c].iter().any(|r| produced.contains_key(r))).collect();
     if answered.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     // Each gate: its `done` relation, its `ask` (none: the whole relation's gate, `done_N(0)`), the negated relation,
     // and the key's columns.
     let (mut rules, mut made) = (Vec::new(), Vec::<(String, Option<String>, String, Vec<(String, String)>)>::new());
-    for r in std::mem::take(&mut prog.rules) {
+    // Each rule's origin: the rule it was, where it is that rule unchanged.
+    let mut origin: Vec<Option<usize>> = Vec::new();
+    for (k, r) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
         let Some(&c) = comp.get(r.head.rel.as_str()).filter(|c| answered.contains(c)) else {
             rules.push(r);
+            origin.push(Some(k));
             continue;
         };
         let mut body: Vec<Literal> = Vec::new();
@@ -101,6 +108,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
                 let (ask, done) = (format!("ask_{}_{ad}", a.rel), format!("done_{}_{ad}", a.rel));
                 // The keys asked about: the rule's literals before the negation.
                 rules.push(Rule { head: atom(ask.clone(), key.clone()), body: r.body[..i].to_vec().into() });
+                origin.push(None);
                 if !made.iter().any(|(d, ..)| *d == done) {
                     made.push((done.clone(), Some(ask), a.rel.to_string(), cols));
                 }
@@ -108,7 +116,9 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             }
             body.push(Literal::Atom(Atom { neg: true, gated: true, ..a.clone() }));
         }
+        let same = body.as_slice() == &r.body[..];
         rules.push(Rule { head: r.head, body: body.into() });
+        origin.push(same.then_some(k));
     }
     // The gates: each `done` is fed from its `ask` once what its relation reads inside the component is quiet.
     let names: BTreeSet<String> = made.iter().map(|(d, ..)| d.clone()).collect();
@@ -121,10 +131,12 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
                 prog.decls.insert(ask.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
                 rules.push(Rule { head: atom(done.clone(), vs.clone()), body: [Literal::Atom(atom(ask.clone(), vs))].into() });
+                origin.push(None);
             }
             None => {
                 let wild = vec![Term::Wild; prog.decls.get(rel.as_str()).map_or(0, |c| c.len())];
                 rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: [Literal::Atom(atom(rel.clone(), wild))].into() });
+                origin.push(None);
             }
         }
     }
@@ -168,9 +180,10 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
     for (d, g) in &mut gates {
         g.level = order.iter().position(|s| s.contains(d.as_str())).unwrap_or(0);
     }
+    debug_assert_eq!(origin.len(), rules.len());
     prog.rules = rules;
     prog.gates.extend(gates);
-    Ok(())
+    Ok(Some(origin))
 }
 
 /// A program split at its requests: `load`, the rules every request depends on (its cone, gates and answers with
@@ -180,6 +193,9 @@ pub(in crate::code_rule_dsl) struct Loading {
     pub(in crate::code_rule_dsl) load: Program,
     pub(in crate::code_rule_dsl) rest: Program,
     pub(in crate::code_rule_dsl) reads: BTreeSet<String>,
+    /// The relations the load part derives: its rules, lattices and gates are those of these (the rest's, of the
+    /// others); both keep every native.
+    pub(in crate::code_rule_dsl) cone: BTreeSet<String>,
 }
 
 /// [`Loading`], or `None` for a program without answers.
@@ -230,7 +246,7 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
             rest.inputs.push(r.clone());
         }
     }
-    Some(Loading { load, rest, reads })
+    Some(Loading { load, rest, reads, cone })
 }
 
 #[cfg(test)]
@@ -247,7 +263,7 @@ pub mod tests {
         .unwrap();
         prog.answers.insert("req".into(), vec!["got".into()]);
         assert!(super::super::front::strata(&prog).is_err(), "ungated, the negation is inside the component");
-        gate(&mut prog).unwrap();
+        gate(&mut prog).unwrap().expect("gated");
         let (sccs, _) = super::super::front::strata(&prog).unwrap();
         let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
         for rel in ["got", "want", "fresh", "seen", "ask_seen_b", "done_seen_b"] {

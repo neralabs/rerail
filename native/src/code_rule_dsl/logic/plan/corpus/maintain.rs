@@ -152,7 +152,11 @@ pub(in crate::code_rule_dsl) struct One<'m> {
 /// `rewrite`'s `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
     let part = cut.program(cross);
-    let p = Placed::of_program(&part.program)?;
+    // The cut program's version where it has one (a part of the cross part's, decision 0244), else its image.
+    let p = match &part.version {
+        Some(v) if part.program.again.is_empty() && part.program.together.is_empty() => Placed::new(v.clone(), v.rules().map(|r| r.id()).collect(), true),
+        _ => Placed::of_program(&part.program)?,
+    };
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
     let src = Part {
         p: &p,
@@ -168,11 +172,14 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut over = rewrite_over(&src, Builder::derive(&p.v), cut, kept, sccs, given, None)?;
     over.b.set_inputs(&over.inputs);
     let (v, _) = over.b.finish().map_err(Error::Plan)?;
-    // Read as a tree by the session's run until it takes a version (t36 item 7 step 9).
+    // The run reads `v` and its `Maint`; the tree is read beside it until the run reads none (t36 item 7).
     let lists = front::Lists::default();
     let mut program = v.program(&lists).map_err(Error::Plan)?;
+    let mut maint = None;
     if !(over.groups.is_empty() && over.together.is_empty()) {
-        (program.again, program.together) = Maint::written(&v, &p.v, &over.groups, &over.together)?.to_tree(&lists);
+        let m = Maint::written(&v, &p.v, &over.groups, &over.together)?;
+        (program.again, program.together) = m.to_tree(&lists);
+        maint = Some(Arc::new(m));
     }
     if let Ok(show) = std::env::var("O125_RULES") {
         for r in program.rules.iter().filter(|r| r.head.rel.starts_with(show.as_str())) {
@@ -188,7 +195,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         None => input_views(&cross.program).into_keys().collect(),
         Some(k) => input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| k.has_old(&a.rel))).map(|(rel, _)| rel).collect(),
     };
-    Ok(Maintained { program: lower::Lowered { program, version: None, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
+    Ok(Maintained { program: lower::Lowered { program, version: Some(v), maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
 static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

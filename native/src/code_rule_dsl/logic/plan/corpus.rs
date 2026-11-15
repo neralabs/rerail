@@ -2925,9 +2925,9 @@ fn run_observed(
     let (mut local_version, mut cross_version) = split.versions.take().map_or((None, None), |p| (Some(p.local), Some(p.cross)));
     let cross_plan = match &cross_declared {
         Some(declared) => {
-            let plan = cross_memo::split(&mut split.cross, declared, &cross_digest, &split.same_doc)?;
-            // The split keeps the cross part's rules and natives by relation, and its outputs less the components'.
-            cross_version = cross_version.and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(&v, &split.cross));
+            let had = cross_version.is_some();
+            let (plan, version) = cross_memo::split(&mut split.cross, cross_version.take(), declared, &cross_digest, &split.same_doc)?;
+            cross_version = made_from(had, version, "the cross memo's split");
             plan
         }
         None => None,
@@ -2959,7 +2959,7 @@ fn run_observed(
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
     let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect::<Vec<_>>())?, None => None };
-    let part = |program: front::Program, version| lower::Lowered { program, version, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+    let part = |program: front::Program, version| lower::Lowered { program, version, maint: None, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
             "{} rules run per chunk over its files (file-local); {} rules run once over all files (cross-file); {} relations exported to the cross part, {} base relations kept for it; exports and file-local outputs without a location column: {:?}",
@@ -2988,7 +2988,7 @@ fn run_observed(
     // pausing for answers. A load's answer is the loaded document's rows of every per-file relation the cone reads,
     // made by the chunk path as any file's are; the rest of the cross-file part reads the cone's rows as inputs.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
-    let loading: Option<(front::Program, BTreeSet<String>)> = if loading_run {
+    let loading: Option<(front::Program, BTreeSet<String>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> = if loading_run {
         let mut whole = split.cross.clone();
         whole.answers = world::answers(&whole);
         let cone = crate::code_rule_dsl::logic::answers::split(&whole).ok_or_else(|| Error::Plan("a program that reads the file system makes no request in its cross-file part".to_owned()))?;
@@ -3009,7 +3009,7 @@ fn run_observed(
         if let Some(produced) = whole.answers.get_mut(world::LOAD) {
             produced.extend(per_file);
         }
-        crate::code_rule_dsl::logic::answers::gate(&mut whole).map_err(|e| Error::Plan(e.to_string()))?;
+        let gated = crate::code_rule_dsl::logic::answers::gate(&mut whole).map_err(|e| Error::Plan(e.to_string()))?;
         let parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
         crate::code_rule_dsl::logic::profile::decision("requests (decision 0065 §2a)", || {
             format!(
@@ -3026,9 +3026,18 @@ fn run_observed(
                 rest.inputs.push(rel.clone());
             }
         }
+        // Their versions: the gated program's made from the cross-file part's by the edit `gate` made, and the cone's
+        // and the rest's parts of it, by the cone (decision 0244).
+        let had = cross_version.is_some();
+        let whole_version = made_from(had, cross_version.take().and_then(|v| cone_version(&v, &split.cross, &whole, gated.as_deref())), "the gated program");
+        let (load_version, rest_version) = match whole_version {
+            Some(v) => cone_parts(&v, &parts.cone, &parts.load, &rest),
+            None => (None, None),
+        };
+        let load_version = made_from(had, load_version, "the cone of requests");
+        cross_version = made_from(had, rest_version, "the rest of the cross-file part");
         split.cross = rest;
-        cross_version = None;
-        Some((parts.load, parts.reads))
+        Some((parts.load, parts.reads, load_version))
     } else {
         None
     };
@@ -3037,7 +3046,7 @@ fn run_observed(
     let not_per_document = prog
         .outputs
         .iter()
-        .filter(|o| split.cross.outputs.contains(o) && !loading.as_ref().is_some_and(|(load, _)| load.rules.iter().any(|r| &r.head.rel == *o)))
+        .filter(|o| split.cross.outputs.contains(o) && !loading.as_ref().is_some_and(|(load, ..)| load.rules.iter().any(|r| &r.head.rel == *o)))
         .find(|o| !split.cross.rules.iter().filter(|r| &r.head.rel == *o).all(|r| matches!(r.body.as_slice(), [front::Literal::Atom(a)] if !a.neg && split.exports.iter().any(|x| x == &a.rel))))
         .cloned();
     let (mut local, mut cross) = (part(split.local, local_version.take()), part(split.cross, cross_version.take()));
@@ -3088,16 +3097,21 @@ fn run_observed(
             p.gates.retain(|(rel, _)| cone.contains(rel));
             p.lattice.retain(|rel, _| cone.contains(rel));
             p.outputs = once.iter().cloned().collect();
-            // Each a part of the file-local part's version: rules, gates and lattices kept by relation (decision 0244).
-            let p_version = local.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &p));
+            // Each a part of its version, by the same relations (decision 0244): the constants' of the file-local part's,
+            // its rules, gates and lattices those of `cone`; the parts', their rules less those of `once`.
+            use crate::code_rule_dsl::logic::program_image::PartFields;
+            let (in_cone, not_once, all) = (|rel: &str| cone.contains(rel), |rel: &str| !once.contains(rel), |_: &str| true);
+            let p_version = made_from(local.version.is_some(), local.version.as_ref().and_then(|v| v.part(&in_cone, &p.inputs, &p.outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).ok()), "the run's constants");
             for part in [&mut local, &mut cross] {
-                part.program.rules.retain(|r| !once.contains(r.head.rel.as_str()));
+                part.program.rules.retain(|r| not_once(&r.head.rel));
                 for rel in &once {
                     if !part.program.inputs.contains(rel) {
                         part.program.inputs.push(rel.clone());
                     }
                 }
-                part.version = part.version.take().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(&v, &part.program));
+                let program = &part.program;
+                let had = part.version.is_some();
+                part.version = made_from(had, part.version.take().and_then(|v| v.part(&not_once, &program.inputs, &program.outputs, PartFields { natives: &all, lattice: &all, gates: &all }).ok()), "a part less the run's constants");
             }
             crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
                 format!("{} relations derived once, before the chunks, and bound beside the exports: {}", once.len(), once.iter().cloned().collect::<Vec<_>>().join(", "))
@@ -5090,7 +5104,7 @@ fn run_observed(
     // own, in a thread of its own, and pauses; this thread answers: a directory's entries and a file's lines from
     // `World`, and a load by sending the document through the chunk path, as any file goes (the memo by content,
     // else parsed), then handing on its rows of the per-file relations the cone reads.
-    if let (Some((load, reads)), Some(docs_tx)) = (&loading, &docs_out) {
+    if let (Some((load, reads, load_version)), Some(docs_tx)) = (&loading, &docs_out) {
         let _loading = crate::code_rule_dsl::logic::profile::span(|| "requests answered inside the fixpoint".into());
         let mut world = world::World::new(root, &prog);
         let corpus: BTreeSet<String> = world.canonical_corpus(docs.iter().map(|(_, p)| p));
@@ -5102,7 +5116,7 @@ fn run_observed(
         // What the rest of the cross-file part reads of the cone; what was answered is kept here, as it is given.
         let kept: BTreeSet<String> = reads.clone();
         let mut answered: BTreeMap<String, Vec<Vec<i64>>> = world_rels.iter().map(|(r, _)| (r.clone(), Vec::new())).collect();
-        let lowered_load = part(load.clone(), None);
+        let lowered_load = part(load.clone(), load_version.clone());
         let load_stats = t_stats.clone();
         let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(u64, String, Vec<Vec<i64>>)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>();
@@ -6250,7 +6264,7 @@ fn run_observed(
         modules.bind(&db, rel, source)?;
     }
     // The cone of requests' rows and the answers, as the rest of the cross-file part reads them (decision 0065 §2a).
-    if let Some((load, _)) = &loading {
+    if let Some((load, ..)) = &loading {
         for (rel, rows) in std::mem::take(&mut loading_rows) {
             let width = load.decls[rel.as_str()].len();
             let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
@@ -6314,16 +6328,14 @@ fn run_observed(
         let all_found = cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty();
         if all_found {
             let before = cross.program.rules.len();
-            cross.version = None;
-            cross_memo::keep_copies(&mut cross.program, plan, &wanted);
+            cross_memo::keep_copies(&mut cross, plan, &wanted);
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
                 format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
             });
         }
         // No component found (a new store): `rr_cross_doc` is empty and every guard passes, so none is run.
         if found.hits.is_empty() && cross_mode != cross_memo::Mode::Verify {
-            cross.version = None;
-            let dropped = cross_memo::drop_guards(&mut cross.program);
+            let dropped = cross_memo::drop_guards(&mut cross);
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || format!("no component found: {dropped} guards on `rr_cross_doc` not run"));
         }
         let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
@@ -6637,7 +6649,8 @@ fn run_observed(
                         }
                         // The deltas' inputs over the cut's version (decision 0244): their declarations, the relations
                         // of no columns among them, and the inputs, an overlay of fields.
-                        part.version = part.version.take().and_then(|v| {
+                        let had = part.version.is_some();
+                        part.version = made_from(had, part.version.take().and_then(|v| {
                             let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
                             let mut nullary = Vec::new();
                             for (name, ..) in &sources {
@@ -6652,7 +6665,7 @@ fn run_observed(
                             b.add_nullary(&nullary);
                             b.set_inputs(&part.program.inputs);
                             b.finish_overlay().ok()
-                        });
+                        }), "the input deltas");
                         maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
                     } else {
                         maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
@@ -9337,15 +9350,83 @@ fn stats_key(root: &str) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }
 
+/// An edit's version of a part (decision 0244): made wherever the part had one. In a debug build (every test's), an
+/// edit that made none is a fault, never a quiet fall back to an image of the tree.
+pub(super) fn made_from<T>(had: bool, made: Option<T>, edit: &str) -> Option<T> {
+    debug_assert!(!had || made.is_some(), "{edit}: no version was made from the part's");
+    made
+}
+
+/// The version of `whole`, the cross-file part `cross` (version `v`) with its answers stated and its negations gated
+/// (`answers::gate`, whose edit is `gated`): a derivation of `v` (decision 0241's form), each rule `gate` left as it
+/// was copied by its handle and each it rewrote or made added, in order, with the declarations and gates it added and
+/// the answers; an overlay of the answers where `gate` changed no rule. `None` where `v` is not `cross`'s rules.
+fn cone_version(
+    v: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    cross: &front::Program,
+    whole: &front::Program,
+    gated: Option<&[Option<usize>]>,
+) -> Option<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    if v.size() != cross.rules.len() {
+        return None;
+    }
+    let Some(origin) = gated else {
+        let mut b = Builder::on(v);
+        b.set_answers(&whole.answers);
+        return b.finish_overlay().ok();
+    };
+    let handles: Vec<_> = v.rules().collect();
+    let mut b = Builder::derive(v);
+    for (rule, from) in whole.rules.iter().zip(origin) {
+        match from {
+            Some(k) => {
+                b.copy(v, handles[*k]);
+            }
+            None => {
+                b.add(rule).ok()?;
+            }
+        }
+    }
+    for (rel, cols) in whole.decls.iter().filter(|(rel, _)| !cross.decls.contains_key(*rel)) {
+        let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        b.declare(rel, &cols);
+    }
+    b.add_tree_gates(&whole.gates[cross.gates.len()..]);
+    b.set_answers(&whole.answers);
+    b.finish().ok().map(|(v, _)| v)
+}
+
+/// The cone of requests' part and the rest's, of the gated program's version `v` (`answers::split`): each a view of
+/// the rules its side of `cone` derives, with its own inputs and outputs, and its side's lattices and gates; both keep
+/// every native, and the rest no answers.
+fn cone_parts(
+    v: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    cone: &BTreeSet<String>,
+    load: &front::Program,
+    rest: &front::Program,
+) -> (Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>) {
+    use crate::code_rule_dsl::logic::program_image::{Builder, PartFields};
+    let (inside, outside, all) = (|rel: &str| cone.contains(rel), |rel: &str| !cone.contains(rel), |_: &str| true);
+    let load_v = v.part(&inside, &load.inputs, &load.outputs, PartFields { natives: &all, lattice: &inside, gates: &inside }).ok();
+    let rest_v = v.part(&outside, &rest.inputs, &rest.outputs, PartFields { natives: &all, lattice: &outside, gates: &outside }).ok().and_then(|r| {
+        let mut b = Builder::on(&r);
+        b.set_answers(&Default::default());
+        b.finish_overlay().ok()
+    });
+    (load_v, rest_v)
+}
+
 /// `part`'s version, its qualifiers stated as its tree's (an overlay of that field, decision 0244), after the run
 /// edits the tree's qualifiers.
 fn requalified(part: &mut lower::Lowered) {
-    part.version = part.version.take().and_then(|v| {
+    let had = part.version.is_some();
+    part.version = made_from(had, part.version.take().and_then(|v| {
         let words: Vec<(&str, &str)> = part.program.qualifiers.iter().flat_map(|(r, ws)| ws.iter().map(move |w| (r.as_str(), w.as_str()))).collect();
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
         b.set_qualifiers(&words);
         b.finish_overlay().ok()
-    });
+    }), "the qualifiers");
 }
 
 /// The cross-file part as a run that keeps it maintains it (decision 0077): each derived relation stored, not
@@ -9357,8 +9438,6 @@ fn requalified(part: &mut lower::Lowered) {
 /// part.
 fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, usize)>) {
     let mut stored = cross.clone();
-    // Its fields are stated here: the version of `cross` is not its (t36 item 7 step 9 ports it).
-    stored.version = None;
     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
     let declared_inline: BTreeSet<String> = cross.program.decls.keys().filter(|r| cross.program.qualified(r, "inline")).cloned().map(String::from).collect();
     let levels = maintain::levels_wanted();
@@ -9370,6 +9449,7 @@ fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, u
             stored.program.qualifiers.entry(rel.to_string()).or_default().insert("no_inline".to_owned());
         }
     }
+    requalified(&mut stored);
     let out = if supports::counting() {
         let (counted, through, kept) = supports::supports(&stored);
         (counted, Some((through, kept)))

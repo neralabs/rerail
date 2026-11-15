@@ -347,9 +347,13 @@ impl Cut {
         }
         program.outputs.retain(|o| !self.clean.contains(o));
         crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        // A part of the cross part's version, where it has one (decision 0244): rules and natives kept by relation.
-        let version = cross.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &program));
-        lower::Lowered { program, version, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
+        // A part of the cross part's version, where it has one, by the same relations (decision 0244): its rules and
+        // natives those of the dirty strata, its gates none where the cut starts at the first stratum.
+        use crate::code_rule_dsl::logic::program_image::PartFields;
+        let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
+        let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
+        let version = super::made_from(cross.version.is_some(), cross.version.as_ref().and_then(|v| v.part(&dirty, &program.inputs, &program.outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok()), "the session's cut");
+        lower::Lowered { program, version, maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
@@ -1133,7 +1137,7 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:p.clone(),version:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {program:p.clone(),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
         assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
         let mut changed=inputs.clone();

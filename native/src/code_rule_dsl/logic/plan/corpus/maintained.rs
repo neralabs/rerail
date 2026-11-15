@@ -83,6 +83,7 @@ pub(in crate::code_rule_dsl) fn run(
             q.insert("no_inline".to_owned());
         }
     }
+    super::requalified(&mut maintained.program);
     drop(s);
     let s = span("bind and measure");
     let part = &maintained.program;

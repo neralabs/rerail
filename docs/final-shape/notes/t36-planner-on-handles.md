@@ -710,3 +710,37 @@ ported, over the targeted tests and dl1.
     `edit` filter, 823 in `session`, 3 in `cross_memo`, 23 in `constants`, over the same filters and the corpus tests,
     then removed; dl1: the same 48 findings cold and warm; cold 44.0 and 42.9 G against the baseline's 45.2 and
     45.4 G, warm 2.7 G on both (load about 60).
+
+- **Item 7, step 9: done** (2026-11-15). Every edit the run makes of a part states its edit on the part's version;
+  none is found again by reading the edited tree.
+  - The edits by relation state their own relations (`Version::part`, decision 0244): the cross memo's split (the
+    components' rules and natives out), the run's constants (the constants' cone; each part less `once`) and the
+    session's cut (the clean strata out). `file_local::part_as`, which guessed the relations from the edited tree's
+    heads and checked only the count of rules, is gone: an edit that rewrote a rule in place and kept the count would
+    have run the old rule.
+  - The edits that rewrite rules are derivations of the part's version (decision 0241's form), each rule they leave
+    copied by its handle and each they rewrite or make added, in the tree's order:
+    - the cone of requests: `answers::gate` returns its edit (each rule after it, the rule it was where unchanged),
+      and the gated program is made from it with the declarations, gates (`Builder::add_tree_gates`, with their
+      sources) and answers (`Builder::set_answers`) it adds; the cone and the rest are parts of it by the cone
+      (`answers::Loading::cone`);
+    - the cross memo's replay (the guarded rules rewritten, the copies added, its declarations, inputs and
+      qualifiers), `drop_guards` and `supports`; `keep_copies` is a view, its natives an overlay; and
+      `maintain::rewrite`'s maintained program, which the run reads with its `Maint` (`Lowered::maint`).
+  - A tree-diffing form (`Version::derived_as`: the edit found by matching the edited tree's rules to the old one's)
+    was tried and dropped: it reads both trees whole on every run, which is the cost this item removes.
+  - Guards, in a debug build (every test's): `Lowered::placed` checks that a version made from another's is its
+    tree's program (the image of each, the maintained parts too), and `corpus::made_from` that every edit of a part
+    with a version made one (no quiet fall back to an image of the tree). Both were seen to fail: rules dropped from
+    the file-local part's version (7 of 7 `corpus::tests::a_`, 8 of `edit`), and the gated program's version not
+    made (the `cone` tests). Swapping a part's inputs and outputs at the split was not seen, rightly: the later edits
+    state them from the tree, so the version run was right.
+  - Cost: the debug check decodes each placed version and images its tree; the corpus tests' three largest chunks
+    took about 86 s each against about 40 s without it.
+  - Checked: the targeted filters (`answers`, `cross_memo`, `session`, `file_local`, `supports`, `maintain`,
+    `retain`, `keeps`, `prepared`, `edit`, `phase0`, `cone`) and the 91 corpus tests, with both guards on; dl1: the
+    same 48 findings cold and warm; cold 44.5 and 45.4 G against the baseline's 46.1 and 47.0 G, warm 2.8 G.
+  - Still trees beside the versions, for the readers that read one: the program digests (`memo::program_digest`,
+    `cross_digest`, the choices' key, decoded from the version in `plan::run`) until decision 0173 step 6, the
+    split's analyses, and `maintain::rewrite`'s tree, decoded from its version each session run. The run's
+    `shared_split.clone()` still copies the parts' trees.

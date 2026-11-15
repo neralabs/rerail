@@ -17,6 +17,7 @@
 //! `nearest`, a matcher, or a variable no positive atom binds keeps its form; its stratum is maintained as before.
 
 use super::lower;
+use crate::code_rule_dsl::logic::program_image::{Builder, RuleRef};
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,10 +36,14 @@ pub(in crate::code_rule_dsl) fn is_support(rel: &str) -> bool {
 /// so, and how many kept their form.
 pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowered, usize, usize) {
     let mut out = cross.clone();
-    // Its rules are made here: the version of `cross` is not theirs.
-    out.version = None;
     let prog = &cross.program;
     let Ok(sccs) = front::components_of(prog) else { return (out, 0, 0) };
+    // Its version: a derivation of `cross`'s (decision 0241's form), each rule that keeps its form copied by its
+    // handle, in the tree's order, and each made one added. `None` where `cross` has no version of its rules.
+    let from = cross.version.as_deref().filter(|v| v.size() == prog.rules.len());
+    let handles: Vec<RuleRef<'_>> = from.map(|v| v.rules().collect()).unwrap_or_default();
+    let mut b = from.map(Builder::derive);
+    let mut failed = false;
     let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
     let mut rules: Vec<Rule> = Vec::new();
     let (mut through, mut kept) = (0, 0);
@@ -57,7 +62,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
         .map(String::as_str)
         .collect();
     let mut n: BTreeMap<String, usize> = BTreeMap::new();
-    for rule in &prog.rules {
+    for (k, rule) in prog.rules.iter().enumerate() {
         let h = &rule.head.rel;
         let eligible = !recursive.contains(h.as_str()) && !gated.contains(h.as_str()) && !prog.natives.contains_key(h.as_str()) && !prog.lattice.contains_key(h.as_str()) && !prog.nullary.contains(h.as_str());
         match eligible.then(|| support(prog, rule, n.get(h.as_str()).copied().unwrap_or(0))).flatten() {
@@ -66,21 +71,33 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
                 let width = decl.len() - rule.head.args.len();
                 let mut args = rule.head.args.clone();
                 args.extend((0..width).map(|_| Term::Wild));
+                if let Some(b) = &mut b {
+                    let cols: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                    b.declare(&name, &cols);
+                }
                 out.program.decls.insert(name.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 if let Some(d) = cross.domains.get(h.as_str()).cloned() {
                     out.domains.entry(name.clone()).or_insert(d);
                 }
+                let head = Rule { head: rule.head.clone(), body: [Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })].into() };
+                if let Some(b) = &mut b {
+                    failed |= b.add(&made).and_then(|_| b.add(&head)).is_err();
+                }
                 rules.push(made);
-                rules.push(Rule { head: rule.head.clone(), body: [Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })].into() });
+                rules.push(head);
                 through += 1;
             }
             None => {
+                if let Some(b) = &mut b {
+                    b.copy(from.expect("a version"), handles[k]);
+                }
                 rules.push(rule.clone());
                 kept += 1;
             }
         }
     }
     out.program.rules = rules;
+    out.version = super::made_from(cross.version.is_some(), b.filter(|_| !failed).and_then(|b| b.finish().ok()).map(|(v, _)| v), "the supports");
     (out, through, kept)
 }
 
