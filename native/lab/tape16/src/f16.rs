@@ -235,6 +235,19 @@ impl<'a> F16<'a> {
     pub fn widths(&self) -> [u32; 4] {
         [self.lang.widths[0], self.lang.widths[1], self.lang.widths[2], self.ckpt.w]
     }
+    /// E29: the tape as the GPU reads it in place (`inplace_gpu`'s `f16_q`): the node count, the codes, the
+    /// slots, gaps and lengths, the checkpoints.
+    pub fn gpu_image(&self) -> crate::inplace::GpuImage {
+        use crate::inplace::Gpu;
+        let mut g = crate::inplace::GpuImage { bytes: Vec::new(), params: Vec::new() };
+        g.val(self.n as u32);
+        self.codes.gpu(&mut g);
+        self.slot.gpu(&mut g);
+        self.gap.gpu(&mut g);
+        self.len.gpu(&mut g);
+        self.ckpt.gpu(&mut g);
+        g
+    }
     #[inline(always)]
     fn number(&self, i: usize) -> u32 {
         self.codes.get(i)

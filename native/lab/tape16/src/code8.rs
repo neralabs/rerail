@@ -997,3 +997,24 @@ impl Parts {
         self.entries
     }
 }
+
+/// E29: the parts as the GPU reads them in place: the value width, the block count, each part's start, the
+/// parts' bytes.
+impl crate::inplace::Gpu for Parts {
+    fn gpu(&self, g: &mut crate::inplace::GpuImage) {
+        g.val(self.vw as u32);
+        g.val(self.blocks as u32);
+        g.arr(&self.base);
+        g.arr(self.stored());
+    }
+}
+
+/// E29: the code bytes, the cutoff and numbers a prefix covers, and the side list's parts.
+impl crate::inplace::Gpu for Rank8 {
+    fn gpu(&self, g: &mut crate::inplace::GpuImage) {
+        g.val(self.cut);
+        g.val(self.per);
+        g.arr(&self.bytes);
+        self.parts.as_ref().expect("format 16 reads its side list in parts").gpu(g);
+    }
+}

@@ -717,3 +717,25 @@ pub fn occurrences(cols: &[Cols]) -> Vec<Occ> {
     }
     out
 }
+
+/// E29: the width, the fixed-width words, the fold masks and the exact all-ones test's mask (constants of the
+/// width, as generated code would hold them), and the escapes' parts.
+impl crate::inplace::Gpu for Esc {
+    fn gpu(&self, g: &mut crate::inplace::GpuImage) {
+        g.val(self.w);
+        g.arr(&self.words);
+        let v64 = |g: &mut crate::inplace::GpuImage, v: u64| {
+            g.val(v as u32);
+            g.val((v >> 32) as u32);
+        };
+        assert!(self.folds.len() <= 3, "a whole-byte width folds at most 3 times");
+        g.val(self.folds.len() as u32);
+        for k in 0..3 {
+            let (fw, m) = self.folds.get(k).copied().unwrap_or((0, 0));
+            g.val(fw);
+            v64(g, m);
+        }
+        v64(g, self.low);
+        self.parts.as_ref().expect("format 16 reads its escapes in parts").gpu(g);
+    }
+}

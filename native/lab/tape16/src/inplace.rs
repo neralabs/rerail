@@ -2020,7 +2020,7 @@ pub struct GpuImage {
 }
 
 impl GpuImage {
-    fn arr<T: Copy>(&mut self, v: &[T]) {
+    pub(crate) fn arr<T: Copy>(&mut self, v: &[T]) {
         while self.bytes.len() % 8 != 0 {
             self.bytes.push(0);
         }
@@ -2029,7 +2029,7 @@ impl GpuImage {
         // Padding, so a two-word read past the end stays in the buffer.
         self.bytes.extend_from_slice(&[0u8; 16]);
     }
-    fn val(&mut self, v: u32) {
+    pub(crate) fn val(&mut self, v: u32) {
         self.params.push(v);
     }
 }

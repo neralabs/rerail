@@ -319,6 +319,10 @@ half format 15's size (t39 steps 1–6). The point parent and the point start ar
 forms cost. Reading in order through cursors, which E17 assumed of the engine, is as fast as XF or
 faster.
 
+On Metal (E29, t39 step 21), the same reads as kernels, one thread a question over the whole corpus,
+take 0.07–0.37 ns a question on the M1 Max, within 1.5× XF's. The parent is the exception at
+0.22–0.30 ns, 1.6–2.3× XF's, as on the CPU. Every answer was checked against the CPU reader's.
+
 ### 1.8 What it costs, together (E24)
 
 Measured files only: the numbering, widths and dictionaries were learned on the other half
@@ -821,7 +825,7 @@ Each reports a curve over its options, not a pass or fail. Each runs on captured
   - on disk: bytes per node under zstd (with and without a dictionary), and the load cost to inflate
     to exactly the in-memory bytes;
   - the writer's cost a node (E6).
-  On Metal, the same questions as kernels, later.
+  On Metal, the same questions as kernels (t38 E10 §5; format 16's in E29).
 - **E8, key width** (T7). Index and fact store bytes a row under each identity, against the
   4.5–8 B/row target.
 
@@ -861,6 +865,8 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   mark (1.0) on every tape, checked before every load.
 - E28 (2026-11-15, t39 step 20): the writer (7): format 15's cost a node, 3–16% fewer instructions,
   every tape equal to the reader's.
+- E29 (2026-11-15, t39 step 21): every question as a Metal kernel on the tape as stored (1.7):
+  0.07–0.37 ns a question, the parent 1.6–2.3× XF's, every answer checked.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

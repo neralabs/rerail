@@ -1173,6 +1173,51 @@ Fewer instructions on every large set. The time is level on Python, JSON and `.r
 more on Rust, TypeScript and SQL. With the lean `.rr` parser (M5 Max, `--features lean`), parse
 and write take 454 instructions a node with format 15's writer, and 437 with format 16's.
 
+### Step 21: format 16's questions on Metal (E29)
+
+`tape16 inplace-gpu` (t38 E10 §5) now has a kernel for format 16, `f16_q`, beside X, M, B, BE, XF
+and MF. It reads the tape's arrays as they are stored, with nothing built beside them:
+- **code**: the byte below the cutoff, else the prefix and its 256-node block's entry in the side
+  list's part (two u16 ends, a binary search of the offsets);
+- **subtree end**: the slot, one byte load;
+- **parent**: at most 7 sibling steps over the slots;
+- **start**: the checkpoint, then the 7 or fewer gaps after it folded a word at a time, escapes
+  added from the part;
+- **end**: the start and the length.
+
+As in t38, each candidate is built over the corpus as one forest, one thread a question, the best
+of four warm dispatches, every answer checked against the CPU reader's. The forest is one language
+to format 16, so its single code table puts more nodes past the cutoff (0.6% data-layer, 5.3%
+rerail, against 0.36–1.1% a language in 0156 §1.8). Slots, gaps and lengths are each 8 bits; 2–4%
+of slots and lengths are escaped.
+
+M1 Max at load 4, ns a question:
+
+```text
+                      data-layer (9.5M nodes)          rerail (5.5M nodes)
+                      F16    XF     MF     BE          F16    XF     MF     BE
+image bytes a node    4.75   4.81   4.02   3.11        5.04   4.91   4.20   3.12
+code, in order        0.07   0.05   0.07   0.10        0.10   0.06   0.07   0.10
+code at random        0.18   0.23   0.17   0.26        0.31   0.26   0.26   0.39
+start at random       0.26   0.18   0.28   0.52        0.16   0.18   0.23   0.43
+end at random         0.37   0.34   0.57   0.88        0.25   0.31   0.49   0.77
+subtree end           0.09   0.15   0.14   0.46        0.09   0.13   0.13   0.39
+parent at random      0.22   0.14   0.14   1.19        0.30   0.13   0.13   1.76
+children of a node    1.24   1.12   1.12   2.77        11.3   9.0    9.0    10.1
+```
+
+- **Every question runs in place on the device at 0.07–0.37 ns,** within 1.5× XF's, except the
+  parent. The M3 (load 6–7) and the M5 Max (load 44–90) give the same order, and every answer was
+  right on all three.
+- **The parent costs 1.6–2.3× XF's** (0.22–0.30 against 0.13–0.14). XF stores the distance in the
+  slot before; format 16 walks up to 7 siblings, each a dependent load, and a SIMD group waits for
+  its longest walk. On the CPU the same walk costs 1.5–2.6× (0156 §1.7), so the device adds
+  nothing of its own.
+- **The subtree end is faster than XF's** (0.09 against 0.13–0.15): one byte load against a
+  bit-packed field. The escapes split a group onto the binary search, but at 2–4% that stays cheap.
+- **Children on rerail** are set by the forest's root (1,698 children), as in t38; it is the same
+  for every candidate.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1360,3 +1405,6 @@ In order. Each step is measured on all three corpora, every answer checked.
     readers read; byte 0 of every tape is its language's revision, checked before every load.
 20. **The writer (E28).** Done: format 15's cost a node (3–16% fewer instructions, time level to +25%),
     every tape equal to the reader's. Next: the tape's own kernels on the decoded blocks.
+21. **The questions on Metal (E29).** Done: every question in place on the device, 0.07–0.37 ns,
+    within 1.5× XF's except the parent (1.6–2.3×, the sibling walk), every answer checked. Next:
+    the primitives (match, nearest, outermost, has, spans) as format 16 kernels.
