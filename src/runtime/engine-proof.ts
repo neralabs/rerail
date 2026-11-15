@@ -124,6 +124,8 @@ async function proofRoute(socketPath: string, deadline: number): Promise<Request
  * What the listener `route` reaches answers `challenge` with, by `answerBy` (epoch ms). The limit is a timer of its own,
  * since a request's timeout starts only once its socket has connected and restarts at each byte read. Once there is a
  * verdict the request is destroyed with its socket, so a listener that keeps the connection open holds nothing here.
+ * The Host header is the one Node writes for a Unix socket, on a pipe too: a request with a connection of its own and
+ * no agent would carry `localhost:80`.
  */
 async function askForProof(route: RequestOptions, accessToken: string, challenge: string, answerBy: number): Promise<EngineProofAnswer> {
   const expected = engineProof(accessToken, challenge);
@@ -133,7 +135,7 @@ async function askForProof(route: RequestOptions, accessToken: string, challenge
     ...route,
     method: "POST",
     path: ENGINE_PROOF_PATH,
-    headers: { [ENGINE_CHALLENGE_HEADER]: challenge, "content-length": 0 },
+    headers: { [ENGINE_CHALLENGE_HEADER]: challenge, "content-length": 0, Host: "localhost" },
   }, (response) => {
     answered = true;
     const chunks: Buffer[] = [];
