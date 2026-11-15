@@ -1,8 +1,8 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync,
-  writeFileSync,
+  chmodSync, closeSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync,
+  symlinkSync, writeFileSync,
 } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -507,8 +507,8 @@ interface CountingDaemon {
 /**
  * A daemon recorded in the Rerail home `home` that answers as a live one does and counts every request it gets: a
  * repository's start state is `repositoryState`, or what it gives for the folder asked about. With `answerWhen`, it
- * holds each start check until the promise `answerWhen` gives for it settles, as a daemon busy with other checkouts
- * does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
+ * holds each start check until the promise `answerWhen` gives for its address settles, as a daemon busy with other
+ * checkouts does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
  * engine pipe exists (`recordedDaemonAlive`), so it holds one. It keeps the Rerail database open where there is one, as
  * a running daemon does, so the database's WAL and the WAL's index stay beside it, unless `holdsDatabase` is false: a
  * test whose daemon's connection is another process's gives that. With an answer of stopped it names the checkout it
@@ -518,7 +518,7 @@ interface CountingDaemon {
 async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
-  answerWhen?: () => Promise<unknown>,
+  answerWhen?: (url: URL) => Promise<unknown>,
   { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope }: StandInOptions = {},
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
@@ -543,7 +543,7 @@ async function countingDaemon(
         gone = !response.writableFinished;
         if (gone) ended += 1;
       });
-      await Promise.race([answerWhen(), closing.promise]);
+      await Promise.race([answerWhen(url), closing.promise]);
       if (gone) return;
     }
     const answer = Object.hasOwn(answers, url.pathname) ? answers[url.pathname] : undefined;
@@ -992,6 +992,83 @@ function keptAnswerFile(folder: string, { pid = process.pid, startedAt = 1 }: Pi
 function keptAt(folder: string, at: number): void {
   const file = keptAnswerFile(folder);
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")) as object, at }));
+}
+
+/** Whether `text` is a whole kept answer: it parses, and holds every field one is written with. */
+function wholeKeptAnswer(text: string): boolean {
+  try {
+    const kept = JSON.parse(text) as Record<string, unknown>;
+    return kept.v === 1 && ["repository", "folder", "checkout", "git"].every(field => typeof kept[field] === "string")
+      && typeof kept.depth === "number" && typeof kept.at === "number";
+  } catch {
+    return false;
+  }
+}
+
+/** The codes Windows gives a moment while another program holds a file or is deleting it (`heldOnWindows`). */
+const WINDOWS_HOLDS: readonly string[] = ["EPERM", "EACCES", "EBUSY"];
+
+/** What the hook's reads of kept answers gave and what its renames onto them did. */
+interface KeptAnswerTraffic {
+  /** Each read of a kept answer: the text it gave, or the code it failed with. */
+  readonly reads: Array<{ readonly text: string } | { readonly code: string }>;
+  /** Each rename onto a kept answer: `renamed`, or the code it failed with. */
+  readonly renames: string[];
+}
+
+/** Records {@link KeptAnswerTraffic} of the hook host the test loads next (`startCheckHost`), through `node:fs` and `node:fs/promises`. */
+function watchKeptAnswers(): KeptAnswerTraffic {
+  const traffic: KeptAnswerTraffic = { reads: [], renames: [] };
+  const kept = (path: unknown): boolean => typeof path === "string" && path.includes(`${sep}stopped-answers${sep}`) && path.endsWith(".json");
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const readFileSync = (...args: Parameters<typeof actual.readFileSync>): ReturnType<typeof actual.readFileSync> => {
+      if (!kept(args[0])) return actual.readFileSync(...args);
+      try {
+        const text = actual.readFileSync(...args);
+        traffic.reads.push({ text: String(text) });
+        return text;
+      } catch (error) {
+        traffic.reads.push({ code: codeOf(error) });
+        throw error;
+      }
+    };
+    return { ...actual, default: { ...actual, readFileSync }, readFileSync };
+  });
+  vi.doMock("node:fs/promises", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const rename = async (from: string, to: string): Promise<void> => {
+      if (!kept(to)) return await actual.rename(from, to);
+      try {
+        await actual.rename(from, to);
+        traffic.renames.push("renamed");
+      } catch (error) {
+        traffic.renames.push(codeOf(error));
+        throw error;
+      }
+    };
+    return { ...actual, default: { ...actual, rename }, rename };
+  });
+  return traffic;
+}
+
+/**
+ * A stand-in daemon's timing for `hooksAtOnce`: it answers each Codex hook's start check at once, and that hook writes the
+ * answer again over one kept over a minute ago; it holds each Claude Code hook's, as a busy daemon does, and that hook
+ * repeats the answer kept.
+ */
+const codexAnsweredAtOnce = (url: URL): Promise<unknown> => (url.searchParams.get("host") === "codex" ? Promise.resolve() : busyTheWholeTest());
+
+/** `count` start checks in `folder` at once, every other one a Codex hook's that waits for the daemon's answer however long it takes. */
+function hooksAtOnce(host: StartCheckHost, folder: string, count: number): Array<Promise<boolean>> {
+  return Array.from({ length: count }, (_, index) => (index % 2 === 0
+    ? host.hookRerailStarted("codex", folder, undefined, GRACE_NO_ANSWER_MISSES)
+    : host.hookRerailStarted("claude-code", folder)));
+}
+
+/** Each hook's answer, or what it threw. */
+function settled(results: ReadonlyArray<PromiseSettledResult<boolean>>): Array<boolean | string> {
+  return results.map(result => (result.status === "fulfilled" ? result.value : String(result.reason)));
 }
 
 /**
@@ -1489,7 +1566,15 @@ function windowsTool(...path: string[]): string {
 
 /** Another program holding the Rerail database file open with no sharing, as a backup or a copy can. */
 async function heldWithoutSharing(): Promise<DatabaseHolder> {
-  const command = `$f = [System.IO.File]::Open('${defaultRerailDatabasePath().replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None'); `
+  return await heldByAnotherProgram(defaultRerailDatabasePath(), "ReadWrite", "None");
+}
+
+/**
+ * Another program holding the file at `path` open for `access`, sharing only what `share` names (.NET's `FileShare`):
+ * while it shares no deleting, Windows refuses to delete the file or to rename another over it.
+ */
+async function heldByAnotherProgram(path: string, access: "Read" | "ReadWrite", share: "None" | "Read"): Promise<DatabaseHolder> {
+  const command = `$f = [System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', '${access}', '${share}'); `
     + "[Console]::Out.WriteLine('held'); [Console]::Out.Flush(); Start-Sleep -Seconds 600";
   return await holdingProcess(windowsTool("WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", command]);
 }
@@ -1658,6 +1743,14 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
       folderLink(`${answers}-copy`, answers);
     },
   },
+  {
+    what: "this daemon's folder of kept answers is a link to a copy of it", change: app => {
+      const folder = dirname(keptAnswerFile(join(app, "src")));
+      cpSync(folder, `${folder}-copy`, { recursive: true });
+      retried(() => renameSync(folder, `${folder}-before`));
+      folderLink(`${folder}-copy`, folder);
+    },
+  },
 ];
 
 /**
@@ -1727,6 +1820,7 @@ describe("the hook start check", () => {
     vi.doUnmock("../../src/engine/storage/database.js");
     vi.doUnmock("../../src/engine/catalog/checkout-control.js");
     vi.doUnmock("node:fs/promises");
+    vi.doUnmock("node:fs");
     vi.resetModules();
     vi.unstubAllEnvs();
   });
@@ -1837,6 +1931,112 @@ describe("the hook start check", () => {
     } finally {
       await daemon.close();
     }
+  });
+
+  it("keeps one whole answer where 100 hooks in one folder write it again and repeat it at once: none fails, none reads part of one, and a read Windows refuses only waits", { timeout: 120_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const traffic = watchKeptAnswers();
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped", codexAnsweredAtOnce);
+    try {
+      for (let round = 0; round < 3; round += 1) {
+        keptAt(app, Date.now() - 25 * 60_000);
+        const [readsBefore, checksBefore] = [traffic.reads.length, host.proofs.found.length];
+        const answers = settled(await Promise.allSettled(hooksAtOnce(host, app, 100)));
+        const reads = traffic.reads.slice(readsBefore);
+        const refusedReads = reads.filter(read => "code" in read).length;
+        const waited = host.proofs.found.slice(checksBefore).filter(found => found !== true).length;
+        expect({
+          answers, partReads: reads.filter(read => "text" in read && !wholeKeptAnswer(read.text)),
+          refusedOtherwise: [...reads.flatMap(read => ("code" in read ? [read.code] : [])), ...traffic.renames.filter(code => code !== "renamed")]
+            .filter(code => process.platform !== "win32" || !WINDOWS_HOLDS.includes(code)),
+          waitedThoughWhole: Math.max(0, waited - refusedReads), written: traffic.renames.includes("renamed"),
+          folder: readdirSync(dirname(keptAnswerFile(app))), whole: wholeKeptAnswer(readFileSync(keptAnswerFile(app), "utf8")),
+        }).toEqual({
+          answers: Array.from({ length: 100 }, () => false), partReads: [], refusedOtherwise: [], waitedThoughWhole: 0, written: true,
+          folder: [basename(keptAnswerFile(app))], whole: true,
+        });
+      }
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("answers every hook where another program holds the kept answer open sharing only reads, as a virus scan can: Windows refuses to write it again, and the answer kept stays whole and is repeated", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const traffic = watchKeptAnswers();
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    keptAt(app, Date.now() - 25 * 60_000);
+    const kept = readFileSync(keptAnswerFile(app), "utf8");
+    const holder = await heldByAnotherProgram(keptAnswerFile(app), "Read", "Read");
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped", codexAnsweredAtOnce);
+    try {
+      const checksBefore = host.proofs.found.length;
+      const answers = settled(await Promise.allSettled(hooksAtOnce(host, app, 20)));
+      expect({
+        answers, refused: traffic.renames.length > 0 && traffic.renames.every(code => WINDOWS_HOLDS.includes(code)),
+        repeated: host.proofs.found.slice(checksBefore), kept: readFileSync(keptAnswerFile(app), "utf8"), folder: readdirSync(dirname(keptAnswerFile(app))),
+      }).toEqual({
+        answers: Array.from({ length: 20 }, () => false), refused: true, repeated: Array.from({ length: 10 }, () => true), kept,
+        folder: [basename(keptAnswerFile(app))],
+      });
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
+  it("waits for a late daemon where the answer kept is a link to a copy of it, and writes nothing through it", async ({ skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const [file, copy] = [keptAnswerFile(app), join(root, "copy.json")];
+    copyFileSync(file, copy);
+    rmSync(file);
+    try {
+      symlinkSync(copy, file, "file");
+    } catch (error) {
+      if (codeOf(error) === "EPERM") skip("this user may not make a symbolic link");
+      throw error;
+    }
+    const before = readFileSync(copy, "utf8");
+    const late = await daemonAnsweringAfterProof(host, "started");
+    try {
+      host.proofs.nextCheck();
+      expect({ started: await host.hookRerailStarted("claude-code", app), checked: host.proofs.found.at(-1), requests: late.requests })
+        .toEqual({ started: true, checked: false, requests: ["/api/presentation"] });
+    } finally {
+      await late.close();
+    }
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await prompt.close();
+    }
+    expect({ copy: readFileSync(copy, "utf8"), link: lstatSync(file).isSymbolicLink(), whole: wholeKeptAnswer(readFileSync(file, "utf8")) })
+      .toEqual({ copy: before, link: false, whole: true });
+  });
+
+  it("removes the folders of the daemons before it at a new daemon's first kept answer, following no link in them", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "kept");
+    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+    mkdirSync(join(answers, "7-1"), { recursive: true });
+    writeFileSync(join(answers, "7-1", `${"0".repeat(32)}.json`), "{}");
+    folderLink(outside, join(answers, "7-1", "linked"));
+    folderLink(outside, join(answers, "8-1"));
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    expect({ answers: readdirSync(answers), outside: readdirSync(outside) }).toEqual({ answers: [`${process.pid}-1`], outside: ["keep.txt"] });
   });
 
   it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {
