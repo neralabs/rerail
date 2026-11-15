@@ -652,11 +652,13 @@ capability.
      `rerail status` name the key and the command that makes it private.
   3. A missing or unreadable key is still an error. Any other `--tls-key` that was refused before stops the start
      with the exit code and message it had: a missing or misspelled path, a folder, a FIFO, a file this account may
-     not read or another program holds (a lease, or on Windows an oplock not given up within 2 s), one over 1 MiB,
-     one that holds no private key (the certificate, when the two are swapped), or one whose readers cannot be read
-     (`Get-Acl` failing on Windows). A `--tls-cert` that cannot be read, holds no certificate or is not the key's
-     stops it too, with the message it gets beside a private key, a folder's naming the folder; a held one, a FIFO
-     or one over 1 MiB gets the key's refusal.
+     not read or another program holds (a lease, or on Windows an oplock not given up within 2 s of the open), one
+     over 1 MiB, one that holds no private key (the certificate, when the two are swapped), or one whose readers
+     cannot be read (`Get-Acl` failing on Windows). A `--tls-cert` that cannot be read, holds no certificate or is
+     not the key's stops it too, with the message it gets beside a private key, a folder's naming the folder; a held
+     one, a FIFO or one over 1 MiB gets the key's refusal. On Windows a Node process opens both files first, so that
+     an oplock keeps it waiting and not the daemon; when that process cannot start, ends before it opens them, or has
+     not begun within 10 s, the start stops with the key's refusal and a line saying why.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
