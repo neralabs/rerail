@@ -78,13 +78,15 @@ function checkoutLocation(top: string, commonDirectory: string, gitDirectory: st
  * refuses the checkout (`safe.directory`, a ceiling, a filesystem boundary, `core.bare`); with no `.git` above, it ends
  * outside Git. Each end is the location {@link repositoryIdentityLocation} gives there, for the folder's real path, which
  * is what a hook asks the daemon about. Undefined where the filesystem leaves the end open: a folder with no real path, a
- * folder on the way that is gone while the walk looks in it, a `.git` Git would pass over or refuse, a Git folder on the
- * way (inside `.git`, a bare repository), a `core.worktree` that puts the checkout elsewhere, or a checkout whose top Git
- * would name otherwise than this walk spells it.
+ * folder on a server ({@link onServer}), a folder on the way that is gone while the walk looks in it, a `.git` Git would
+ * pass over or refuse, one that names a Git folder on a server, a Git folder on the way (inside `.git`, a bare
+ * repository), a `core.worktree` that puts the checkout elsewhere or a config that cannot be read now, or a checkout
+ * whose top Git would name otherwise than this walk spells it.
  */
 export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] | undefined {
-  const requested = realFolder(workspace);
-  if (requested === undefined) return undefined;
+  const requested = onServer(workspace) ? undefined : realFolder(workspace);
+  // A mapped drive letter's real path is the server's.
+  if (requested === undefined || onServer(requested)) return undefined;
   const top = nearestGitTop(requested);
   if (top === "open") return undefined;
   return top === undefined ? [nonGitLocation(requested)] : [top, nonGitLocation(requested)];
@@ -102,6 +104,16 @@ function realFolder(workspace: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A Windows path on a server (`\\server\share`, `\\?\UNC\server\share`). The walk never touches one: where the server
+ * does not answer, Windows holds each look there for about 21 s.
+ */
+const SERVER_PATH = /^[\\/]{2}(?:[?.][\\/]UNC[\\/])?[^\\/?.]/i;
+
+function onServer(path: string): boolean {
+  return process.platform === "win32" && SERVER_PATH.test(path);
 }
 
 /**
@@ -177,11 +189,14 @@ function dotGitIn(folder: string): DotGit {
   return gitDirectory === undefined ? OPEN_DOT_GIT : takenGitDirectory(gitDirectory);
 }
 
-/** `path` followed through links, as Git's `stat` follows them: missing, a folder, a file, or anything else. */
+/**
+ * `path` followed through links, as Git's `stat` follows them: missing, a folder, a file, or anything else, which a
+ * link to a server path also is, left untouched.
+ */
 function entryKind(path: string): "none" | "folder" | "file" | "other" {
   let stats: Stats | undefined;
   try {
-    stats = statSync(path, { throwIfNoEntry: false });
+    stats = followedLocally(path);
   } catch {
     return "other";
   }
@@ -190,10 +205,21 @@ function entryKind(path: string): "none" | "folder" | "file" | "other" {
   return stats.isFile() ? "file" : "other";
 }
 
+/** What `stat` gives for `path`, undefined where nothing is there; throws for a link that names a server path. */
+function followedLocally(path: string): Stats | undefined {
+  const own = lstatSync(path, { throwIfNoEntry: false });
+  if (own === undefined || !own.isSymbolicLink()) return own;
+  if (onServer(readlinkSync(path))) throw new Error(`${path} links to a server`);
+  return statSync(path, { throwIfNoEntry: false });
+}
+
 /** A `gitdir:` file as Git reads it: the whole file, its line ends trimmed. */
 const GITFILE = /^gitdir: (.+?)[\r\n]*$/;
 
-/** The folder a `gitdir:` file names, relative to the file's own folder; undefined where Git refuses the file. */
+/**
+ * The folder a `gitdir:` file names, relative to the file's own folder; undefined where Git refuses the file, and where
+ * it names a folder on a server, which is left untouched.
+ */
 function gitfileTarget(file: string): string | undefined {
   let text: string;
   try {
@@ -202,7 +228,8 @@ function gitfileTarget(file: string): string | undefined {
     return undefined;
   }
   const named = GITFILE.exec(text)?.[1];
-  return named === undefined ? undefined : resolve(dirname(file), named);
+  const target = named === undefined ? undefined : resolve(dirname(file), named);
+  return target === undefined || onServer(target) ? undefined : target;
 }
 
 /**
@@ -222,13 +249,16 @@ function isGitDirectory(gitDirectory: string, commonDirectory: string): boolean 
   return headGitReads(join(gitDirectory, "HEAD")) && gitMaySearch(join(commonDirectory, "objects")) && gitMaySearch(join(commonDirectory, "refs"));
 }
 
-/** The common folder Git reads for `gitDirectory`: the one its `commondir` file names, else itself; undefined where Git cannot read that file. */
+/**
+ * The common folder Git reads for `gitDirectory`: the one its `commondir` file names, else itself; undefined where Git
+ * cannot read that file, and where it names a folder on a server, which is left untouched.
+ */
 function commonDirectoryOf(gitDirectory: string): string | undefined {
   const file = join(gitDirectory, "commondir");
   if (!existsSync(file)) return gitDirectory;
   try {
     const named = readFileSync(file, "utf8").replace(/[\r\n]+$/, "");
-    return named === "" ? undefined : resolve(gitDirectory, named);
+    return named === "" || onServer(resolve(gitDirectory, named)) ? undefined : resolve(gitDirectory, named);
   } catch {
     return undefined;
   }
@@ -264,16 +294,23 @@ function gitMaySearch(path: string): boolean {
 /** A `worktree` key anywhere in a config file; a commented-out one counts too, which only sends more folders to Git. */
 const WORKTREE_KEY = /\bworktree\s*=/i;
 
-/** Whether the repository's own config (`config`, and a linked worktree's `config.worktree`) sets `core.worktree`. */
+/**
+ * Whether the repository's own config (`config`, and a linked worktree's `config.worktree`) sets `core.worktree`, or
+ * cannot be read now, which tells nothing of it.
+ */
 function setsWorktree(gitDirectory: string, commonDirectory: string): boolean {
-  return [join(commonDirectory, "config"), join(gitDirectory, "config.worktree")].some(file => WORKTREE_KEY.test(textOf(file)));
+  return [join(commonDirectory, "config"), join(gitDirectory, "config.worktree")].some(file => {
+    const text = textOf(file);
+    return text === undefined || WORKTREE_KEY.test(text);
+  });
 }
 
-function textOf(file: string): string {
+/** The text of `file`: empty where there is no such file, which Git reads as setting nothing; undefined where it cannot be read. */
+function textOf(file: string): string | undefined {
   try {
     return readFileSync(file, "utf8");
-  } catch {
-    return "";
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? "" : undefined;
   }
 }
 
