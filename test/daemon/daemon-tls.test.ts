@@ -440,6 +440,48 @@ Start-Sleep 60`;
     expect(ms).toBeLessThan(10_000 + 2_000);
   }, 30_000);
 
+  it.skipIf(process.platform !== "win32")("never opens a held key or certificate itself, and refuses as main does within its bounds, when a NODE_OPTIONS preload of the person's prints a line holding a d", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    // Printed by every Node process before its own script, the one that opens the files first included.
+    await beforeEachNodeStart("require('node:fs').writeSync(1, 'preload loaded\\n');");
+    for (const held of [files.keyFile, files.certFile]) {
+      const oplock = await holdOplock(held);
+      if (oplock !== "held") skip(`PowerShell could not hold an oplock here: ${oplock}`);
+      // An open of the held file in the daemon itself would wait as long as the holder lives, 60 s, past this test.
+      const { error, ms } = await refusal(files, shared);
+      expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+      expect((error as Error).message).toBe(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only: icacls "${files.keyFile}" /inheritance:r /grant:r "${userInfo().username}:R"`);
+      expect(ms).toBeLessThan(10_000 + 2_000 + 1_000);
+      await endHolders();
+    }
+  }, 45_000);
+
+  it.skipIf(process.platform !== "win32")("gives the open of a held key its 2 s from the moment the Node process begins, saying nothing more than main, when a NODE_OPTIONS preload of the person's prints a line with no d", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await beforeEachNodeStart("require('node:fs').writeSync(1, 'hi\\n');");
+    const oplock = await holdOplock(files.keyFile);
+    if (oplock !== "held") skip(`PowerShell could not hold an oplock here: ${oplock}`);
+    const { error, ms } = await refusal(files, shared);
+    expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+    // Main's refusal and nothing more: the process began, and its open, not its start, ran out of time.
+    expect((error as Error).message).toBe(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only: icacls "${files.keyFile}" /inheritance:r /grant:r "${userInfo().username}:R"`);
+    expect(ms).toBeGreaterThanOrEqual(2_000);
+    expect(ms).toBeLessThan(10_000);
+    // With the key free, what the preload prints costs nothing: the start serves this computer alone.
+    await endHolders();
+    await expect(loadDaemonTls(files, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+  }, 30_000);
+
   it("reads at most a mebibyte of a key others can read and of its certificate, so a huge file gets main's refusal at once", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const { cert, key } = selfSignedCertificate();
