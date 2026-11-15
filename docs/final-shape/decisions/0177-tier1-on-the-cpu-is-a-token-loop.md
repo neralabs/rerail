@@ -1075,3 +1075,44 @@ tests: rr's guards are all ones the zeros make.
 lanes' indexes with the span once, as `needs_wide` does. Numbers
 246→233 a token. A one-lane span fails
 `a_numbers_checks_are_at_its_token` and the engine's tapes.
+
+## A comment's count its opener makes (2026-11-15)
+
+**Intro.** A lexer that reads a comment knows it starts with `//`
+or `/*`. rr's grammar marks the token after a comment for JSON:
+
+```
+# Holds at every comment: a comment starts with an opener.
+after comment when count(line_open | block_open) at least 1
+```
+
+The generated loop did not know it. Each comment ran a 64-byte
+gate for `/` (its own opener has one, so the gate always failed),
+then a call that counted the openers block by block.
+
+**The change.** The lowering proves the count holds
+(`Lowering::implies`): every arm opener of the comment's reader
+implies `line_open | block_open`.
+
+- The proof walks the operations: a conjunct or each disjunct of
+  the left side, a disjunct or each conjunct of the right, a `prev`
+  as its operand at a smaller delay, `within` at matching delays.
+- A proved test has `least` 0 (`TokenCheck::always`). The CPU makes
+  its hit a constant and fuses no count call for it.
+- It holds where the rule's reader reads a token. A `/` that the
+  reader passes to its other rule (division) gets no hit
+  (`records::test_holds`). Metal tests the reader's openers the
+  same way.
+
+`a_comments_opener_is_its_count` checks the fold and where it holds.
+When the interpreter let the hit through at every `/`, the records
+test failed on a division in the corpus.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Comments | 498 | 371 | 193 |
+
+Open: if the always-true test's mask moves from "made at the
+tokens" into the CPU body's stored outputs, one refusal flag flips
+(a string open at the file's end). Nothing reads that mask now. It
+stays at the tokens, but the flip is not yet explained.

@@ -3313,13 +3313,19 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let mut len = f.ins().iadd_imm(len, 1);
     let mut ones = f.ins().iconst(types::I64, -1);
     let mut rest = None;
-    let mut refuse = f.ins().iconst(types::I64, 0);
-    let mut hits = f.ins().iconst(types::I64, 0);
+    // The tests that hold at every token (`TokenCheck::always`): their hits, made nowhere.
+    let always = tests.iter().filter(|(t, _)| t.always()).fold((0i64, 0i64), |(r, h), (t, _)| match t.then {
+        crate::records::CheckThen::Escape => (-1, h),
+        crate::records::CheckThen::At(k) => (r, h | 1i64 << k),
+        crate::records::CheckThen::After(k) => (r, h | 1i64 << (crate::records::AFTER_SHIFT + u32::from(k))),
+    });
+    let mut refuse = f.ins().iconst(types::I64, always.0);
+    let mut hits = f.ins().iconst(types::I64, always.1);
     // The count tests, fused into one call (`tests_fn`) where the loop has it.
     let rule = tests.first().map_or(0, |(t, _)| t.rule);
     let fused = rd.calls.iter().find(|x| x.0 == TESTS_CALL | u16::from(rule)).cloned();
     if let Some((_, id, sig)) = &fused {
-        let least = tests.iter().filter(|(t, _)| t.count).map(|(t, _)| t.least).min().unwrap_or(0);
+        let least = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| t.least).min().unwrap_or(0);
         let (on, join) = (f.create_block(), f.create_block());
         f.append_block_param(join, types::I64);
         f.append_block_param(join, types::I64);
@@ -3329,7 +3335,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         // What the tests need of the bytes, together (`native_cpu_bytes::needs`): a token whose
         // bytes (and the few its masks look past) fit one vector has none of them where no byte
         // there is in the set, a compare a run of bytes, and the call is skipped.
-        let counts: Vec<crate::records::TokenCheck> = tests.iter().filter(|(t, _)| t.count).map(|(t, _)| *t).collect();
+        let counts: Vec<crate::records::TokenCheck> = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| *t).collect();
         if let Some(n) = rd.bytes.and_then(|(b, _)| counts_need(b.native, &counts)) {
             let (vec, call) = (f.create_block(), f.create_block());
             let span = f.ins().iadd_imm(len, i64::from(n.hi - n.lo));
@@ -3372,7 +3378,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         rest = Some(after);
     }
     for &(ref t, filter) in tests {
-        if t.count && fused.is_some() {
+        if t.always() || t.count && fused.is_some() {
             continue;
         }
         let next = f.create_block();
@@ -5020,7 +5026,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         // Each rule's count tests, fused (`tests_fn`), where the bytes make all their masks.
         for (k, _) in rec.rules.iter().enumerate() {
-            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count).copied().collect();
+            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count && !c.always()).copied().collect();
             if tests.is_empty() || !tests.iter().all(|c| bytewise.can(c.o)) {
                 continue;
             }
@@ -5035,7 +5041,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // string's bytes for its end and its tests.
         for (k, rule) in rec.rules.iter().enumerate() {
             let crate::records::EndRule::Read(i) = *rule else { continue };
-            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count).copied().collect();
+            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count && !c.always()).copied().collect();
             for (j, a) in rec.readers[usize::from(i)].arms.iter().enumerate() {
                 let Some(counts) = byte_calls.iter().find(|x| x.0 == TESTS_CALL | k as u16).map(|x| (x.0, x.1, x.2.clone())) else { continue };
                 if !read_fused(&bytewise, a, &tests) || j >= 8 {

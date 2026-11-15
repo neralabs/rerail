@@ -1341,10 +1341,20 @@ fn records_source(programs: &[&BlockNative]) -> String {
     let mut cases = String::new();
     // A token test's code (`Records::checks`) over the token `s..=l` (`len` bytes): `bad` set
     // where it holds. A count over its words; a run from a window of one word or two.
-    let test_code = |i: usize, c: &rerail_compiler::records::TokenCheck| -> String {
+    let test_code = |r: &rerail_compiler::records::Records, i: usize, c: &rerail_compiler::records::TokenCheck| -> String {
         let o = c.o;
         assert!(i < 8, "at most 8 token tests");
-        if c.count {
+        if c.always() {
+            // At every token its rule reads (`records::test_holds`): a reader's, where an
+            // arm's opener holds at its first byte.
+            match r.rules.get(usize::from(c.rule)) {
+                Some(&rerail_compiler::records::EndRule::Read(k)) => {
+                    let any = r.readers[usize::from(k)].arms.iter().map(|a| format!("record_bit(out, f, {}u, s)", a.opener)).collect::<Vec<_>>().join(" || ");
+                    format!("bad = bad || {any};")
+                }
+                _ => "bad = true;".to_string(),
+            }
+        } else if c.count {
             format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
         } else {
             let need = format!("{:#x}ul", !0u64 >> (64 - c.least));
@@ -1360,12 +1370,13 @@ fn records_source(programs: &[&BlockNative]) -> String {
         // The tests, each once whatever rules it is at (a bit of `record_tests`).
         let mut distinct: Vec<rerail_compiler::records::TokenCheck> = Vec::new();
         for c in &r.checks {
-            let c = rerail_compiler::records::TokenCheck { rule: 0, ..*c };
+            // A test that always holds keeps its rule: where it holds is the rule's reads.
+            let c = rerail_compiler::records::TokenCheck { rule: if c.always() { c.rule } else { 0 }, ..*c };
             if !distinct.contains(&c) {
                 distinct.push(c);
             }
         }
-        let bit_of = |c: &rerail_compiler::records::TokenCheck| distinct.iter().position(|d| *d == rerail_compiler::records::TokenCheck { rule: 0, ..*c }).expect("listed");
+        let bit_of = |c: &rerail_compiler::records::TokenCheck| distinct.iter().position(|d| *d == rerail_compiler::records::TokenCheck { rule: if c.always() { c.rule } else { 0 }, ..*c }).expect("listed");
         out.push_str(&format!(
             "constant uchar record_kinds_{p}[256] = {{{kinds}}};\n\
              constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
@@ -1430,7 +1441,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| c.then == rerail_compiler::records::CheckThen::Escape)
-                .map(|(i, c)| format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(i, c)))
+                .map(|(i, c)| format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(r, i, c)))
                 .collect::<String>(),
             // The marks' tests (`CheckThen::At`, `After`): a token's hits, `records::check_hits`.
             hits = distinct
@@ -1442,7 +1453,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
                         rerail_compiler::records::CheckThen::At(k) => 1u32 << k,
                         rerail_compiler::records::CheckThen::After(k) => 1u32 << (rerail_compiler::records::AFTER_SHIFT + u32::from(k)),
                     };
-                    Some(format!(" if ((on >> {i}u) & 1u) {{ bool bad = false; {} if (bad) hits |= {bit}u; }}", test_code(i, c)))
+                    Some(format!(" if ((on >> {i}u) & 1u) {{ bool bad = false; {} if (bad) hits |= {bit}u; }}", test_code(r, i, c)))
                 })
                 .collect::<String>(),
             slots = t.keys.len(),

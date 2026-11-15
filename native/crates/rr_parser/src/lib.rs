@@ -1543,6 +1543,30 @@ pub mod tests {
         assert_eq!(unguarded(&n, 8), Some(vec![1, 0]));
     }
 
+    /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
+    /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
+    /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer
+    /// knows a comment has its opener. It holds where the reader reads a comment, not at a `/`
+    /// its other rule takes (`records::test_holds`).
+    #[test]
+    fn a_comments_opener_is_its_count() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let always: Vec<_> = r.checks.iter().filter(|t| t.always()).collect();
+        assert_eq!(always.len(), 1, "{:?}", r.checks);
+        let t = always[0];
+        assert!(matches!(r.rules[usize::from(t.rule)], rerail_compiler::records::EndRule::Read(_)), "{t:?}");
+        // No other count folds: a string's bad bytes are not its opener.
+        assert!(r.checks.iter().filter(|x| x.count && !x.always()).count() >= 1);
+        let f = b"a(x / 2) // c\n/* d */ b(y / z).";
+        let run = block.run(f);
+        let holds = |s: usize| rerail_compiler::records::test_holds(r, t, s, s, &run.outputs);
+        for (s, want) in [(4, false), (9, true), (14, true), (26, false)] {
+            assert_eq!(holds(s), want, "at byte {s} ({:?})", f[s] as char);
+        }
+    }
+
     /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
     /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
     /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.
@@ -1661,7 +1685,12 @@ pub mod tests {
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
-            assert_eq!(g.codes, unlazy(&want.codes, lazy), "file {k}: the codes (the gap marks tier 2 tests itself apart)");
+            let w = unlazy(&want.codes, lazy);
+            if let Some(i) = (0..g.codes.len().max(w.len())).find(|&i| g.codes.get(i) != w.get(i)) {
+                let at = g.positions[usize::from(r.starts)].get(i).copied().unwrap_or(0) as usize;
+                let text = String::from_utf8_lossy(&f[at.saturating_sub(40).min(f.len())..(at + 12).min(f.len())]).into_owned();
+                panic!("file {k} ({} bytes): the codes (the gap marks tier 2 tests itself apart) differ at token {i}, byte {at}, the CPU's {:#x}, the interpreter's {:#x}, near {text:?}", f.len(), g.codes[i], w[i]);
+            }
             assert_eq!(g.totals, want.totals, "file {k}: the totals");
         }
     }
