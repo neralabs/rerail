@@ -19,7 +19,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 4
+VERSION = 5
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -284,6 +284,48 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
+TIDY_SECONDS = 3600
+
+
+def tidy(out_dir):
+    """Starts `clean-target --wait` on the target directory `out_dir` is in, at most once an hour
+    per directory: Rerail's worktrees together write terabytes of builds a day, and what the next
+    build cannot use goes after the build ends (it waits for cargo's lock). Detached, at nice 19."""
+    if not out_dir or os.environ.get("RERAIL_FARM_NO_TIDY"):
+        return
+    target, d = None, os.path.realpath(out_dir)
+    for _ in range(4):
+        if os.path.isfile(os.path.join(d, "CACHEDIR.TAG")):
+            target = d
+            break
+        d = os.path.dirname(d)
+    script = os.path.join(SHARE, "clean-target")
+    if target is None or not os.path.exists(script):
+        return
+    stamp = state("tidy", key(target))
+    try:
+        if time.time() - os.stat(stamp).st_mtime < TIDY_SECONDS:
+            return
+    except OSError:
+        pass
+    # One starter per hour: whoever creates the claim starts it.
+    claim = stamp + f".{int(time.time() // TIDY_SECONDS)}"
+    try:
+        os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return
+    open(stamp, "w").close()
+    for old in os.listdir(os.path.dirname(stamp)):
+        if old.startswith(os.path.basename(stamp) + ".") and old != os.path.basename(claim):
+            try:
+                os.unlink(os.path.join(os.path.dirname(stamp), old))
+            except OSError:
+                pass
+    with open(stamp + ".log", "a") as out:
+        subprocess.Popen(["nice", "-n", "19", script, "--wait", target], stdin=subprocess.DEVNULL,
+                         stdout=out, stderr=out, start_new_session=True, close_fds=True)
+
+
 def wrapper(rustc, args):
     """cargo's RUSTC_WRAPPER."""
     env = dict(os.environ)
@@ -304,6 +346,7 @@ def wrapper(rustc, args):
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
         canonical(crate)
     join(checkout)
+    tidy(out_dir)
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:

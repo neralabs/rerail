@@ -2,28 +2,32 @@
 """Removes what this checkout's cargo builds can no longer use from its target directory, and nothing
 they still use: never a full `cargo clean` (a rebuild of everything takes 15 minutes and more).
 
-    scripts/dev/clean-target [--dry-run] [--days N] [TARGET_DIR]
+    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [TARGET_DIR]
+
+The farm's wrapper runs it on its own (`--wait`, at most once an hour per target directory, after
+the build that started it ends): scripts/build/farm/README.md, "Old builds"
 
 TARGET_DIR is cargo's target directory for this checkout (`cargo metadata`, so CARGO_TARGET_DIR
 counts) unless given. Each profile directory (`debug`, `release`, `<triple>/debug`, ...) is
-cleaned while no cargo builds in it: one that holds cargo's lock is skipped, and said so.
+cleaned while no cargo builds in it: one that holds cargo's lock is skipped, and said so, or with
+`--wait` cleaned once that build ends.
 
 What goes, per profile directory:
 
 - **Another compiler's.** Artifacts whose metadata says another rustc than `rust-toolchain.toml`
   pins: cargo never uses them again (a toolchain bump leaves a whole tree of them).
 - **Superseded.** A crate's build (one hash: its library, test binary, dep-info, fingerprint,
-  build-script output) untouched for N days (default 7) while the same crate has a newer build. A
-  build that is still wanted (another feature set, the test profile) is rebuilt by cargo, from the
-  shared compiler cache when it has it.
+  build-script output) older than H hours (default 1) when the same unit has a newer build. The
+  hour spares a pair of builds a worktree alternates between (two feature sets of one crate); one
+  still wanted after that is rebuilt once by cargo, dependencies from the shared compiler cache.
 - **Leftover objects.** On macOS a debug build keeps its debug info in `.rcgu.o` files beside the
   binary, which the binary's debug map names (`split-debuginfo=unpacked`). Each rebuild leaves the
   previous ones behind. Those no binary or dylib of the directory names go.
 - **Old incremental state.** Incremental directories of crates no longer built here, and those
-  untouched for N days. A crate's next edit then compiles it whole once.
+  untouched for a day. A crate's next edit then compiles it whole once.
 
 It prints what it removes and the space freed (blocks on disk: APFS shares cloned files' blocks).
-`--dry-run` only prints. Runs at nice 19.
+`--dry-run` only prints (and takes no lock). Runs at nice 19.
 """
 import fcntl
 import json
@@ -46,12 +50,18 @@ def say(message):
     print(f"clean-target: {message}", flush=True)
 
 
-def pinned_rustc():
-    """`rustc X.Y.Z` as rust-toolchain.toml pins it, or None (a channel such as nightly)."""
-    try:
-        text = open(os.path.join(CHECKOUT, "rust-toolchain.toml")).read()
-    except OSError:
-        return None
+def pinned_rustc(target):
+    """`rustc X.Y.Z` as the rust-toolchain.toml above `target` pins it, or None (none, or a channel
+    such as nightly)."""
+    d = target
+    while True:
+        try:
+            text = open(os.path.join(d, "rust-toolchain.toml")).read()
+            break
+        except OSError:
+            if os.path.dirname(d) == d:
+                return None
+            d = os.path.dirname(d)
     m = re.search(r'^channel\s*=\s*"(\d+\.\d+\.\d+)"', text, re.M)
     return f"rustc {m.group(1)} ".encode() if m else None
 
@@ -103,15 +113,23 @@ def built_by(path, rustc):
 
 
 def referenced_objects(deps, binaries):
-    """The object files the debug maps of `binaries` name (macOS: nm's OSO entries)."""
+    """The object files the debug maps of `binaries` name (macOS: OSO entries). Their paths are
+    NUL-terminated strings in the binary's string table: read there directly, 30 times faster than
+    `nm -ap` on the engine's binaries. A string that only looks like one keeps an object, never
+    removes one."""
     named = set()
     if sys.platform != "darwin":
         return named
     for b in binaries:
-        out = subprocess.run(["nm", "-ap", os.path.join(deps, b)], capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            if " OSO " in line:
-                named.add(os.path.basename(line.split(" OSO ", 1)[1].strip()))
+        try:
+            with open(os.path.join(deps, b), "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+                at = m.find(b".rcgu.o\0")
+                while at >= 0:
+                    start = max(m.rfind(b"\0", 0, at), m.rfind(b"/", 0, at)) + 1
+                    named.add(m[start:at + 7].decode("utf-8", "replace"))
+                    at = m.find(b".rcgu.o\0", at + 8)
+        except (OSError, ValueError):
+            pass
     return named
 
 
@@ -122,7 +140,7 @@ def is_binary(deps, name):
     return "." not in name and os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def clean_profile(profile, rustc, days, plan):
+def clean_profile(profile, rustc, keep_hours, plan):
     """Adds what goes from the profile directory `profile` to `plan` ([(reason, path)])."""
     deps = os.path.join(profile, "deps")
     groups = {}
@@ -158,7 +176,7 @@ def clean_profile(profile, rustc, days, plan):
     for unit, builds in newest.items():
         builds.sort(reverse=True)
         for t, key in builds[1:]:
-            if now - t > days * 86400:
+            if now - t > keep_hours * 3600:
                 gone.add(key)
                 plan.append(("superseded", key))
     # Expand each removed build into its files and units.
@@ -178,7 +196,7 @@ def clean_profile(profile, rustc, days, plan):
     left = [n for n in os.listdir(deps) if n not in removed]
     named = referenced_objects(deps, [n for n in left if is_binary(deps, n)])
     plan += [("leftover object", os.path.join(deps, n)) for n in left if n.endswith(".rcgu.o") and n not in named]
-    # Incremental state: of crates no longer built here, or untouched for `days`.
+    # Incremental state: of crates no longer built here, or untouched for a day.
     inc = os.path.join(profile, "incremental")
     if os.path.isdir(inc):
         # Build scripts' incremental state is `build_script_build`'s, whose builds live in build/.
@@ -188,7 +206,7 @@ def clean_profile(profile, rustc, days, plan):
             crate = name.rsplit("-", 1)[0]
             if crate not in crates:
                 plan.append(("incremental, crate not built here", path))
-            elif now - mtime(path) > days * 86400:
+            elif now - mtime(path) > 86400:
                 plan.append(("incremental, untouched", path))
 
 
@@ -210,7 +228,7 @@ def profiles(target):
 
 
 def main(argv):
-    dry, days = False, 7
+    dry, wait, keep_hours = False, False, 1.0
     rest = []
     while argv:
         a = argv.pop(0)
@@ -219,31 +237,36 @@ def main(argv):
             return 0
         if a == "--dry-run":
             dry = True
-        elif a == "--days" and argv:
-            days = float(argv.pop(0))
+        elif a == "--wait":
+            wait = True
+        elif a == "--keep-hours" and argv:
+            keep_hours = float(argv.pop(0))
         elif a.startswith("-"):
             sys.exit(f"clean-target: unknown option {a} (--help)")
         else:
             rest.append(a)
-    os.nice(19)
+    # Already 19 when the farm's wrapper starts it: nice() would add 19 more, which macOS refuses.
+    if os.getpriority(os.PRIO_PROCESS, 0) < 19:
+        os.setpriority(os.PRIO_PROCESS, 0, 19)
     target = target_dir(rest)
     if not os.path.isfile(os.path.join(target, "CACHEDIR.TAG")):
         sys.exit(f"clean-target: {target} is not a cargo target directory (no CACHEDIR.TAG)")
-    rustc = pinned_rustc()
+    rustc = pinned_rustc(target)
+    started = time.time()
     freed, counts = 0, {}
     for profile in profiles(target):
         rel = os.path.relpath(profile, target)
         lock_path = os.path.join(profile, ".cargo-lock")
-        lock = open(lock_path, "a+") if os.path.exists(lock_path) else None
+        lock = open(lock_path, "a+") if os.path.exists(lock_path) and not dry else None
         try:
             if lock:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
                 except OSError:
                     say(f"{rel}: a cargo build is running there: skipped")
                     continue
             plan = []
-            clean_profile(profile, rustc, days, plan)
+            clean_profile(profile, rustc, keep_hours, plan)
             size = 0
             for reason, path in plan:
                 # Only ever inside this profile directory.
@@ -269,7 +292,8 @@ def main(argv):
                 lock.close()
     for reason, (n, b) in sorted(counts.items(), key=lambda kv: -kv[1][1]):
         say(f"  {reason}: {n} paths, {b / 1e9:.1f} GB")
-    say(f"{'would free' if dry else 'freed'} {freed / 1e9:.1f} GB in {target}")
+    say(f"{'would free' if dry else 'freed'} {freed / 1e9:.1f} GB in {target} "
+        f"({time.strftime('%Y-%m-%d %H:%M')}, {time.time() - started:.0f} s)")
     return 0
 
 
