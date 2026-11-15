@@ -291,9 +291,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - The daemon's last answers of stopped that hooks repeat (`stopped-answers/`, `src/runtime/stopped-answers.ts`) are
-  written 0600 in folders made 0700, hold no path, and are never read or written through a link. A hook repeats one
-  only while the database still records that checkout as stopped and the folders on disk are the ones it names, so a
-  changed or planted file cannot turn Rerail off in a checkout the database records as started.
+  written 0600 in folders made 0700, hold no path, and are never read, written or removed through a link. A hook
+  repeats one only while the database still records that checkout as stopped and the folders on disk are the ones it
+  names, so a changed or planted file cannot turn Rerail off in a checkout the database records as started.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
