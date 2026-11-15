@@ -452,6 +452,27 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
 }
 
+/// A literal over a file's nodes tied to the asked variables only through their document tests that some node is
+/// in the same file: in the context it was every pair of the file's nodes (`latest_alias`'s `max` beside
+/// `docof(a, d), docof(e, d)`, 18 M rows on 100 files), so it is left out. A relation of the document itself stays.
+#[test]
+fn a_context_leaves_out_a_files_nodes_tied_only_through_the_document() {
+    let p = parse(concat!(
+        ".decl site(e: node, x: symbol)\n.decl alias_at(a: node, x: symbol)\n.decl docof(n: node, d: number)\n",
+        ".decl visit_index(n: node, i: number)\n.decl earlier(m: node, n: node)\n.decl first(d: number)\n",
+        ".input site, alias_at, docof, visit_index, earlier, first\n",
+        ".decl alias(a: node, x: symbol)\nalias(a, x) :- alias_at(a, x).\n",
+        ".decl last(e: node, a: node)\n.output last\n",
+        "last(e, a) :- site(e, x), k = max j : { alias(b, x), earlier(b, e), visit_index(b, j) },\n",
+        "    alias(a, x), visit_index(a, k), docof(a, d), docof(e, d), first(d).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx") || r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(ctx.iter().any(|r| r.starts_with("rr_ctx")), "the max has a context: {ctx:?}");
+    assert!(ctx.iter().all(|r| !r.contains("visit_index(") && r.matches("docof(").count() <= 1), "{ctx:?}");
+}
+
 /// A context's second group binding only what the first binds still narrows it, joined once a binding: as a
 /// relation of the asked variable, not left out (every row the first group gives) and not joined whole (every pair
 /// of the two groups' rows, pyi041's `within(c1, n), within(c2, n)`).

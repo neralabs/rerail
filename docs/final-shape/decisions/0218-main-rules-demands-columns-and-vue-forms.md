@@ -130,3 +130,10 @@ otherwise range over the corpus's nodes (the pairs above). One alone is a row pe
 literals already allow; bound by the context instead, TRY004's `node(d, n, …), seen_import(s, …), node(d, s, …)` made
 a cover of every pair of a file's nodes (386 k rows on one file, 609 MB). With the refinement TRY004 peaks at 372 MB,
 and RUF018 keeps its context.
+
+A context's literal over a file's nodes (`docof(a, d)`, `node(d, a, …)`, with `a` not asked about) is not reached
+through its document (2026-11-15). Tied to the asked variables only that way, it tests that some node exists in
+the same file, and its cover is every pair of the file's nodes. `latest_alias`'s `max` had `docof(a, d),
+visit_index(a, _)` in the context of `(e, x)`: 18 M rows on 100 files. A relation of the document itself
+(`first_import(d, …)`) still narrows the context. Test:
+`a_context_leaves_out_a_files_nodes_tied_only_through_the_document`.

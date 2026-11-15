@@ -279,6 +279,34 @@ pub(super) fn choose(prog: &Program, base: &Placed, model: &mut Model) -> Result
             inline.insert(rel.to_owned());
         }
     }
+    // Each candidate was priced with every other relation stored: its copies read the relations its rules read as
+    // rows. Two chosen where one reads the other compose instead (the reader's copies hold the read relation's body),
+    // a reader copy nobody priced: RUF/PYI's diagnostics' document key `xk_…_rr_diagnostic_3(d)`, read by an `xd_`
+    // cut, over a diagnostic relation also inlined, became `node(d, x), text(x, …), line(x, …), doc(d, …)` joined on
+    // the document alone, 197 M rows on 30 files. So a relation stays inlined only where nothing its rules read is
+    // inlined too (bottom up, its reads decided first); a forced one (`.decl … inline`, RERAIL_INLINE_ONLY) always.
+    if only.is_none() {
+        fn kept<'a>(rel: &'a str, chosen: &BTreeSet<String>, forced: &dyn Fn(&str) -> bool, reads: &dyn Fn(&str) -> Vec<&'a str>, memo: &mut BTreeMap<&'a str, bool>) -> bool {
+            if let Some(&k) = memo.get(rel) {
+                return k;
+            }
+            // Inlined relations are not recursive (`refusals`): the walk ends. Marked first, so a cycle cannot loop.
+            memo.insert(rel, false);
+            let k = chosen.contains(rel) && (forced(rel) || !reads(rel).into_iter().any(|r| r != rel && kept(r, chosen, forced, reads, memo)));
+            memo.insert(rel, k);
+            k
+        }
+        let forced = |rel: &str| f.qualified(rel, "inline");
+        let reads = |rel: &str| { ids_of.get(rel).into_iter().flatten().flat_map(|&k| reads_of(k)).collect::<Vec<_>>() };
+        let mut memo: BTreeMap<&str, bool> = BTreeMap::new();
+        let names: Vec<&str> = ids_of.keys().copied().filter(|r| inline.contains(*r)).collect();
+        let dropped: Vec<&str> = names.into_iter().filter(|r| !kept(r, &inline, &forced, &reads, &mut memo)).collect();
+        for rel in dropped {
+            inline.remove(rel);
+            let under: Vec<&str> = reads(rel).into_iter().filter(|r| memo.get(r).copied().unwrap_or(false)).collect();
+            lines.push(format!("{rel}: stored, it reads {} inlined, and was priced reading it stored", under.join(", ")));
+        }
+    }
     if super::super::profile::on() {
         for line in factorizable(prog, base, &ids_of, &estimates, model) {
             super::super::profile::decision("factorized store (decision 0099): stored flat, would shrink as parts", || line);
@@ -1675,6 +1703,24 @@ pub mod tests {
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
+    /// Each candidate is priced with every other stored. Two chosen where one reads the other would compose (the
+    /// reader's copies holding the read relation's body), which nobody priced: the reader is stored. (RUF's and PYI's
+    /// diagnostics' document key over an inlined diagnostic: 197 M rows on 30 files.)
+    #[test]
+    fn a_relation_reading_an_inlined_one_is_stored() {
+        let prog = super::super::super::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(x: number)\n.input a\n.input b\n.input c\n\
+             .decl s(x: number)\ns(x) :- b(x, y).\n\
+             .decl r(x: number)\nr(x) :- s(x), c(x).\n\
+             .decl o(x: number)\no(x) :- a(x), r(x).\n.output o\n",
+        )
+        .unwrap();
+        let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[100_000.0, 1_000.0]), ("c", 1_000_000.0, &[1_000_000.0])]);
+        let done = choose(&prog, &Placed::of_program(&prog).unwrap(), &mut model).unwrap().map(|(_, done, _)| done).unwrap_or_default();
+        assert!(!(done.iter().any(|r| r == "s") && done.iter().any(|r| r == "r")), "both inlined: {done:?}");
+        assert!(!done.is_empty(), "nothing inlined: the case does not choose");
+    }
+
     fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
         use super::super::{Inputs, Stats};
         use std::collections::{HashMap, HashSet};

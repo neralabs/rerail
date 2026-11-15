@@ -2916,10 +2916,31 @@ impl Lowerer {
         Self::bound_context(kept).0
     }
 
-    /// The literals of `context` reachable from `vars` through shared variables, in their order.
+    /// The literals of `context` reachable from `vars` through shared variables, in their order. A literal that
+    /// ranges over a file's nodes (`docof(a, d)`, `node(d, a, …)`, `a` not asked about) is not reached through its
+    /// document: tied to `vars` only so, it tests that some node exists in the same file, and joined in the context it
+    /// is every pair of the file's nodes (`latest_alias`'s `max` beside `docof(a, d), docof(e, d)`: `docof(a, d),
+    /// visit_index(a, _)` in the context of `(e, x)`, 18 M rows on 100 files). Left out, it widens the context, which
+    /// the rule joins with its own literals. A relation of the document itself (`first_import(d, …)`) still is.
     fn connected(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let file_nodes = |l: &Lit| -> Option<String> {
+            let Lit::Atom { rel, args, neg: false } = l else { return None };
+            match (rel.as_str(), args.as_slice()) {
+                ("docof", [STerm::Var(n), STerm::Var(d), ..]) | ("node", [STerm::Var(d), STerm::Var(n), ..]) if !vars.contains(n) && !vars.contains(d) => Some(d.clone()),
+                _ => None,
+            }
+        };
         let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
-        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        let of: Vec<BTreeSet<String>> = context
+            .iter()
+            .map(|l| {
+                let mut vs = body_vars(std::slice::from_ref(l));
+                if let Some(d) = file_nodes(l) {
+                    vs.remove(&d);
+                }
+                vs
+            })
+            .collect();
         let mut keep = vec![false; context.len()];
         loop {
             let mut grew = false;

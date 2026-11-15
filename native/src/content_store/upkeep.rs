@@ -176,7 +176,7 @@ impl Job for SqliteFile {
         let mut db = self.connect(slice.memory).map_err(err)?;
         // A run that begins interrupts the action (a `VACUUM` holds the file's writers for its length): rolled back,
         // and the work left as it was, still due.
-        db.progress_handler(1000, Some(slice.stopper()));
+        db.progress_handler(1000, Some(slice.stopper())).map_err(err)?;
         let done = (|| -> rusqlite::Result<Option<Step>> {
             // Pages given back reach the disk at the checkpoint after (the file is truncated there, under WAL).
             if self.work.free_pages > 0 {
