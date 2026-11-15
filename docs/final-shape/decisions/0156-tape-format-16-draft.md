@@ -322,6 +322,10 @@ faster.
 On Metal (E29, t39 step 21), the same reads as kernels, one thread a question over the whole corpus,
 take 0.07–0.37 ns a question on the M1 Max, within 1.5× XF's. The parent is the exception at
 0.22–0.30 ns, 1.6–2.3× XF's, as on the CPU. Every answer was checked against the CPU reader's.
+The bulk primitives (E30, t39 step 22), one thread a group of 64 nodes, take 0.01–0.09 ns a node to
+match a set on the M3, 0.06–0.09 for has from counts and 0.07 for spans, level with XF's or
+faster. Nearest and outermost take 0.12–0.23, 1.5–2.5× XF's, because each group's carry climbs by
+the sibling walk.
 
 ### 1.8 What it costs, together (E24)
 
@@ -867,6 +871,9 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   every tape equal to the reader's.
 - E29 (2026-11-15, t39 step 21): every question as a Metal kernel on the tape as stored (1.7):
   0.07–0.37 ns a question, the parent 1.6–2.3× XF's, every answer checked.
+- E30 (2026-11-15, t39 step 22): the bulk primitives as Metal kernels on the tape as stored (1.7):
+  match, has and spans level with XF's or faster; nearest and outermost 1.5–2.5×; every answer
+  checked.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

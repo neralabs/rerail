@@ -1218,6 +1218,54 @@ children of a node    1.24   1.12   1.12   2.77        11.3   9.0    9.0    10.1
 - **Children on rerail** are set by the forest's root (1,698 children), as in t38; it is the same
   for every candidate.
 
+### Step 22: format 16's bulk primitives on Metal (E30)
+
+`tape16 prim-gpu` (step 5) now runs format 16 beside XF, MF and BE: one thread a group of 64
+nodes, each primitive on the tape as stored (`f16_match`, `f16_nearest`, `f16_has`, `f16_hasc`,
+`f16_span` in `prim_gpu.rs`, reading through E29's `F16C`). As before, it uses one language's files
+as one forest, five sets, every answer checked against the tree. Format 16's choices are learned on
+that forest, with the grammar's code table.
+
+Three changes, each what the CPU reader already does, brought the match level with the others:
+- **the group's 64 code bytes read as 8 words**, not a byte at a time: 0.23 → 0.11 ns a node
+  (M1 Max, data-layer);
+- **the set compiled as the CPU's `NumSet`**: 256 byte entries, the prefix's entry saying whether
+  the set holds any code past the cutoff, then the set by number. A set with none decodes nothing:
+  0.17 → 0.013 (M3, rerail);
+- **a group's nodes past the cutoff read in order**: one search finds the group's first entry in its
+  block's list, and the rest are the next entries. Rerail's class, block and string sets hold rare
+  field and flag tuples past the cutoff, so every prefix is decoded: 0.17 → 0.09.
+
+M3 Max at load 5–8, ns a node, the range over the five sets (fn, class, block, call, string):
+
+```text
+                         data-layer Python (2.5M nodes)          rerail Rust (1.4M nodes)
+                       F16        XF         MF         BE          F16        XF         MF         BE
+match                  0.01-0.04  0.02-0.06  0.06       0.06        0.02-0.09  0.02-0.06  0.06       0.06
+nearest (with match)   0.12-0.13  0.05-0.09  0.05-0.08  0.16-0.26   0.20-0.23  0.11-0.33  0.07-0.23  0.20-0.34
+outermost              0.12-0.13  0.05-0.08  0.05-0.07  0.18-0.29   0.20-0.23  0.06-0.12  0.06-0.08  0.21-0.39
+has, climbing          0.04-0.26  0.04-0.17  0.04-0.16  0.32-0.85   0.10-0.39  0.06-0.21  0.10-0.22  0.21-0.61
+has, from counts       0.06       0.07-0.12  0.07-0.09  0.24        0.08-0.09  0.09       0.09       0.28-0.29
+span                   0.07       0.08-0.12  0.16       0.32-0.34   0.07       0.07       0.13       0.38
+```
+
+On the M1 Max (load 3–4), format 16 takes 0.06–0.07 to match on the data-layer (XF 0.13–0.25), 0.18–0.24 for has
+from counts (XF 0.24–0.33) and 0.21–0.22 for spans (XF 0.24–0.28), but 0.39–0.47 for nearest on
+rerail (XF 0.19–0.24). The M1 Max's match for XF and MF jumps between 0.08 and 0.27 from set to set
+on the same data, so its small numbers are the GPU's clock states more than the forms. The M5 Max
+(load 31–44) gives the same order. Every answer was right on all three.
+
+- **Spans and has from counts are format 16's best.** Spans are level with XF and half MF's: a
+  group of 64 starts on a checkpoint, so its spans are a running sum of byte loads.
+- **The match is level with XF's or faster,** once it reads as the CPU does.
+- **Nearest and outermost cost 1.5–2.5× XF's.** Each group's carry climbs from its first node to
+  the root, and on format 16 each parent is the sibling walk (E29: the point parent costs 1.6–2.3×).
+  This is the parent's tradeoff of 0156 §1.3 again, not a new cost. A carry that climbs only as far
+  as the sweep needs it is the lever, if the mix calls for it.
+- **On the CPU (one thread, M3), format 16's nearest is level with XF's on dense sets and up to
+  1.5× on sparse ones** (0.39–1.79 against 0.32–1.77). Has, from the S-nodes, costs 1.2–1.9× XF's
+  (0.42–2.37 against 0.29–2.04), the most on the sparsest sets, where the climb is all of the work.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1408,3 +1456,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 21. **The questions on Metal (E29).** Done: every question in place on the device, 0.07–0.37 ns,
     within 1.5× XF's except the parent (1.6–2.3×, the sibling walk), every answer checked. Next:
     the primitives (match, nearest, outermost, has, spans) as format 16 kernels.
+22. **The primitives on Metal (E30).** Done: match, has from counts and spans level with XF's or
+    faster, nearest and outermost 1.5–2.5× (the carry's parent walk), every answer checked. Next, if
+    the mix calls for it: a carry that climbs only as far as the sweep needs.

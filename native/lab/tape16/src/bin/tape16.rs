@@ -1326,7 +1326,7 @@ fn cmd_prim_gpu(path: &str) {
     for (s, kinds) in SETS {
         let set = names.set(tag, &codes, kinds);
         let share = tree.nodes.iter().filter(|x| set[codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())] as usize]).count() as f64 / n as f64;
-        let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set).unwrap_or_else(|e| die(&e));
+        let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set, rerail_tape_lab::f16::grammar_codes(tag)).unwrap_or_else(|e| die(&e));
         for (name, r, c) in rows {
             println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3], r.has_counts, r.span,
                 r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);

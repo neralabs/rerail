@@ -12,7 +12,8 @@
 //! - `has`: from each S-node of the group, a climb that sets each ancestor's flag by an atomic exchange and
 //!   stops at a flag already set (another climb is doing the rest), so the work is the nodes marked.
 //!
-//! Every answer is checked against the tree.
+//! Format 16's kernels (t39 step 22, `f16_*`) read the tape as stored, through `inplace_gpu`'s `F16C`, with
+//! the set compiled as the CPU reader's `NumSet`. Every answer is checked against the tree.
 
 use crate::inplace::{B, EfEf, ForLen, GpuImage, PredGap, Reader, XF};
 use metal::{Device, MTLResourceOptions, MTLSize};
@@ -453,6 +454,112 @@ kernel void b_span(CARGS) {
         span[sk[i]].y = en.get(cp - b.rank1(cp), tb);
     }
 }
+// ---- format 16 (t39 step 22): the same primitives on the tape as stored (`inplace_gpu`'s `F16C`). The set is
+// compiled once for the language, as the CPU reader's (`f16::NumSet`): 256 byte entries, the prefix's entry
+// saying whether the set holds any code past the cutoff, then the set by number. ----
+kernel void f16_match(BARGS) {
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    // The group's 64 code bytes as 8 words (the bytes are padded to whole groups). A byte past the cutoff is
+    // decoded only when the set holds such a code (the prefixes' entries are that one flag); the group's
+    // nodes past it are its block's next entries in order, so one search finds the first and the rest follow.
+    device const ulong* w = (device const ulong*)(x.code.b + k0);
+    ulong m = 0;
+    uint idx = 0, vb = 0;
+    bool found = false;
+    for (uint q = 0; q < 8; q++) {
+        ulong word = w[q];
+        for (uint j = 0; j < 8; j++) {
+            uint v = uint(word >> (8 * j)) & 255u, k = q * 8 + j;
+            uint b = set[v];
+            if (v >= x.code.cut && b != 0) {
+                if (found) { idx++; } else { idx = x.code.parts.find(k0 + k, vb); found = true; }
+                b = set[256 + x.code.cut + (v - x.code.cut) * x.code.per + uint(x.code.parts.value(vb, idx))];
+            }
+            m |= ulong(b) << k;
+        }
+    }
+    masks[g] = m & mask(min(64u, x.n - k0));
+}
+
+// mode 0: nearest, 1: outermost.
+kernel void f16_nearest(BARGS) {
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    uint st[STACK], se[STACK];
+    int sp = 0;
+    ulong p1 = x.parent1(k0);
+    while (p1 != 0) {
+        uint p = uint(p1 - 1);
+        if (set[256 + x.code.get(p)]) {
+            if (sp == STACK) { atomic_fetch_add_explicit(bad, 1u, memory_order_relaxed); return; }
+            st[sp] = p; se[sp] = x.end(p); sp++;
+        }
+        p1 = x.parent1(p);
+    }
+    for (int i = 0; i < sp / 2; i++) {
+        uint a = st[i]; st[i] = st[sp - 1 - i]; st[sp - 1 - i] = a;
+        uint b = se[i]; se[i] = se[sp - 1 - i]; se[sp - 1 - i] = b;
+    }
+    ulong m = masks[g];
+    uint hi = min(64u, x.n - k0);
+    for (uint j = 0; j < hi; j++) {
+        uint k = k0 + j;
+        while (sp > 0 && se[sp - 1] <= k) sp--;
+        out[k] = sp == 0 ? NONE : (mode == 0 ? st[sp - 1] : st[0]);
+        if ((m >> j) & 1) {
+            if (sp == STACK) { atomic_fetch_add_explicit(bad, 1u, memory_order_relaxed); return; }
+            st[sp] = k; se[sp] = x.end(k); sp++;
+        }
+    }
+}
+
+kernel void f16_has(BARGS) {
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    device atomic_uint* flag = (device atomic_uint*)out;
+    ulong m = masks[g];
+    while (m != 0) {
+        uint s = k0 + ctz(m);
+        m &= m - 1;
+        ulong p1 = x.parent1(s);
+        while (p1 != 0) {
+            uint p = uint(p1 - 1);
+            if (atomic_exchange_explicit(&flag[p], 1u, memory_order_relaxed) == 1u) break;
+            p1 = x.parent1(p);
+        }
+    }
+}
+
+kernel void f16_hasc(CARGS) {
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    uint G = lv[2];
+    for (uint k = k0; k < min(x.n, k0 + 64); k++) {
+        out[k] = s_below(cex, cnt, masks, G, x.end(k)) > s_below(cex, cnt, masks, G, k + 1) ? 1u : 0u;
+    }
+}
+
+// A group of 64 starts on a checkpoint (64 is a multiple of K): a running sum of gaps, a checkpoint every 8.
+kernel void f16_span(CARGS) {
+    Rd r = { buf, P, 0 };
+    F16C x = rd_f16(r);
+    uint k0 = g * 64;
+    if (k0 >= x.n) return;
+    ulong s0 = 0;
+    for (uint k = k0; k < min(x.n, k0 + 64); k++) {
+        s0 = (k & 7) == 0 ? x.ck.get(k >> 3) : s0 + x.gap.get(k);
+        span[k] = ulong2(s0, s0 + x.len.get(k));
+    }
+}
 "#;
 
 pub struct Row {
@@ -620,9 +727,10 @@ pub fn run(pre: &str, span_kernels: &[&str], image: &GpuImage, n: usize, set: &[
     Ok(Row { ns: [t_match, t_near, t_outer, t_has], no_carry, has_counts: t_hasc, span: t_span, wrong })
 }
 
-/// XF, MF and BE on one forest, for one set: (name, GPU row, CPU ns a node for nearest, outermost, has from
+/// XF, MF, BE and format 16 on one forest, for one set: (name, GPU row, CPU ns a node for nearest, outermost, has from
 /// the S-nodes, best of 3).
-pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, set: &[bool]) -> Result<Vec<(&'static str, Row, [f64; 3])>, String> {
+/// `table`: the language's code table from the grammar, for format 16's numbering (`f16::grammar_codes`).
+pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, set: &[bool], table: usize) -> Result<Vec<(&'static str, Row, [f64; 3])>, String> {
     let n = tree.len();
     let code: Vec<u32> = tree.nodes.iter().map(|x| codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())]).collect();
     let inset: Vec<bool> = code.iter().map(|&c| set[c as usize]).collect();
@@ -665,5 +773,22 @@ pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, set: &[bool]
     let mut row = run("b", &["b_span"], &be.gpu_image(), n, set, t, &ts)?;
     row.wrong += w;
     rows.push(("BE", row, c));
+    drop(be);
+    // Format 16, its choices learned on this forest; the kernels test the set by number.
+    let cols = crate::inplace::Cols::of_tree(tree, codes);
+    let lang = crate::f16::F16Lang::learn(codes, table, std::iter::once(&cols)).marked(0);
+    let f = crate::f16::F16::new(&cols, &lang);
+    drop(cols);
+    let by_num: Vec<bool> = lang.by_num.iter().map(|&k| set.get(k as usize).copied().unwrap_or(false)).collect();
+    let cut = (lang.cut as usize).min(by_num.len());
+    let mut f16_set: Vec<bool> = (0..256).map(|v| v < cut && by_num[v]).collect();
+    if cut < 256 {
+        f16_set[cut..].fill(by_num[cut..].iter().any(|&b| b));
+    }
+    f16_set.extend(&by_num);
+    let (c, w) = cpu(&f, set, n, t);
+    let mut row = run("f16", &["f16_span"], &f.gpu_image(), n, &f16_set, t, &ts)?;
+    row.wrong += w;
+    rows.push(("F16", row, c));
     Ok(rows)
 }

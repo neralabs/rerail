@@ -315,7 +315,11 @@ inline ulong rd_v64(thread Rd& r) { ulong lo = r.val(); return lo | (ulong(r.val
 // A side list in parts of 1024 nodes (4 blocks of 256): each part the blocks' u16 ends, the offsets, the values.
 struct PartsC {
     uint vw, blocks; device const uint* base; device const uchar* b;
-    ulong get(uint i) const {
+    ulong get(uint i) const { uint vb; uint k = find(i, vb); return value(vb, k); }
+    // Entry k's value, its block's values starting at byte vb.
+    ulong value(uint vb, uint k) const { return extract((device const ulong*)b, ulong(vb + k * vw) * 8, vw * 8); }
+    // The entry of node i (listed) or of the first listed node after it in its block; vb: the block's values.
+    uint find(uint i, thread uint& vb) const {
         uint blk = i >> 8, p = blk >> 2, j = blk & 3;
         uint at = base[p];
         uint nsub = min(4u, blocks - p * 4);
@@ -326,7 +330,8 @@ struct PartsC {
         uint offs = at + 2 * nsub;
         uint key = i & 255;
         while (s < e) { uint m = (s + e) >> 1; if (uint(b[offs + m]) < key) s = m + 1; else e = m; }
-        return extract(w, ulong(offs + total + s * vw) * 8, vw * 8);
+        vb = offs + total;
+        return s;
     }
 };
 inline PartsC rd_parts(thread Rd& r) { PartsC x; x.vw = r.val(); x.blocks = r.val(); x.base = r.arr<uint>(); x.b = r.arr<uchar>(); return x; }

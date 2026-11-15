@@ -94,7 +94,7 @@ the test half is measured shard by shard, the rows summed.
 | `f16-gpu` | E26 | Format 16's fixed LZ4 blocks decoded on Metal (one thread and one SIMD group a block), every language in one dispatch, against the CPU, checked byte for byte. |
 | `gcodes` | E25 | Every code each grammar allows, from its node-types.json, and every captured node checked against them. |
 | `inplace-gpu` | T9, E10, E29 | Each in-place question as a Metal kernel, one thread a question, on each candidate's one-buffer image (format 16's included), checked against the CPU reader. |
-| `prim-gpu` | T9, E10 | The bulk primitives as Metal kernels on XF, MF and BE, checked. |
+| `prim-gpu` | T9, E10, E30 | The bulk primitives as Metal kernels on XF, MF, BE and format 16, checked. |
 | `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
 `cargo test` runs the round trips: every codec whole and through `read_at` at random ranges, every
