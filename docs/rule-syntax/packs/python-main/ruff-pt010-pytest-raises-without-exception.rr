@@ -28,6 +28,30 @@ pt010_raises(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n,
 .decl pt010_positional(n: node)
 pt010_positional(n) :- node(_, n, _, _, _), !pt010_alt_1(n).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:expected_exception|match|check)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt010_tok_has_1(n: node)
+.stored pt010_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt010_tok_has_1(n) :- field(n, "name", c5), glob("{expected_exception,match,check}", c5).
+pt010_tok_has_1(n) :- op(n, t6), match("(?:expected_exception|match|check)", t6).
+pt010_tok_has_1(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g7).
+pt010_tok_has_1(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g7).
+pt010_tok_has_1(n) :- node_text(n, g7), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g7).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:expected_exception|match|check)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt010_tok_has_2(n: node)
+.stored pt010_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt010_tok_has_2(n) :- field(n, "name", c2), glob("{expected_exception,match,check}", c2).
+pt010_tok_has_2(n) :- op(n, t3), match("(?:expected_exception|match|check)", t3).
+pt010_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g4).
+pt010_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g4).
+pt010_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_exception)(?:\\W.*)?|(?:.*\\W)?(?:match)(?:\\W.*)?|(?:.*\\W)?(?:check)(?:\\W.*)?)$", g4).
+
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pt010_alt_1(n: node)
 pt010_alt_1(n) :-
@@ -47,5 +71,4 @@ pt010_alt_2(n) :- precedes(s1, n), pt010_positional(s1).
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl pt010_alt_3(n: node)
 pt010_alt_3(n) :- pt010_positional(n), !pt010_alt_2(n).
-pt010_alt_3(n) :- kind(n, "keyword_argument"), field(n, "name", c2),
-    glob("{expected_exception,match,check}", c2).
+pt010_alt_3(n) :- kind(n, "keyword_argument"), pt010_tok_has_2(n).

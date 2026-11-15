@@ -24,12 +24,63 @@ dtz003_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz003
 .decl dtz003_astz_safe(n: node)
 dtz003_astz_safe(n) :- within_stop(n, p1, dtz003_stop_1), kind(p1, "attribute"), dtz003_alt_3(p1).
 
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^astimezone$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz003_tok_has_1(n: node)
+.stored dtz003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz003_tok_has_1(n) :- field(n, "attribute", c2), glob("astimezone", c2).
+dtz003_tok_has_1(n) :- op(n, t3), match("astimezone", t3).
+dtz003_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+dtz003_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+dtz003_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz003_tok_has_2(n: node)
+.stored dtz003_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz003_tok_has_2(n) :- field(n, "attribute", c10), glob("replace", c10).
+dtz003_tok_has_2(n) :- op(n, t11), match("replace", t11).
+dtz003_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+dtz003_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+dtz003_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g12).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^astimezone$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz003_tok_has_3(n: node)
+.stored dtz003_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz003_tok_has_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz003_tok_has_3(n) :- op(n, t2), match("astimezone", t2).
+dtz003_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+dtz003_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+dtz003_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:astimezone)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz003_tok_has_4(n: node)
+.stored dtz003_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz003_tok_has_4(n) :- field(n, "attribute", c9), glob("replace", c9).
+dtz003_tok_has_4(n) :- op(n, t10), match("replace", t10).
+dtz003_tok_has_4(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+dtz003_tok_has_4(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+dtz003_tok_has_4(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g11).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz003_up_1(n: node, p: node)
+dtz003_up_1(n, p) :- dtz003_tok_has_4(n), within_stop(n, p, dtz003_stop_1), kind(p, "call"), dtz003_astz_safe(p).
+
 // stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl dtz003_stop_1(n: node)
 dtz003_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl dtz003_alt_3(n: node)
-dtz003_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
-dtz003_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz003_stop_1),
-    kind(p3, "call"), dtz003_astz_safe(p3).
+dtz003_alt_3(n) :- dtz003_tok_has_3(n).
+dtz003_alt_3(n) :- dtz003_tok_has_4(n), dtz003_up_1(n, p17).

@@ -23,6 +23,66 @@
 //! byte each: the word is its index in `Records::words` plus one, 0 for none; mark `k` is bit
 //! `16 + k`. A parser then tests a kind, a word or a mark with one load of the token's code.
 
+/// Where tier 1 puts each token's record, its first byte, last byte and code, for tier 2 to
+/// read (decision 0231). The compiler chooses it for each program, by who writes the records:
+/// no backend assumes one.
+///
+/// - **columns:** each field a column of the file's positions, as an extract writes its
+///   positions, a token's field 4 bytes after the one before's. A GPU's threads read them
+///   coalesced.
+/// - **rows:** a token's three fields together, 12 bytes, as the lean lexer's `Tok`, where the
+///   CPU's token loop writes them all: one base and one index for the three.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RecordLayout {
+    #[default]
+    Columns,
+    Rows,
+}
+
+/// A record's fields, in a row's order (`RecordLayout`).
+pub const FIELD_START: usize = 0;
+pub const FIELD_LAST: usize = 1;
+pub const FIELD_CODE: usize = 2;
+
+/// Who writes a program's records, which the layout's choice weighs (`RecordLayout::choose`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordWriter {
+    /// One thread's token loop writes each token's fields together (the CPU's).
+    TokenLoop,
+    /// A group of threads writes a token each, side by side (a GPU's block passes): their
+    /// stores coalesce where each field is a column.
+    Lanes,
+}
+
+impl RecordLayout {
+    /// The layout for records `writer` writes; `whole` where it writes all three fields of
+    /// each token and nothing else shares their room (`native_cpu_block::record_layout`).
+    pub const fn choose(writer: RecordWriter, whole: bool) -> RecordLayout {
+        match writer {
+            RecordWriter::TokenLoop if whole => RecordLayout::Rows,
+            _ => RecordLayout::Columns,
+        }
+    }
+
+    /// The bytes from a token's field to the next token's.
+    pub const fn stride(self) -> u64 {
+        match self {
+            RecordLayout::Columns => 4,
+            RecordLayout::Rows => 12,
+        }
+    }
+
+    /// Where token `k`'s field `field` is in a file's positions, in `u32`s from the file's
+    /// first (`Row::positions`): the columns at `columns` (start, last, code) of `capacity`
+    /// positions each; the rows from the first of them.
+    pub fn index(self, field: usize, k: u64, columns: [u64; 3], capacity: u64) -> u64 {
+        match self {
+            RecordLayout::Columns => columns[field] * capacity + k,
+            RecordLayout::Rows => columns.iter().min().copied().unwrap_or(0) * capacity + 3 * k + field as u64,
+        }
+    }
+}
+
 /// A block program's records (`BlockProgram::records`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Records {
@@ -73,6 +133,10 @@ pub struct Records {
     pub nexts: Vec<PairTable>,
     /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
     pub tested_only: u32,
+    /// The masks tier 2's local checks read (`program::LocalCheck::mask`, indexes into the block
+    /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
+    /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.
+    pub check_masks: Vec<u16>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,

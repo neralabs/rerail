@@ -61,15 +61,14 @@ pt030_pos0(n) :- pt030_positional(n), !pt030_alt_6(n).
 
 // keyword_named(n): the JSON util `keyword-named`, used where the JSON says `matches: "keyword-named"`
 .decl pt030_keyword_named(n: node)
-pt030_keyword_named(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("expected_warning", c1),
-    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("expected_warning", c3) } = 0.
+pt030_keyword_named(n) :- kind(n, "keyword_argument"), pt030_tok_has_1(n),
+    count : { precedes(s9, n), kind(s9, "keyword_argument"), pt030_tok_has_2(s9) } = 0.
 
 // unmatched_warns_args(n): the JSON util `unmatched-warns-args`, used where the JSON says `matches: "unmatched-warns-args"`
 .decl pt030_unmatched_warns_args(n: node)
 pt030_unmatched_warns_args(n) :- kind(n, "argument_list"), field(p1, "arguments", n),
     kind(p1, "call"), field(p1, "function", c2), pt030_warns_callee(c2),
-    count : { child(n, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("match", c4), !pt030_alt_7(c3) } = 0.
+    count : { child(n, c3, _), kind(c3, "keyword_argument"), pt030_tok_has_3(c3), !pt030_alt_7(c3) } = 0.
 
 // callable_args(n): the JSON util `callable-args`, used where the JSON says `matches: "callable-args"`
 .decl pt030_callable_args(n: node)
@@ -103,20 +102,20 @@ pt030_ann_empty_or_null(n) :- kind(n, "parenthesized_expression"), child(n, c2, 
 // ann_keyword_named(n): the JSON util `ann-keyword-named`, used where the JSON says `matches: "ann-keyword-named"`
 .decl pt030_ann_keyword_named(n: node)
 pt030_ann_keyword_named(n) :- kind(n, "keyword_argument"), child(n, c1, _),
-    kind(c1, "identifier"), glob("expected_warning", c1), pt030_tok_precedes_1(c1),
-    count : { precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, _), kind(c10, "identifier"), glob("expected_warning", c10), pt030_tok_precedes_2(c10) } = 0.
+    kind(c1, "identifier"), glob("expected_warning", c1), pt030_tok_precedes_6(c1),
+    count : { precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, _), kind(c10, "identifier"), glob("expected_warning", c10), pt030_tok_precedes_7(c10) } = 0.
 
 // ann_unmatched_args(n): the JSON util `ann-unmatched-args`, used where the JSON says `matches: "ann-unmatched-args"`
 .decl pt030_ann_unmatched_args(n: node)
 pt030_ann_unmatched_args(n) :- kind(n, "argument_list"), next_sibling(s1, n),
     pt030_warns_callee(s1),
-    count : { child(n, c2, _), kind(c2, "keyword_argument"), child(c2, c3, _), kind(c3, "identifier"), glob("match", c3), pt030_tok_precedes_3(c3), !pt030_alt_9(c2) } = 0.
+    count : { child(n, c2, _), kind(c2, "keyword_argument"), child(c2, c3, _), kind(c3, "identifier"), glob("match", c3), pt030_tok_precedes_8(c3), !pt030_alt_9(c2) } = 0.
 
 // ann_flagged_warning(n): the JSON util `ann-flagged-warning`, used where the JSON says `matches: "ann-flagged-warning"`
 //   W: metavariable this relation binds for the calling rule
 .decl pt030_ann_flagged_warning(n: node, w: loc)
 pt030_ann_flagged_warning(n, W) :- pt030_broad_warning(n, W),
-    ( pt030_tok_follows_7(n), child(p1, n, _), pt030_ann_keyword_named(p1), child(p2, p1, _), pt030_ann_unmatched_args(p2)
+    ( pt030_tok_follows_12(n), child(p1, n, _), pt030_ann_keyword_named(p1), child(p2, p1, _), pt030_ann_unmatched_args(p2)
     ; pt030_pos0(n), child(p3, n, _), pt030_ann_unmatched_args(p3), count : { child(p3, c1, _), pt030_ann_keyword_named(c1) } = 0
     ).
 
@@ -334,74 +333,134 @@ pt030_part_empty_u7(n) :- kind(n, "string"),
     count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
     pt030_alt_3_u6(n).
 
-// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_precedes_1(n: node)
-.stored pt030_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_precedes_1(n) :- next_sibling(n, s2), glob("=", s2).
-pt030_tok_precedes_1(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^expected_warning$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_has_1(n: node)
+.stored pt030_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_has_1(n) :- field(n, "name", c1), glob("expected_warning", c1).
+pt030_tok_has_1(n) :- op(n, t2), match("expected_warning", t2).
+pt030_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g3).
+pt030_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g3).
+pt030_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^expected_warning$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_has_2(n: node)
+.stored pt030_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_has_2(n) :- field(n, "name", c10), glob("expected_warning", c10).
+pt030_tok_has_2(n) :- op(n, t11), match("expected_warning", t11).
+pt030_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g12).
+pt030_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g12).
+pt030_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:expected_warning)(?:\\W.*)?)$", g12).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_has_3(n: node)
+.stored pt030_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_has_3(n) :- field(n, "name", c4), glob("match", c4).
+pt030_tok_has_3(n) :- op(n, t5), match("match", t5).
+pt030_tok_has_3(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g6).
+pt030_tok_has_3(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g6).
+pt030_tok_has_3(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g6).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_has_4(n: node)
+.stored pt030_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_has_4(n) :- field(n, "name", c14), glob("match", c14).
+pt030_tok_has_4(n) :- op(n, t15), match("match", t15).
+pt030_tok_has_4(n) :- child(n, c21, _), structural_before(c21, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g16).
+pt030_tok_has_4(n) :- child(n, c21, _), structural_after(c21, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g16).
+pt030_tok_has_4(n) :- node_text(n, g16), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g16).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^match$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_has_5(n: node)
+.stored pt030_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_has_5(n) :- field(n, "name", c3), glob("match", c3).
+pt030_tok_has_5(n) :- op(n, t4), match("match", t4).
+pt030_tok_has_5(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g5).
+pt030_tok_has_5(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g5).
+pt030_tok_has_5(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:match)(?:\\W.*)?)$", g5).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_6(n: node)
+.stored pt030_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_6(n) :- next_sibling(n, s2), glob("=", s2).
+pt030_tok_precedes_6(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
     node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
     match("=", t3).
-pt030_tok_precedes_1(n) :- structural_after(n, g4),
+pt030_tok_precedes_6(n) :- structural_after(n, g4),
     match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
 
-// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_precedes_2(n: node)
-.stored pt030_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_precedes_2(n) :- next_sibling(n, s11), glob("=", s11).
-pt030_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_7(n: node)
+.stored pt030_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_7(n) :- next_sibling(n, s11), glob("=", s11).
+pt030_tok_precedes_7(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
     node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
     match("=", t12).
-pt030_tok_precedes_2(n) :- structural_after(n, g13),
+pt030_tok_precedes_7(n) :- structural_after(n, g13),
     match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
 
-// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_precedes_3(n: node)
-.stored pt030_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_precedes_3(n) :- next_sibling(n, s4), glob("=", s4).
-pt030_tok_precedes_3(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_8(n: node)
+.stored pt030_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_8(n) :- next_sibling(n, s4), glob("=", s4).
+pt030_tok_precedes_8(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
     node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
     match("=", t5).
-pt030_tok_precedes_3(n) :- structural_after(n, g6),
+pt030_tok_precedes_8(n) :- structural_after(n, g6),
     match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
 
-// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_follows_4(n: node)
-.stored pt030_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_follows_4(n) :- next_sibling(s12, n), glob("=", s12).
-pt030_tok_follows_4(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_9(n: node)
+.stored pt030_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_9(n) :- next_sibling(s12, n), glob("=", s12).
+pt030_tok_follows_9(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
     node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
     match("=", t13).
-pt030_tok_follows_4(n) :- structural_before(n, g14),
+pt030_tok_follows_9(n) :- structural_before(n, g14),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g14).
 
-// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_precedes_5(n: node)
-.stored pt030_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_precedes_5(n) :- next_sibling(n, s21), glob("=", s21).
-pt030_tok_precedes_5(n) :- structural_after(n, g23), match("\\s*", g23), child(p24, n, _),
+// tok_precedes_10(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_10(n: node)
+.stored pt030_tok_precedes_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_10(n) :- next_sibling(n, s21), glob("=", s21).
+pt030_tok_precedes_10(n) :- structural_after(n, g23), match("\\s*", g23), child(p24, n, _),
     node(_, n, _, _, en27), o25 = en27 + strlen(g23), token(p24, _, t22, o25, _),
     match("=", t22).
-pt030_tok_precedes_5(n) :- structural_after(n, g23),
+pt030_tok_precedes_10(n) :- structural_after(n, g23),
     match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g23).
 
-// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_follows_6(n: node)
-.stored pt030_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_follows_6(n) :- next_sibling(s2, n), glob("=", s2).
-pt030_tok_follows_6(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+// tok_follows_11(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_11(n: node)
+.stored pt030_tok_follows_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_11(n) :- next_sibling(s2, n), glob("=", s2).
+pt030_tok_follows_11(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
     node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
     match("=", t3).
-pt030_tok_follows_6(n) :- structural_before(n, g4),
+pt030_tok_follows_11(n) :- structural_before(n, g4),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g4).
 
-// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl pt030_tok_follows_7(n: node)
-.stored pt030_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pt030_tok_follows_7(n) :- next_sibling(s1, n), glob("=", s1).
-pt030_tok_follows_7(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+// tok_follows_12(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_12(n: node)
+.stored pt030_tok_follows_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_12(n) :- next_sibling(s1, n), glob("=", s1).
+pt030_tok_follows_12(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
     node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
     match("=", t2).
-pt030_tok_follows_7(n) :- structural_before(n, g3),
+pt030_tok_follows_12(n) :- structural_before(n, g3),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g3).
 
 // alt_2_u0_empty: level -1 of an unrolled recursion, empty
@@ -446,14 +505,13 @@ pt030_alt_6(n) :- precedes(s1, n), pt030_positional(s1).
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl pt030_alt_7(n: node)
 pt030_alt_7(n) :- field(n, "value", c1), pt030_empty_or_null(c1).
-pt030_alt_7(n) :- precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3),
-    glob("match", c3).
+pt030_alt_7(n) :- precedes(s2, n), kind(s2, "keyword_argument"), pt030_tok_has_5(s2).
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl pt030_alt_9(n: node)
-pt030_alt_9(n) :- child(n, c1, _), pt030_ann_empty_or_null(c1), pt030_tok_follows_6(c1).
+pt030_alt_9(n) :- child(n, c1, _), pt030_ann_empty_or_null(c1), pt030_tok_follows_11(c1).
 pt030_alt_9(n) :- precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, _),
-    kind(c10, "identifier"), glob("match", c10), pt030_tok_precedes_2(c10).
+    kind(c10, "identifier"), glob("match", c10), pt030_tok_precedes_7(c10).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable this relation binds for the calling rule

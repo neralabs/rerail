@@ -39,15 +39,38 @@ pt023_empty_mark_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _)
 // deeper_import_site(n): the JSON util `deeper-import-site`, used where the JSON says `matches: "deeper-import-site"`
 .decl pt023_deeper_import_site(n: node)
 pt023_deeper_import_site(n) :- kind(n, "aliased_import"),
-    count : { child(p1, n, _), kind(p1, "import_from_statement") } = 0,
-    field(n, "name", c2), match("(?:[^.]*\\.){3}.*", c2).
-pt023_deeper_import_site(n) :- child(p3, n, _), kind(p3, "import_from_statement"),
-    field(p3, "module_name", c4), match("(?:[^.]*\\.){2}.*", c4).
+    count : { child(p1, n, _), kind(p1, "import_from_statement") } = 0, pt023_tok_has_1(n).
+pt023_deeper_import_site(n) :- child(p10, n, _), kind(p10, "import_from_statement"),
+    pt023_tok_has_2(p10).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:[^.]*\\.){3}": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt023_tok_has_1(n: node)
+.stored pt023_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt023_tok_has_1(n) :- field(n, "name", c2), match("(?:[^.]*\\.){3}.*", c2).
+pt023_tok_has_1(n) :- op(n, t3), match("(?:[^.]*\\.){3}.*", t3).
+pt023_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+pt023_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+pt023_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){3})\\S*.*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(?:[^.]*\\.){2}": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt023_tok_has_2(n: node)
+.stored pt023_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt023_tok_has_2(n) :- field(n, "module_name", c11), match("(?:[^.]*\\.){2}.*", c11).
+pt023_tok_has_2(n) :- op(n, t12), match("(?:[^.]*\\.){2}.*", t12).
+pt023_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
+pt023_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
+pt023_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:.*\\S*?(?:^(?:[^.]*\\.){2})\\S*.*)$", g13).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pt023_alt_1(n: node)
 pt023_alt_1(n) :- sym_of(n, "pytest.mark").
-pt023_alt_1(n) :- ref_site(n, b1), main_form(b1, "import"), (st2 = b1 ; within(b1, st2)),
+pt023_alt_1(n) :- ref_site(n, b1), main_form(b1, "import"), st2 = b1,
     pt023_deeper_import_site(st2).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does

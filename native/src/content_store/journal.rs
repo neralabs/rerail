@@ -475,11 +475,15 @@ mod fsevents {
         let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
         let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
         real.sort();
-        // Outer roots first (a path sorts before those under it): each takes the cursors of the roots under it.
+        // Outer roots first (a path sorts before those under it): a stream for each, from its own cursor. A root
+        // under it, or another name of it, may hold an older cursor that no run asks any more (one covered by the
+        // root above it, a name no longer used): starting from it replayed millions of events at every process's
+        // start. One that is asked with an older cursor than the stream's starts a stream of its own (`since`).
         let mut groups: Vec<(PathBuf, u64)> = Vec::new();
         for (r, c) in real {
             match groups.last_mut() {
-                Some((g, from)) if r.starts_with(&*g) => *from = (*from).min(c),
+                Some((g, from)) if r == *g => *from = (*from).max(c),
+                Some((g, _)) if r.starts_with(&*g) => {}
                 _ => groups.push((r, c)),
             }
         }

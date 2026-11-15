@@ -671,9 +671,13 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        if on && (all || std::thread::current().name() == Some("main")) {
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
         }
         return Span(false);
     }
@@ -837,6 +841,11 @@ pub fn run_begins() -> impl Drop {
     Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
 }
 
+/// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
+pub fn may_read_store() -> bool {
+    !waves_here()
+}
+
 /// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
 fn waves_here() -> bool {
     match STAGE.with(std::cell::Cell::get) {
@@ -874,8 +883,8 @@ pub fn strict() -> bool {
 ///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
 ///
 /// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
-/// every fault and goes on, each distinct one once with its stack, and ends the process with status 3 if there was
-/// one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
+/// every fault and goes on, a line each as it happens (the first 60 with their stacks), and ends the process with
+/// status 3 if there was one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
 /// out (`reuse::NOT_OUTPUTS`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Warm {
@@ -915,6 +924,7 @@ pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+    ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
 ];
 
 /// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).

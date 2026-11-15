@@ -1297,6 +1297,10 @@ mod language {
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
         pub mod csharp;
         pub mod java;
+        // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
+        pub mod css;
+        pub mod html;
+        pub mod markdown;
         pub use rerail_lang_json::code_rule_dsl::language::adapter::json;
         #[cfg(test)]
         pub mod kit;
@@ -1815,6 +1819,9 @@ pub(crate) mod logic {
             // The corpus runner's tests: they parse files, so they run where the languages are registered.
             #[cfg(test)]
             pub mod tests;
+            // Markdown's inline guests against tree-sitter-md's inline trees: they parse files.
+            #[cfg(test)]
+            pub mod guests_tests;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
             #[allow(unused_imports)]
@@ -4756,7 +4763,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, csharp::Csharp, ecma::Ecma, format::Format, java::Java, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4781,6 +4788,12 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
     language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
+    register(Family::Html, &Pack::<Html>::NEW);
+    language::register_base(Family::Html, &Pack::<Html>::NEW);
+    register(Family::Css, &Pack::<Css>::NEW);
+    language::register_base(Family::Css, &Pack::<Css>::NEW);
+    register(Family::Markdown, &Pack::<Markdown>::NEW);
+    language::register_base(Family::Markdown, &Pack::<Markdown>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -4955,9 +4968,33 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
         }
         if cfg!(feature = "lang-php") {
-            // The lean PHP parser (`tape::php_lean`, decision 0197); a file it refuses goes to
+            // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to
             // tree-sitter-php.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Php, name: "lean PHP parser", rank: 0, runs: true, parser: &tape::php_lean::Lean });
+        }
+        if cfg!(feature = "lang-html") {
+            // The lean HTML parser (`tape::html_lean`, decision 0199); a file it refuses goes to
+            // tree-sitter-html.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Html, name: "lean HTML parser", rank: 0, runs: true, parser: &tape::html_lean::Lean });
+        }
+        if cfg!(feature = "lang-css") {
+            // The lean CSS parser (`tape::css_lean`, decision 0200); a file it refuses goes to
+            // tree-sitter-css.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Css, name: "lean CSS parser", rank: 0, runs: true, parser: &tape::css_lean::Lean });
+        }
+        if cfg!(feature = "lang-markdown") {
+            // The lean Markdown parser (`tape::markdown_lean`, decision 0237); a file it refuses
+            // goes to tree-sitter-md.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Markdown, name: "lean Markdown parser", rank: 0, runs: true, parser: &tape::markdown_lean::Lean });
+            // The lean parser of Markdown's inline grammar (`tape::markdown_inline_lean`, decision
+            // 0234), for the inline texts Markdown's tapes embed; a text it refuses goes to
+            // tree-sitter-md-inline.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::MarkdownInline, name: "lean Markdown inline parser", rank: 0, runs: true, parser: &tape::markdown_inline_lean::Lean });
+        }
+        if cfg!(feature = "lang-sql") {
+            // The lean SQL parser (`tape::sql_lean`, decision 0214); a file it refuses goes to
+            // tree-sitter-sql.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Sql, name: "lean SQL parser", rank: 0, runs: true, parser: &tape::sql_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser

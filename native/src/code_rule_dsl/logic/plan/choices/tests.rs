@@ -13,7 +13,7 @@
         let prepared = [3u8; 32];
         {
             let _durable = Durable::start(&db, prepared, Default::default(), Default::default());
-            remember(key, Chosen { program: Some(Arc::new(rewritten.clone())), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
+            remember(key, Chosen { program: Some(Arc::new(rewritten.clone())), version: None, inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
         }
         // Another process: nothing kept in memory, the store's entry read back.
         kept().lock().unwrap().clear();
@@ -26,6 +26,14 @@
         let back = decode_chosen(&texts, &entry, &Default::default()).expect("decodes");
         assert_eq!(format!("{:?}", back.program.as_deref()), format!("{:?}", Some(&rewritten)));
         assert_eq!((back.inlined.clone(), back.nodes), (vec!["e".to_owned()], 1000.0));
+        // Kept as its image, the program read back is its version too (t36 item 6, step 4): the run reads its rules
+        // from it as they are, rule `k` the program's.
+        let v = back.version.as_ref().expect("the image is the program's version");
+        let made = super::super::body::Placed::made(&rewritten.rules).unwrap();
+        for k in 0..rewritten.rules.len() {
+            let shown = |b: super::super::body::Body<'_>| (b.show_head(), (0..b.len()).map(|i| b.show(i)).collect::<Vec<_>>(), b.observed_key());
+            assert_eq!(shown(v.body(k)), shown(made.body(k)), "rule {k}");
+        }
         let (text, _) = named(&prepared);
         assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
         // Under another prepared program, nothing.

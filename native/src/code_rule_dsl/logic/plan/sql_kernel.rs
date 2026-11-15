@@ -30,15 +30,17 @@ pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
 }
 
 fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::Program> {
+    let f = run.fields();
     let mut operations = BTreeMap::new();
     let mut lattices_meta = Vec::new();
     for rel in rels {
-        if let Some(l) = run.prog.lattice.get(rel) {
-            let top = if l.lattice() == "flat" {
+        if let Some(l) = f.lattice_decl(rel) {
+            let lattice = f.text(l.lattice);
+            let top = if lattice == "flat" {
                 TOP
             } else {
                 let mut ops =
-                    lattices::registered(&run.db, l.lattice()).map_err(|e| Error::Plan(e.reason))?;
+                    lattices::registered(&run.db, lattice).map_err(|e| Error::Plan(e.reason))?;
                 ops.after = l.widen;
                 let top = ops.top;
                 operations.insert(rel.clone(), ops);
@@ -51,7 +53,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
         name: "corpus-sql".into(),
         relations: rels
             .iter()
-            .map(|r| (r.clone(), run.prog.decls[r.as_str()].len()))
+            .map(|r| (r.clone(), f.width(r)))
             .collect(),
         steps: vec![],
         file_local: false,
@@ -63,10 +65,10 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
             .map(|r| {
                 (
                     r.clone(),
-                    run.prog.decls[r.as_str()]
+                    f.types(r)
                         .iter()
-                        .map(|(_, t)| {
-                            if t == "sym" && run.model.inputs.atoms.is_none() {
+                        .map(|t| {
+                            if *t == "sym" && run.model.inputs.atoms.is_none() {
                                 "TEXT".into()
                             } else {
                                 "INTEGER".into()
@@ -139,23 +141,25 @@ pub fn component(
         }
         run.model.stats.solve(BTreeSet::new());
     }
-    let tops = run
-        .prog
-        .lattice
-        .iter()
+    let f = vs.whole(run.version);
+    // In the lattices' order (by name).
+    let mut lats: Vec<(&str, &super::super::program_image::LatticeRef)> = f.lattices().iter().map(|l| (f.rel_name(l.rel), l)).collect();
+    lats.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    let tops = lats
+        .into_iter()
         .map(|(r, l)| {
-            super::super::native::lattice(l.lattice()).map(|lat| (r.clone(), (l.keys, lat.top())))
+            super::super::native::lattice(f.text(l.lattice)).map(|lat| (r.to_owned(), (l.keys, lat.top())))
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
         constant_rows: Default::default(),
-        value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
+        value_types: std::sync::Arc::new(f.decls_by_name().into_iter().map(|(r, c)| (r.to_owned(), c.into_iter().map(String::from).collect())).collect()),
         analysis: run.model.analysis(run.prog),
         program: p,
         queries,
         setup: vec![],
         views: vec![],
-        inputs: run.prog.inputs.clone(),
+        inputs: f.inputs().map(str::to_owned).collect(),
     };
     lattices::transfers(&mut emitted, &tops);
     for (step, q) in emitted

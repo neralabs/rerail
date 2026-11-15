@@ -120,13 +120,13 @@ pyi058_plain_method(n) :- kind(n, "function_definition"), !match("async\\b.*", n
 
 // iter_method(n): the JSON util `iter-method`, used where the JSON says `matches: "iter-method"`
 .decl pyi058_iter_method(n: node)
-pyi058_iter_method(n) :- pyi058_plain_method(n), field(n, "name", c1), glob("__iter__", c1),
-    field(n, "return_type", c2), pyi058_generator_return(c2).
+pyi058_iter_method(n) :- pyi058_plain_method(n), pyi058_tok_has_3(n), field(n, "return_type", c9),
+    pyi058_generator_return(c9).
 
 // aiter_method(n): the JSON util `aiter-method`, used where the JSON says `matches: "aiter-method"`
 .decl pyi058_aiter_method(n: node)
-pyi058_aiter_method(n) :- pyi058_plain_method(n), field(n, "name", c1), glob("__aiter__", c1),
-    field(n, "return_type", c2), pyi058_async_generator_return(c2).
+pyi058_aiter_method(n) :- pyi058_plain_method(n), pyi058_tok_has_4(n), field(n, "return_type", c9),
+    pyi058_async_generator_return(c9).
 
 // none_value(n): the JSON util `none-value`, used where the JSON says `matches: "none-value"`
 .decl pyi058_none_value(n: node)
@@ -168,7 +168,7 @@ pyi058_late_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
 pyi058_simple_statement(n) :- (kind(n, "pass_statement") ; kind(n, "comment")).
 pyi058_simple_statement(n) :- node(_, n, _, _, _), glob(";", n).
 pyi058_simple_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
-    pyi058_statement_expr(c1), !pyi058_tok_has_3(n).
+    pyi058_statement_expr(c1), !pyi058_tok_has_5(n).
 pyi058_simple_statement(n) :- kind(n, "return_statement"), !pyi058_late_value_return(n).
 
 // PYI058(n, detail): findings from clauses `generator-from-iter`, `async-generator-from-aiter`. Their messages differ only in
@@ -216,16 +216,40 @@ pyi058_tok_has_2(n) :- child(n, c20, _), structural_after(c20, g15),
     match("(?s)^(?:.*(?:,).*)$", g15).
 pyi058_tok_has_2(n) :- node_text(n, g15), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g15).
 
-// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^__iter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi058_tok_has_3(n: node)
 .stored pyi058_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi058_tok_has_3(n) :- child(n, c2, _), glob("\\,", c2).
-pyi058_tok_has_3(n) :- op(n, t3), match(",", t3).
-pyi058_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+pyi058_tok_has_3(n) :- field(n, "name", c1), glob("__iter__", c1).
+pyi058_tok_has_3(n) :- op(n, t2), match("__iter__", t2).
+pyi058_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi058_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+pyi058_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__iter__).*)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^__aiter__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi058_tok_has_4(n: node)
+.stored pyi058_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi058_tok_has_4(n) :- field(n, "name", c1), glob("__aiter__", c1).
+pyi058_tok_has_4(n) :- op(n, t2), match("__aiter__", t2).
+pyi058_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+pyi058_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+pyi058_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g3).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi058_tok_has_5(n: node)
+.stored pyi058_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi058_tok_has_5(n) :- child(n, c2, _), glob("\\,", c2).
+pyi058_tok_has_5(n) :- op(n, t3), match(",", t3).
+pyi058_tok_has_5(n) :- child(n, c9, _), structural_before(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-pyi058_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+pyi058_tok_has_5(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
-pyi058_tok_has_3(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+pyi058_tok_has_5(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
 // stop_11: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pyi058_stop_11(kind: symbol)

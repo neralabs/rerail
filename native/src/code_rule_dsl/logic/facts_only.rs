@@ -189,6 +189,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
     ("code_rule_dsl/logic/front/name.rs", "TABLE"),
+    // The relations' numbers (decision 0209 step 1, `table::rel_id`): an interner as `TABLE`, one number per name.
+    ("code_rule_dsl/logic/plan/table.rs", "NAMES"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),

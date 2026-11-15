@@ -49,7 +49,7 @@ pub(in crate::code_rule_dsl) fn run(
     // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
     let no_locations = retain::Locations::new();
     let s = span("cut and rewrite");
-    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(&prog.program).map_err(|e| super::Error::Plan(e.to_string()))?;
+    let sccs = crate::code_rule_dsl::logic::front::components_of(&prog.program).map_err(|e| super::Error::Plan(e.to_string()))?;
     let cut = retain::cut(kept.as_ref(), key, &prog.program, &sccs, &digests)?;
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {

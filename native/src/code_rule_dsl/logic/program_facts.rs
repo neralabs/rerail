@@ -26,7 +26,7 @@
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
 use super::front::Name;
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
@@ -123,6 +123,11 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
         // `tapes`: the columns declared `tape` (decision 0103 §3).
         ("tape_column", &["p:sym", "rel:sym", "i:int"]),
+        // `shapes`: the join shape directives, in order: each one's head, literal and text, and when its literal
+        // joins (after a relation, or once its variables are bound).
+        ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
+        ("shape_after", &["p:sym", "k:int", "rel:sym"]),
+        ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
     ];
     SCHEMA
         .iter()
@@ -300,6 +305,17 @@ impl Writer<'_> {
         for (rel, cols) in &prog.tapes {
             for i in cols {
                 self.row("tape_column", vec![s(rel), n(*i)]);
+            }
+        }
+        for (k, shape) in prog.shapes.iter().enumerate() {
+            self.row("shape", vec![n(k), s(&shape.head), s(&shape.lit), s(&shape.text)]);
+            match &shape.wait {
+                ShapeWait::After(a) => self.row("shape_after", vec![n(k), s(a)]),
+                ShapeWait::Bound(vars) => {
+                    for (i, x) in vars.iter().enumerate() {
+                        self.row("shape_bound", vec![n(k), n(i), s(x)]);
+                    }
+                }
             }
         }
         for (rel, l) in &prog.lattice {
@@ -722,6 +738,18 @@ impl<'a, C: Cell> Reader<'a, C> {
             gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: indexed(quiet.get(&k))?, deps: indexed(deps.get(&k))? })));
         }
         prog.gates = ordered(gates);
+        let after = self.by_id("shape_after")?;
+        let bound = self.by_id("shape_bound")?;
+        let mut shapes = Vec::new();
+        for row in self.get("shape") {
+            let k = int(&row[0])?;
+            let wait = match after.get(&k).and_then(|r| r.first()) {
+                Some(r) => ShapeWait::After(text(&r[0])?),
+                None => ShapeWait::Bound(indexed(bound.get(&k))?),
+            };
+            shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
+        }
+        prog.shapes = ordered(shapes);
         prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;

@@ -11,7 +11,7 @@
 // ANN204(n): a finding at node n, from clause `missing-return-type-special-method`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ANN204(at: node, n: loc) "Add a return type annotation to `{n}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
+.violation ANN204(at: node, n_mv: loc) "Add a return type annotation to `{n_mv}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
     suppress noqa "ANN204"
 ANN204(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, prefix("__", n), suffix("__", n),
     field(p1, "name", n), kind(p1, "function_definition"), ann204_unannotated_method(p1),
@@ -100,9 +100,17 @@ ann204_overload_impl(n, N) :- ann204_demand_overload_impl(n, N), kind(n, "functi
 
 // unannotated_method(n): the JSON util `unannotated-method`, used where the JSON says `matches: "unannotated-method"`
 .decl ann204_unannotated_method(n: node)
-ann204_unannotated_method(n) :- kind(n, "function_definition"),
-    count : { field(n, "return_type", c1), match("(?s).*..*", c1) } = 0,
-    within_stop(n, p2, ann204_stop_9), kind(p2, "class_definition").
+ann204_unannotated_method(n) :- kind(n, "function_definition"), !ann204_tok_has_1(n),
+    within_stop(n, p9, ann204_stop_9), kind(p9, "class_definition").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann204_tok_has_1(n: node)
+.stored ann204_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann204_tok_has_1(n) :- field(n, "return_type", c1), match("(?s).*..*", c1).
+ann204_tok_has_1(n) :- op(n, t2), match("(?s).*..*", t2).
+ann204_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3), match("(?s)^.*\\S.*$", g3).
+ann204_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3), match("(?s)^.*\\S.*$", g3).
+ann204_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^.*\\S.*$", g3).
 
 // demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
 .decl ann204_demand_overload_impl(n: node, n_mv: loc)

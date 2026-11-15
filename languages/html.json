@@ -1,0 +1,27 @@
+{
+  "format": "rerail.language/v1",
+  "id": "html",
+  "status": "supported",
+  "family": "html",
+  "dialects": [
+    {
+      "label": "html",
+      "variant": "Html",
+      "suffixes": [
+        ".html",
+        ".htm"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Html",
+      "tapeTag": 20
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

@@ -26,3 +26,7 @@ core-foundation-sys = "0.8.7"
 
 [build-dependencies]
 cc = "=1.10.0"
+
+[lints.rust]
+# objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

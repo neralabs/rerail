@@ -28,7 +28,7 @@ g201_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
 g201_logger_object(n) :-
     ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
-    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g201_name_chain(c2)
+    ; kind(n, "attribute"), g201_tok_has_2(n), field(n, "object", c1), g201_name_chain(c1)
     ),
     !sym_of(n, _).
 
@@ -52,16 +52,16 @@ g201_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
 .decl g201_exc_info_kwarg(n: node)
-g201_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("exc_info", c1), field(n, "value", c2), g201_exc_info_set(c2).
+g201_exc_info_kwarg(n) :- kind(n, "keyword_argument"), g201_tok_has_3(n), field(n, "value", c9),
+    g201_exc_info_set(c9).
 
 // level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
 .decl g201_level_callee(n: node)
-g201_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("error", c1),
-    field(n, "object", c2), g201_logger_object(c2).
+g201_level_callee(n) :- kind(n, "attribute"), g201_tok_has_4(n), field(n, "object", c9),
+    g201_logger_object(c9).
 g201_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.error").
-g201_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    g201_level_callee(c3).
+g201_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    g201_level_callee(c10).
 
 // error_call(n): the JSON util `error-call`, used where the JSON says `matches: "error-call"`
 .decl g201_error_call(n: node)
@@ -72,6 +72,58 @@ g201_error_call(n) :- kind(n, "call"), g201_in_handler(n), field(n, "arguments",
 .decl g201_callee(n: node)
 g201_callee(n) :- field(p1, "function", n), kind(p1, "call"), g201_error_call(p1).
 g201_callee(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), g201_callee(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g201_tok_has_1(n: node)
+.stored g201_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g201_tok_has_1(n) :- field(n, "attribute", c3),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c3).
+g201_tok_has_1(n) :- op(n, t4),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t4).
+g201_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g201_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+g201_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g201_tok_has_2(n: node)
+.stored g201_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g201_tok_has_2(n) :- field(n, "attribute", c1),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1).
+g201_tok_has_2(n) :- op(n, t2),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t2).
+g201_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g201_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+g201_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^exc_info$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g201_tok_has_3(n: node)
+.stored g201_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g201_tok_has_3(n) :- field(n, "name", c1), glob("exc_info", c1).
+g201_tok_has_3(n) :- op(n, t2), match("exc_info", t2).
+g201_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+g201_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+g201_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^error$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl g201_tok_has_4(n: node)
+.stored g201_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+g201_tok_has_4(n) :- field(n, "attribute", c1), glob("error", c1).
+g201_tok_has_4(n) :- op(n, t2), match("error", t2).
+g201_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
+g201_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
+g201_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
 
 // demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
 .decl g201_demand_in_handler(n: node)

@@ -77,12 +77,17 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     })
 }
 
+/// The source tree's `native` directory, with no `..` in it: a path the engine reads is named one way, so the file
+/// observer keeps one answer and one journal root for each directory (`native/crates/logic/../../src` and
+/// `native/src` were two). The manifest's directory is a real one, so its parents are what `..` would resolve to.
+pub fn native_dir() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).expect("the manifest's directory is native/crates/<crate>")
+}
+
 /// The library `#include` reads from.
 pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
-    std::env::var_os("RERAIL_RR_LIB")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/lib"))
+    std::env::var_os("RERAIL_RR_LIB").map(PathBuf::from).unwrap_or_else(|| native_dir().parent().unwrap_or(native_dir()).join("docs/rule-syntax/lib"))
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:

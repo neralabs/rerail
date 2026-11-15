@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 struct Version {
     value: u64,
     readers: Vec<usize>,
-    priced: Option<(Vec<f64>, Option<HashMap<Constant, i64>>)>,
+    priced: Option<(Vec<f64>, Option<std::sync::Arc<HashMap<Constant, i64>>>)>,
 }
 
 pub struct Watch {

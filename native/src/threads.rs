@@ -90,6 +90,12 @@ pub(crate) struct Beside<T> {
     slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
 }
 
+/// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
+/// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
+pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
+    rayon::spawn(move || drop(value));
+}
+
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
