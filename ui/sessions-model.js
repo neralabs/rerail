@@ -285,8 +285,11 @@ export const ignoredEdits = s => gapsOf(s).ignoredEdits;
 /** Changes to Git's ignore rules during the session. */
 export const ignoreRuleChanges = s => gapsOf(s).ignoreRuleChanges;
 
-/** The places the session's shell-write check could not check, each once. */
+/** The places the session's shell-write check could not check that its record holds, each once. */
 export const discoveryGaps = s => gapsOf(s).discoveryGaps ?? 0;
+
+/** Whether the check met more such places than the session's record takes. */
+export const discoveryGapsMore = s => gapsOf(s).discoveryGapsMore === true;
 
 /** The first of those places, each with its path and why; none until the daemon answers. */
 export const discoveryGapPlaces = s => gapsOf(s).discoveryGapPlaces ?? [];

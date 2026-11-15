@@ -942,7 +942,7 @@ describe("CodeRuleBridge", () => {
       expect(told.slice(0, MAX_TOLD_GAPS).map(gap => gap.path)).toEqual(folders.slice(0, MAX_TOLD_GAPS).map(folder => `src/${basename(folder)}`));
       expect(told.at(-1)).toEqual({
         boundary: "turn", reason: `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`,
-        key: JSON.stringify(["", `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`]),
+        key: JSON.stringify(["", `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`]), more: true,
       });
     }, 60_000);
 

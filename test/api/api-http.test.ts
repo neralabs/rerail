@@ -249,13 +249,17 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordDiscoveryGap(SESSION, { ...locked, reason: "EACCES: permission denied, open '/repo/src/locked'" });
     const large = { path: "big.bin", reason: "Source exceeds 1000000 byte policy limit" };
     sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", ...large, key: JSON.stringify(["big.bin", large.reason]) });
+    // The record that says the walks met more places than it takes, once: no place, neither counted nor listed as one.
+    const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
     }
 
     expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps).toEqual({
-      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2,
+      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
       // Each place with why, in the order the session met them, for the person to act on.
       discoveryGapPlaces: [
         { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },

@@ -50,6 +50,7 @@ declare module "*/ui/sessions-model.js" {
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;
+  export function discoveryGapsMore(s: { sessionId: string }): boolean;
   export function sessionCorrections(sessionId: string): Correction[];
   export function sessionViolationTotal(sessionId: string): number | null;
   export function loadedFrom(sessionId: string): number;
@@ -127,8 +128,8 @@ declare module "*/ui/render/pack-panel.js" {
 declare module "*/ui/render/timeline.js" {
   /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
   export function coverageGaps(s: { sessionId: string }): string;
-  /** The heading over the places a session's shell-write check could not check: `shown` of `total`. */
-  export function placesHeading(shown: number, total: number): string;
+  /** The heading over the places a session's shell-write check could not check: `shown` of `total`, and whether it met `more`. */
+  export function placesHeading(shown: number, total: number, more?: boolean): string;
 }
 
 declare module "*/ui/state.js" {

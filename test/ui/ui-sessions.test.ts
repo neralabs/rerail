@@ -100,7 +100,16 @@ describe("what the timeline says Rerail did not see of the session", () => {
     // Words true of every reason a place has: one Rerail could not read went unchecked, one checked in part was not.
     expect(placesHeading(1, 1)).toBe("Rules could not fully check this place:");
     expect(placesHeading(3, 3)).toBe("Rules could not fully check these places:");
-    expect(placesHeading(20, 1001)).toBe("Rules could not fully check the first 20 of these 1,001 places:");
+    expect(placesHeading(20, 1000)).toBe("Rules could not fully check the first 20 of these 1,000 places:");
+  });
+
+  it("says how many places the record holds and that the check met more, once it met more than the record takes", () => {
+    // 1,001, 1,500 or 10,000 places met: the record holds the first 1,000, and one more record, no place, says it met more.
+    withGaps({ ...NO_GAPS, discoveryGaps: 1000, discoveryGapsMore: true });
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (more than 1,000 places; 1,000 recorded)");
+    expect(placesHeading(20, 1000, true)).toBe("Rules could not fully check more than 1,000 places; the first 20 of the 1,000 recorded:");
+    withGaps({ ...NO_GAPS, discoveryGaps: 1000, discoveryGapsMore: false });
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (1,000 places)");
   });
 
   it("says nothing of a walk's gaps when the session has none, or the answer counts none", () => {

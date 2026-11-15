@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryGap, DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
@@ -67,8 +67,10 @@ export interface SessionGaps {
   ignoredEdits: number;
   /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
-  /** The places the session's walks could not check, each once (`source-discovery-gap`). */
+  /** The places the session's walks could not check that its record holds, each once (`source-discovery-gap`). */
   discoveryGaps: number;
+  /** The walks met more such places than the record takes (`DiscoveryGap.more`): `discoveryGaps` holds the first of them. */
+  discoveryGapsMore: boolean;
 }
 
 /** A `source-discovery-gap` event's payload, as `recordDiscoveryGap` writes it. */
@@ -77,8 +79,11 @@ const discoveryGapPayloadSchema = z.object({ boundary: z.string(), path: z.strin
 /** A place a session's walks could not check (`source-discovery-gap`), and when it was first met. */
 export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { readonly observedAt: number };
 
+/** The id of the one record that says the walks met more places than the record takes (`DiscoveryGap.more`): no place. */
+const MORE_DISCOVERY_GAPS_EVENT = "source-discovery-gap:more";
+
 const NO_GAPS: SessionGaps = {
-  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0,
+  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
 };
 
 export interface SessionPageQuery {
@@ -204,12 +209,15 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
-/** The first `limit` places the session's walks could not check, in the order the session met them. Indexed by session and kind. */
-function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: number): DiscoveryGapRecord[] {
+/**
+ * The first `limit` places the session's walks could not check, in the order the session met them, and with `more` the
+ * record that says they met more (`MORE_DISCOVERY_GAPS_EVENT`) where it falls. Indexed by session and kind.
+ */
+function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: number, more: boolean): DiscoveryGapRecord[] {
   return database
     .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
     .from(events)
-    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap")))
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap"), more ? undefined : ne(events.eventId, MORE_DISCOVERY_GAPS_EVENT)))
     .orderBy(asc(events.sequence))
     .limit(limit)
     .all()
@@ -334,12 +342,13 @@ export class SqliteSessionStore {
    * Marks a place a boundary's walks could not check, so shell writes there went unchecked: its path and why. A place is
    * recorded once per session and key (its path and its reason's kind, `DiscoveryGap.key`), at the first boundary that
    * meets it: its id is the key's digest, so a place every later turn end meets again, in whatever order, a daemon
-   * restart and a reopened session add no copy of it.
+   * restart and a reopened session add no copy of it. The record that says the walks met more places than the record
+   * takes (`DiscoveryGap.more`) has an id of its own (`MORE_DISCOVERY_GAPS_EVENT`), which `gaps` counts apart.
    */
   recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
     this.append({
       sessionId: session.sessionId,
-      eventId: `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
+      eventId: gap.more === true ? MORE_DISCOVERY_GAPS_EVENT : `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
       kind: "source-discovery-gap",
       payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
     }, session, attribution);
@@ -450,9 +459,12 @@ export class SqliteSessionStore {
     return listWorkLinks(this.#database, sessionId);
   }
 
-  /** The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order met. */
+  /**
+   * The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order
+   * met, with the record that says they met more where it falls: the bridge reads it as its bound.
+   */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
-    return listDiscoveryGaps(this.#database, sessionId, limit);
+    return listDiscoveryGaps(this.#database, sessionId, limit, true);
   }
 
   close(): void {
@@ -553,30 +565,32 @@ export class SqliteSessionReader {
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
    * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
    * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
-   * shell-write check could not check. Indexed by session and kind.
+   * shell-write check could not check, the record that says it met more of those than the record takes counted apart
+   * (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
     if (database === undefined) return { ...NO_GAPS };
-    const row = database.all<SessionGaps>(sql`
+    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
         count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges,
-        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap') AS discoveryGaps
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} <> ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGaps,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} = ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGapsMore
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
         AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
-    return row ?? { ...NO_GAPS };
+    return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
   }
 
-  /** The first `limit` places the session's walks could not check, in the order the session met them. Indexed by session and kind. */
+  /** The first `limit` places the session's walks could not check, in the order the session met them; no record that says they met more. */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
     const database = this.#database.open();
-    return database === undefined ? [] : listDiscoveryGaps(database, sessionId, limit);
+    return database === undefined ? [] : listDiscoveryGaps(database, sessionId, limit, false);
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

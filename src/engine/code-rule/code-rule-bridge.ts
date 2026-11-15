@@ -723,7 +723,7 @@ function toldGap(boundary: DiscoveryGap["boundary"], { path, reason }: WalkGap):
   return { boundary, ...(path === undefined ? {} : { path }), reason, key: gapKey(path, reasonKind(reason)) };
 }
 function untoldGaps(boundary: DiscoveryGap["boundary"]): DiscoveryGap {
-  return { boundary, reason: UNTOLD_GAPS, key: UNTOLD_KEY };
+  return { boundary, reason: UNTOLD_GAPS, key: UNTOLD_KEY, more: true };
 }
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
@@ -1052,6 +1052,11 @@ export interface DiscoveryGap {
    * error code, else the reason). The same key is the same gap, though its reason's text may differ (`opendir`, `open`).
    */
   readonly key: string;
+  /**
+   * The one gap past `MAX_TOLD_GAPS`: no place, it says the walks met more places than the session's record takes, and
+   * none of them is told.
+   */
+  readonly more?: true;
 }
 
 /** A place the session's record holds (`recordedDiscoveryGaps`): its path and why, as `onDiscoveryGaps` was told them. */

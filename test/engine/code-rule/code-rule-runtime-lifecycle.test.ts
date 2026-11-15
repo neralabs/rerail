@@ -701,10 +701,10 @@ describe("source-scoped steers", () => {
       }
     }, 60_000);
 
-    it(`records no place past the session's ${MAX_TOLD_GAPS} after the session reopens, nor after a restart`, async () => {
+    it(`records no place past the session's ${MAX_TOLD_GAPS} after the session reopens, nor after a restart, and counts the places recorded and that it met more`, async () => {
       const root = await realpath(await temporaryDirectory());
       const store = await realpath(await temporaryDirectory());
-      const folders = Array.from({ length: MAX_TOLD_GAPS + 5 }, (_, index) => join(root, `f${String(index).padStart(4, "0")}`));
+      const folders = Array.from({ length: 1_500 }, (_, index) => join(root, `f${String(index).padStart(4, "0")}`));
       for (const folder of folders) await mkdir(folder);
       // Before the others in path order: a bridge that counted the session's places from 0 again would record these first.
       const earlier = Array.from({ length: 50 }, (_, index) => join(root, `a${String(index).padStart(2, "0")}`));
@@ -733,7 +733,9 @@ describe("source-scoped steers", () => {
         await opened(second, root, "start-after-restart");
         for (let turn = 21; turn <= 22; turn += 1) await turnEnd(second, turn);
         expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
-        expect(reader.gaps(session.sessionId).discoveryGaps).toBe(MAX_TOLD_GAPS + 1);
+        // The record that says the walks met more is no place: the count is of the places recorded, the first met.
+        expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: MAX_TOLD_GAPS, discoveryGapsMore: true });
+        expect(reader.discoveryGaps(session.sessionId, 20).map(gap => gap.path)).toEqual(folders.slice(0, 20).map(folder => basename(folder)));
       } finally {
         await second.dispose();
         reader.close();

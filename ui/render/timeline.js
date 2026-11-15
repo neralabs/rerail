@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapPlaces, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -248,11 +248,17 @@ function renderEarlier(earlier) {
   setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
 }
 
+/**
+ * The `n` places the session's record holds, in words, and when the check met more than the record takes (`more`), that
+ * it met more: true for 1,001 places met as for 10,000, and the record that says so is no place.
+ */
+const placesCounted = (n, more) => (more ? `more than ${fmt(n)} places; ${fmt(n)} recorded` : `${fmt(n)} ${plural(n, "place")}`);
+
 /** Each count of what Rerail did not see of a session, in the order the timeline says them, with the clause for a count above 0. */
 const COVERAGE_CLAUSES = [
   [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
   [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
-  [discoveryGaps, n => `rules could not fully check part of the repository (${fmt(n)} ${plural(n, "place")})`],
+  [discoveryGaps, (n, sess) => `rules could not fully check part of the repository (${placesCounted(n, discoveryGapsMore(sess))})`],
   [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
   [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
   [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],
@@ -262,15 +268,17 @@ const COVERAGE_CLAUSES = [
 export function coverageGaps(sess) {
   return COVERAGE_CLAUSES.flatMap(([count, clause]) => {
     const n = count(sess);
-    return n === 0 ? [] : [clause(n)];
+    return n === 0 ? [] : [clause(n, sess)];
   }).join("; ");
 }
 
 /**
- * The heading over the places listed: how many of the session's `total` they are. Its words hold for every reason a place
- * can have, given beside it: what happened to shell edits there is the reason's to say.
+ * The heading over the places listed: how many of the `total` the session's record holds they are, and when the check
+ * met more than the record takes (`more`), that it did. Its words hold for every reason a place can have, given beside
+ * it: what happened to shell edits there is the reason's to say.
  */
-export function placesHeading(shown, total) {
+export function placesHeading(shown, total, more = false) {
+  if (more) return `Rules could not fully check more than ${fmt(total)} places; the first ${fmt(shown)} of the ${fmt(total)} recorded:`;
   const which = shown < total ? `the first ${fmt(shown)} of these ${fmt(total)} places` : plural(shown, "this place", "these places");
   return `Rules could not fully check ${which}:`;
 }
@@ -282,7 +290,7 @@ const placeItem = place => h("li", null, h("code", null, place.path ?? "the whol
 function renderPlaces(sess, loaded) {
   const places = loaded ? discoveryGapPlaces(sess) : [];
   setAttr(t.places, "hidden", places.length === 0);
-  setText(t.places.firstChild, placesHeading(places.length, discoveryGaps(sess)));
+  setText(t.places.firstChild, placesHeading(places.length, discoveryGaps(sess), discoveryGapsMore(sess)));
   syncChildren(t.places.lastChild, places, placeKey, placeItem, () => undefined);
 }
 
