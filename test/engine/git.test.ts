@@ -1221,9 +1221,8 @@ describe("Git reads and their output limit", () => {
     expect(endProcessTree).toHaveBeenCalledTimes(process.platform === "win32" ? 0 : 1);
   }, 30_000);
 
-  // Linux only. Windows ends a process on SIGTERM whatever it asked for, so there the listing ends at once and lists no
-  // file, as the test of a listing past 64 MiB above shows; on macOS, where no CI job runs these tests, it has not run.
-  it.runIf(process.platform === "linux")("reads a listing past the 64 MiB a listing takes as late when its Git ignores SIGTERM and prints no more, and ends that Git at the read's time limit", async () => {
+  it("reads a listing past the 64 MiB a listing takes as late when its Git ignores SIGTERM and prints no more, and ends that Git at the read's time limit", async ({ skip }) => {
+    skip(process.platform !== "linux", "Linux only: Windows ends a process on SIGTERM whatever it asked for, so there the listing ends at once and lists no file, as the 64 MiB listing test above holds; no CI job runs these tests on macOS, where this case has not run");
     const root = await repository({ "a.py": "1\n" });
     vi.mocked(endProcessTree).mockClear();
     // A timer made before the read's timers are faked runs on the real clock.
