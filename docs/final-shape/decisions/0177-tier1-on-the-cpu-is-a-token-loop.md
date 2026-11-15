@@ -1517,3 +1517,37 @@ Tried and dropped along the way:
   constants (the tables' address). Those now cost an `adrp` a token,
   and more of the loop's values spill.
 - Not marking the rule calls cold. rustc's code did not change.
+
+## A spent block is read twice (open)
+
+**Intro.** A lexer that reaches the end of a block's tokens reads the
+next block. Ours reads the cursor's block again first. When a block's
+starts run out, the refill classifies the block holding the cursor,
+from the cursor. After a token that ends inside its block, that is
+the same block, so the pass finds nothing past the token. Only then
+is the next block classified. Lean's loop moves on to its next window.
+
+Counted by stepping the loop one instruction at a time, on a line of
+one word and 63 spaces (one token a block): 471 instructions a block.
+That is 27 to 42 for the token, then 218 for the empty pass and 184
+for the next block. A block with no token costs 207. Lean costs 327
+for the same line.
+
+**Tried.** At the refill, read the next block whole where the token
+before started in the cursor's block, unless a run of pairs goes on
+across that token's end. A flag in the marks so far (`pending`'s
+sign bit) marks that case for the refill. The one-token line went
+483→357. But every word and punctuation token got 4 to 5 instructions
+longer (46→50 for a short word, five stack accesses where there were
+three, and two more branches). Words went +3, punctuation +4 and
+numbers +8. The first attempt, which tested the pair word at the
+refill, kept that word live into the refill and spilled the record
+pointer (+5 a token). Both were dropped.
+
+The same thing blocked the two-register return. The loop has more
+values live across its rule calls than the callee-saved registers
+hold, so any change in it moves rustc's spills about the token path.
+Lean's loop spills too (two loads a token, its word and pair masks),
+so the spills themselves are not the difference. What differs is
+how far a change in a cold part moves the hot path. Changes inside
+the rule functions (the string gates) did not move it.
