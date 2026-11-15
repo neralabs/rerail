@@ -129,13 +129,14 @@ pub(in crate::code_rule_dsl) type Measured = (Vec<(String, i64, i64, i64, i64)>,
 /// A relation's statistics by column, and its exact postings by (column, value).
 pub(in crate::code_rule_dsl) type InputStats = (Vec<[i64; 4]>, Vec<(usize, i64, i64)>);
 
-/// The key of a cross-file part: the prepared program's key and the part's program as lowered.
-pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program) -> [u8; 32] {
+/// The key of a cross-file part: the prepared program's key and the part's program as lowered, by its digest
+/// (`Lowered::digest`, decision 0173 §7), which reads no rule.
+pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: u64) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
-    hash.update(b"rerail.cross-retained/v1\0");
+    hash.update(b"rerail.cross-retained/v2\0");
     hash.update(prepared);
-    hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}", cross.rules, cross.decls, cross.inputs, cross.outputs).as_bytes());
+    hash.update(cross.to_le_bytes());
     hash.finalize().into()
 }
 

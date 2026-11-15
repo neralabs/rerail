@@ -485,6 +485,23 @@ pub struct AgainRef {
 }
 
 impl Maint {
+    /// The parts' digest (decision 0173 §7): each stratum derived again (its relations by name, its rules' and deltas'
+    /// hashes) and each set run as one component, summed, so it reads no rule's text. A program's digest with its
+    /// version's is `Placed::digest`.
+    pub fn digest(&self) -> u64 {
+        use super::super::program_image::strings::hash;
+        let names = |rels: &[RelId]| self.names(rels).collect::<Vec<_>>().join("\0");
+        let rules = |ids: &[RuleId]| ids.iter().fold(0u64, |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())));
+        let mut d = 0u64;
+        for g in &self.again {
+            let text = format!("again\x01{}\x01{}\x01{}\x01{}\x01{:016x}\x01{:016x}", names(&g.scc), names(&g.owned), names(&g.reads), names(&g.olds), rules(&g.rules), rules(&g.deltas));
+            d = d.wrapping_add(hash(text.as_bytes()));
+        }
+        for t in &self.together {
+            d = d.wrapping_add(hash(format!("together\x01{}", names(t)).as_bytes()));
+        }
+        d
+    }
     /// The name of relation `r`, one of `v`'s.
     pub fn name(&self, r: RelId) -> &str {
         self.v.rel_name(r)
@@ -663,6 +680,19 @@ impl Placed {
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
         Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default() }
+    }
+    /// The program's digest (decision 0173 §7): its version's, kept as the version was made, less the rules the
+    /// program leaves out of it (where it is some of its version's rules), with its maintained parts'. A sum, so it
+    /// does not see the rules' order.
+    pub fn digest(&self) -> u64 {
+        let d = match &self.ids {
+            None => self.v.digest(),
+            Some(ids) => {
+                let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
+                ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
+            }
+        };
+        self.maint.as_ref().map_or(d, |m| d.wrapping_add(m.digest()))
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {

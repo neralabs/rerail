@@ -744,3 +744,28 @@ ported, over the targeted tests and dl1.
     `cross_digest`, the choices' key, decoded from the version in `plan::run`) until decision 0173 step 6, the
     split's analyses, and `maintain::rewrite`'s tree, decoded from its version each session run. The run's
     `shared_split.clone()` still copies the parts' trees.
+
+- **Decision 0173, step 6: the program digests compose** (2026-11-15). The keys a run makes of its programs read
+  the versions' digests (decision 0173 §7, kept as each version is made), not a tree's text.
+  - `Placed::digest`: the version's, less the rules a program of some of its rules leaves out, with its maintained
+    parts' (`Maint::digest`: each stratum derived again, by its relations' names and its rules' and deltas' hashes,
+    and each set run as one component). `Lowered::digest` is its version's, the tree's image's where it has none.
+  - The choices' key (`choices::key`) and the composed plan's (`compose::planned`, the run's and each stage's) are
+    of the run's `Placed`: `plan::run` no longer decodes the normalized tree for them (only for the version trace),
+    and `compose::stages` no longer decodes each stage's (`compose::tree_text` is gone).
+  - The memo's key (`memo::program_digest`) is of the file-local part's version; the relations its rules reach and
+    the cross-file part's reads, which the keys take the earlier phases' rows of, are walked on the versions
+    (`heads`, `reads`). The file-local part's constants are the split's (`Programs::constants`), not its analysis
+    run again each run: on the part's relations the two are the same fixpoint (its rules read no cross-file
+    relation), which a debug check states.
+  - The kept parts' key (`retain::key`) is of a digest: the maintained cross-file part's (`Lowered::digest`), and
+    the cone's rounds' (their program, still a tree, imaged once).
+  - Order: each key is a sum, so it does not see the rules' order. None of the keyed results depends on it: the
+    choices' rewrites and the composed plan keep the program's meaning, and a part's rows are a set.
+  - Not ported: `prepared_key`. It keys the preparation's input (the program texts, the settled facts, inputs and
+    outputs) before any version exists; imaging the program to key it would cost what reusing the preparation saves.
+    And `Model::analysis`'s key (`plan::program_digest`), the planner's analysis of a tree, which goes with that
+    analysis's port.
+  - Guard: `Lowered::placed`'s debug check states that a version made from another's has the tree's digest too.
+  - Checked: `choices`, `compose`, `memo`, `session`, `retain`, `cross_memo`, `keeps`, `cone`, `maintain` and the 91
+    corpus tests with the guards on.

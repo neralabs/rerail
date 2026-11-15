@@ -374,7 +374,19 @@ impl Lowered {
                 if digest(&maint.0) == digest(&maint.1) { "the same" } else { "differ" },
             );
         }
+        // And its composed digest (decision 0173 §7), which the program's keys are made of, is the tree's image's.
+        assert_eq!(placed.digest(), of.digest(), "a version made from another's has the program's rules and fields, but not their digest");
         Ok(())
+    }
+
+    /// The program's digest (`Placed::digest`): its version's, kept as it was made, with its maintained parts'; the
+    /// tree's image's where it has no version.
+    pub fn digest(&self) -> super::Result<u64> {
+        Ok(match &self.version {
+            Some(v) if self.maint.is_none() && self.program.again.is_empty() && self.program.together.is_empty() => super::body::Placed::whole(v.clone()).digest(),
+            Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()).digest(),
+            _ => super::body::Placed::of_program(&self.program)?.digest(),
+        })
     }
 }
 

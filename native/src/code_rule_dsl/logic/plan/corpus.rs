@@ -2889,40 +2889,69 @@ fn run_observed(
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
-    // A digest under the rows of the phases' exports that `rules` read, which are not in the program's text.
-    let under_phased = |digest: [u8; 32], rules: &[front::Rule]| -> [u8; 32] {
-        let by_rows: BTreeSet<&str> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r)).collect();
+    // A digest under the rows of the phases' exports among `reads`, which are not in the program's text.
+    let under_phased = |digest: [u8; 32], reads: &BTreeSet<&str>| -> [u8; 32] {
+        let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
-    let memo_local = memo::program_digest(&split.local);
+    // The parts' versions (decision 0244), each dropped where the run edits its tree (the cross memo's split, the cone
+    // of requests, the run's constants): that part's run makes its image of the tree, as before (t36 item 7 step 9).
+    let (mut local_version, mut cross_version) = split.versions.take().map_or((None, None), |p| (Some(p.local), Some(p.cross)));
+    // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7):
+    // their versions, imaged from the trees only where the split has none.
+    let local_v = match &local_version {
+        Some(v) => Arc::clone(v),
+        None => super::body::Placed::of_program(&split.local)?.v,
+    };
+    let cross_v = match &cross_version {
+        Some(v) => Arc::clone(v),
+        None => super::body::Placed::of_program(&split.cross)?.v,
+    };
+    let memo_local = memo::program_digest(&local_v);
     let memo_program = {
         let digest = memo_local;
-        let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
+        let reads_options = local_v.rules().flat_map(|r| r.reads()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(local_v.rel_name(a.rel())));
         let digest = if reads_options { memo::with_options(digest, options) } else { digest };
         // Under the earlier phases' rows only those rules read that a memoised row depends on (an export's or an
         // output's): a constant the per-file part derives for nothing it keeps (phase 1's keys) does not change a
         // file's entry. Nor does a constant the cross-file part reads (phase 1's `py_own`): its rows name no document,
         // and a file's entry holds none of them; one a per-file rule reads is reached through that rule.
-        let constant = crate::code_rule_dsl::typing::file_local::constant_relations(&split.local);
-        let mut kept: BTreeSet<&str> = split.exports.iter().chain(split.local.outputs.iter()).map(String::as_str).filter(|r| !constant.contains(*r)).collect();
-        loop {
-            let more: Vec<&str> = split.local.rules.iter().filter(|r| kept.contains(r.head.rel.as_str())).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).filter(|r| !kept.contains(r)).collect();
-            if more.is_empty() {
-                break;
+        // The constants are the split's (`Programs::constants`): on the file-local part's relations, the part's own
+        // (its rules read no cross-file relation).
+        let constant = &split.constants;
+        #[cfg(debug_assertions)]
+        {
+            let tree = crate::code_rule_dsl::typing::file_local::constant_relations(&split.local);
+            for r in split.exports.iter().chain(split.local.outputs.iter()) {
+                assert_eq!(tree.contains(r.as_str()), constant.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
             }
-            kept.extend(more);
         }
-        let reaching: Vec<front::Rule> = split.local.rules.iter().filter(|r| kept.contains(r.head.rel.as_str())).cloned().collect();
+        let mut kept: BTreeSet<&str> = split.exports.iter().map(String::as_str).chain(local_v.outputs().map(|a| local_v.text(a))).filter(|r| !constant.contains(*r)).collect();
+        // What the rules of every kept relation read, reached from the kept ones.
+        let mut todo: Vec<&str> = kept.iter().copied().collect();
+        let mut reaching: BTreeSet<&str> = BTreeSet::new();
+        while let Some(rel) = todo.pop() {
+            let Some(id) = local_v.rel(rel) else { continue };
+            for rule in local_v.heads(id) {
+                for a in rule.reads() {
+                    let read = local_v.rel_name(a.rel());
+                    reaching.insert(read);
+                    if kept.insert(read) {
+                        todo.push(read);
+                    }
+                }
+            }
+        }
         under_phased(digest, &reaching)
     };
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
     // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
     // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
     // that changed.
-    let cross_digest = under_phased(memo_program, &split.cross.rules);
-    // The parts' versions (decision 0244), each dropped where the run edits its tree (the cross memo's split, the cone
-    // of requests, the run's constants): that part's run makes its image of the tree, as before (t36 item 7 step 9).
-    let (mut local_version, mut cross_version) = split.versions.take().map_or((None, None), |p| (Some(p.local), Some(p.cross)));
+    let cross_digest = {
+        let reads: BTreeSet<&str> = cross_v.rules().flat_map(|r| r.reads()).map(|a| cross_v.rel_name(a.rel())).collect();
+        under_phased(memo_program, &reads)
+    };
     let cross_plan = match &cross_declared {
         Some(declared) => {
             let had = cross_version.is_some();
@@ -3547,7 +3576,7 @@ fn run_observed(
     let mut early_maintained: Option<(lower::Lowered, Option<(usize, usize)>)> = None;
     let kept_route = kept_route && {
         let maintained = maintained_cross(&cross);
-        let ckey = retain::key(&prepared_key, &maintained.0.program);
+        let ckey = retain::key(&prepared_key, maintained.0.digest()?);
         let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
         let found = retain::kept_inputs_stored(store, kept_strata::space(root), ckey, &maintained.0.program, &rels)?;
         early_maintained = Some(maintained);
@@ -5180,7 +5209,12 @@ fn run_observed(
         let rounds_space_of = move |key: &[u8; 32]| kept_strata::part_space(&rounds_root, &format!("{rounds_phase}/{}", crate::content_store::observe::hex(key)));
         // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
         // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
-        let rounds_record = round.as_ref().map(|r| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(&retain::key(&[0; 32], &r.program)))));
+        // The rounds' key: the cone's round program's digest (`Placed::digest`), made once.
+        let rounds_key = match &round {
+            Some(r) => Some(retain::key(&[0; 32], super::body::Placed::of_program(&r.program)?.digest())),
+            None => None,
+        };
+        let rounds_record = rounds_key.as_ref().map(|k| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(k))));
         let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
             observe(|o| {
                 let (read, _) = o.run_record(key)?;
@@ -5245,7 +5279,6 @@ fn run_observed(
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
-            let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
             let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at, ledger: &load_ledger_in };
             // Only what the stored frames hold that is current is known here; rows are read when a round needs them.
@@ -5792,7 +5825,7 @@ fn run_observed(
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs".into());
             let installed: std::result::Result<(usize, usize), String> = (|| {
                 let maintained = early_maintained.take().unwrap_or_else(|| maintained_cross(&cross));
-                let ckey = retain::key(&prepared_key, &maintained.0.program);
+                let ckey = retain::key(&prepared_key, maintained.0.digest().map_err(|e| e.to_string())?);
                 let prog = &maintained.0.program;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
                 let kept = retain::kept_inputs(store, kept_strata::space(root), ckey, prog, &split.locations, &rels).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
@@ -6446,7 +6479,7 @@ fn run_observed(
                         .map(|(rel, source)| (rel.clone(), input_digests.get(rel).copied().unwrap_or_else(|| retain::digest(source.as_ref()))))
                         .collect();
                     drop(s);
-                    let ckey = retain::key(&prepared_key, &cross.program);
+                    let ckey = retain::key(&prepared_key, cross.digest()?);
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
                     let mut cell = cells.remove(&ckey);
