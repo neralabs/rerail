@@ -155,7 +155,7 @@ struct BufferReservation {
 
 impl BufferReservation {
     fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
-        let take = || ledger.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next <= limit));
+        let take = || ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next <= limit));
         // The idle blocks of the device's pool give way to a reservation the budget refuses.
         let previous = take()
             .or_else(|used| if std::ptr::eq(ledger, pool()) && crate::pool::give_way(bytes, limit) { take() } else { Err(used) })

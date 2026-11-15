@@ -1036,7 +1036,10 @@ mod tests {
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
+        // The machine's git settings (a signing key, hooks, a default branch) are not the test's.
         let output = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(directory)
             .args(arguments)

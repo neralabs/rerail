@@ -162,24 +162,7 @@ impl SqlViolationRow {
         })
     }
 
-    pub(super) fn publication_key(&self) -> (&str, &str, &str) {
-        (&self.rule_id, &self.clause_id, &self.path)
-    }
 
-    pub(super) fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
-        let sql_violation = Some(self.to_value());
-        crate::code_rule_dsl::violations::Witness {
-            path: self.path,
-            span: Some(self.span),
-            captures: crate::code_rule_dsl::violations::Captures::from_spans(self.captures),
-            message: Some(self.message),
-            fix: self.fix.map(|fix| {
-                serde_json::to_value(fix).expect("a typed SQL fix serializes as a witness fix")
-            }),
-            sql_violation,
-            ignored: false,
-        }
-    }
 
     pub(super) fn to_value(&self) -> Value {
         let mut id = crate::code_rule_dsl::eval::violation_id(
@@ -299,14 +282,7 @@ impl SqlPlans {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn inject_failure(&self, producer: usize, code: &str) {
-        *self.failure_injection.lock().unwrap() = Some((producer, code.to_owned()));
-    }
 
-    pub(super) fn verify_lowered(&self) -> Result<(), String> {
-        self.plan.as_ref().map_err(Clone::clone)?.verify()
-    }
 
     /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet
     /// pack its terminal descriptors into the expanded virtual-table relation.
@@ -639,18 +615,6 @@ fn production_backend() -> ExecutionBackend {
     }
 }
 
-#[cfg(test)]
-fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
-    drive_sql(
-        demand,
-        &[ExecutionStatement {
-            sql: plan::legacy_test_scan_sql().to_owned(),
-            clauses: "[]".to_owned(),
-            materialization: None,
-        }],
-        "[]",
-    )
-}
 
 fn drive_sql(
     demand: PackedDemand,
@@ -838,34 +802,7 @@ thread_local! {
     };
 }
 
-pub(super) fn release_connections() {
-    let mut slots = SLOTS.lock().expect("query connection registry poisoned");
-    slots.retain(|slot| {
-        let Some(slot) = slot.upgrade() else {
-            return false;
-        };
-        if let Ok(mut connection) = slot.try_lock() {
-            connection.take();
-        }
-        true
-    });
-}
 
-/// A regex clause's ordered byte ranges, bounded by `limit` and the active deadline.
-pub(in crate::code_rule_dsl) fn regex_matches(
-    regex: &regex::Regex,
-    haystack: &str,
-    limit: usize,
-) -> (Vec<std::ops::Range<usize>>, bool) {
-    let mut matches = Vec::new();
-    for found in regex.find_iter(haystack) {
-        if crate::code_rule_dsl::budget::matcher_budget_exhausted() || matches.len() >= limit {
-            return (matches, false);
-        }
-        matches.push(found.range());
-    }
-    (matches, true)
-}
 
 #[cfg(test)]
 mod policy_lowering_tests;

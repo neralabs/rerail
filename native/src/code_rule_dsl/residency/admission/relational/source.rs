@@ -27,7 +27,7 @@ impl ToSql for Slice {
 
 pub fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
     if work
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
             left.checked_sub(count)
         })
         .is_err()

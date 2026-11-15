@@ -9,8 +9,10 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry. What only `build.rs` calls is
+/// dead here.
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]

@@ -1191,7 +1191,9 @@ mod findings {
     #[path = "tests"]
     pub mod async_reference {
         pub use rerail_lang_python::code_rule_dsl::findings::async_reference::*;
+        // Its timings are read by the p-anchor-corpus tests alone.
         #[cfg(test)]
+        #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
         pub mod native_oracle;
         #[cfg(test)]
         pub mod s_native_oracle;
@@ -2029,7 +2031,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+    pub(crate) use super::logic::profile::strict_on_every_connection;
 }
 #[cfg_attr(test, path = "sql_executor")]
 mod sql_executor {
@@ -3200,7 +3202,9 @@ pub mod sql_admission {
 #[cfg_attr(test, path = "query")]
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;
+    // The async-call family's reference (`plan::async_reference`) is read by the p-anchor-corpus tests alone.
     #[cfg(test)]
+    #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
     pub mod plan;
     #[cfg(test)]
     pub mod tests;
@@ -3369,7 +3373,6 @@ mod residency {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
 }
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
-use residency::admission::relational;
 #[cfg_attr(test, path = "scope")]
 mod scope {
     pub use rerail_w::code_rule_dsl::scope::*;
@@ -4598,8 +4601,6 @@ pub(crate) mod workspace {
 
 #[cfg(test)]
 pub use rerail_lang::code_rule_dsl::fixtures;
-#[cfg(test)]
-pub(crate) use fixtures::{fixtures_dir, oracle};
 
 use compile::{compile_document, parse_capabilities, parse_document};
 use json::{canonicalize_value, hex_digest, invalid, json_error};

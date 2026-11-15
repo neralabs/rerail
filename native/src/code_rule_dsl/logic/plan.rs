@@ -5639,7 +5639,10 @@ impl Ambient {
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        // Any guard: what is held is dropped with the box, whether or not its type implements `Drop` itself.
+        trait Guard {}
+        impl<T> Guard for T {}
+        struct Entered(placement::Binding, bool, Box<dyn Guard>, Box<dyn Guard>, Box<dyn Guard>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
@@ -8653,10 +8656,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
     // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
-    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
+    let inlined_rels: BTreeSet<String>;
     let prog: &Program = match reused {
         Some(c) => {
-            inlined_rels = c.inlined.iter().cloned().collect();
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
             inlined_rels = c.inlined.iter().cloned().collect();

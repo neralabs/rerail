@@ -82,7 +82,7 @@ impl Shared {
             return Err("SQL work graph cancelled or timed out".into());
         }
         self.submitted
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < self.limit).then(|| n + 1)
             })
             .map(|_| ())
