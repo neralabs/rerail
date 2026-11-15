@@ -861,6 +861,39 @@ describe("audit rule provenance", () => {
     }
   });
 
+  it("waits as long as another connection holds the write lock before a batch, then moves the rest", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+    const writer = new Database(path);
+    let pauses = 0;
+    try {
+      // After the first batch another connection takes the write lock and holds it for 100 of the move's pauses, past
+      // the 5 s every Rerail connection waits for it, as `rerail scrub` holds it 6.8 to 17.7 s on a large file.
+      const moved = await move(path, {
+        perBatch: 10,
+        pause: () => {
+          pauses += 1;
+          if (pauses === 2) writer.exec("BEGIN IMMEDIATE");
+          if (pauses === 102) writer.exec("ROLLBACK");
+          return Promise.resolve();
+        },
+      });
+      expect(moved).toBe(30);
+      expect(pauses).toBeGreaterThan(102);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+    }
+
+    expect(inlineAudits(path)).toBe(0);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
+
   it("empties the WAL between tries while another connection reads, never waiting inside SQLite, so its thread keeps running", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));

@@ -182,6 +182,31 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(moveLines(log.writes())).toEqual([]);
   }, 2 * TEST_MS);
 
+  it("waits while another process holds the write lock 12 s into the move, then moves the rest, and logs nothing", async () => {
+    const { home, databasePath, provenance } = databaseWithInlineAudits({ audits: 500, rules: 20 });
+    const log = spyOnStderr();
+    const other = new Database(databasePath);
+    cleanups.push(() => {
+      if (other.inTransaction) other.exec("ROLLBACK");
+      other.close();
+    });
+
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => daemon.close());
+    // Once the first batch has moved, another process holds the write lock 12 s, as `rerail scrub` holds it 6.8 to
+    // 17.7 s on a large file: past the 5 s every Rerail connection waits for it.
+    await until(() => namingStoredCopy(databasePath, provenance) > 0, 10);
+    other.exec("BEGIN IMMEDIATE");
+    const left = fileState(databasePath).inline;
+    await new Promise(resolve => setTimeout(resolve, 12_000));
+    other.exec("ROLLBACK");
+
+    await until(() => moved(databasePath));
+    expect(left).toBeGreaterThan(0);
+    expect(namingStoredCopy(databasePath, provenance)).toBe(500);
+    expect(moveLines(log.writes())).toEqual([]);
+  }, TEST_MS + 12_000);
+
   it("ends the move quietly at a stop that comes while another process holds the write lock as the move's thread opens its writer", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
     const log = spyOnStderr();
@@ -223,7 +248,7 @@ describe("the daemon's move of audit rule provenance", () => {
     const lines = moveLines(log.writes());
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/\n +at moveBatch \(.*rule-provenance-move\.[jt]s:\d+:\d+\)\n/u);
-    expect(lines[0]).toMatch(/\n +at whenFree \(.*rule-provenance-move\.[jt]s:\d+:\d+\)\n/u);
+    expect(lines[0]).toMatch(/\n +at timedBatch \(.*rule-provenance-move\.[jt]s:\d+:\d+\)\n/u);
     expect(lines[0]).toMatch(/^rerail daemon: moving audit rule provenance failed: /u);
     expect(lines[0]).toContain(`${refused}\n`);
     // The audits read as before: each still holds its provenance in its row.

@@ -8,7 +8,9 @@
  * transaction sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep
  * recording while it runs; a process stopped partway loses at most one batch, and the next run goes on from what is
  * left. Until an audit moves, the audit store reads its provenance inline. The move never waits inside SQLite for
- * another connection: it awaits a pause and tries again (`whenFree`), so a stop reaches it between two tries.
+ * another connection: it awaits a pause and tries again, for as long as another connection holds the write lock, so a
+ * stop reaches it between two tries, and a long hold, such as `rerail scrub`'s on a large file, pauses the move
+ * without ending it.
  *
  * The pages a batch frees stay in the file, zeroed as every delete's are (`secure_delete`, `database.ts`), and new
  * history reuses them before the file grows again. No `VACUUM` runs here: one holds the write lock until it ends, and
@@ -54,8 +56,10 @@ const BATCH_MS = 100;
 const PAUSE_MS = 150;
 
 /**
- * How many times the move tries a step while another connection is in its way: with the daemon's pause, the 5 s every
- * Rerail connection waits (`busy_timeout`, `database.ts`). Past that it gives up as such a connection does.
+ * How many times the checkpoint after the last batch tries while another connection's read keeps it from emptying the
+ * WAL: with the daemon's pause, the 5 s every Rerail connection waits (`busy_timeout`, `database.ts`). Past that it
+ * leaves the WAL to SQLite's later checkpoints. A batch has no such bound: it waits as long as another connection holds
+ * the write lock, since a batch that gave up would end the move until the daemon's next start.
  */
 const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
 
@@ -173,14 +177,14 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
   // waits inside SQLite up to 5 s while another process holds the lock, where a stop cannot reach it.
   const database = openSqliteDatabase(path);
   try {
-    // From here SQLite reports another connection's lock at once, and `whenFree` waits for it between tries.
+    // From here SQLite reports another connection's lock at once, and the move waits for it between tries.
     database.$client.pragma("busy_timeout = 0");
     const upTo = stepAppliedAt(database);
     if (upTo === undefined) return 0;
     const client = database.$client;
     const batching = batchingOf(options, () => takes(client, upTo) && lastOlderWrite(client, older) !== undefined);
     const free: Free = step => whenFree(step, batching.pause, options.signal);
-    const done = await moveInBatches(database, upTo, free, batching);
+    const done = await moveInBatches(database, upTo, batching);
     if (done.ended && done.moved > 0) await emptyWalAfterMove(client, free);
     return done.moved;
   } finally {
@@ -207,15 +211,15 @@ function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean
 
 /**
  * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
- * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it, `signal` also while a batch waits for
- * another connection (`whenFree`): how many it moved, and whether none is left. The first batch takes `FIRST_BATCH`
- * audits, and each later one as many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the
- * write lock about that long however loaded the machine and however large each audit's provenance.
+ * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is
+ * left. A batch another connection's lock is in the way of is tried again after the next pause, with no bound, and
+ * `signal` and `postponed` are read before each try. The first batch takes `FIRST_BATCH` audits, and each later one as
+ * many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the write lock about that long
+ * however loaded the machine and however large each audit's provenance.
  */
 async function moveInBatches(
   database: RerailDatabase,
   upTo: number,
-  free: Free,
   { most, pause, now, signal, postponed }: Batching,
 ): Promise<{ moved: number; ended: boolean }> {
   let moved = 0;
@@ -224,20 +228,30 @@ async function moveInBatches(
   for (;;) {
     await pause();
     if (signal?.aborted === true || postponed()) return { moved, ended: false };
-    let took = 0;
-    const batch = await free(() => {
-      const began = now();
-      try {
-        return moveBatch(database, { after, upTo, limit: size });
-      } finally {
-        took = now() - began;
-      }
-    });
-    if (batch === STOPPED) return { moved, ended: false };
-    if (batch === undefined) return { moved, ended: true };
-    moved += batch.moved;
-    after = batch.last;
-    size = nextBatchSize(size, took, most);
+    const batch = timedBatch(() => moveBatch(database, { after, upTo, limit: size }), now);
+    if (batch === BUSY) continue;
+    if (batch.done === undefined) return { moved, ended: true };
+    moved += batch.done.moved;
+    after = batch.done.last;
+    size = nextBatchSize(size, batch.took, most);
+  }
+}
+
+/** What `timedBatch` gives back for a batch another connection's lock was in the way of. */
+const BUSY = Symbol("busy");
+
+/**
+ * What `batch` did and how long it held the write lock by `now`, or `BUSY` when another connection held what it needed
+ * (`isBusy`), which a later try may find free.
+ */
+function timedBatch<T>(batch: () => T, now: () => number): { done: T; took: number } | typeof BUSY {
+  const began = now();
+  try {
+    const done = batch();
+    return { done, took: now() - began };
+  } catch (error) {
+    if (isBusy(error)) return BUSY;
+    throw error;
   }
 }
 
@@ -366,11 +380,11 @@ function movedBy(worker: Worker): Promise<number> {
 }
 
 /**
- * What `step` returns, tried again after each `pause` while another connection is in its way (`isBusy`): a writer that
- * holds the lock, or a read that keeps a checkpoint from emptying the WAL. After `BUSY_TRIES` tries it throws what the
- * last try threw, as a connection that waits out its busy timeout fails. A stop that comes while it waits ends it
- * before the next try with `STOPPED`, as a stop between two batches ends the move: the step's work is left for the
- * next run, and the stop is not a failure.
+ * What `step`, the checkpoint after the last batch, returns, tried again after each `pause` while another connection is
+ * in its way (`isBusy`): a read that keeps it from emptying the WAL, or a writer that holds the lock. After
+ * `BUSY_TRIES` tries it throws what the last try threw, as a connection that waits out its busy timeout fails. A stop
+ * that comes while it waits ends it before the next try with `STOPPED`, as a stop between two batches ends the move:
+ * the step's work is left for the next run, and the stop is not a failure.
  */
 async function whenFree<T>(
   step: () => T,
