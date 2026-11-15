@@ -325,3 +325,27 @@ describe("the engine proof's limit", () => {
     expect(ranOnMs).toBeLessThan(SLACK_MS);
   }, 45_000);
 });
+
+describe("the engine proof's request", () => {
+  // An engine reads the request a proof sends as main sent it. Node writes its own Host header with a port when a
+  // request has a connection of its own and no agent.
+  it("is the request main sent, on a Windows pipe and on a Unix socket", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-proof-"));
+    folders.push(root);
+    const path = process.platform === "win32" ? pipePath("request") : join(root, "engine.sock");
+    let asked = "";
+    const listener = createSocketServer((socket) => {
+      sockets.push(socket);
+      socket.on("data", (chunk: Buffer) => {
+        asked += chunk.toString("latin1");
+        if (asked.includes("\r\n\r\n")) socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
+      });
+    });
+    closers.push(() => listener.close());
+    listener.listen(path);
+    await once(listener, "listening");
+    const challenge = "0123456789abcdef".repeat(4);
+    expect(await engineCapabilityProof(path, "capability", 1_000, challenge)).toBe("refused");
+    expect(asked).toBe(`POST /proof HTTP/1.1\r\nx-rerail-challenge: ${challenge}\r\ncontent-length: 0\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+  }, 15_000);
+});
