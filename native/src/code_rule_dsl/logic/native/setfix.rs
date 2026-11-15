@@ -966,7 +966,9 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// driver; none, no limit.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>> }
 
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
+/// `at`: the scope of the connection the store was opened on (`vtab::Db`), whose bound sources a step that reads the
+/// run's documents reads (`rr_node_text`).
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>>, at: usize }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -1567,7 +1569,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     }
     syms.check()?;
     drop(syms);
-    let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
+    let store = Arc::new(RwLock::new(Store { rels, syms: symbols, at: conn.at() }));
     forgotten_on_close();
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (conn.at(), name.clone());
@@ -5840,7 +5842,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
                     let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-                    eval(name, &texts, &numbers)
+                    if *name == "rr_node_text" {
+                        // From the batch bound on the store's connection (`syntax::long_node_text`): the run's own.
+                        let db = crate::code_rule_dsl::facts::vtab::Db::scope(cx.store.at);
+                        crate::code_rule_dsl::facts::vtab::syntax::long_node_text(db, numbers[0]).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
+                    } else {
+                        eval(name, &texts, &numbers)
+                    }
                 };
                 let mark = cx.texts.len();
                 let v = match value {

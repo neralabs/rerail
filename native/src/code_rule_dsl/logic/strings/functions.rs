@@ -171,10 +171,16 @@ pub fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
 
 /// Registers every function on `db`.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
-    for &(name, args, _) in FUNCTIONS {
+    for &(name, args, _) in FUNCTIONS.iter().filter(|(name, _, _)| *name != "rr_node_text") {
         let arity = i32::try_from(args.len()).expect("few arguments");
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
+    // `rr_node_text(n)`: from the batch bound on the connection it runs on (`syntax::long_node_text`).
+    db.create_scalar_function("rr_node_text", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let Some(n) = ctx.get::<Option<i64>>(0)? else { return Ok(None) };
+        let conn = unsafe { ctx.get_connection()? };
+        Ok(crate::code_rule_dsl::facts::vtab::syntax::long_node_text(&conn, n))
+    })?;
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
     Ok(())
 }
@@ -294,7 +300,9 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
-        "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
+        // A node's long text is its run's: read from the batch of the connection the call runs on (`register`, the
+        // native `Func` step), never here, which knows no run.
+        "rr_node_text" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

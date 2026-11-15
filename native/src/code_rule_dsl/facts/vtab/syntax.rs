@@ -334,30 +334,15 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// The batches whose documents' texts `long_node_text` reads, by document key: the latest batch to hold each
-/// document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing).
-static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>> = std::sync::LazyLock::new(Default::default);
-
-/// Hold `batch`'s documents for `long_node_text`.
-fn hold_texts(batch: &Arc<Batch>) {
-    let mut texts = TEXTS.write().unwrap_or_else(|p| p.into_inner());
-    // Entries of dropped batches go once they are as many as the live ones.
-    if texts.len() > 4096 && texts.len() > 2 * batch.docs.len() {
-        texts.retain(|_, (b, _)| b.strong_count() > 0);
-    }
-    for (i, p) in batch.docs.iter().enumerate() {
-        texts.insert(p.key, (Arc::downgrade(batch), i));
-    }
-}
-
 /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`), read from its document in the
-/// batch that holds it; none for a shorter node (whose text `text` holds), a span, or a document no batch holds.
-/// Only the nodes a rule binds are read and interned (decision 0108 §1).
-pub(crate) fn long_node_text(n: i64) -> Option<String> {
-    let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
-    let batch = batch.upgrade()?;
-    let p = &batch.docs[i];
+/// batch the run's connection `db` holds (bound to `node`, as the Python producer reads it); none for a shorter node
+/// (whose text `text` holds), a span, or a document the batch does not hold. Only the nodes a rule binds are read
+/// and interned (decision 0108 §1). The batch is the run's own: a document's key is its path's atom, the same in two
+/// runs of one process over roots that both hold the path (O174), so no table of the process may answer it.
+pub fn long_node_text(db: impl super::Scoped, n: i64) -> Option<String> {
+    let batch = super::bound_source(db, "node")?.python_batch()?;
+    let (key, low) = (n >> 32, n as u32);
+    let p = &batch.docs[batch.doc(key)?];
     let local = p.local_of(low)?;
     let core = *p.core.get(local as usize)?;
     let text = p.facts.text(core);
@@ -3117,7 +3102,6 @@ impl Batch {
         let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
         let locs = OnceLock::new();
         let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, families: bound, made });
-        hold_texts(&batch);
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
         Ok((batch, relations, matched, (strings, atoms)))

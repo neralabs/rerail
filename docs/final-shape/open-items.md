@@ -5169,6 +5169,15 @@ message names `bf44cf353` as this item's fix: it is not; it is about a long-text
 fixed after it: the root's tokens between anchored subtrees were not counted). Anchors are made per program, not kept
 across a process, so they are not the shared state either.
 
+**Closed (2026-11-15).** The test failed in its group's *first* run, not the memo replay, beside any concurrent run
+with an `a.py` of its own. The long texts `@rr_node_text` reads (`syntax::long_node_text`) were held in a
+process-wide map (`TEXTS`) keyed by document key, and a document's key is its path atom: two concurrent runs each
+with an `a.py` wrote one entry, and one read the other's text. The map is gone: `long_node_text` reads the batch bound
+on the connection the run's query runs on (`vtab::bound_source(db, "node")`, as `text`'s own producer does), SQLite's
+`rr_node_text` is registered per connection, and the native fixpoint's store keeps its connection's scope
+(`Store::at`). Test: `rr_comparison::concurrent_runs_read_their_own_long_texts` (four concurrent runs, each its own
+`a.py`); the module passes 4 of 4 runs, the long-text pair 6 of 6.
+
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
 Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on

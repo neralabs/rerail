@@ -369,6 +369,10 @@ impl<'a> Db<'a> {
     pub fn of(conn: &'a Connection) -> Self {
         Db { at: connection_scope(conn), conn: Some(conn) }
     }
+    /// A connection's scope alone (`connection_scope`), as a store opened on it keeps it.
+    pub fn scope(at: usize) -> Db<'static> {
+        Db { at, conn: None }
+    }
     /// The scope alone: a job off the connection's thread.
     pub fn detached(self) -> Db<'static> {
         Db { at: self.at, conn: None }

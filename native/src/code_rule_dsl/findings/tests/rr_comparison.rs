@@ -328,15 +328,44 @@ fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
 result(t) :- field(_,"right",n), text(n,t).
 .output result
 "#;
-    for _ in 0..2 {
+    for run in ["first", "memo replay"] {
         corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
             1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
         let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "result").unwrap();
         let got: std::collections::BTreeSet<&str> = rows.iter().map(|r| r[0].as_str()).collect();
         assert_eq!(rows.iter().map(Vec::len).max(), Some(1));
-        assert_eq!(got, [long.as_str(),"[1]"].into_iter().collect());
+        assert_eq!(got, [long.as_str(),"[1]"].into_iter().collect(), "the {run} run");
     }
     std::fs::remove_dir_all(base).unwrap();
+}
+
+/// Concurrent runs of one process, each with its own `a.py`: each reads its own long text (O174: the texts were
+/// held process-wide by document key, the path, so a run could read another's `a.py`).
+#[test]
+fn concurrent_runs_read_their_own_long_texts() {
+    let src = r#"
+#include "core.rr"
+.decl result(t:symbol)
+result(t) :- field(_,"right",n), text(n,t).
+.output result
+"#;
+    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| std::thread::spawn(move || {
+        let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("long-text-{digits}"));
+        let root = base.join("src");
+        std::fs::create_dir_all(&root).unwrap();
+        let long = format!("[{}]", vec![digits; 100].join(","));
+        std::fs::write(root.join("a.py"), format!("a = {long}\n")).unwrap();
+        for _ in 0..3 {
+            corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
+                1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
+            let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "result").unwrap();
+            assert_eq!(rows, vec![vec![long.clone()]], "the run of {digits}");
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    })).collect();
+    for run in runs {
+        run.join().unwrap();
+    }
 }
 
 #[test]
