@@ -3441,7 +3441,8 @@ impl<'a> P<'a> {
             match self.at(pos) {
                 b'>' => break,
                 b'/' if self.at(pos + 1) == b'>' && !fragment => {
-                    // A self-closing element: the element is the tag.
+                    // A self-closing element: the element is the tag, its comments in it.
+                    self.flush(pos as u32);
                     self.w.set_key(el.at, key(K::JsxSelfClosingElement, s.field, class(K::JsxSelfClosingElement, s.ctx), false));
                     self.last_end = pos as u32 + 2;
                     self.close(el);
@@ -3455,6 +3456,8 @@ impl<'a> P<'a> {
                 _ => return self.refuse_at(pos),
             }
         }
+        // The tag's comments are in it.
+        self.flush(pos as u32);
         self.w.insert(el.at + 1, key(K::JsxOpeningElement, f::OPEN_TAG, C_NONE, false), t.start);
         let open = N { at: el.at + 1, kind: K::JsxOpeningElement };
         self.last_end = pos as u32 + 1;
@@ -3499,6 +3502,7 @@ impl<'a> P<'a> {
                     if self.at(p) != b'>' {
                         return self.refuse_at(p);
                     }
+                    self.flush(p as u32);
                     self.last_end = p as u32 + 1;
                     self.close(close);
                     pos = p + 1;
@@ -3553,7 +3557,8 @@ impl<'a> P<'a> {
             return self.jsx_namespace_name(p, end, q, field);
         }
         let word = crate::lex::word(self.src, p, end);
-        let kind = if word == w::THIS { K::This } else { K::Identifier };
+        // TSX's grammar reads `this` in a tag's name as an identifier; JavaScript's as `this`.
+        let kind = if word == w::THIS && self.dialect == Dialect::JavaScript { K::This } else { K::Identifier };
         self.leaf_span(kind, field, p as u32, end as u32);
         let mut e = N { at: start, kind };
         let mut pos = end;

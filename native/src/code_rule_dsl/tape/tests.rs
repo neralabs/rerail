@@ -2921,7 +2921,11 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
     ];
     // Arguments no expression reads: a call of `await` in JavaScript, errors in TypeScript.
     let js = ["async function f() { await (...a); await (); await (a, b)() }\n"];
-    let jsx = ["const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n"];
+    let jsx = [
+        "const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n",
+        // A tag's comments are in it, before its `>` or `/>`.
+        "x = <A b={c} /* d */ />\ny = <A b={c} // d\n />\nz = < /*a*/ ></ /*b*/>\nw = <A /* d */></A /* e */>\n",
+    ];
     let ts = [
         "let x: A | B & C[] = y as const;\nlet z = <T>w;\n",
         "interface I<T extends U = V> extends J { a?: number; readonly b: string; (x: T): void; new (): I<T>; [k: string]: any }\n",
@@ -2942,7 +2946,11 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A {\n  public\n  m() {}\n  static\n  *g() {}\n  readonly\n  r: string\n}\n",
         "class B {\n  static\n  m() {}\n  get\n  n() {}\n  static\n  x = 1\n}\n",
     ];
-    let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
+    let tsx = [
+        "const C = <T,>(p: T) => <Table<T> rows={p} />;\n",
+        // TSX reads `this` in a tag's name as an identifier.
+        "x = <this.a></this.a>\ny = <this.a.b />\n",
+    ];
     let cases: [(Dialect, Vec<&str>); 3] = [
         (Dialect::JavaScript, common.iter().chain(&js).chain(&jsx).copied().collect()),
         (Dialect::TypeScript, common.iter().chain(&ts).copied().collect()),
