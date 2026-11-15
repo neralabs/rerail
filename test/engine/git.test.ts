@@ -1083,3 +1083,141 @@ describe("gitInstalled", () => {
     expect(gitInstalled(join(root, "runs", "git"), "linux")).toBe(true);
   });
 });
+
+/** The most bytes of Git's output `gitHead` reads: past them it answers none. */
+const READ_LIMIT = 1024 * 1024;
+
+/** The most bytes of Git's output a listing of changed files or of unmerged entries reads. */
+const LISTING_LIMIT = 64 * 1024 * 1024;
+
+/**
+ * How long a test waits for the answer to a read whose Git printed past its limit: well under the read's time limit of
+ * 10 s, so an answer by then came from the output limit and not from the time limit.
+ */
+const PAST_LIMIT_WAIT_MS = 5_000;
+
+/** In Git's place: prints `bytes` bytes of `fill`, then stays until its input ends, as a Git still at work does. */
+function printsAndStays(bytes: number, fill: string): string {
+  return `process.stdout.write(Buffer.alloc(${bytes}, ${JSON.stringify(fill)})); process.stdin.resume()`;
+}
+
+/** How `child` ended: by itself, with its exit code, or by a signal. */
+function ending(child: ChildProcess): { exitCode: number | null; signalCode: NodeJS.Signals | null } {
+  return { exitCode: child.exitCode, signalCode: child.signalCode };
+}
+
+/** Has the next Git a read starts run as itself: a stand-in `gitInPlace` queues after this takes the Git after it. */
+function realGitNext(): void {
+  vi.mocked(spawn).mockImplementationOnce(actualChildProcess.spawn);
+}
+
+// These tests come last in the file: after the two listings of 64 MiB, this process holds more memory for a while, and
+// each Git a later test started took about half as long again on Linux.
+describe("Git reads and their output limit", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    clock.ahead = 0;
+  });
+
+  it("answers none when Git prints past the MiB a read takes, and ends that Git at once with SIGTERM", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // A MiB of two-byte characters and one byte more: 1,048,577 bytes in 524,289 characters, as the limit counts bytes.
+    const started = gitInPlace(`process.stdout.write('\\u00e9'.repeat(${READ_LIMIT / 2}) + 'a'); process.stdin.resume()`);
+    const read = gitHead(root);
+    const child = await started;
+    await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toBeUndefined();
+    // The read settles once its Git has exited, so none is left running; the time limit did not end it.
+    expect(ending(child)).toEqual({ exitCode: null, signalCode: "SIGTERM" });
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("answers in whole what Git printed when that is one byte under the MiB a read takes, or exactly that MiB", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    gitInPlace(`process.stdout.write('a'.repeat(${READ_LIMIT - 1}))`);
+    gitInPlace(`process.stdout.write('a'.repeat(${READ_LIMIT}))`);
+    const answers = await Promise.all([gitHead(root), gitHead(root)]);
+    // Lengths, and whether each is all `a`: a diff of a MiB would hide what failed.
+    expect(answers.map(answer => answer?.length)).toEqual([READ_LIMIT - 1, READ_LIMIT]);
+    expect(answers.map(answer => /^a*$/u.test(answer ?? "b"))).toEqual([true, true]);
+  }, 30_000);
+
+  it("reads a character whole when Git prints its bytes in two pieces", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    // In Git's place: prints `a` and the first byte of `é`, and once the test writes to its input, the other byte and `b`.
+    const started = gitInPlace([
+      "const fs = require('node:fs'); const text = Buffer.from('a\\u00e9b'); fs.writeSync(1, text.subarray(0, 2));",
+      "process.stdin.once('data', () => { fs.writeSync(1, text.subarray(2)); process.exit(0); });",
+    ].join(" "));
+    const read = gitHead(root);
+    const child = await started;
+    // The read has had the first piece alone: nothing more is printed until this.
+    await firstOutput(child);
+    child.stdin?.write("\n");
+    await expect(read).resolves.toBe("aéb");
+  }, 30_000);
+
+  it("lists no file when Git lists past the 64 MiB a listing takes, and ends that Git at once with SIGTERM", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    const started = gitInPlace(printsAndStays(LISTING_LIMIT + 1, "a.py\0"));
+    const read = gitModifiedOrUntrackedPaths(root);
+    const child = await started;
+    await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toEqual([]);
+    expect(ending(child)).toEqual({ exitCode: null, signalCode: "SIGTERM" });
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("cannot say which entries are unmerged when Git lists past the 64 MiB a listing takes, and ends that Git at once", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // The reader's first Git finds the index file; the second lists the entries.
+    realGitNext();
+    const started = gitInPlace(printsAndStays(LISTING_LIMIT + 1, `100644 ${"0".repeat(40)} 1\ta.py\0`));
+    const read = gitUnmergedReader()(root);
+    const child = await started;
+    await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toBeUndefined();
+    expect(ending(child)).toEqual({ exitCode: null, signalCode: "SIGTERM" });
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("ends a Git that goes on printing past the limit and ignores SIGTERM at once, by closing its output", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // In Git's place: prints 64 KiB at a time, 16 MiB at most, and exits with status 0 once a write fails; SIGTERM does
+    // not end it. The read answers none all the same: it had more than it takes.
+    const started = gitInPlace([
+      "process.on('SIGTERM', () => {}); process.stdout.on('error', () => process.exit(0)); process.stdin.resume();",
+      "const chunk = Buffer.alloc(65536, 'a'); let left = 256;",
+      "const more = () => { if (left-- > 0) process.stdout.write(chunk, error => { if (!error) more(); }); }; more();",
+    ].join(" "));
+    const read = gitHead(root);
+    const child = await started;
+    await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toBeUndefined();
+    // Its next write found the output closed. Windows ends a process on SIGTERM whatever it asked for.
+    expect(ending(child)).toEqual(process.platform === "win32" ? { exitCode: null, signalCode: "SIGTERM" } : { exitCode: 0, signalCode: null });
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("ends a Git that printed past the limit, ignores SIGTERM and prints no more at the read's time limit", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    vi.mocked(endProcessTree).mockClear();
+    // A timer made before the read's timers are faked runs on the real clock.
+    const late = stillWaiting(PAST_LIMIT_WAIT_MS);
+    fakeReadTimers({ limitTimer: true });
+    const started = gitInPlace(`process.on('SIGTERM', () => {}); ${printsAndStays(READ_LIMIT + 1, "a")}`);
+    const read = gitHead(root);
+    const child = await started;
+    if (process.platform !== "win32") {
+      // Once the read has sent SIGTERM, the clock and the timers move past its time limit of 10 s.
+      await vi.waitFor(() => expect(child.killed).toBe(true), { timeout: PAST_LIMIT_WAIT_MS, interval: 10 });
+      clockAhead(11_000);
+      vi.advanceTimersByTime(11_000);
+    }
+    await expect(Promise.race([read, late])).resolves.toBeUndefined();
+    // Windows ends a process on SIGTERM whatever it asked for; elsewhere the time limit sends SIGKILL.
+    expect(ending(child)).toEqual({ exitCode: null, signalCode: process.platform === "win32" ? "SIGTERM" : "SIGKILL" });
+    expect(endProcessTree).toHaveBeenCalledTimes(process.platform === "win32" ? 0 : 1);
+  }, 30_000);
+});
