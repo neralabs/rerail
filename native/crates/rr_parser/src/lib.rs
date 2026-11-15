@@ -1561,6 +1561,27 @@ pub mod tests {
         assert!(!zeros_bound(&n, 2, 1));
     }
 
+    /// A class of one run of bytes is a subtract and a compare on the CPU's vectors
+    /// (`native_cpu_lanes::set_range`): a digit's `b - '0' <= 9`. Whitespace is no run; a
+    /// byte alone is one, a compare.
+    #[test]
+    fn a_digit_is_a_range() {
+        use rerail_compiler::native_cpu_lanes::set_range;
+        let set = |bytes: &[u8]| {
+            let mut s = [0u64; 4];
+            for &b in bytes {
+                s[usize::from(b) / 64] |= 1 << (b % 64);
+            }
+            s
+        };
+        assert_eq!(set_range(set(b"0123456789")), Some((b'0', b'9')));
+        assert_eq!(set_range(set(b"/")), Some((b'/', b'/')));
+        assert_eq!(set_range(set(b" \t\n\r")), None);
+        assert_eq!(set_range(set(b"0123456789_")), None);
+        assert_eq!(set_range(set(b"")), None);
+        assert_eq!(set_range(set(&[0xfe, 0xff])), Some((0xfe, 0xff)));
+    }
+
     /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
     /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
     /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer

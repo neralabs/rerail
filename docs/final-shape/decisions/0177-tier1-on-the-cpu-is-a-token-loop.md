@@ -1225,3 +1225,30 @@ source.
 | Strings | 344 | 337 | 241 |
 | Numbers | 222 | 215 | 107 |
 | Comments | 312 | 306 | 193 |
+
+## A digit is a range (2026-11-15)
+
+**Intro.** A lexer tests a digit as `b - b'0' <= 9`. The CPU's
+vectors tested every class by its nibble tables: two lookups, two
+`and`s, a compare (about seven instructions a vector). A number's
+run reads three vectors (a `.` between two digits needs the bytes
+either side), so about twenty of a number's instructions were
+lookups.
+
+**The change.** A class whose bytes are one run `lo..=hi`
+(`native_cpu_lanes::set_range`) is `b - lo <= hi - lo` on the
+vector: two instructions, and one compare for a single byte. A class
+whose table this window has looked up already keeps the lookup: it
+then costs an `and` and a compare.
+
+The scalar tests at a token keep a run as the set's word. As a
+subtract and compare in the main loop's cold tests (a `-` before a
+digit), rustc allocated the loop's registers differently, and every
+kind rose about one instruction. Without it, no kind rose.
+`a_digit_is_a_range` checks the runs.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Numbers | 215 | 197 | 107 |
+
+Other kinds did not change.

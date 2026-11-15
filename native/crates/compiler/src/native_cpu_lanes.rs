@@ -108,6 +108,25 @@ fn class_byte(t: &ClassTable, b: u8) -> u8 {
     t.lo[usize::from(b & 15)] & t.hi[usize::from(b >> 4)]
 }
 
+/// The bytes of a class (`bits` of table `t`) as one run `lo..=hi`, where they are one.
+pub fn byte_range(t: &ClassTable, bits: u8) -> Option<(u8, u8)> {
+    let mut set = [0u64; 4];
+    for b in 0..=255u8 {
+        if class_byte(t, b) & bits != 0 {
+            set[usize::from(b) / 64] |= 1 << (b % 64);
+        }
+    }
+    set_range(set)
+}
+
+/// A 256-bit set of bytes as one run `lo..=hi`, where it is one (not empty).
+pub fn set_range(set: [u64; 4]) -> Option<(u8, u8)> {
+    let has = |b: usize| set[b / 64] >> (b % 64) & 1 == 1;
+    let lo = (0..256).find(|&b| has(b))?;
+    let hi = (0..256).rev().find(|&b| has(b))?;
+    (lo..=hi).all(has).then_some((lo as u8, hi as u8))
+}
+
 /// Which values are byte-local, on the vectors, and how far back each reads (its leaves' bytes at
 /// most that far before its own: a `prev` adds its shift, a `pair` and a `plane_before` one), and
 /// what may be true of each on ASCII bytes. `deep`: a `prev` of any byte-local value (within
@@ -845,6 +864,20 @@ impl<'a> Lanes<'a> {
                 let b = self.bytes(f, c, lag);
                 let s = self.splat(f, byte);
                 Lane::V(f.ins().icmp(IntCC::Equal, b, s), false)
+            }
+            // A class of one run of bytes, its table not looked up here already: a subtract
+            // and a compare, as a compiler lowers a range test (a digit's `b - '0' <= 9`).
+            BlockInst::Class { table, bits } if !self.lookups.contains_key(&(usize::from(table), c, lag)) && byte_range(&self.native.tables[usize::from(table)], bits).is_some() => {
+                let (lo, hi) = byte_range(&self.native.tables[usize::from(table)], bits).expect("a range");
+                let b = self.bytes(f, c, lag);
+                if lo == hi {
+                    let s = self.splat(f, lo);
+                    return Lane::V(f.ins().icmp(IntCC::Equal, b, s), false);
+                }
+                let from = self.splat(f, lo);
+                let d = f.ins().isub(b, from);
+                let span = self.splat(f, hi - lo);
+                Lane::V(f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d, span), false)
             }
             BlockInst::Class { table, bits } => {
                 let v = self.lookup(f, usize::from(table), c, lag);

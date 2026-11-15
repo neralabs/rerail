@@ -575,11 +575,11 @@ fn byte_at(f: &mut FunctionBuilder<'_>, at: &File, i: Value) -> Value {
 
 /// Whether byte `b` is in the 256-bit set, 0 or 1.
 fn in_set(f: &mut FunctionBuilder<'_>, b: Value, set: [u64; 4]) -> Value {
-    // One byte: a compare, as a lexer's `b == c`.
-    if set.iter().map(|w| w.count_ones()).sum::<u32>() == 1 {
-        let w = set.iter().position(|&w| w != 0).expect("one bit");
-        let c = 64 * w as i64 + i64::from(set[w].trailing_zeros());
-        let same = f.ins().icmp_imm(IntCC::Equal, b, c);
+    // One byte: a compare, as a lexer's `b == c`. (A run of bytes stays the set's word: as a
+    // subtract and a compare in the token loop's cold tests, rustc allocated the loop's
+    // registers worse, an instruction more a token on every kind.)
+    if let Some((lo, _)) = crate::native_cpu_lanes::set_range(set).filter(|(lo, hi)| lo == hi) {
+        let same = f.ins().icmp_imm(IntCC::Equal, b, i64::from(lo));
         return f.ins().uextend(types::I64, same);
     }
     let zero = f.ins().iconst(types::I64, 0);
