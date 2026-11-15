@@ -4276,6 +4276,15 @@ program itself and taken out where stratifying refuses it. Measured on the 44 st
 findings unchanged; `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and the 11
 `lowering_is_idempotent_*` shards pass.
 
+**Again (2026-11-15).** On a pack's programs, `guards` was ~16% of the samples of
+`dropping_unreached_clauses_prunes_to_the_same_program_script_packs` (500 G instructions, 33.5 s). `Reach` built
+the reverse edges again for each target's walk; `guards` cloned every safe literal and made each literal's
+variables again each round; and each placement dropped every walk. Now the reverse edges are made once, a
+placement adds its edges and drops only the walks of targets a guard is or reaches (`Reach::placed`; exact, cycles
+closed included), and `guards` borrows the literals with their variables made once, cloning only those kept.
+324 G instructions; `a_placement_keeps_only_the_walks_it_leaves_unchanged` (rr) and the `script_packs`,
+`python_pack_0` and `other_packs` shards pass.
+
 ## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
 
 **Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
