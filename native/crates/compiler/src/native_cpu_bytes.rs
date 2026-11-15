@@ -36,6 +36,14 @@ pub struct Bytewise<'a> {
     pub carries: Vec<(usize, cranelift_module::FuncId, cranelift_codegen::ir::Signature)>,
 }
 
+/// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
+/// the carries out made.
+#[derive(Default)]
+struct Carry {
+    ins: Vec<(usize, Value)>,
+    outs: Vec<(usize, Value)>,
+}
+
 /// Where the reads are: the file's first byte and length, and the body's constants.
 #[derive(Clone, Copy)]
 pub struct File {
@@ -136,6 +144,15 @@ impl<'a> Bytewise<'a> {
     /// each: one window's vectors and words shared among them, as a lexer classifies a byte
     /// once for every test that reads it.
     pub fn words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        self.words_carried(f, at, os, p, &[], heads).0
+    }
+
+    /// `words`, with `escaped(a)`'s carry in at `p` given for each `(a, carry)` of `cins`
+    /// where the outputs read it at their window's start (`carried_runs`), not read back from
+    /// the bytes; and each one's carry out, at `p + 64` (simdjson's add overflow), in `cins`'
+    /// order: a loop of windows 64 bytes apart passes it on, as the lean lexer's reader does.
+    pub fn words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, Vec<Value>) {
+        let mut carry = Carry { ins: cins.to_vec(), outs: Vec::new() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let rem = f.ins().isub(at.len, p);
@@ -148,15 +165,67 @@ impl<'a> Bytewise<'a> {
         let low = f.ins().iadd_imm(low, -1);
         let ones = f.ins().iconst(types::I64, -1);
         let cut = f.ins().select(full, ones, low);
-        os.iter()
+        let words = os
+            .iter()
             .map(|&o| {
                 let x = usize::from(self.native.outputs[usize::from(o)]);
                 // A delay `d` reads from `p + d`: `d` bytes ahead of the shared start.
                 let d = i64::from(self.native.output_delays[usize::from(o)]);
-                let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, heads);
+                let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, &mut carry, heads);
                 f.ins().band(m, cut)
             })
-            .collect()
+            .collect();
+        let outs = cins.iter().map(|&(a, _)| carry.outs.iter().find(|o| o.0 == a).expect("a carried run's carry out (`carried_runs`)").1).collect();
+        (words, outs)
+    }
+
+    /// The runs whose `escaped` outputs `os` read at their window's start, no `prev` or delay
+    /// before it: the carries `words_carried` takes and gives.
+    pub fn carried_runs(&self, os: &[u16]) -> Vec<usize> {
+        fn walk(b: &Bytewise<'_>, x: usize, back: i64, seen: &mut std::collections::HashSet<(usize, i64)>, runs: &mut Vec<usize>) {
+            if !seen.insert((x, back)) || b.plan.lanes[x] {
+                return;
+            }
+            match b.native.insts[x] {
+                BlockInst::Not(a) => walk(b, usize::from(a), back, seen, runs),
+                BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => {
+                    walk(b, usize::from(a), back, seen, runs);
+                    walk(b, usize::from(c), back, seen, runs);
+                }
+                BlockInst::Prev(a, k) => walk(b, usize::from(a), back + i64::from(k), seen, runs),
+                BlockInst::Escaped(a) => {
+                    if back == 0 && !runs.contains(&usize::from(a)) {
+                        runs.push(usize::from(a));
+                    }
+                    walk(b, usize::from(a), back, seen, runs);
+                }
+                _ => {}
+            }
+        }
+        let (mut seen, mut runs) = (std::collections::HashSet::new(), Vec::new());
+        for &o in os {
+            let x = usize::from(self.native.outputs[usize::from(o)]);
+            walk(self, x, -i64::from(self.native.output_delays[usize::from(o)]), &mut seen, &mut runs);
+        }
+        runs
+    }
+
+    /// `escaped(a)`'s carry in at `pos` (the parity of `a`'s run that ends at `pos - 1`), from
+    /// the bytes: none where `a` does not hold at `pos - 1`.
+    pub fn carry_at(&self, f: &mut FunctionBuilder<'_>, at: &File, a: usize, pos: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        self.carry_in(f, at, a, pos, heads)
+    }
+
+    /// Whether `a` never holds where output `o` does: the bytes `o` needs at its position, and
+    /// those `a` needs at its own, are apart (`needs`). A reader's opener so starts no run of
+    /// its escapes: the carry after it is none, as the lean lexer's reader starts with none.
+    pub fn apart(&self, o: u16, a: usize) -> bool {
+        let n = needs(self.native, o);
+        let r = needs_at(self.native, a, &mut HashMap::new());
+        match (n, r) {
+            (Some(n), Some(r)) => n.lo == 0 && n.hi == 0 && r.lo == 0 && r.hi == 0 && n.set.iter().zip(r.set).all(|(x, y)| x & y == 0),
+            _ => false,
+        }
     }
 
     /// Output `o` at the file's byte `p`, 0 or 1 (0 past its end).
@@ -175,12 +244,12 @@ impl<'a> Bytewise<'a> {
     fn mask(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, start: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
-        self.mask_at(f, at, x, start, 0, &mut windows, &mut memo, heads)
+        self.mask_at(f, at, x, start, 0, &mut windows, &mut memo, &mut Carry::default(), heads)
     }
 
     /// `x`'s word from `start - back`; the windows' vectors and the words shared.
     #[allow(clippy::too_many_arguments)]
-    fn mask_at<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, start: Value, back: i64, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    fn mask_at<'s>(&'s self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, start: Value, back: i64, windows: &mut HashMap<i64, Lanes<'s>>, memo: &mut HashMap<(usize, i64), Value>, carry: &mut Carry, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         if let Some(&v) = memo.get(&(x, back)) {
             return v;
         }
@@ -208,12 +277,12 @@ impl<'a> Bytewise<'a> {
                     f.ins().rotr(k, sh)
                 }
                 BlockInst::Not(a) => {
-                    let a = self.mask_at(f, at, usize::from(a), start, back, windows, memo, heads);
+                    let a = self.mask_at(f, at, usize::from(a), start, back, windows, memo, carry, heads);
                     f.ins().bnot(a)
                 }
                 BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => {
-                    let p = self.mask_at(f, at, usize::from(a), start, back, windows, memo, heads);
-                    let q = self.mask_at(f, at, usize::from(b), start, back, windows, memo, heads);
+                    let p = self.mask_at(f, at, usize::from(a), start, back, windows, memo, carry, heads);
+                    let q = self.mask_at(f, at, usize::from(b), start, back, windows, memo, carry, heads);
                     match self.native.insts[x] {
                         BlockInst::And(..) => f.ins().band(p, q),
                         BlockInst::Or(..) => f.ins().bor(p, q),
@@ -223,7 +292,7 @@ impl<'a> Bytewise<'a> {
                 }
                 BlockInst::Prev(a, k) => {
                     // `a` `k` further back; no bits before the stream.
-                    let m = self.mask_at(f, at, usize::from(a), start, back + i64::from(k), windows, memo, heads);
+                    let m = self.mask_at(f, at, usize::from(a), start, back + i64::from(k), windows, memo, carry, heads);
                     let pos = here(f);
                     let need = f.ins().irsub_imm(pos, i64::from(k));
                     let zero = f.ins().iconst(types::I64, 0);
@@ -237,15 +306,25 @@ impl<'a> Bytewise<'a> {
                 BlockInst::Escaped(a) => {
                     // simdjson's find_escaped_branchless, its carry the run before the window.
                     let pos = here(f);
-                    let cin = self.carry_in(f, at, usize::from(a), pos, heads);
+                    let given = if back == 0 { carry.ins.iter().find(|c| c.0 == usize::from(a)).map(|c| c.1) } else { None };
+                    let cin = match given {
+                        Some(c) => c,
+                        None => self.carry_in(f, at, usize::from(a), pos, heads),
+                    };
                     // The control flow of the carry: the windows made before it are still made.
-                    let run = self.mask_at(f, at, usize::from(a), start, back, windows, memo, heads);
+                    let run = self.mask_at(f, at, usize::from(a), start, back, windows, memo, carry, heads);
                     let b = f.ins().band_not(run, cin);
                     let up = f.ins().ishl_imm(b, 1);
                     let follows = f.ins().bor(up, cin);
                     let odd = f.ins().band_not(b, at.even);
                     let odd_starts = f.ins().band_not(odd, follows);
                     let sequences = f.ins().iadd(odd_starts, b);
+                    if given.is_some() {
+                        // The carry out: the add's overflow, a run odd at the window's end.
+                        let over = f.ins().icmp(IntCC::UnsignedLessThan, sequences, b);
+                        let over = f.ins().uextend(types::I64, over);
+                        carry.outs.push((usize::from(a), over));
+                    }
                     let invert = f.ins().ishl_imm(sequences, 1);
                     let flipped = f.ins().bxor(at.even, invert);
                     f.ins().band(flipped, follows)

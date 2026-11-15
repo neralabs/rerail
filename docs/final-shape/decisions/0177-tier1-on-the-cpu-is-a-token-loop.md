@@ -839,3 +839,44 @@ what the lookup gives; a first byte whose pairs are two words (`<`:
 which bytes take the table.
 
 Tier 1 AOT 169 to 155 instructions a node, JIT 253 to 239.
+
+## A string read once (2026-11-14)
+
+A string's end and its tests read the same bytes. Before, the loop read
+them twice:
+
+- the closer's search, a call a word (`bytes12`), from aligned words, so
+  each word looked back a byte for the escape's carry;
+- then the count tests' function (`tests1`), skipped only where a string's
+  span fit 16 bytes with none of the bytes the tests need.
+
+The two took 10.7% of tier 1's time. The lean lexer's `string_end` takes
+one loop. Its window starts after the opener, where no escape is open,
+and it carries the escape's parity from one window to the next.
+
+Now a reader's arm with count tests is one function (`read_fn`), as the
+lean reader:
+
+- **The closer from `s + 1`, 64 bytes apart.** `Bytewise::words_carried`
+  takes `escaped`'s carry in and gives its carry out (simdjson's add
+  overflow), so the loop passes it on. `Bytewise::apart` proves the
+  opener is no escape byte, so the first carry is zero, with no load.
+- **The tests behind a gate.** One check of four vectors (`needs_wide`)
+  says whether the token's bytes, up to 64, hold any byte the tests need.
+  Where none does, there are no hits and no test mask is made. Where one
+  does, or the token is longer, the tests' function runs, as rare as
+  such bytes.
+
+```rust
+// A string with no `\` and no control byte (the tests' needs):
+// two compares a window, the escape's carry, the gate; no test mask.
+let (ws, couts) = bw.words_carried(f, &file, &[a.closer], at, &cins, heads);
+```
+
+A first form made every test mask in the loop, for every string. It
+lost: tier 1 AOT went from 155 to 159 instructions a node. Short
+strings had skipped those masks before.
+
+Tier 1 AOT 155 to 147 instructions a node, JIT 239 to 222. The string
+reader is 153 lines of machine code, down from 460, and saves two
+register pairs, not six.
