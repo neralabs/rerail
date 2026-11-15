@@ -337,6 +337,12 @@ fn tier1_by_kind() {
         ("numbers", "1 22 333 4444 55555 1.5 2.25\n"),
         ("comments", "// a line comment of some words\n/* a block */\n"),
     ];
+    // `RR_LINE`: that line alone (a kind's cost by its tokens' lengths).
+    let line = std::env::var("RR_LINE").ok();
+    let kinds: Vec<(&str, &str)> = match &line {
+        Some(l) => vec![("line", l.as_str())],
+        None => kinds.to_vec(),
+    };
     // `RR_KIND`: that kind alone, tier 1 for `RR_SECONDS`, for a profile.
     let only = std::env::var("RR_KIND").ok();
     let seconds: f64 = std::env::var("RR_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);

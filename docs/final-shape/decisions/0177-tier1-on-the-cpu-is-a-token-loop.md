@@ -1472,3 +1472,48 @@ if span > 32: any |= in_set(v[2]) & …; any |= in_set(v[3]) & …
 | Strings | 298 | 285 | 241 |
 
 Other kinds did not change.
+
+## A long string's gate reads it a chunk at a time
+
+**Intro.** A lexer that finds a string's closing quote also knows
+whether it passed a `\` on the way. Our string read finds the quote
+first, then checks the token's bytes for any the counts need (a `\`,
+a control byte), and calls the counts only if it finds one. That
+check covered 64 bytes at most. A longer string always called the
+counts, which read every byte of it again.
+
+**The change.** Past 64 bytes the gate (`needs_chunks`) loops over
+64-byte chunks: four vectors a chunk, then the rest as before. It
+stops at the first chunk with such a byte, which then calls the
+counts as before. It is a loop of whole windows, like the closer's
+search, not a loop over bytes.
+
+```
+while rest > 64: if any(chunk at p): call counts; p += 64; rest -= 64
+if any(rest at p, cut at rest): call counts
+```
+
+`the_cpus_records_are_the_interpreters` now has a tab and a `\u` in
+strings past 64 bytes, at each chunk's edges, in a whole chunk and
+in the rest, and long strings with neither. Making the long gate
+always quiet fails that test.
+
+| One string a line | Before | After | Lean |
+|---|---|---|---|
+| 66 bytes | 930 | 691 | 514 |
+| 80 bytes | 970 | 716 | 517 |
+| 120 bytes | 1083 | 776 | 526 |
+| 250 bytes | 1587 | 1090 | 730 |
+
+The by-kind lines did not change: their strings are 37 bytes at
+most. `tier1_by_kind` takes `RR_LINE` to count a line of one's own.
+
+Tried and dropped along the way:
+
+- The two-register return again (`(last+1) | (tag+1) << 32`, and
+  the hits with the refusal as their sign bit). Numbers 168→167,
+  strings and comments −5, but words, punctuation and mixed code +3
+  each. The results come back in `x0`/`x1`, where the loop kept its
+  constants (the tables' address). Those now cost an `adrp` a token,
+  and more of the loop's values spill.
+- Not marking the rule calls cold. rustc's code did not change.

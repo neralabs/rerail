@@ -2326,15 +2326,20 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     let l = f.ins().iadd_imm(close, i64::from(a.off));
     let call = f.create_block();
     if let Some(ns) = counts_need_by_offset(bw.native, tests) {
-        // A token of 64 bytes at most none of whose bytes, at each offset, is one the tests
-        // need there: no hits, and no test's mask made.
-        let (vec, quiet) = (f.create_block(), f.create_block());
+        // A token none of whose bytes, at each offset, is one the tests need there: no
+        // hits, and no test's mask made. One of 64 bytes at most by its vectors, a longer
+        // one 64 bytes at a time (`needs_chunks`).
+        let (vec, long, quiet) = (f.create_block(), f.create_block(), f.create_block());
+        f.set_cold_block(long);
         let n1 = f.ins().isub(l, s);
         let span = f.ins().iadd_imm(n1, 1);
         let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
-        f.ins().brif(fits, vec, &[], call, &[]);
+        f.ins().brif(fits, vec, &[], long, &[]);
         f.switch_to_block(vec);
         let some = needs_spans(&mut f, &ns, bytes, s, span);
+        f.ins().brif(some, call, &[], quiet, &[]);
+        f.switch_to_block(long);
+        let some = needs_chunks(&mut f, &ns, bytes, s, span, &mut heads);
         f.ins().brif(some, call, &[], quiet, &[]);
         f.switch_to_block(quiet);
         f.ins().return_(&[close, zero]);
@@ -3432,6 +3437,34 @@ fn needs_spans(f: &mut FunctionBuilder<'_>, ns: &[crate::native_cpu_bytes::Needs
     let w0 = f.ins().extractlane(wide, 0);
     let w1 = f.ins().extractlane(wide, 1);
     f.ins().bor(w0, w1)
+}
+
+/// `needs_spans` over a token of any length: 64 bytes at a time while more than 64 are left,
+/// each chunk's four vectors, and the rest as `needs_spans`'s; nonzero at the first chunk
+/// with a byte of the sets. A lexer's string read past its first window that saw no `\`
+/// and no control byte: the tests' function is never called for it (`read_fn`).
+fn needs_chunks(f: &mut FunctionBuilder<'_>, ns: &[crate::native_cpu_bytes::Needs], bytes: Value, s: Value, span: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    let (head, full, last, join) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(head, types::I64);
+    f.append_block_param(head, types::I64);
+    f.append_block_param(join, types::I64);
+    f.ins().jump(head, &[s.into(), span.into()]);
+    f.switch_to_block(head);
+    heads.push((head, Step::Word));
+    let (p, rest) = (f.block_params(head)[0], f.block_params(head)[1]);
+    let big = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, rest, 64);
+    f.ins().brif(big, full, &[], last, &[]);
+    f.switch_to_block(full);
+    let all = f.ins().iconst(types::I64, 64);
+    let a = needs_spans(f, ns, bytes, p, all);
+    let p1 = f.ins().iadd_imm(p, 64);
+    let r1 = f.ins().iadd_imm(rest, -64);
+    f.ins().brif(a, join, &[a.into()], head, &[p1.into(), r1.into()]);
+    f.switch_to_block(last);
+    let a = needs_spans(f, ns, bytes, p, rest);
+    f.ins().jump(join, &[a.into()]);
+    f.switch_to_block(join);
+    f.block_params(join)[0]
 }
 
 /// The refusal and the hits of the tests that hold at every token (`TokenCheck::always`).

@@ -1727,12 +1727,18 @@ pub mod tests {
             }
         }
         // A byte the string's counts need (a tab, a `\u`) at each edge of the gate's vectors
-        // (`needs_spans`): 16, 32 and 48 bytes on.
-        for at in [14usize, 15, 16, 17, 30, 31, 32, 33, 46, 47, 48] {
+        // (`needs_spans`): 16, 32 and 48 bytes on; and in a string past 64 bytes, at each
+        // edge of its 64-byte chunks (`needs_chunks`), in a whole chunk and in the rest.
+        for at in [14usize, 15, 16, 17, 30, 31, 32, 33, 46, 47, 48, 62, 63, 64, 65, 79, 126, 127, 128, 129, 150] {
             for odd in ["\t", "\\u12"] {
                 inputs.push(format!("a(\"{}{odd}x\", 1).\n", "s".repeat(at)).into_bytes());
                 inputs.push(format!("a(\"{}{odd}\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
             }
+        }
+        // A long string with none: no test's function.
+        for n in [64usize, 65, 127, 128, 129, 200] {
+            inputs.push(format!("a(\"{}\", 1).\n", "s".repeat(n)).into_bytes());
         }
         // A `\` run right before a string's quote: the opener's escape carry, which a short
         // reader leaves to its whole function (`Bytewise::bail`).
