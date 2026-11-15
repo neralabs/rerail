@@ -220,6 +220,10 @@ pub struct Observer {
     volumes: Vec<(PathBuf, Option<[u8; 16]>)>,
     /// Where the journal's cookies are written: beside the store.
     cookies: Option<PathBuf>,
+    /// rerail's own files this observer knows of (decision 0246): its content store (and so every file named after
+    /// it), and the directories runs wrote their outputs into (`own_output`, kept as `own:<dir>` in its store). With
+    /// the process's (`own`).
+    own: Vec<PathBuf>,
 }
 
 /// A root a run watches.
@@ -328,7 +332,49 @@ impl Observer {
                 .collect();
             super::journal::prepare(&roots, dir);
         }
-        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies }
+        // The content store this observer's store is named after (`store_beside`), and the outputs runs recorded.
+        let mut own: Vec<PathBuf> = path.map(|p| p.to_string_lossy().strip_suffix(".files").map_or_else(|| p.to_path_buf(), PathBuf::from)).into_iter().flat_map(|p| spellings(&p)).collect();
+        if let Some(k) = db.as_ref() {
+            own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
+        }
+        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own }
+    }
+
+    /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0246), for this observer
+    /// and, in its store, for the processes after (one write, the first time a directory is named).
+    pub fn own_output(&mut self, dir: &Path) {
+        let dir = self.abs(dir);
+        if self.own.contains(&dir) {
+            return;
+        }
+        self.own.extend(spellings(&dir));
+        let Some(k) = self.db.as_mut() else { return };
+        let key = format!("{OWN_OUTPUT}{}", dir.display());
+        if k.meta.contains_key(&key) {
+            return;
+        }
+        k.meta.insert(key.clone(), rusqlite::types::Value::Integer(1));
+        k.writer.send(move |db| {
+            let _ = db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, 1)", params![key]);
+        });
+    }
+
+    /// Whether `path` is one of rerail's own files (decision 0246): this observer's or the process's.
+    fn is_own(&self, path: &Path) -> bool {
+        self.own.iter().any(|o| owned_by(o, path)) || OWN.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
+    }
+
+    /// The kind and stat of an own file, asked of the system each time: no answer is kept (decision 0246).
+    fn own_stat(path: &Path) -> Option<(Kind, Stat)> {
+        let m = std::fs::metadata(path).ok()?;
+        let kind = if m.is_file() {
+            Kind::File
+        } else if m.is_dir() {
+            Kind::Dir
+        } else {
+            Kind::Other
+        };
+        Some((kind, Stat::of(&m)))
     }
 
     /// Waits until everything this observer queued is in its file: a process's end, or a test's next observer.
@@ -464,6 +510,9 @@ impl Observer {
     }
 
     fn remember(&mut self, path: &Path, entry: Entry) {
+        if self.is_own(path) {
+            return;
+        }
         if let Some(root) = self.roots.iter_mut().find(|r| !r.trusted && path.starts_with(&r.path)) {
             root.checked.insert(path.to_owned());
         }
@@ -485,6 +534,9 @@ impl Observer {
     /// (decision 0105): the answer kept, or for a path its directory's kept listing does not hold, missing.
     pub fn kind(&mut self, path: &Path) -> Kind {
         let path = &self.abs(path);
+        if self.is_own(path) {
+            return Self::own_stat(path).map_or(Kind::Missing, |(k, _)| k);
+        }
         self.ensure(path);
         self.stat(path).map_or(Kind::Missing, |(k, _)| k)
     }
@@ -523,6 +575,9 @@ impl Observer {
     /// moved or retargeted under the root is an event that forgets it. Elsewhere, one `realpath`, kept for the next run.
     pub fn canonical(&mut self, path: &Path) -> Option<PathBuf> {
         let path = self.abs(path);
+        if self.is_own(&path) {
+            return std::fs::canonicalize(&path).ok();
+        }
         self.ensure(&path);
         self.watch_above(&path);
         let asked = self.flushes;
@@ -566,6 +621,9 @@ impl Observer {
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
     pub fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
         let path = &self.abs(path);
+        if self.is_own(path) {
+            return self.read(path).map(|(_, d)| d);
+        }
         self.ensure(path);
         if let Some(e) = self.trusted(path).filter(|e| e.kind == Kind::File) {
             self.counts.reused += 1;
@@ -660,6 +718,8 @@ impl Observer {
             });
             match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
                 super::journal::Since::Changed { paths, cursor: next } => {
+                    // News of rerail's own files is no news (decision 0246): each run writes them.
+                    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
                     self.forget(&root, &paths, volume, &next);
                     self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default() });
                 }
@@ -735,7 +795,7 @@ impl Observer {
             }
             match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
                 super::journal::Since::Changed { paths, cursor } => {
-                    named.extend(paths);
+                    named.extend(paths.into_iter().filter(|p| !self.is_own(p)));
                     now[i] = Some(cursor);
                 }
                 super::journal::Since::Lost { .. } => return None,
@@ -892,6 +952,11 @@ impl Observer {
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
     pub fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
         let path = &self.abs(path);
+        if self.is_own(path) {
+            let bytes = std::fs::read(path).ok().filter(|_| std::fs::metadata(path).is_ok_and(|m| m.is_file()))?;
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            return Some((bytes, digest));
+        }
         self.ensure(path);
         let started = now_ns();
         let (kind, now) = self.stat(path)?;
@@ -917,24 +982,29 @@ impl Observer {
     /// An entry is a directory when what it names is one, symlinks followed.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
         let dir = &self.abs(dir);
-        self.ensure(dir);
-        if let Some(listing) = self.trusted(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
+        let own = self.is_own(dir);
+        if !own {
+            self.ensure(dir);
+        }
+        if let Some(listing) = self.trusted(dir).filter(|e| e.kind == Kind::Dir && !own).and_then(|e| e.listing) {
             self.counts.reused += 1;
             return Some(listing);
         }
         let started = now_ns();
-        let (kind, now) = self.stat(dir)?;
+        let (kind, now) = if own { Self::own_stat(dir)? } else { self.stat(dir)? };
         if kind != Kind::Dir {
             return None;
         }
-        if let Some(listing) = self.known(dir).filter(|e| e.kind == Kind::Dir && e.holds(&now)).and_then(|e| e.listing) {
+        if let Some(listing) = self.known(dir).filter(|e| e.kind == Kind::Dir && e.holds(&now) && !own).and_then(|e| e.listing) {
             self.counts.reused += 1;
             return Some(listing);
         }
         self.counts.listed += 1;
+        // rerail's own files are not in a listing (decision 0246): what they hold changes with every run.
         let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
             .ok()?
             .filter_map(|e| e.ok())
+            .filter(|e| own || !self.is_own(&e.path()))
             .map(|e| {
                 let is_dir = match e.file_type() {
                     Ok(t) if t.is_symlink() => e.path().is_dir(),
@@ -946,7 +1016,7 @@ impl Observer {
             .collect();
         entries.sort();
         let listing: Listing = Arc::new(entries);
-        if encode_listing(&listing).is_some() {
+        if encode_listing(&listing).is_some() && !own {
             self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
         }
         Some(listing)
@@ -1240,6 +1310,42 @@ impl Drop for Writer {
 /// The prefix of a path's canonical form's record (`run_record`).
 const CANONICAL: &str = "canonical:";
 
+/// The prefix of a directory runs wrote their outputs into, as `observer_meta` keeps it (`own_output`).
+const OWN_OUTPUT: &str = "own:";
+
+/// rerail's own files the process names (decision 0246, `own`): the cost statistics' file.
+static OWN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Names `path` as one of rerail's own files for every observer of the process (decision 0246): it, what is under
+/// it, and every file named after it beside it (`<path>-wal`, `<path>.upkeep`) are outside the observer.
+pub fn own(path: &Path) {
+    let mut own = OWN.lock().unwrap_or_else(|e| e.into_inner());
+    for p in spellings(path) {
+        if !own.contains(&p) {
+            own.push(p);
+        }
+    }
+}
+
+/// `path` absolute, and with its directory's canonical form (the journal names paths by their real names).
+fn spellings(path: &Path) -> Vec<PathBuf> {
+    let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let real = abs.parent().zip(abs.file_name()).and_then(|(dir, name)| Some(std::fs::canonicalize(dir).ok()?.join(name)));
+    std::iter::once(abs.clone()).chain(real.filter(|r| *r != abs)).collect()
+}
+
+/// Whether `path` is `own`'s (decision 0246): `own` or under it, or a file named after it beside it (`<own>-wal`,
+/// `<own>.files`, `<own>.files.cookies/…`) or under one.
+fn owned_by(own: &Path, path: &Path) -> bool {
+    if path.starts_with(own) {
+        return true;
+    }
+    let (Some(dir), Some(name)) = (own.parent(), own.file_name()) else { return false };
+    let Some(first) = path.strip_prefix(dir).ok().and_then(|rest| rest.components().next()) else { return false };
+    let (first, name) = (first.as_os_str().as_encoded_bytes(), name.as_encoded_bytes());
+    first.len() > name.len() && first.starts_with(name) && matches!(first[name.len()], b'.' | b'-')
+}
+
 /// Whether `path` has no `.` or `..` component: its last name is a name in its directory's listing.
 fn plain(path: &Path) -> bool {
     !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir))
@@ -1263,6 +1369,8 @@ pub struct Swept {
     pub cursors: usize,
     pub answers: usize,
     pub records: usize,
+    /// Output directories recorded as rerail's own that are gone (decision 0246).
+    pub outputs: usize,
 }
 
 /// Collects the observer's store at `path` (`store_beside`), with the content store's collection (decision 0053),
@@ -1335,9 +1443,17 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
             .map(|(key, _)| key)
             .collect()
     };
+    // An output directory recorded as rerail's own (`own_output`) that is gone: nothing there to leave out.
+    let outputs: Vec<String> = {
+        let mut st = db.prepare(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'"))?;
+        st.query_map([], |r| r.get::<_, String>(0))?.flatten().filter(|k| k.strip_prefix(OWN_OUTPUT).is_some_and(|d| !Path::new(d).exists())).collect()
+    };
     let tx = db.transaction()?;
     for key in &dropped {
         swept.cursors += tx.execute("DELETE FROM observer_meta WHERE key = ?1", [key])?;
+    }
+    for key in &outputs {
+        swept.outputs += tx.execute("DELETE FROM observer_meta WHERE key = ?1", [key])?;
     }
     for path in &answers {
         swept.answers += tx.execute("DELETE FROM observed WHERE path = ?1", [path])?;
@@ -1456,6 +1572,75 @@ mod tests {
         assert!(third.forgotten >= 1 && third.hashed == 1, "the edited file is read again: {third}");
         assert_ne!(after[2], digests[2]);
         assert_eq!([after[0], after[1], after[3], after[4]], [digests[0], digests[1], digests[3], digests[4]]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Decision 0246: rerail's own files are outside the observer. Under a watched root: the content store and every
+    /// file named after it (its WAL, the observer's store `<store>.files` and its cookies, the lock and upkeep files),
+    /// and a directory a run wrote its outputs into (recorded by the run that did, `own_output`, for later processes).
+    /// A listing leaves them out, no answer is kept for them, and the journal's news of them forgets nothing and moves
+    /// no stored cursor: a run after the writes of rerail's own is as warm as one after none.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rerails_own_files_are_outside_the_observer() {
+        let base = std::env::temp_dir().join(format!("rerail-own-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("root/pkg")).unwrap();
+        let root = std::fs::canonicalize(base.join("root")).unwrap();
+        let source = root.join("pkg/m.py");
+        std::fs::write(&source, "x = 1\n").unwrap();
+        aged(&source);
+        let content = root.join("store.sqlite");
+        let out = root.join("out");
+        // What a run writes of its own: the store and the files beside it, and its outputs.
+        let own_writes = |n: u32| {
+            std::fs::write(&content, format!("store {n}")).unwrap();
+            std::fs::write(root.join("store.sqlite-wal"), format!("wal {n}")).unwrap();
+            std::fs::write(root.join("store.sqlite.upkeep"), format!("frames\t{n}\n")).unwrap();
+            std::fs::create_dir_all(&out).unwrap();
+            std::fs::write(out.join("rr_diagnostic.csv"), format!("{n}\n")).unwrap();
+        };
+        own_writes(0);
+        let store = store_beside(&content);
+        let cursor = || -> Vec<String> {
+            let db = Connection::open(&store).unwrap();
+            db.prepare("SELECT value FROM observer_meta WHERE key LIKE 'journal:%'").unwrap().query_map([], |r| r.get::<_, rusqlite::types::Value>(0)).unwrap().flatten().filter_map(|v| text_cursor(&v)).collect()
+        };
+        let run = |first: bool, n: u32| {
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            if first {
+                o.own_output(&out);
+            }
+            let marked = o.mark(std::slice::from_ref(&root)).unwrap_or_default();
+            let names: Vec<String> = o.listing(&root).unwrap().iter().map(|(n, _)| n.clone()).collect();
+            o.digest(&source).unwrap();
+            assert!(o.digest(&content).is_some(), "an own file is still answered");
+            let kept = [&content, &out.join("rr_diagnostic.csv")].iter().filter(|p| o.entries.contains_key(p.as_path())).count();
+            own_writes(n);
+            o.flush();
+            o.written();
+            (o.counts, names, kept, marked)
+        };
+        let (_, names, kept, _) = run(true, 1);
+        assert_eq!(names, ["pkg"], "a listing leaves rerail's own files out");
+        assert_eq!(kept, 0, "no answer is kept for an own file");
+        // The setup's writes may be named once more.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let (_, _, _, marked) = run(false, 2);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let before = cursor();
+        let (third, names, kept, _) = run(false, 3);
+        assert_eq!((third.forgotten, third.stats), (0, 0), "the journal's news of own files forgets nothing: {third}");
+        assert_eq!((names.as_slice(), kept), (["pkg".to_owned()].as_slice(), 0));
+        assert_eq!(cursor(), before, "and moves no stored cursor: nothing written");
+        // A record made in the second run holds: what changed since under its root is rerail's own.
+        let mut o = Observer::open(Some(&store));
+        o.begin();
+        assert_eq!(o.changed_since("rec", std::slice::from_ref(&root), &marked), Some(Vec::new()));
+        o.flush();
+        o.written();
+        drop(o);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1840,6 +2025,9 @@ mod tests {
         record("cutoff:dead", &format!("plan\t\t{}", hex(&dead)));
         record(&"ab".repeat(32), "rule\tx.rr\tab");
         record("constants:k", "");
+        // An output directory still there is kept; one removed goes (decision 0246).
+        db.execute("INSERT INTO observer_meta VALUES (?1, 1)", [format!("{OWN_OUTPUT}{}", s(&inner))]).unwrap();
+        db.execute("INSERT INTO observer_meta VALUES (?1, 1)", [format!("{OWN_OUTPUT}{}", s(&gone))]).unwrap();
         drop(db);
         let swept = collect(&store, |plan| *plan == live).unwrap();
         let db = Connection::open(&store).unwrap();
@@ -1850,7 +2038,8 @@ mod tests {
         records.sort();
         assert_eq!(records, [format!("{CANONICAL}{}", s(&root.join("a.py"))), "constants:k".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
-        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 3 });
+        assert_eq!(keys(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'")), [format!("{OWN_OUTPUT}{}", s(&inner))]);
+        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 3, outputs: 1 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);

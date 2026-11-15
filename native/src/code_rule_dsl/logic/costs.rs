@@ -516,6 +516,10 @@ pub fn start() {
             let _ = std::panic::catch_unwind(read);
             done();
         }
+        // The statistics' store is rerail's own: outside the file observer (decision 0246).
+        if let Some(p) = path() {
+            crate::content_store::observe::own(&p);
+        }
         // The upkeep of the statistics' store, and the model's retraining, for the process's life (decision 0190).
         std::mem::forget(upkeep_jobs());
         rerail_accel::upkeep::start();

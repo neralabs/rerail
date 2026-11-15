@@ -1050,3 +1050,17 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Decision 0246: the directory a run writes its outputs into is rerail's own: the observer leaves it out of a
+/// listing, beside the corpus it read.
+#[test]
+fn a_runs_output_directory_is_rerails_own() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+    let out = dir.path().join("out");
+    super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert!(out.join("defs.csv").exists());
+    let names: Vec<String> = super::observe(|o| o.listing(dir.path()).unwrap().iter().map(|(n, _)| n.clone()).collect());
+    assert_eq!(names, ["a.py"], "the outputs are not in the listing");
+}
