@@ -629,7 +629,11 @@ ported, over the targeted tests and dl1.
     against the baseline's 50.7 and 49.9 G, warm 2.7 G on both (load about 18).
   - Seen: `long_text_fallback_keeps_short_and_long_results_across_memo_replay` (its second run's rows, `rr_comparison.rs`
     line 340) failed in three of four runs of the `keeps` filter, with the oracles and without them, and passed alone
-    and in the fourth. It plans through `corpus::run_with_options` like its neighbours; not traced here. Open.
+    and in the fourth. Traced and fixed after step 8 (its own commit): the long texts a run reads past `text`'s bound
+    (`facts::vtab::syntax::long_node_text`) were held by document key alone, process-wide. Each test has its own store,
+    a copy of one template, so two tests running at once number their documents alike, and one read the other's batch:
+    the run lost its long text (`{"[1]"}`, no `[123,…]`). They are held by the run's store and document key now (the
+    store registered at load, `install_text_store`). The `keeps` filter passed five runs of five after it.
 
 - **Item 7, step 9: open, a design question** (2026-11-15). Every caller family of step 9 starts from the split's
   parts (E1): the run's edits (E2) are edits of a part, the session's cut (E3) and its maintained cross part are made
