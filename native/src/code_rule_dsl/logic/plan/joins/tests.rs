@@ -129,6 +129,23 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
 /// noted with its best order measured far over its price takes the other at its next plan, its wider search left to
 /// the background.
 #[test]
+fn a_run_that_changes_no_decision_writes_no_notes() {
+    let _serial = SERIAL.lock();
+    clear();
+    let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
+    let line = |work: f64| LineRun { stratum: "s".into(), key: 220, rule: 1, order: steps(&order), work, est: 1e5, ..Default::default() };
+    critical(&["s".into()], &[vec![]], &[line(2e5)]);
+    assert!(to_store().is_some(), "a new note is written");
+    // The same line run again, measuring within a quarter octave: its runs and shares change, no decision does.
+    critical(&["s".into()], &[vec![]], &[line(2.05e5)]);
+    assert!(to_store().is_none(), "nothing the planner reads changed");
+    // Measured at four times: its order's ratio moves, and the note is written.
+    critical(&["s".into()], &[vec![]], &[line(8e5)]);
+    assert!(to_store().is_some(), "a changed measure is written");
+    clear();
+}
+
+#[test]
 fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let _serial = SERIAL.lock();
     clear();

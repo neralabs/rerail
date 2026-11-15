@@ -220,6 +220,29 @@ struct Memo {
     /// of lines on the measured path that ran over twice their price. Made from the start of each later plan.
     raised: FxHashSet<(String, usize)>,
     dirty: bool,
+    /// Decision 0247: each note's decision fingerprint as last written or read (`fingerprint`): a run that changed
+    /// nothing the planner reads writes nothing.
+    written: FxHashMap<PlanKey, u64>,
+}
+
+/// Decision 0247: what of a note a plan's choice reads, as a hash: its orders tried and proposals with their
+/// measures to a quarter octave, its walked work, whether a search is wanted, its exact statistics and raised
+/// columns, and whether it is critical or slow. Its runs, moving shares and last measures are not: a warm run that
+/// ran its joins again rewrote every note and, with them, the kept plans (django-bugs decision 0228).
+fn fingerprint(n: &Note) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let q = |x: f64| if x > 0.0 { (x.log2() * 4.0).round() as i64 } else { i64::MIN };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    n.rule.hash(&mut h);
+    for t in &n.tried { format!("{:?}", t.order).hash(&mut h); q(t.ratio).hash(&mut h); }
+    for (o, w) in &n.proposals { format!("{o:?}").hash(&mut h); q(*w).hash(&mut h); }
+    q(n.walked).hash(&mut h);
+    n.wants_search.hash(&mut h);
+    format!("{:?}", n.exact).hash(&mut h);
+    n.raised.hash(&mut h);
+    (n.critical >= critical_share()).hash(&mut h);
+    (n.slow > 0).hash(&mut h);
+    h.finish()
 }
 
 static MEMO: std::sync::LazyLock<RwLock<Memo>> = std::sync::LazyLock::new(Default::default);
@@ -1049,6 +1072,11 @@ pub fn to_store() -> Option<Stored> {
     if !std::mem::take(&mut m.dirty) {
         return None;
     }
+    let now: FxHashMap<PlanKey, u64> = m.notes.iter().map(|(k, n)| (*k, fingerprint(n))).collect();
+    if now == m.written {
+        return None;
+    }
+    m.written = now;
     let notes: Vec<(PlanKey, Note)> = m.notes.iter().map(|(k, n)| (*k, n.clone())).collect();
     let exact = notes.iter().flat_map(|(k, n)| n.exact.iter().map(move |(s, c)| (*k, n.rule, s.clone(), *c))).collect();
     let raised = notes.iter().flat_map(|(k, n)| n.raised.iter().map(move |(r, c)| (*k, r.clone(), *c))).collect();
@@ -1088,6 +1116,11 @@ pub fn from_store((notes, exact, raised): Stored) {
     if !all.is_empty() {
         RAISED.store(true, Relaxed);
         m.raised.extend(all);
+    }
+    // As the store holds them: a run that changes none of them writes none.
+    for k in &taken {
+        let f = fingerprint(&m.notes[k]);
+        m.written.insert(*k, f);
     }
     let rules: Vec<(u64, HashMap<Sig, [i64; 2]>)> = m.notes.values().filter(|n| !n.exact.is_empty()).map(|n| (n.rule, n.exact.iter().cloned().collect())).collect();
     for (rule, map) in rules {
