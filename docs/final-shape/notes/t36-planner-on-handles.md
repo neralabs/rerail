@@ -630,3 +630,35 @@ ported, over the targeted tests and dl1.
   - Seen: `long_text_fallback_keeps_short_and_long_results_across_memo_replay` (its second run's rows, `rr_comparison.rs`
     line 340) failed in three of four runs of the `keeps` filter, with the oracles and without them, and passed alone
     and in the fourth. It plans through `corpus::run_with_options` like its neighbours; not traced here. Open.
+
+- **Item 7, step 9: open, a design question** (2026-11-15). Every caller family of step 9 starts from the split's
+  parts (E1): the run's edits (E2) are edits of a part, the session's cut (E3) and its maintained cross part are made
+  from the cross part, and the prepared program read from the store is kept only to make the parts from. Making the
+  parts versions needs a shape the builder does not have, and decisions 0173, 0215 and 0241 do not settle it.
+  - Measured on dl1 cold (`RERAIL_VERSION_TRACE`, each distinct split, the parts' rules matched in order against the
+    lowered program's): of the largest prepared program's 5,414 rules, the file-local part keeps 3,689 in 340 ranges
+    (1,725 removed) and the cross part 1,775 in 346 ranges (3,639 removed); of the next, 5,333 rules, 3,795 in 173
+    ranges and 1,588 in 180; of a 1,001-rule program, 412 in 24 and 591 in 23; the small programs' parts are 2 to 5
+    ranges. No part adds a rule. Each part also states parts of its own (`file_local::assemble`): its inputs and
+    outputs, and the natives, lattices and gates of its relations.
+  - The builder makes a view only of an edit that removes rules alone and leaves at most `MAX_RANGES` (32) ranges, of
+    a base or a view. Otherwise the edit is an overlay holding the removed set, folded when the edit (removals, rules
+    added, part rows stated) reaches half its parent: the cross part above removes 3,639 of 5,414 and folds, and a fold
+    is a new base under the parent's ids, which copies its string table and parts (decision 0241's lesson).
+  - The run's edits of a part (E2) remove 69 of 591, 75 of 80 and 17 of 21 of the cross part's rules, or 3 of 16 of
+    the file-local part's, and add inputs. The session's cut (E3) removes 0 to 2 of 2,836 and adds the deltas' inputs;
+    its input, the maintained cross part (`maintained_cross`, `supports`), rewrites every rule (1,775 into 2,836).
+  - The options:
+    1. Views of many ranges, and a part as an overlay of its parts over its view (two edits). `MAX_RANGES` grows, or
+       becomes a share of the base's rules; a view costs its range list (here at most 346 pairs) and a lookup by head
+       or by reader filters the base's index by range. No new kind of version; for E2 a view's parent must then be
+       allowed to be an overlay (a view of the part), or the run's removals stay an overlay's removed set.
+    2. A view that holds parts of its own in the same version (the notes' "a view whose fields are overlaid"): a new
+       kind of version, one edit.
+    3. An overlay whose removals do not count toward its fold: the parts are overlays of the lowered program holding
+       their removed sets (1,725 and 3,639 ids here); reading one walks the base and skips them, so a part's reading
+       costs the whole program, as a `clone` and `retain` does today.
+    4. The prepared program's rules ordered by part, so each part is a range or two: this changes the order of a
+       part's rules (constants sit among the file-local rules), and so the keys made of its text (the choices' key, the
+       program digests), which must not change.
+  - So step 9 waits for that decision; the trees on its path stay. Step 8 is done (above).
