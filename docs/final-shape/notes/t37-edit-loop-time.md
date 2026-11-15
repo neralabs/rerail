@@ -180,6 +180,12 @@ The gate's 14 failures:
     field's `.name`), and the format family's scope is refused. The walk kinds are now checked only
     for families with scopes.
 
+On a host, two more things differ from this checkout. The store's git tests made repositories
+under the host's own git config, and a host that signs its commits failed 10 of them; their git
+now runs without the global and system config. And
+`git_workspace::tests::discovers_current_repository_without_a_git_process` reads this checkout's
+`.git`, which the mirror does not send, so it fails on a host only.
+
 ## 3. Relax
 
 Relax is makepad/relax, first shown in public on 2026-11-12. It has its own front end, type and
