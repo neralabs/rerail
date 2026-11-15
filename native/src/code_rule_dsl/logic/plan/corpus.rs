@@ -939,19 +939,33 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     // Each program lowered in scope is kept in the store as its image (decision 0246 §6).
     let images = if in_scope.is_some() && cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { phases::reading_store() } else { None };
     let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
+    // Each distinct scope seeded once (decision 0246 §2), before the programs lowered in it.
+    let mut scoped: Vec<crate::code_rule_dsl::logic::rr::Scoped> = Vec::new();
+    let scope_of: Vec<Option<usize>> = match in_scope {
+        Some(library) => texts.iter().map(|t| t.as_ref().and_then(|t| t.files())).map(|files| {
+            let files = files?;
+            let keys = library.scope(&files).1;
+            Some(scoped.iter().position(|s| s.keys == keys).unwrap_or_else(|| {
+                scoped.push(library.scoped(&files));
+                scoped.len() - 1
+            }))
+        }).collect(),
+        None => vec![None; texts.len()],
+    };
     let each: Vec<_> = programs
         .par_iter()
         .zip(&own_only)
         .zip(texts.par_iter_mut())
-        .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
+        .zip(&scope_of)
+        .map(|(((text, &own_only), slot), scope_of)| recorded_on_worker(|| -> Result<Program> {
             if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
                 front::declared(read)?;
                 return Ok(read.clone());
             }
             if let Some(read) = slot.take() {
-                if let Some(library) = in_scope {
+                if let Some(library) = in_scope && let Some(k) = *scope_of {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
-                    let prog = read.lower_in(text, library, images.as_deref())?.expect("a modular text");
+                    let prog = read.lower_in(text, library, &scoped[k], images.as_deref())?.expect("a modular text");
                     return Ok(prog);
                 }
                 let prog = read.lower(!own_only)?;

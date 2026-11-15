@@ -205,11 +205,9 @@ impl Text {
     /// copied from the linked library (`with_cone`). `None` for a text that includes nothing. `store` holds it as a program
     /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
     /// text is not lowered.
-    pub fn lower_in(self, src: &str, library: &Library, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
+    pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
-        let paths: Vec<PathBuf> = files.iter().map(|(p, _, _)| p.clone()).collect();
-        let (scope, keys) = library.scope(&paths);
-        let key = program_key(src, &keys);
+        let key = program_key(src, &scoped.keys);
         if let Some(store) = store
             && let Ok(Some(id)) = store.source_by_alias(key)
             && let Ok(bytes) = store.get_source(id)
@@ -223,8 +221,8 @@ impl Text {
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let m = lower::lower_module_in(own, &scope)?;
-        let mut program = lower::link_in(m, &scope, core_names())?;
+        let m = lower::lower_module_seeded(own, &scoped.seeds)?;
+        let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -308,7 +306,29 @@ pub struct Library {
     pub program: Program,
 }
 
+impl Text {
+    /// The library files a modular text includes, as `Library::scope` reads them; `None` for a plain one.
+    pub fn files(&self) -> Option<Vec<PathBuf>> {
+        match &self.0 {
+            Read::Modular { files, .. } => Some(files.iter().map(|(p, _, _)| p.clone()).collect()),
+            Read::Plain(_) => None,
+        }
+    }
+}
+
+/// A scope of a library, seeded once for every program lowered in it (`Text::lower_in`): its modules' keys.
+pub struct Scoped {
+    pub keys: Vec<crate::content_store::HashKey>,
+    seeds: lower::Seeds,
+}
+
 impl Library {
+    /// The scope of a program whose library files are `files`, seeded.
+    pub fn scoped(&self, files: &[PathBuf]) -> Scoped {
+        let (scope, keys) = self.scope(files);
+        Scoped { keys, seeds: lower::seeds(&scope) }
+    }
+
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
