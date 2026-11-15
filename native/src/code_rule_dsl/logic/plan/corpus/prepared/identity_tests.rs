@@ -65,7 +65,7 @@ fn prepared_identity_child() {
     super::super::with_prepared(|kept| for (key, all) in kept.iter() {
         for p in all {
             let (sccs, _) = front::strata(&p.split.cross).unwrap();
-            let by = plan::rules_by_stratum(&p.split.cross, &sccs);
+            let by = front::rules_by_stratum(&p.split.cross, &sccs);
             let identities: BTreeMap<_, _> = plan::identities_of(&p.split.cross, &sccs, &by).unwrap().into_iter().collect();
             let label = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert!(!programs.contains_key(&label), "one store must have one prepared variant per key");

@@ -453,3 +453,34 @@ ported, over the targeted tests and dl1.
     versions' ranges, then `Version::rule` down the overlay chain (one binary search a pass's overlay). Step 3 (the
     lists as `RuleKey`s) removes the address search; folding a run's overlays into one (the builder's fold, which
     counts removals today) removes the chain.
+
+- **Item 7, step 3: the run's rule lists are keys** (2026-11-14).
+  - The run's lists hold `RuleKey`s (a version's place in the run's `Versions` and the rule's place in that
+    version's program), not `&Rule`s: `rules_by`, `by_stratum` (`keys_by_stratum`), the strata, members and pieces
+    (`run_members`, `run_forms`, `Slot::Reached`, `issue`'s `Members`, `rules_of`), and every helper that took
+    `&[&Rule]` (`native_stratum*`, `seed_specs`, `runnable`, `strand_reads_with`, `native_fixpoint`,
+    `native_set_fixpoint`, `stratum_reads`, `first_reads`, `last_reads`, `identities`, `retainable_stratum`,
+    `cyclic_relations`, `solving_of`, `plan_views`, `Model::read_by`, `Model::wants_strata`, `issue::Board`,
+    `again_costs`). A list is made as keys where it is made: the program's rule `k` is `RuleKey::program(k)`, a
+    form's rule `i` is `RuleKey::new(k, i)` with `k` its version's place (`Run::add_form`), and the rules a stratum
+    derives again and their deltas are versions of their own (`Run::add_rules`, which returns their keys).
+  - Readers go straight to the version: `Versions::at`, `rule_at` and `head_at`. `body_of` and `rule_of` are gone,
+    `reads_of` takes a key, and `Versions::find` and `rule_ref` are gone. The address lookup (`Versions::key`) is
+    left only where a caller holding trees makes its list once: `Leaves::identities` (and so `identities_of`, for
+    compose's trimmed copies, the kept strata and the cut), and `Versions::body`, which the tests use.
+  - The run keeps, per version, the tree slice the version was made from (`Run::trees`; `Run::tree` gives a key's
+    tree). Its only readers, each still a tree's reader: the maintained form's driver (`Driver::form` takes the
+    stratum's trees: step 7); the fixpoints' made rules (`native_fixpoint`'s parts and `native_set_fixpoint`'s edges
+    clone the rule's `Literal`s: step 5's run-local overlay); the profile's and the spike's rule text and the SQL
+    path's chosen head (`Display` of the tree). The again paths' own reads of `g.rules` and `g.deltas` (where a
+    group is placed, what it reads) are the tree's too (step 7); `projections` reads the program's tree.
+  - The top-level run's stratum derived again (`prog.again`, and `make_deferred`'s deltas) now has its rules added
+    to the run's versions; before, they were found by address in no version.
+  - Checked: logic `plan::` (110); the engine's keeps, demand, negation, inline, choices, cone, phase0, session,
+    maintain, again, retain, edit, strata, emit, answer, native, setfix, program_image, kept, frame, cyclic,
+    `corpus::` (in chunks) and `rr::`; dl1: the same 48 findings cold and warm as the baseline.
+  - Measured on dl1 (profiling builds, load 30–45, both engines run alternately): 49.2–49.6 G cold against 50.7–51.7
+    G for the build of 93d01d0ff's tree, 2.6–2.8 G warm. The machine ran higher than at the last step's
+    measurement (45.1–45.7 G then for the older build); the difference between the two builds is about 1.5 G, the
+    address search the lookup made. Folding a run's overlays into one (the overlay chain `Version::rule` walks) is
+    still open.

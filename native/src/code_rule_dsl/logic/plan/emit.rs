@@ -126,15 +126,13 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     let vs = super::body::Versions::with(prog, placed);
     let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its fields are read from its version".into()))?;
     let sccs = components_of(prog)?;
-    let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
-    // The same, by key: a stratum's rules are read by their handles.
+    // Each relation's rules, by key: a stratum's rules are read by their handles.
     let mut keys_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
     for (k, r) in prog.rules.iter().enumerate() {
-        rules_by.entry(r.head.rel.as_str()).or_default().push(r);
         keys_by.entry(r.head.rel.as_str()).or_default().push(RuleKey::program(k));
     }
     let mut setup = vec![RDL_INT.to_owned()];
-    let planned_views = plan_views(f, &vs, &mut model, &rules_by)?;
+    let planned_views = plan_views(f, &vs, &mut model, &keys_by)?;
     let mut views = HashSet::new();
     for (rel, view) in &planned_views {
         setup.push(view_sql(rel, view));

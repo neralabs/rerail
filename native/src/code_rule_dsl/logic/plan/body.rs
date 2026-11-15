@@ -418,11 +418,12 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     (ready && !bound.contains(y)).then_some(y)
 }
 
-/// The versions of the programs whose rules a run plans, each encoded once, and a rule of one found by its place in
-/// the program's rules. Until `plan::run` takes a version (t36 item 7) and its rules are keyed by id (item 5), the run's
-/// programs are trees, and this is how the planner reads their rules by handles. A program is added once it is
-/// final: its rules do not move after. A whole program (the run's, a maintained form) is also found by its address
-/// (`index_of`), for the run to read its fields from its version.
+/// The versions of the programs whose rules a run plans, each encoded once, and a rule of one named by its key
+/// (`RuleKey`: the version's place and the rule's place in the program's rules). Until `plan::run` takes a version
+/// (t36 item 7), the run's programs are trees: the run's rule lists hold keys, made where each list is made, and a
+/// tree a caller still holds finds its key by its address (`key`), once, where its list is made. A program is added
+/// once it is final: its rules do not move after. A whole program (the run's, a maintained form) is also found by its
+/// address (`index_of`), for the run to read its fields from its version.
 #[derive(Clone, Default)]
 pub struct Versions(Vec<(usize, usize, Placed)>, Vec<(usize, usize)>);
 
@@ -592,9 +593,21 @@ impl RuleKey {
     pub fn program(k: usize) -> RuleKey {
         RuleKey { v: 0, id: k as u32 }
     }
+    /// Rule `k` of the run's `v`-th version (its place in the program's rules the version was made from).
+    pub fn new(v: usize, k: usize) -> RuleKey {
+        RuleKey { v: v as u32, id: k as u32 }
+    }
     /// The rule's number in the program, a rule of the program's version (a maintained form's has none).
     pub fn number(self) -> Option<usize> {
         (self.v == 0).then_some(self.id as usize)
+    }
+    /// The version the rule is a rule of (its place in the run's `Versions`).
+    pub fn version(self) -> usize {
+        self.v as usize
+    }
+    /// The rule's place among its version's program's rules.
+    pub fn index(self) -> usize {
+        self.id as usize
     }
 }
 
@@ -632,11 +645,35 @@ impl Versions {
     pub fn placed(&self, k: usize) -> &Placed {
         &self.0[k].2
     }
-    /// Adds `rules` (a program's, or a maintained form's), encoded, unless they are held already.
-    pub fn add_rules(&mut self, rules: &[Rule]) -> Result<()> {
+    /// The place of the version made of `rules` (`add_rules`), if the run holds one.
+    pub fn index_of_rules(&self, rules: &[Rule]) -> Option<usize> {
         let start = rules.as_ptr() as usize;
-        if rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
-            return Ok(());
+        if rules.is_empty() {
+            return None;
+        }
+        self.0.iter().position(|e| e.0 == start)
+    }
+    /// How many versions the run holds.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    /// Whether the run holds no version.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// The keys of the `v`-th version's rules, `n` of them (its program's rule count), in the program's order.
+    pub fn keys(v: usize, n: usize) -> impl Iterator<Item = RuleKey> {
+        (0..n).map(move |k| RuleKey::new(v, k))
+    }
+    /// Adds `rules` (a program's, or a maintained form's), encoded, unless they are held already: their version's
+    /// place, the one that holds them already if one does (`None` for no rules).
+    pub fn add_rules(&mut self, rules: &[Rule]) -> Result<Option<usize>> {
+        let start = rules.as_ptr() as usize;
+        if rules.is_empty() {
+            return Ok(None);
+        }
+        if let Some(k) = self.0.iter().position(|e| e.0 == start) {
+            return Ok(Some(k));
         }
         // A maintained form's rules are an overlay of the run's version (decision 0173 §7, t36 item 6 step 6): the
         // rules it adds over the program's atoms and relations, not a program image of their own.
@@ -645,13 +682,7 @@ impl Versions {
             None => Placed::made(rules)?,
         };
         self.0.push((start, start + std::mem::size_of_val(rules), v));
-        Ok(())
-    }
-    /// The version `r` is a rule of, and its id there.
-    pub fn find(&self, r: &Rule) -> Option<(&Arc<Version>, RuleId)> {
-        let k = self.key(r)?;
-        let p = &self.0[k.v as usize].2;
-        Some((&p.v, p.id(k.id as usize)))
+        Ok(Some(self.0.len() - 1))
     }
     /// `r`'s key, a rule of a program the run holds.
     pub fn key(&self, r: &Rule) -> Option<RuleKey> {
@@ -675,17 +706,26 @@ impl Versions {
     pub fn at(&self, k: RuleKey) -> Body<'_> {
         self.0[k.v as usize].2.body(k.id as usize)
     }
-    /// Rule `r` as the planner reads it.
-    pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
-        let (v, rule) = self.rule_ref(r)?;
-        Ok(Body::of(v, rule))
+    /// The rule `k` names by its handles, its literals read in place: for a reader that walks it once, with no
+    /// `Body` (which collects the literals).
+    pub fn rule_at(&self, k: RuleKey) -> (&Version, RuleRef<'_>) {
+        let p = &self.0[k.v as usize].2;
+        (&p.v, p.rule(k.id as usize))
     }
-    /// `r` by its handles, its literals read in place: for a reader that walks a rule once, with no `Body` (which
-    /// collects the literals).
-    pub fn rule_ref(&self, r: &Rule) -> Result<(&Version, RuleRef<'_>)> {
-        let (v, id) = self.find(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))?;
-        let rule = v.rule(id).ok_or_else(|| Error::Plan(format!("{}: rule {} is not in its version", r.head, id.0)))?;
-        Ok((v, rule))
+    /// The relation the rule `k` names derives (its head's).
+    pub fn head_at(&self, k: RuleKey) -> &str {
+        let (v, rule) = self.rule_at(k);
+        v.rel_name(rule.head().rel())
+    }
+    /// The keys of `rules`, rules of programs the run holds, found by their addresses: for a caller that holds a
+    /// list of trees, once, where its list is made (t36 item 7: until the callers pass versions, step 9).
+    pub fn keys_of(&self, rules: &[&Rule]) -> Result<Vec<RuleKey>> {
+        rules.iter().map(|r| self.key_of(r)).collect()
+    }
+    /// Rule `r`, a tree of a program the run holds, as the planner reads it: found by its address, for a caller
+    /// that holds the tree (the tests).
+    pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
+        Ok(self.at(self.key_of(r)?))
     }
 }
 
