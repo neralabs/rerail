@@ -114,6 +114,7 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
 pub(super) fn fold(
     prog: &mut Program,
     programs: &[&str],
+    read: Option<&Program>,
     added: &super::added::Added,
     root: &Path,
     scratch: &Path,
@@ -138,7 +139,7 @@ pub(super) fn fold(
     let ((image, consulted), plans) = match was_kept {
         Some(kept) => (kept, Vec::new()),
         None => {
-            let (derived, plans) = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            let (derived, plans) = derive(programs, read, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
             keep(&key, &derived.0, &derived.1)?;
             (derived, plans)
         }
@@ -176,11 +177,12 @@ pub(super) fn fold(
 /// consulted.
 type Derived = (Vec<u8>, Vec<(String, String, String)>);
 
-/// The constants' run: the same texts, its outputs the wanted relations, over no documents. Each relation's rows as
-/// the run wrote them, and what it consulted.
+/// The constants' run: the same texts (or the same program read, `read`), its outputs the wanted relations, over no
+/// documents. Each relation's rows as the run wrote them, and what it consulted.
 #[allow(clippy::too_many_arguments)]
 fn derive(
     programs: &[&str],
+    read: Option<&Program>,
     root: &Path,
     scratch: &Path,
     modes: &str,
@@ -194,7 +196,7 @@ fn derive(
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
-    let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let report: Report = super::run_handed(programs, read, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
     let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     let _ = std::fs::remove_dir_all(&out);

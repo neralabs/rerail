@@ -337,6 +337,19 @@ impl TextRead {
     }
 }
 
+impl TextNames {
+    /// A program already read: the relations it declares and the phase it names, and the engine's library programs
+    /// (it includes nothing of its own: its libraries are in it), as a print of it reads (decision 0249).
+    pub fn of_program(prog: &Program) -> TextNames {
+        let mut names: Vec<String> = prog.decls.keys().map(|n| n.to_string()).collect();
+        names.sort();
+        names.dedup();
+        let phase = prog.settings.iter().find(|(k, _)| k == "phase").map(|(_, v)| v.trim().to_owned());
+        let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+        TextNames { included, names, phase }
+    }
+}
+
 /// The library files a program's text reads (`TextNames::included`): what a record of the run must check besides
 /// the text (phase 0, t23). For a text read alone; a run reads its programs once (`read_seed`).
 pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {

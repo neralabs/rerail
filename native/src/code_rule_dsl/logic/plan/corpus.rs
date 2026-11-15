@@ -511,14 +511,21 @@ pub struct Texts<'a> {
     pub graphs: Vec<Option<[u8; 32]>>,
     /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rr` for all of them.
     pub derived: Vec<Arc<phase0::Graph>>,
-    /// The program the one text prints from, already lowered, when the run was handed it (`run_read`): the run holds
-    /// it, not its text lowered again.
+    /// The program the run was handed, already read (`run_read`): the run holds it, and `programs` is its key.
     pub read: Option<&'a front::Program>,
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
 
 impl<'a> Texts<'a> {
+    /// A program already read, keyed by `key` (`read_key`): it includes nothing to derive a graph of, and its names
+    /// are its own (`rr::TextNames::of_program`), as a print of it had them.
+    pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
+        let names = std::cell::OnceCell::new();
+        let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), reads: std::cell::RefCell::new(Vec::new()), names }
+    }
+
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
     pub fn of(programs: &'a [&'a str]) -> Result<Self> {
         let reads: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::read_seed(t)).collect::<std::result::Result<_, _>>()?;
@@ -1907,11 +1914,10 @@ pub fn run_with_options(
     run_handed(programs, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
 }
 
-/// `run_with_options` of one program text and the program it prints from, already lowered (`tools::run_program`,
-/// which read the file): the run holds that program, not its text lowered a second time.
+/// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
+/// program, and is keyed by its digest (`read_key`), never by a print of it (decision 0249).
 #[allow(clippy::too_many_arguments)]
 pub fn run_read(
-    text: &str,
     read: &front::Program,
     root: &Path,
     out: &Path,
@@ -1921,7 +1927,14 @@ pub fn run_read(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(&[text], Some(read), root, None, out, modes, binding, chunk_nodes, typing, options)
+    let key = read_key(read);
+    run_handed(&[key.as_str()], Some(read), root, None, out, modes, binding, chunk_nodes, typing, options)
+}
+
+/// A handed program's key, in the place of a text: its digest (`choices::key`, the whole program by its
+/// structure), named so that it reads as no program. Every key a run makes of its texts is made of this.
+fn read_key(read: &front::Program) -> String {
+    format!("rerail.read-program {}", crate::content_store::observe::hex(&super::choices::key(read)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1969,8 +1982,10 @@ fn run_handed(
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
     // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
-    let mut texts = Texts::of(programs)?;
-    texts.read = read;
+    let mut texts = match read {
+        Some(read) => Texts::of_read(programs, read),
+        None => Texts::of(programs)?,
+    };
     let mut component_seeded = false;
     if !phase0::active() {
         let graphs = &texts.derived;
@@ -1979,7 +1994,13 @@ fn run_handed(
         // or malformed modules remain the parser's error, not a proof of no demand.
         let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
         let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
-        component_seeded = programs.iter().any(|t| uses_components(t)) || modules.into_iter().any(|path| {
+        // A handed program, by its own settings and relations: its key is no text to search.
+        let read_uses = |p: &front::Program| {
+            p.settings.iter().any(|(k, v)| k == "pragma" && v.contains("cross-memo"))
+                || p.decls.keys().any(|r| r.starts_with("rr_cx_"))
+                || p.rules.iter().any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| a.rel.starts_with("rr_cx_")))
+        };
+        component_seeded = read.map_or_else(|| programs.iter().any(|t| uses_components(t)), read_uses) || modules.into_iter().any(|path| {
             observe(|o| o.read(path)).is_none_or(|(bytes, _)| {
                 std::str::from_utf8(&bytes).map_or(true, uses_components)
             })
@@ -2300,7 +2321,7 @@ fn run_observed(
                 constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
                 Ok(Default::default())
             }
-            None => constants::fold(prog, programs, &added, root, out, modes, binding, chunk_nodes, typing, options),
+            None => constants::fold(prog, programs, read, added, root, out, modes, binding, chunk_nodes, typing, options),
         }
     };
     phase("combine", 0);

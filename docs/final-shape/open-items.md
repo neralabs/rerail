@@ -5158,7 +5158,11 @@ Heavy values are made by a full pass over a relation when a column is raised. Op
 `findings::async_reference::rr_comparison::long_text_fallback_keeps_short_and_long_results_across_memo_replay`
 fails about one group run in five: after the memo replay, the long text row is missing. It passes alone and with
 `--test-threads=1`, and fails 3 of 20 group runs on the build before decision 0239's stage 5, so it predates it.
-Likely cause: tests beside it share a store and one's run evicts or replaces the entry it replays. Open.
+Paired with each test of its module alone (`--exact`, six runs each), only
+`annotation_demand_keeps_string_membership_before_parsing` makes it fail (2 of 6); the module whole fails 4 of 10. Both
+run over the default store, each its own root with an `a.py`: the annotation run's embedded parses
+(`parsed(s, "annotation", e)`) and the long-text fallback (`rr_long_text_node`) meet there or in a process-wide
+cache. Open.
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 

@@ -64,12 +64,19 @@ joins `SOURCE`, the policies' program and `KEPT`, in that order, as programs (`j
 outputs, rules after the ones before them, facts. `SOURCE` and `KEPT` are the engine's own constant texts, parsed
 once per process. The compiled plan is keyed by a digest of the joined program, not by its text.
 
+### 5. A handed program is keyed by itself
+
+`run_read` takes the program alone. Its key, in the place of a text, is `rerail.read-program <digest>`
+(`read_key`): `plan::choices::key`, which digests a whole program by its structure (its rules structurally, every
+other field by value), named so that it reads as no program. `Texts::of_read` holds it: no graph to derive (the
+program includes nothing; its libraries are in it), and its names (`rr::TextNames::of_program`: the relations it
+declares, the phase it names, the engine's library programs) as a print of it had them. Whether it reads the
+components (`components.rr`) is asked of its settings and relations, not searched for in a text. The constants' run
+of it is handed the same program (`constants::derive`, `run_handed`). `tools::run_program` no longer prints the
+program it read.
+
 ## Still text
 
-- A read program's key text. `run_read` is keyed by `rr::print` of the program it is handed. It is never parsed into
-  the run's program, but phase 0's `Texts::of` tokenizes it for includes and names. The next step keys a handed
-  program by a digest of the program itself (`plan::choices::key` digests a whole program by its structure),
-  gives `Texts` its names from the program, and hands the program to the constants' run.
 - Phase programs. `phases` appends `.output …` (and phase 1's `.language …`) to a phase program's source before
   running it.
 - `test_store`'s template, which prints a parsed program to warm the store as the tests' printed programs do.

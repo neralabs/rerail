@@ -295,9 +295,6 @@ pub fn run_program(
     } else {
         dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
     };
-    // The program's text: what the run is keyed by (its record, the combined program's key; a test's program is its
-    // file's with the test spliced in, so not the file's text). The run holds `program` itself.
-    let source = rr::print(&program).map_err(|e| e.to_string())?;
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
@@ -306,7 +303,7 @@ pub fn run_program(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&source, &program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
+        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
         // Each diagnostic: one JSON text the rules made (`rr::lower::findings`; step 5 makes them columns).
         let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
         for row in outputs.rows("rr_diagnostic") {
