@@ -1726,6 +1726,14 @@ pub mod tests {
                 inputs.push(format!("{}a(x). /*{body}", " ".repeat(pad)).into_bytes());
             }
         }
+        // A byte the string's counts need (a tab, a `\u`) at each edge of the gate's vectors
+        // (`needs_spans`): 16, 32 and 48 bytes on.
+        for at in [14usize, 15, 16, 17, 30, 31, 32, 33, 46, 47, 48] {
+            for odd in ["\t", "\\u12"] {
+                inputs.push(format!("a(\"{}{odd}x\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}\", 1).\n", "s".repeat(at)).into_bytes());
+            }
+        }
         // A `\` run right before a string's quote: the opener's escape carry, which a short
         // reader leaves to its whole function (`Bytewise::bail`).
         for run in ["\\", "\\\\", "\\\\\\"] {

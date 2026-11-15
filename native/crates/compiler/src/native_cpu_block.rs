@@ -2272,7 +2272,7 @@ fn read_fused(bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::Re
 /// closer's at `off`. The closer's words from `s + 1`, 64 bytes apart, an escape's carry
 /// passed from each to the next (`Bytewise::words_carried`), none after an opener that is no
 /// escape's (`Bytewise::apart`). Then the tests: none where the token's bytes have none of
-/// those they need (`needs_wide`), else their function (`tests_fn`), as rare as such bytes.
+/// those they need (`needs_spans`), else their function (`tests_fn`), as rare as such bytes.
 #[allow(clippy::too_many_arguments)]
 fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::ReadArm, tests: &[crate::records::TokenCheck], counts: &ByteCall, carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
@@ -2334,11 +2334,7 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
         let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
         f.ins().brif(fits, vec, &[], call, &[]);
         f.switch_to_block(vec);
-        let mut some = zero;
-        for n in &ns {
-            let x = needs_wide(&mut f, n, bytes, s, span);
-            some = f.ins().bor(some, x);
-        }
+        let some = needs_spans(&mut f, &ns, bytes, s, span);
         f.ins().brif(some, call, &[], quiet, &[]);
         f.switch_to_block(quiet);
         f.ins().return_(&[close, zero]);
@@ -2948,11 +2944,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 64);
                                 f.ins().brif(fits, vec, &[], long, &[]);
                                 f.switch_to_block(vec);
-                                let mut some = zero;
-                                for n in &ns {
-                                    let x = needs_wide(f, n, c.bytes, s, span);
-                                    some = f.ins().bor(some, x);
-                                }
+                                let some = needs_spans(f, &ns, c.bytes, s, span);
                                 f.ins().brif(some, long, &[], quiet, &[]);
                                 f.switch_to_block(quiet);
                                 let (r0, h0) = (f.ins().iconst(types::I64, refuse0), f.ins().iconst(types::I64, hits0));
@@ -3379,47 +3371,63 @@ fn needs_lanes(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, 
 }
 
 /// Whether the bytes `s + n.lo` on, `span` of them (64 at most), have one of `n`'s
-/// (`native_cpu_bytes::Needs`): four vectors' compares, the lanes past `span` cut by their
-/// index, nonzero where some byte is in the set.
-fn needs_wide(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, bytes: Value, s: Value, span: Value) -> Value {
+/// (`native_cpu_bytes::Needs`), for each of `ns`: nonzero where some byte is. Only the 16-byte
+/// vectors the span reaches, one, two or four, each a predictable branch on the span, as a
+/// lexer reads a short string's bytes and no more; each vector's lanes past the span cut by
+/// their index.
+fn needs_spans(f: &mut FunctionBuilder<'_>, ns: &[crate::native_cpu_bytes::Needs], bytes: Value, s: Value, span: Value) -> Value {
     let at = f.ins().iadd(bytes, s);
     let span8 = f.ins().ireduce(types::I8, span);
     let span16 = f.ins().splat(types::I8X16, span8);
-    let mut all: Option<Value> = None;
-    for c in 0..4i32 {
-        let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, n.lo + 16 * c);
-        let mut any: Option<Value> = None;
-        for (a, b) in n.ranges() {
-            let m = if a == b {
-                let k = f.ins().iconst(types::I8, i64::from(a));
-                let k = f.ins().splat(types::I8X16, k);
-                f.ins().icmp(IntCC::Equal, v, k)
-            } else {
-                let lo = f.ins().iconst(types::I8, i64::from(a));
-                let lo = f.ins().splat(types::I8X16, lo);
-                let w = f.ins().iconst(types::I8, i64::from(b - a) + 1);
-                let w = f.ins().splat(types::I8X16, w);
-                let d = if a == 0 { v } else { f.ins().isub(v, lo) };
-                if u16::from(b - a) + 1 == 256 { f.ins().icmp(IntCC::Equal, v, v) } else { f.ins().icmp(IntCC::UnsignedLessThan, d, w) }
-            };
-            any = Some(match any {
-                Some(x) => f.ins().bor(x, m),
-                None => m,
-            });
-        }
-        let any = any.expect("a range");
-        // The lanes at `16 c + i < span` alone.
+    // Vector `c` of every need, the lanes in their sets and inside the span.
+    let part = |f: &mut FunctionBuilder<'_>, c: i32| -> Value {
         let index: Vec<u8> = (0..16).map(|i| (16 * c + i) as u8).collect();
         let index = f.func.dfg.constants.insert(index.into());
         let index = f.ins().vconst(types::I8X16, index);
         let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, span16);
-        let any = f.ins().band_not(any, past);
-        all = Some(match all {
-            Some(x) => f.ins().bor(x, any),
-            None => any,
-        });
-    }
-    let all = all.expect("four vectors");
+        let mut all: Option<Value> = None;
+        for n in ns {
+            let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, n.lo + 16 * c);
+            for (a, b) in n.ranges() {
+                let m = if a == b {
+                    let k = f.ins().iconst(types::I8, i64::from(a));
+                    let k = f.ins().splat(types::I8X16, k);
+                    f.ins().icmp(IntCC::Equal, v, k)
+                } else {
+                    let lo = f.ins().iconst(types::I8, i64::from(a));
+                    let lo = f.ins().splat(types::I8X16, lo);
+                    let w = f.ins().iconst(types::I8, i64::from(b - a) + 1);
+                    let w = f.ins().splat(types::I8X16, w);
+                    let d = if a == 0 { v } else { f.ins().isub(v, lo) };
+                    if u16::from(b - a) + 1 == 256 { f.ins().icmp(IntCC::Equal, v, v) } else { f.ins().icmp(IntCC::UnsignedLessThan, d, w) }
+                };
+                all = Some(match all {
+                    Some(x) => f.ins().bor(x, m),
+                    None => m,
+                });
+            }
+        }
+        let all = all.expect("a range");
+        f.ins().band_not(all, past)
+    };
+    let (two, four, join) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(join, types::I8X16);
+    let a0 = part(f, 0);
+    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, span, 16);
+    f.ins().brif(more, two, &[], join, &[a0.into()]);
+    f.switch_to_block(two);
+    let p1 = part(f, 1);
+    let a1 = f.ins().bor(a0, p1);
+    let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, span, 32);
+    f.ins().brif(more, four, &[], join, &[a1.into()]);
+    f.switch_to_block(four);
+    let p2 = part(f, 2);
+    let p3 = part(f, 3);
+    let a2 = f.ins().bor(a1, p2);
+    let a3 = f.ins().bor(a2, p3);
+    f.ins().jump(join, &[a3.into()]);
+    f.switch_to_block(join);
+    let all = f.block_params(join)[0];
     let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), all);
     let w0 = f.ins().extractlane(wide, 0);
     let w1 = f.ins().extractlane(wide, 1);

@@ -1443,3 +1443,32 @@ no prologue now. `a_returned_call_is_the_return` checks the source.
 | Comments | 271 | 263 | 193 |
 
 Words, punctuation and mixed code did not change.
+
+## A string's gate reads its own bytes
+
+**Intro.** A lexer reads a short string's bytes and no more. Before
+calling a string's counts, the CPU checks the token's bytes for any
+the counts need (a `\`, a control byte). That check read four
+16-byte vectors from the opener for every string, cutting the lanes
+past the token by their index. Most strings are under 32 bytes.
+
+**The change.** The gate (`needs_spans`) reads one vector for a token
+of 16 bytes at most, two for 32, four for 64. Each step is one branch
+on the length, and these branches go the same way for strings of
+like lengths. The vectors are ORed as before and reduced once at the
+end.
+
+```
+any = in_set(v[0]) & lanes < span
+if span > 16: any |= in_set(v[1]) & lanes < span
+if span > 32: any |= in_set(v[2]) & …; any |= in_set(v[3]) & …
+```
+
+`the_cpus_records_are_the_interpreters` has a tab and a `\u` escape
+14 to 48 bytes into a string, at each vector's edge.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Strings | 298 | 285 | 241 |
+
+Other kinds did not change.
