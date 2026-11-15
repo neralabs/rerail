@@ -130,6 +130,8 @@ its walk was limited to lead rows matching the constants, it estimated 1.0.2.3.4
 
 ## Open
 
+All three addressed by decision 0247 (2026-11-15).
+
 - **The walker underestimates orders that fan out after the lead.** 1.0.2.3.4.5 walks at 0.39 of its work, inline
   and in the background alike. After `inf(f, n)` each call has several enclosing functions, and thinning to 64
   bindings at that step loses the large ones. The lead's split cannot see this. The own-lead trial inherits it
