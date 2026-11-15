@@ -17,6 +17,7 @@ import { adoptRemote, type AdapterDelivery, defaultRerailDatabasePath, lookupChe
 import {
   encodeRerailEventResult,
   type EngineEndpoint,
+  removeEarlierAnswers,
   setCheckoutStarted,
   setRepositoryStarted,
   startStateReader,
@@ -1619,16 +1620,6 @@ async function heldWithoutSharing(): Promise<DatabaseHolder> {
 }
 
 /**
- * `folder` made so that removing it fails until `end`: on Windows another program holds its first file open sharing only
- * reads, as a virus scan can; elsewhere the folder loses its write permission, so its files cannot be deleted.
- */
-async function heldFromRemoval(folder: string): Promise<DatabaseHolder> {
-  if (process.platform === "win32") return await heldByAnotherProgram(join(folder, readdirSync(folder)[0]!), "Read", "Read");
-  chmodSync(folder, 0o500);
-  return { end: () => Promise.resolve(chmodSync(folder, 0o700)) };
-}
-
-/**
  * Another program holding the file at `path` open for `access`, sharing only what `share` names (.NET's `FileShare`):
  * while it shares no deleting, Windows refuses to delete the file or to rename another over it.
  */
@@ -2232,50 +2223,26 @@ describe("the hook start check", () => {
       .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1"].sort() });
   });
 
-  it("removes the folders of the daemons before it at a new daemon's first kept answer, following no link in them", async () => {
+  it("removes, for a daemon once it runs, the folders of answers the daemons before it kept, leaving its own, and nothing a link leads to", async () => {
     const root = await temporaryDirectory({ started: false });
-    const app = stoppedApp(root);
     const outside = join(root, "outside");
-    mkdirSync(outside);
+    mkdirSync(join(outside, "7-1"), { recursive: true });
     writeFileSync(join(outside, "keep.txt"), "kept");
-    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
-    mkdirSync(join(answers, "7-1"), { recursive: true });
-    writeFileSync(join(answers, "7-1", `${"0".repeat(32)}.json`), "{}");
+    const home = process.env.RERAIL_HOME!;
+    const answers = join(home, "stopped-answers");
+    for (const daemon of ["7-1", `${process.pid}-1`]) {
+      mkdirSync(join(answers, daemon), { recursive: true });
+      writeFileSync(join(answers, daemon, `${"0".repeat(32)}.json`), "{}");
+    }
     folderLink(outside, join(answers, "7-1", "linked"));
     folderLink(outside, join(answers, "8-1"));
-    const host = await startCheckHost();
-    await keptStopped(host, app);
-    expect({ answers: readdirSync(answers), outside: readdirSync(outside) }).toEqual({ answers: [`${process.pid}-1`], outside: ["keep.txt"] });
-  });
-
-  it("keeps a new daemon's first answer where an earlier daemon's folder cannot be removed yet, and removes that folder at a later kept answer", { timeout: 30_000 }, async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = stoppedApp(root);
-    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
-    const earlier = join(answers, "7-1");
-    mkdirSync(earlier, { recursive: true });
-    writeFileSync(join(earlier, `${"0".repeat(32)}.json`), "{}");
-    const host = await startCheckHost();
-    const held = await heldFromRemoval(earlier);
-    try {
-      await keptStopped(host, app);
-      expect(readdirSync(answers).sort()).toEqual([`${process.pid}-1`, "7-1"].sort());
-    } finally {
-      await held.end();
-    }
-    // Windows can hold the file a moment longer once the holder ends, as a virus scan of a file just closed does: each
-    // later write tries again.
-    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
-    try {
-      for (let write = 0; write < 10 && readdirSync(answers).length > 1; write += 1) {
-        if (write > 0) await delay(200);
-        keptAt(app, Date.now() - 2 * 60_000);
-        expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
-      }
-    } finally {
-      await prompt.close();
-    }
-    expect(readdirSync(answers)).toEqual([`${process.pid}-1`]);
+    // A home whose folder of kept answers is itself a link: nothing in what it leads to is removed.
+    const linkedHome = join(root, "linked-home");
+    mkdirSync(linkedHome);
+    folderLink(outside, join(linkedHome, "stopped-answers"));
+    for (const each of [home, linkedHome]) await removeEarlierAnswers(each, { pid: process.pid, startedAt: 1 });
+    expect({ answers: readdirSync(answers), own: readdirSync(join(answers, `${process.pid}-1`)), outside: readdirSync(outside).sort() })
+      .toEqual({ answers: [`${process.pid}-1`], own: [`${"0".repeat(32)}.json`], outside: ["7-1", "keep.txt"] });
   });
 
   it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {

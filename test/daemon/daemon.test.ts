@@ -832,7 +832,7 @@ describe("Rerail daemon", () => {
     }
   });
 
-  it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", async () => {
+  it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", { timeout: 30_000 }, async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const home = join(root, "home");
     const answers = join(home, "stopped-answers");

@@ -12,15 +12,14 @@
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
  * home. It holds no path: the repository key and the clone id the database records, how many folders up the checkout's
  * top is, the device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon
- * places every folder again, so a hook that writes an answer from it removes the folders of the daemons before it. A
- * link in place of the file or of either folder above it is never followed.
+ * places every folder again, so it removes the folders of the daemons before it once it runs (`removeEarlierAnswers`),
+ * and no hook does. A link in place of the file or of either folder above it is never followed.
  */
 import { createHash } from "node:crypto";
 import {
-  closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, rmSync, statSync,
-  type BigIntStats,
+  closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type BigIntStats,
 } from "node:fs";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { storedPath } from "../engine/catalog/checkout-control.js";
@@ -68,7 +67,8 @@ export interface StartAnswer {
   readonly daemon: DaemonIdentity;
 }
 
-interface DaemonIdentity {
+/** A daemon as `daemon.json` names it: its process and when it started. */
+export interface DaemonIdentity {
   readonly pid: number;
   readonly startedAt: number;
 }
@@ -181,7 +181,6 @@ async function rewritten(file: string, { kept, top }: Placed, now: number): Prom
   const cloneId = cloneIdAt(top);
   if (cloneId === undefined) return;
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  removeEarlierDaemons(dirname(file));
   await replaceFile(file, JSON.stringify({ ...kept, cloneId }), { mode: 0o600, retryMs: 0 });
 }
 
@@ -196,22 +195,22 @@ function sameAnswer(left: Placement & { repository?: string }, right: Placement 
 }
 
 /**
- * Removes what is beside `folder`, this daemon's: the folders of the daemons before it, whose answers are never repeated.
- * Each write looks, so a folder Windows refused to remove while a file in it was held is removed at a later one.
+ * Removes from the Rerail home `home` the folders of answers kept from every daemon but `daemon`, whose answers are never
+ * repeated: the daemon calls it once it has written `daemon.json`, off its start, so no hook pays for it. Each entry is
+ * removed on its own, a link as a link and never what it leads to; one refused now (Windows holding a file in it a
+ * moment) is left for the next daemon.
  */
-function removeEarlierDaemons(folder: string): void {
-  for (const name of readdirSync(dirname(folder))) {
-    if (name !== basename(folder)) removeIfItCan(join(dirname(folder), name));
+export async function removeEarlierAnswers(home: string, daemon: DaemonIdentity): Promise<void> {
+  const answers = join(home, STOPPED_ANSWERS_DIR);
+  if (entryKind(answers) !== "folder") return;
+  for (const name of await readdir(answers).catch(() => [])) {
+    if (name !== daemonFolder(daemon)) await removeEntry(join(answers, name));
   }
 }
 
-/** Removes `path`, a folder with what is in it, or a link alone, never what it leads to; a removal refused now is left for a later write. */
-function removeIfItCan(path: string): void {
-  try {
-    rmSync(path, { recursive: entryKind(path) === "folder", force: true });
-  } catch {
-    // Held a moment on Windows, or not this user's to remove: the next write tries again.
-  }
+/** Removes `path`, a folder with what is in it or anything else alone, never through a link; a removal refused is left. */
+async function removeEntry(path: string): Promise<void> {
+  await rm(path, { recursive: entryKind(path) === "folder", force: true }).catch(() => undefined);
 }
 
 /**
@@ -332,7 +331,12 @@ function plainFileText(descriptor: number): string | undefined {
 /** The file of the answer `daemon` gave for `folder`, a real path. */
 function keptFile(daemon: DaemonIdentity, folder: string, home = defaultRerailHome()): string {
   const name = createHash("sha256").update(folder).digest("hex").slice(0, 32);
-  return join(home, STOPPED_ANSWERS_DIR, `${daemon.pid}-${daemon.startedAt}`, `${name}.json`);
+  return join(home, STOPPED_ANSWERS_DIR, daemonFolder(daemon), `${name}.json`);
+}
+
+/** The name of the folder of the answers `daemon` gave. */
+function daemonFolder({ pid, startedAt }: DaemonIdentity): string {
+  return `${pid}-${startedAt}`;
 }
 
 /** The answer kept at `file`; undefined where none is there whole, a look fails, or a link is at its name, which is never followed. */

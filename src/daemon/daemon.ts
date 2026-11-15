@@ -20,6 +20,7 @@ import { chooseEngineSocketPath, startEngineService, type EngineService } from "
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
+import { removeEarlierAnswers } from "../runtime/stopped-answers.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -548,7 +549,12 @@ export class RerailDaemon {
   /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
-    if (options.stateFile !== undefined) await replaceFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`, { mode: 0o600 });
+    if (options.stateFile !== undefined) {
+      await replaceFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`, { mode: 0o600 });
+      // Hooks find this daemon by the file just written, and never repeat an answer of stopped an earlier daemon gave:
+      // it removes those off its start, so no hook pays for the removal.
+      void removeEarlierAnswers(dirname(options.stateFile), { pid: process.pid, startedAt: this.startedAt });
+    }
     // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
     if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.

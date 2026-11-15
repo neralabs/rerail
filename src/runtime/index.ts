@@ -54,6 +54,7 @@ export {
 } from "./repository-start.js";
 export { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 export { resolveModelPath } from "./session-paths.js";
+export { removeEarlierAnswers } from "./stopped-answers.js";
 export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE, type DroppedEvents } from "./session-state.js";
 export {
   SESSION_EVENT_PAGE_LIMIT,
