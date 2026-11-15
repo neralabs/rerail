@@ -483,4 +483,4 @@ ported, over the targeted tests and dl1.
     G for the build of 93d01d0ff's tree, 2.6–2.8 G warm. The machine ran higher than at the last step's
     measurement (45.1–45.7 G then for the older build); the difference between the two builds is about 1.5 G, the
     address search the lookup made. Folding a run's overlays into one (the overlay chain `Version::rule` walks) is
-    still open.
+    still open, but not for its cost: sampled after this step, `Version::rule` is 1 of `run`'s 328 samples.
