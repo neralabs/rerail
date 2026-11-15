@@ -13,6 +13,8 @@
 //! tape16 textrel <cap>                                  E9: text and token as rows with atoms, against the tape
 //! tape16 inplace <cap>                                E10: in-memory tapes read in place, every question costed
 //! tape16 disk  <cap>                                   E18: the forms on disk, zstd and LZ4: bytes, decode, matches
+//! tape16 ralz  <cap>                                   E19: LZ4 in fixed blocks, stored as repeats, raw or LZ4
+//! tape16 code8 <cap>                                   E20: codes in 8 bits, overloaded by the adjacent code
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
@@ -1648,6 +1650,34 @@ fn cmd_disk(path: &str) {
     }
 }
 
+/// E19 (t39 step 11): LZ4 with random access, fixed blocks stored as repeats, raw or LZ4 (`ralz.rs`).
+fn cmd_ralz(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::ralz::run(fs);
+        rerail_tape_lab::ralz::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
+/// E20 (t39 step 12): codes in 8 bits, overloaded by the adjacent code (`code8.rs`).
+fn cmd_code8(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::code8::run(fs);
+        rerail_tape_lab::code8::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+    }
+}
+
 /// E15 (t39 step 7): repeated structure as repeated bits, per slot encoding (`repeat.rs`).
 fn cmd_repeat(path: &str) {
     use rerail_tape_lab::inplace::Codes;
@@ -1699,6 +1729,8 @@ fn main() {
         "repeat" => cmd_repeat(path),
         "relative" => cmd_relative(path),
         "disk" => cmd_disk(path),
+        "ralz" => cmd_ralz(path),
+        "code8" => cmd_code8(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

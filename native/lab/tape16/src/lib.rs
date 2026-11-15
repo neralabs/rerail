@@ -17,12 +17,14 @@
 pub mod base;
 pub mod blocks;
 pub mod capture;
+pub mod code8;
 pub mod codec;
 pub mod disk;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
 pub mod prim;
+pub mod ralz;
 pub mod events;
 pub mod layout;
 pub mod lp;

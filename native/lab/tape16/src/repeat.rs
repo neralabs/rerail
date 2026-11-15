@@ -60,6 +60,13 @@ impl Image for Esc {
     }
 }
 
+/// The first `len` bytes of packed words, little-endian.
+pub fn le_bytes(words: &[u64], len: usize) -> Vec<u8> {
+    let mut out: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    out.truncate(len);
+    out
+}
+
 /// The width costing least (every slot at `w` bits, plus each escape's offset byte and value) among those
 /// escaping at most `share` of the values.
 pub fn esc_width(vals: impl Iterator<Item = u64>, share: f64) -> u32 {
@@ -171,6 +178,16 @@ impl Esc {
     }
     pub fn escapes(&self) -> usize {
         self.off.len()
+    }
+    /// The fixed-width array of `n` values as little-endian bytes (escapes as all-ones), and apart from it
+    /// the escapes' lists (E19 blocks the first and keeps the second whole).
+    pub fn split(&self, n: usize) -> (Vec<u8>, Vec<u8>) {
+        let main = le_bytes(&self.words, (n * self.w as usize).div_ceil(8));
+        let mut side = Vec::new();
+        raw(&mut side, &self.start);
+        raw(&mut side, &self.off);
+        self.val.image(&mut side);
+        (main, side)
     }
     /// The values one word holds.
     pub fn per(&self) -> usize {

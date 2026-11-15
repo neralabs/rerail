@@ -178,38 +178,59 @@ unsafe extern "C" {
     fn LZ4_resetStreamHC_fast(s: *mut c_void, level: c_int);
     fn LZ4_loadDictHC(s: *mut c_void, dict: *const c_char, n: c_int) -> c_int;
     fn LZ4_compress_HC_continue(s: *mut c_void, src: *const c_char, dst: *mut c_char, n: c_int, cap: c_int) -> c_int;
+    fn LZ4_attach_dictionary(s: *mut c_void, dict_stream: *const c_void);
+    fn LZ4_attach_HC_dictionary(s: *mut c_void, dict_stream: *const c_void);
     fn LZ4_decompress_safe_usingDict(src: *const c_char, dst: *mut c_char, n: c_int, cap: c_int, dict: *const c_char, dict_n: c_int) -> c_int;
 }
 
-struct Lz4 {
+/// The library's compressor, its dictionary indexed once in a stream of its own and attached to the working
+/// stream before each block (`LZ4_attach_*_dictionary`), so a block does not pay the dictionary's indexing.
+pub(crate) struct Lz4 {
     s: *mut c_void,
+    ds: *mut c_void,
     hc: bool,
     dict: Vec<u8>,
 }
 
 impl Lz4 {
-    fn new(hc: bool, dict: &[u8]) -> Lz4 {
-        // LZ4 reads at most the last 64 KiB of a dictionary.
-        let dict = dict[dict.len().saturating_sub(64 << 10)..].to_vec();
+    pub(crate) fn new(hc: bool, dict: &[u8]) -> Lz4 {
         // SAFETY: freed in Drop.
-        let s = unsafe { if hc { LZ4_createStreamHC() } else { LZ4_createStream() } };
-        Lz4 { s, hc, dict }
+        let (s, ds) = unsafe { if hc { (LZ4_createStreamHC(), LZ4_createStreamHC()) } else { (LZ4_createStream(), LZ4_createStream()) } };
+        let mut l = Lz4 { s, ds, hc, dict: Vec::new() };
+        l.set_dict(dict);
+        l
     }
-    fn compress(&mut self, data: &[u8]) -> Vec<u8> {
+    /// Another dictionary for the calls that follow (LZ4 reads its last 64 KiB), indexed now.
+    pub(crate) fn set_dict(&mut self, dict: &[u8]) {
+        self.dict.clear();
+        self.dict.extend_from_slice(&dict[dict.len().saturating_sub(64 << 10)..]);
+        // SAFETY: the dictionary stream indexes `self.dict`, which it keeps pointing to until the next call.
+        unsafe {
+            let (d, dn) = (self.dict.as_ptr().cast(), self.dict.len() as c_int);
+            if self.hc {
+                LZ4_resetStreamHC_fast(self.ds, 9);
+                LZ4_loadDictHC(self.ds, d, dn);
+            } else {
+                LZ4_resetStream_fast(self.ds);
+                LZ4_loadDict(self.ds, d, dn);
+            }
+        }
+    }
+    pub(crate) fn compress(&mut self, data: &[u8]) -> Vec<u8> {
         // SAFETY: the stream is reset and given the dictionary (which outlives the call) before each block;
         // the output buffer is the library's bound.
         unsafe {
             let cap = LZ4_compressBound(data.len() as c_int);
             let mut out = vec![0u8; cap as usize];
             let (src, dst, n) = (data.as_ptr().cast(), out.as_mut_ptr().cast(), data.len() as c_int);
-            let (d, dn) = (self.dict.as_ptr().cast(), self.dict.len() as c_int);
+            let ds: *const c_void = if self.dict.is_empty() { std::ptr::null() } else { self.ds };
             let got = if self.hc {
                 LZ4_resetStreamHC_fast(self.s, 9);
-                LZ4_loadDictHC(self.s, d, dn);
+                LZ4_attach_HC_dictionary(self.s, ds);
                 LZ4_compress_HC_continue(self.s, src, dst, n, cap)
             } else {
                 LZ4_resetStream_fast(self.s);
-                LZ4_loadDict(self.s, d, dn);
+                LZ4_attach_dictionary(self.s, ds);
                 LZ4_compress_fast_continue(self.s, src, dst, n, cap, 1)
             };
             assert!(got > 0 || data.is_empty(), "lz4 compressed nothing");
@@ -217,7 +238,7 @@ impl Lz4 {
             out
         }
     }
-    fn decompress(&self, c: &[u8], out: &mut [u8]) -> usize {
+    pub(crate) fn decompress(&self, c: &[u8], out: &mut [u8]) -> usize {
         // SAFETY: `out` is writable for its length, which the library is told.
         let n = unsafe {
             LZ4_decompress_safe_usingDict(c.as_ptr().cast(), out.as_mut_ptr().cast(), c.len() as c_int, out.len() as c_int, self.dict.as_ptr().cast(), self.dict.len() as c_int)
@@ -231,9 +252,23 @@ impl Drop for Lz4 {
     fn drop(&mut self) {
         // SAFETY: created in `new`.
         unsafe {
-            if self.hc { LZ4_freeStreamHC(self.s) } else { LZ4_freeStream(self.s) };
+            if self.hc {
+                LZ4_freeStreamHC(self.s);
+                LZ4_freeStreamHC(self.ds);
+            } else {
+                LZ4_freeStream(self.s);
+                LZ4_freeStream(self.ds);
+            }
         }
     }
+}
+
+/// Decodes an LZ4 block over `dict` (no copy of it): the dictionary may sit anywhere, or right before `out`.
+pub(crate) fn lz4_decode(c: &[u8], out: &mut [u8], dict: &[u8]) -> usize {
+    // SAFETY: `out` is writable for its length, which the library is told; the dictionary is read only.
+    let n = unsafe { LZ4_decompress_safe_usingDict(c.as_ptr().cast(), out.as_mut_ptr().cast(), c.len() as c_int, out.len() as c_int, dict.as_ptr().cast(), dict.len() as c_int) };
+    assert!(n >= 0, "lz4: a corrupt block");
+    n as usize
 }
 
 /// The bytes an LZ4 block's matches cover, read off its sequences.
@@ -337,14 +372,14 @@ pub struct Report {
     pub wrong: u64,
 }
 
-/// Over one language's files.
-pub fn run(files: &[&File]) -> Report {
+/// A language's code table, and the new form's widths over every file of it (E16's choice): codes, slots,
+/// gaps, lengths.
+pub fn lang_widths(files: &[&File]) -> (Codes, [u32; 4]) {
     let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let mut codes = Codes::default();
     for f in files {
         codes.learn(&read(f));
     }
-    // The widths of the new form, over every file of the language (E16's choice).
     let (mut hs, mut hg, mut hl) = (Hist::default(), Hist::default(), Hist::default());
     for f in files {
         let c = Cols::of_tree(&read(f), &codes);
@@ -354,6 +389,13 @@ pub fn run(files: &[&File]) -> Report {
         hl.add(l.into_iter());
     }
     let widths = [codes.width(), hs.width(1.0), hg.width(1.0), hl.width(1.0)];
+    (codes, widths)
+}
+
+/// Over one language's files.
+pub fn run(files: &[&File]) -> Report {
+    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let (codes, widths) = lang_widths(files);
     // Dictionaries are trained on the even files and measured on the odd; with fewer than 16 files, no
     // dictionary, and every file measured.
     let dicts = files.len() >= 16;

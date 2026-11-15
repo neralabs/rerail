@@ -706,6 +706,108 @@ bytes of wide fields, which match trivially; it still ends larger.
   35–59% off (Python 3.37 → 2.04 mixed). Against format 15 the mixed form is 11–25% smaller on
   disk (equal on rerail's JSON) and about half the memory.
 
+### Step 11: LZ4 with random access, in fixed blocks (E19)
+
+Whole-array compression (step 10) gives no random access at rest. `tape16 ralz <capture>`
+(`src/ralz.rs`) cuts each in-place array of a file into fixed blocks of N nodes, so node i's
+block is `i / N` at a fixed offset. A 4-byte index entry per block names how it is stored:
+
+- **repeat**: a pointer to an identical block stored earlier, in this file or (8 bytes) in a pool
+  the store shares, stored once;
+- **raw**: the bytes as they are, read in place;
+- **LZ4**: one block in LZ4's format (HC level 9, the reference library), whose matches reach
+  only the language's 64 KiB dictionary (trained per array on the other half of the files) and
+  the block itself.
+
+A read decodes at most one block. A second variant lets an LZ4 block also match into one earlier
+block of its file that has no reference itself (2 more index bytes). A read then decodes at most
+two: the reader keeps a buffer `[dictionary tail][reference][output]`, so no dictionary is
+copied. Arrays: E18's mixed form (codes bit-packed, the rest at byte widths) and the
+byte-aligned one. The escapes' lists stay whole, one LZ4 block a file and array. Every block is
+decoded and checked (none wrong). Sizes are exact; times are from the quiet M3 Max (load 4–6).
+
+Bytes a node, mixed form, against the same arrays compressed whole with the same dictionary:
+
+| | whole, no random access | N = 256 | 1,024 | 4,096 | 256, with a reference | 1,024, with | 4,096, with |
+|---|---|---|---|---|---|---|---|
+| data-layer Python | 2.19 | 2.70 | 2.44 | 2.29 | 2.62 | 2.38 | 2.27 |
+| data-layer JSON | 0.99 | 1.42 | 1.20 | 1.08 | 1.36 | 1.14 | 1.05 |
+| rerail Rust | 2.38 | 2.78 | 2.57 | 2.46 | 2.73 | 2.52 | 2.44 |
+| rerail TypeScript | 2.28 | 2.61 | 2.41 | 2.32 | 2.56 | 2.38 | 2.32 |
+| rerail `.rr` | 1.54 | 1.79 | 1.60 | 1.54 | 1.76 | 1.58 | 1.54 |
+| rerail JSON | 1.08 | 2.10 | 1.54 | 1.29 | 1.91 | 1.41 | 1.22 |
+
+One LZ4 block read at random (decoded whole), ns, M3 Max, mixed form: 110–240 at N = 256 (0.45–0.9
+ns a node), 210–700 at 1,024, 340–1,800 at 4,096. A reference adds 0–50% on average (it is a
+second decode for the 2–59% of blocks that take one).
+
+- **Random access at rest costs 1–5% at N = 4,096 on code, 4–11% at 1,024, 14–23% at 256.**
+  JSON pays more (9–19% at 4,096, up to 95% at 256 on rerail's small JSON files): a block alone
+  sees less of the file than the whole array does.
+- **A reference block takes back a quarter of that** (Python at 1,024: 2.44 → 2.38 against
+  2.19 whole), for a second decode on a quarter of the blocks. On rerail's JSON it takes back a
+  fifth to a third.
+- **Fixed blocks do not repeat on code.** 0% of code blocks are an earlier block, in the file or in
+  the pool; on JSON 2–15% are (more at small N). A repeated subtree lines up with a fixed block
+  boundary only by chance, so the repeats are found by matches into the dictionary instead.
+  Whole repeated blocks need content-defined cuts (the older `blocks.rs` form), which give up the
+  fixed offset.
+- **Only the checkpoints are read in place.** They are absolute starts, so LZ4 cannot shrink them
+  and they are stored raw (0.30 B a node, a fifth of every array's blocks). Every other block
+  decodes.
+- **The index is small:** 0.08 B a node at 256, 0.02 at 1,024, 0.01 at 4,096. The escapes'
+  lists are 0.14–0.25 B a node, more than the index at 1,024; most of it is each list's start
+  array (4 bytes a 256 nodes, per array), which can shrink.
+
+### Step 12: codes in 8 bits, overloaded by the adjacent code (E20)
+
+Python, Rust and TypeScript have 360–500 codes, so 9 bits. Removing redundancy from the code's
+tuple alone does not reach 8: the kinds fit (153–230), and so do kind, flags and supertypes
+(183–268), but the field multiplies them (331–457 kind + field). The field depends on context.
+`tape16 code8 <capture>` (`src/code8.rs`) uses that context:
+
+- Each code gets one byte `f(code)` in 0..=254, the same in every context, so a repeated
+  subtree is still the same bytes. Two codes may share a byte.
+- The reader tells them apart by the byte before it in the same array (the previous node in
+  preorder), through a language table `T[previous byte][byte]` of 256 × 256 u16 (128 KiB).
+- Where two codes sharing a byte follow the same previous byte, the rarer one there is stored as
+  the escape 255, with its code in the block's list (as `Esc`'s escapes). A context the table has
+  not seen, and the one after an escape, reads each byte as its most frequent code. So no read
+  needs more than two bytes.
+- The shared bytes are chosen greedily (fewest escapes, then rarest codes together, so frequent
+  codes keep a byte of their own), and improved in three passes, on the even files. Escapes are
+  counted on the odd ones.
+
+| | data-layer Python | rerail Python | rerail Rust | rerail TypeScript |
+|---|---|---|---|---|
+| codes (bits today) | 440 (9) | 391 (9) | 494 (9) | 469 (9) |
+| nodes escaped, files the table was not chosen on | 0.04% | 0.31% | 0.09% | 0.21% |
+| the same, with the parent's byte as context | 0.02% | 0.31% | 0.04% | 0.13% |
+| nodes whose byte another code shares (a code-set sweep checks them in the table) | 1.1% | 1.8% | 3.2% | 2.0% |
+| memory, B a node: 8 bits and escapes / 9 bits | 1.020 / 1.125 | 1.031 / 1.125 | 1.020 / 1.125 | 1.025 / 1.125 |
+| repeated subtrees' nodes stored as the same bytes (root excluded) | 100% | 100% | 100% | 100% |
+| read at random, ns (M3): 8-bit / 9-bit | 0.73 / 0.56 | 0.71 / 0.55 | 0.89 / 0.54 | 0.70 / 0.54 |
+| read in order, ns (M3): 8-bit / 9-bit | 0.72 / 0.81 | 0.74 / 0.81 | 0.70 / 0.81 | 0.72 / 0.80 |
+| on disk, zstd + dictionary, B a node: 8-bit / 9-bit / 16-bit | 0.24 / 0.43 / 0.30 | 0.36 / 0.62 / 0.41 | 0.31 / 0.54 / 0.37 | 0.28 / 0.45 / 0.34 |
+
+Every node decodes right, on every corpus.
+
+- **8 bits fit, with almost no escapes**: 0.04–0.31% of nodes on files the table never saw, none
+  on the files it was chosen on. Memory falls 9% (1.125 → 1.02–1.03 B a node).
+- **The previous byte is as good a context as the parent's**, and a read already has it: it is
+  the byte before, in the same cache line. The parent's byte would cost a parent read.
+- **A point read costs 0.15–0.35 ns more** (two bytes and a table lookup, against a shift and a
+  mask), and reading in order is 10–14% faster than 9-bit unpacking.
+- **On disk 8-bit codes are the smallest form measured:** 38–44% under 9 bits bit-packed, and
+  12–19% under 16 bits, because every code is one whole byte and the bytes repeat.
+- **The cost to rules:** a sweep for a set of codes compares bytes, and for the 1–3% of nodes
+  whose byte is shared it confirms the code in the table.
+- **Languages already at 8 bits or fewer** (JSON 5, `.rr` 7, small TypeScript 8) need none of
+  this. At one byte they cost more memory (JSON 0.63 → 1.02) and a little less disk.
+- **With 8-bit codes the byte-aligned form wins on both axes.** On data-layer Python, step 10's
+  byte-aligned form with 8-bit codes in place of 16 takes about 4.57 B a node in memory (mixed:
+  4.63) and 1.88 on disk with zstd and a dictionary (mixed: 2.04).
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -863,3 +965,9 @@ In order. Each step is measured on all three corpora, every answer checked.
 10. **What the same bits buy on disk (E18).** Done: same bits take 18–46% off XF's zstd size, and
     byte widths as much again; a mixed form (codes bit-packed, the rest at byte widths) costs 4.3–4.6
     B a node in memory and 1.5–2.2 on disk on code. Next: write the widths into 0156.
+11. **LZ4 with random access in fixed blocks (E19).** Done: 1–5% over whole arrays at 4,096 nodes
+    a block, 4–11% at 1,024, 14–23% at 256 on code; a reference block takes back a quarter. Fixed
+    blocks do not repeat on code; only the checkpoints are read in place.
+12. **Codes in 8 bits (E20).** Done: overloaded by the previous byte, 0.04–0.31% escapes, 9% less
+    memory, 38–44% less disk, +0.15–0.35 ns a point read. With them the byte-aligned form is the
+    smallest in memory and on disk.

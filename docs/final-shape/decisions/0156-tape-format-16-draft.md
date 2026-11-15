@@ -563,7 +563,16 @@ keeps the same bits.
   41–78%. Codes bit-packed with slots, gaps and lengths at byte widths cost 4.63 B a node in memory
   and 2.04 on disk with a dictionary on Python (XF 4.59 and 3.37, format 15 8.63 and 2.34); LZ4 HC
   with a dictionary is within 7% of zstd there. The absolute checkpoints do not compress (0.25 B a
-  node at K = 8).
+  node at K = 8). Codes fit in 8 bits for every language measured (E20, step 12): one byte a code in
+  every context, overloaded where the previous node's byte tells two codes apart, through a
+  128 KiB table a language; 0.04–0.31% of nodes escape, every repeat keeps its bytes. With them
+  the all-byte form takes about 4.57 B a node in memory and 1.88 on disk on Python.
+- **At rest, with random access.** Fixed blocks of N nodes, each a 4-byte index entry naming a
+  repeat (in the file, or a pool), raw bytes, or one LZ4 block over the language's dictionary (E19,
+  step 11): one decode a read, 1–5% over whole arrays at N = 4,096, 4–11% at 1,024, 14–23% at 256
+  on code; 0.2–0.7 µs a 1,024-node block on the M3. A reference to one earlier block of the file
+  takes back a quarter of the overhead for a second decode. Fixed blocks repeat only on JSON
+  (2–15%).
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.
