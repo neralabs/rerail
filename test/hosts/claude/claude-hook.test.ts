@@ -315,13 +315,28 @@ describe("Claude Code hook with a running daemon", () => {
         database.close();
       }
     }
-    /** The session's `source-discovery-gap` rows, each place with why, once the count a person reads says as many. */
-    function gapPlaces(sessionId: string, rows: number): unknown[] {
-      expect(kindCount(sessionId, "source-discovery-gap")).toBe(rows);
+    /** The session's `source-discovery-gap` rows, each payload but its boundary, in the order recorded. */
+    function gapRows(sessionId: string): unknown[] {
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        return database.prepare<[string], { payload: string }>(
+          "SELECT payload_json AS payload FROM events WHERE session_id = ? AND kind = 'source-discovery-gap' ORDER BY sequence",
+        ).all(sessionId).map(row => {
+          const { boundary: _boundary, ...place } = JSON.parse(row.payload) as Record<string, unknown>;
+          return place;
+        });
+      } finally {
+        database.close();
+      }
+    }
+    /** The places recorded for the session, each with why, once what a person reads (count and list) says the same. */
+    function gapPlaces(sessionId: string): unknown[] {
+      const rows = gapRows(sessionId);
       const reader = new SqliteSessionReader(defaultRerailDatabasePath());
       try {
-        expect(reader.gaps(sessionId).discoveryGaps).toBe(rows);
-        return reader.discoveryGaps(sessionId, 1_000).map(({ path, reason }) => ({ path, reason }));
+        expect(reader.gaps(sessionId).discoveryGaps).toBe(rows.length);
+        expect(reader.discoveryGaps(sessionId, 1_000).map(({ path, reason }) => ({ path, reason }))).toEqual(rows);
+        return rows;
       } finally {
         reader.close();
       }
@@ -348,7 +363,8 @@ describe("Claude Code hook with a running daemon", () => {
       for (let turn = 0; turn < 20; turn += 1) expect(await session.turn()).toEqual({});
 
       const reasons = places.map(place => (denies ? `EACCES: permission denied, opendir '${join(repository, place)}'` : "Source exceeds 1000000 byte policy limit"));
-      expect(gapPlaces("places-session", 10)).toEqual(places.map((place, index) => ({ path: denies ? place : `${place}/big.py`, reason: reasons[index] })));
+      expect(gapRows("places-session")).toHaveLength(10);
+      expect(gapPlaces("places-session")).toEqual(places.map((place, index) => ({ path: denies ? place : `${place}/big.py`, reason: reasons[index] })));
     });
 
     it("records nothing of the folders and files a running process makes and removes beside 30 turn ends", { timeout: 180_000 }, async () => {
@@ -367,7 +383,8 @@ describe("Claude Code hook with a running daemon", () => {
         rounds = await loop.stop();
       }
       expect(rounds).toBeGreaterThan(30);
-      expect(gapPlaces("churn-session", 0)).toEqual([]);
+      expect(gapRows("churn-session")).toEqual([]);
+      expect(gapPlaces("churn-session")).toEqual([]);
     });
 
     it.skipIf(!denies)("records no second copy of a folder whose files it saw, after the daemon restarts and the session resumes", { timeout: 180_000 }, async () => {
@@ -381,14 +398,15 @@ describe("Claude Code hook with a running daemon", () => {
       await session.walked();
       await deny(locked);
       await session.turn();
-      expect(kindCount("restart-session", "source-discovery-gap")).toBe(1);
+      expect(gapRows("restart-session")).toHaveLength(1);
 
       await closeNativeTestDaemons();
       await startNativeTestDaemon(repository);
       await session.start("resume");
       await session.walked();
       for (let turn = 0; turn < 3; turn += 1) await session.turn();
-      expect(gapPlaces("restart-session", 1)).toEqual([{ path: "src/locked", reason: `EACCES: permission denied, opendir '${locked}'` }]);
+      expect(gapRows("restart-session")).toHaveLength(1);
+      expect(gapPlaces("restart-session")).toEqual([{ path: "src/locked", reason: `EACCES: permission denied, opendir '${locked}'` }]);
     });
   });
 });

@@ -542,6 +542,10 @@ interface SourceWalk {
   readonly roots: ReadonlySet<string>;
   /** What the walk asks of each file and folder it finds: the auditor's `walkView` for this walk, or the auditor. */
   readonly view: WalkView;
+  /** The paths that refused the walk with EPERM, to look at again once its other paths are done (`deferredRefusal`). */
+  refused?: string[];
+  /** The walk is looking at `refused` again: a refusal now is the path's. */
+  retried?: boolean;
 }
 /** What a walk of `SourceDiscovery` compares its scan with, all read before it started. */
 interface WalkStart {
@@ -634,15 +638,12 @@ function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread
 /**
  * What the last walks of the session folder and of the other worktrees could not check, with each unlisted file too large
  * to read that this session has not yet reported at its stamp, in path order: walks list their gaps in the order their
- * reads finish, which differs from walk to walk.
+ * reads finish, which differs from walk to walk. Gaps of one path keep the order they were found in.
  */
 function walkGaps(discovery: SourceDiscovery): WalkGap[] {
   const gaps = [...discovery.gaps, ...discovery.worktrees.gaps];
   for (const unread of [discovery.unread, discovery.worktrees.unread]) gaps.push(...newlyUnread(discovery, unread));
-  return gaps.sort(compareWalkGaps);
-}
-function compareWalkGaps(left: WalkGap, right: WalkGap): number {
-  return compareDeterministicStrings(left.path ?? "", right.path ?? "") || compareDeterministicStrings(left.reason, right.reason);
+  return gaps.sort((left, right) => compareDeterministicStrings(left.path ?? "", right.path ?? ""));
 }
 /** A checkpoint's `source-incomplete` text: `gaps` (`walkGaps`) joined, else whether the session folder's walk is still to finish. */
 function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): string | undefined {
@@ -685,6 +686,19 @@ function vanished(error: unknown): boolean {
  */
 function goneWhenExamined(walk: SourceWalk, absolute: string, error: unknown): boolean {
   return vanished(error) && !walk.roots.has(absolute);
+}
+/** How long a walk waits before it looks again at the paths that refused it with EPERM (`deferredRefusal`). */
+const REFUSED_RETRY_MS = 25;
+/**
+ * Whether the walk looks at `absolute` again later: on Windows a file or folder being removed refuses every open with
+ * EPERM until the last handle to it closes, as one the user is denied does, and the real path of a child being removed
+ * fails its folder's listing the same way. Looked at again once (`#observeRefused`), what is gone then is absent and
+ * what is denied fails again.
+ */
+function deferredRefusal(walk: SourceWalk, absolute: string, error: unknown): boolean {
+  if (walk.retried === true || !hasErrorCode(error, "EPERM")) return false;
+  (walk.refused ??= []).push(absolute);
+  return true;
 }
 /**
  * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
@@ -2091,13 +2105,28 @@ export class CodeRuleBridge {
   }
 
   async #observeSources(walk: SourceWalk): Promise<SourceScan> {
-    const { discovery, stack, scan } = walk;
+    const { scan } = walk;
+    await this.#observeStack(walk);
+    await this.#observeRefused(walk);
+    for (const source of scan.sources.values()) recordReadError(scan, source);
+    return scan;
+  }
+
+  async #observeStack(walk: SourceWalk): Promise<void> {
+    const { discovery, stack } = walk;
     while (!discovery.cancelled && stack.length > 0) {
       const wave = stack.splice(-OBSERVATION_CONCURRENCY);
       await Promise.all(wave.map(absolute => this.#observePath(walk, absolute)));
     }
-    for (const source of scan.sources.values()) recordReadError(scan, source);
-    return scan;
+  }
+
+  /** The paths that refused the walk with EPERM (`deferredRefusal`), looked at again once, `REFUSED_RETRY_MS` later. */
+  async #observeRefused(walk: SourceWalk): Promise<void> {
+    if (walk.refused === undefined || walk.discovery.cancelled) return;
+    walk.retried = true;
+    await new Promise(resolve => { setTimeout(resolve, REFUSED_RETRY_MS); });
+    walk.stack.push(...walk.refused);
+    await this.#observeStack(walk);
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
@@ -2106,7 +2135,7 @@ export class CodeRuleBridge {
       info = await lstat(absolute);
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error)) return;
+      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error) || deferredRefusal(walk, absolute, error)) return;
       this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
     }
   }

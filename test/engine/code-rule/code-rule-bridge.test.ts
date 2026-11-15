@@ -838,6 +838,29 @@ describe("CodeRuleBridge", () => {
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ENOENT: no such file or directory, lstat '${root}'`));
     });
 
+    it("looks again at a path that refused it with EPERM, as Windows refuses one being removed: gone then is absent, refused again is a gap", async () => {
+      const root = await workspace();
+      const onDiscoveryGap = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      // A file being removed: refused while the delete is pending, gone a moment later.
+      const removed = join(root, "src", "removed.py");
+      await writeFile(removed, "r = 1\n");
+      const pending = async (): Promise<void> => {
+        throw Object.assign(new Error(`EPERM: operation not permitted, lstat '${removed}'`), { code: "EPERM", syscall: "lstat", path: removed });
+      };
+      discovery.lstats.set(removed, [pending, gone("lstat", removed)]);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      expect(discovery.lstats.get(removed)).toEqual([]);
+      // A folder the user is denied refuses every look.
+      const denied = join(root, "src", "denied");
+      await mkdir(denied);
+      const refusal = denyFolder(denied, () => 0, "EPERM");
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/denied: ${refusal}`));
+      expect(onDiscoveryGap.mock.calls).toEqual([[toldGap("src/denied", refusal, "EPERM")]]);
+    });
+
     it("says nothing of the folders and files a running process makes and removes while 30 checkpoints walk", async () => {
       const root = await workspace();
       const churn = join(root, "src", "churn");
