@@ -949,7 +949,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
                 return Ok(read.clone());
             }
             if let Some(read) = slot.take() {
-                if own_only && let Some(library) = in_scope {
+                if let Some(library) = in_scope {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     let prog = read.lower_in(text, library, images.as_deref())?.expect("a modular text");
                     return Ok(prog);
@@ -996,7 +996,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     // Not held once after all: a program read without its libraries' rules is read whole.
     if !shared {
         for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
-            if own_only {
+            if own_only || in_scope.is_some() {
                 *prog = parse(text)?;
             }
         }
