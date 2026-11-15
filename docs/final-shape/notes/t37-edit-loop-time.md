@@ -387,6 +387,24 @@ remote in each.
   dependency directory listed before cargo wrote the new `.rmeta` (E0463). The farm now checks
   every file a compile read against this machine's and compiles here when one differs. The server
   tuning (16 nfsd threads at a higher priority, 1 s directory caching) is not yet measured.
+- **Measured again (2026-11-15), with the server tuning on.** The compile's reads were replayed on
+  each host, against its mirrored copy and over NFS: the dependency directory listed, then the
+  engine's 219 dep-info inputs (7.6 MB) stat'ed and read, three rounds, at a load of 30–45 here.
+
+  | Step | Mirrored copy | NFS |
+  |---|---|---|
+  | list the dependency directory (45,833 entries) | 33–140 ms | 1.8–9.8 s, with any mount options |
+  | the same for 3,000 entries (a clean target's size) | | 35 ms; 1 ms within the 1 s cache |
+  | stat the 219 inputs | under 1.5 ms | 50–450 ms (one call: 0.23–0.78 ms, the link's round trip at this load) |
+  | read them | 5–15 ms | 0.3–3.1 s cold; 22 ms with attributes cached 1 s |
+
+  The 7.3 s a compile took over NFS was mostly the listing: rustc lists each `-L dependency=`
+  directory in every process, and this one had grown to 45,833 entries of stale artifacts (4,588
+  crate names). Larger directory reads (`dsize`) and `rdirplus` did not change it. With a lean
+  target directory and attributes cached for 1 s (the read check then catches what is stale), a
+  compile would pay about 0.1–0.5 s, near the mirror's; with attributes uncached, the cold reads
+  alone cost more than the mirror's whole sync. Not yet measured: a build end to end on a clean
+  target directory, and writing the outputs over NFS.
 - The mirror wins on moving files: no ssh session or tar per compile, and one scan of the checkout
   (11,298 files, 0.36 s) serves every compile that starts while it runs. The first compile on a
   fresh host sends the whole checkout (346 MB, 13 s). Its daemon used 5 s of CPU.
