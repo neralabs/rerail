@@ -24,21 +24,20 @@ static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::At
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
-    super::costs::ready();
-    let all = Executor::new();
+    // The SME lane where the CPU has it (`sme::backend` asks the CPU). Not by making every lane's executor and
+    // asking it: that made the Metal device too, 11 ms of a run on the cores (decision 0260).
+    #[allow(unused_mut)]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if all.lanes().contains(&rerail_accel::Lane::Sme) {
-        lanes.extend(rerail_accel::sme::backend());
-    }
-    drop(all);
+    lanes.extend(rerail_accel::sme::backend());
     Executor::with(lanes)
 });
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
-    super::costs::ready();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
         dev.install_launch_guard();

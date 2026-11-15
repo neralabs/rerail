@@ -2609,7 +2609,7 @@ fn run_observed(
     // when SQL first runs on it (`vtab::setup_now`).
     crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
     super::ready_native(&db)?;
-    // The cost statistics read before the first wave (decision 0104), the executor's prices fitted from them.
+    // The cost statistics kept and written; read when the run first has work to price (decision 0104, 0260).
     crate::code_rule_dsl::logic::costs::start();
     let statements = Statements::on(&db);
     // The program's preparation (kept or read, split, its parts' plans), until the files are parsed.
@@ -4638,6 +4638,11 @@ fn run_observed(
         }
         phase("wait", statements.count());
         statements.enter("local");
+        // Documents to evaluate: the prices are read beside them (`costs::begin_read`), before their first wave asks.
+        // A chunk of memo hits alone prices nothing.
+        if !documents.is_empty() {
+            crate::code_rule_dsl::logic::costs::begin_read();
+        }
         let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
         // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
         if !hits.is_empty() {
@@ -6691,6 +6696,9 @@ fn run_observed(
                         }
                     };
                     step(&format!("cut: {} of {} strata to run; inputs changed: {}", cut.strata.0, cut.strata.1, cut.changed.len()));
+                    if cut.strata.0 > 0 {
+                        crate::code_rule_dsl::logic::costs::begin_read();
+                    }
                     if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
                         let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r.as_str())).collect();

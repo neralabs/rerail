@@ -143,6 +143,7 @@ mod on {
     }
 
     pub fn current() -> Option<Arc<CostModel>> {
+        crate::price::first_price();
         let version = VERSION.load(std::sync::atomic::Ordering::Acquire);
         if version == 0 {
             return None;

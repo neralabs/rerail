@@ -111,6 +111,9 @@ fn write() {
     if samples.is_empty() && plans.is_empty() && forms.is_empty() {
         return;
     }
+    // What the stored statistics say first (the samples since the model, its age): a run that measured something
+    // read them, or reads them now.
+    ready();
     let _warm = writing();
     if w.is_none() {
         *w = open(&path).ok();
@@ -496,61 +499,91 @@ static READ_DONE: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::s
 /// `start` ran: before it, there is nothing to wait for.
 static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a thread reads the stored
-/// ones and fits the prices, beside the run's preparation; what reads them waits for it (`ready`). Without a store
-/// (`RERAIL_COSTS=off`, or in tests) nothing is kept.
+/// Starts the statistics, once: the executor keeps its samples and a thread writes them. The stored ones are read,
+/// and the prices fitted, when the run first has work to price ([`begin_read`], beside it) or an executor is made
+/// ([`ready`]): a run that evaluates nothing (a warm run with no change) reads none of them. Building the read took
+/// 40 ms of CPU and the machine's name a Metal device, 11 ms of the main thread, in every process (decision 0260).
+/// Without a store (`RERAIL_COSTS=off`) there is nothing to read.
 pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
-        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
-        let done = || {
-            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
-            READ_DONE.1.notify_all();
-        };
         if path().is_none() {
-            done();
             return;
         }
+        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
         sql_plans::enable();
         rerail_accel::score::keep_samples(true);
+        // The first price asked waits for the read, which it begins if the run did not (`ready`).
+        rerail_accel::price::before_first_price(ready);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
-            ready();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 write();
             }
         });
-        // Read beside the run (its preparation reads none of it): a tenth of a second of a cold batch's first run.
-        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
-            crate::code_rule_dsl::logic::profile::behind_the_run();
-            let _ = std::panic::catch_unwind(read);
-            done();
-        });
-        if spawned.is_err() {
-            let _ = std::panic::catch_unwind(read);
-            done();
-        }
         // The statistics' store is rerail's own: outside the file observer (decision 0246).
         if let Some(p) = path() {
             crate::content_store::observe::own(&p);
         }
-        // The upkeep of the statistics' store, and the model's retraining, for the process's life (decision 0190).
-        std::mem::forget(upkeep_jobs());
-        rerail_accel::upkeep::start();
     });
 }
 
-/// Waits until the stored statistics are read, if `start` began reading them: the executors' prices and the SQL
-/// plans' observations are read from here on, before the first wave (decision 0104).
-pub fn ready() {
-    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
-    if *done || !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+/// Reads the stored statistics on a thread of their own, once, if `start` ran: called where the run first knows it
+/// has work the prices are for (a chunk to evaluate, a stratum to run), so the read runs beside that work. The
+/// upkeep of their store and the model's retraining begin with it, for the process's life (decision 0190).
+pub fn begin_read() {
+    static BEGUN: OnceLock<()> = OnceLock::new();
+    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
+    BEGUN.get_or_init(|| {
+        let done = || {
+            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            READ_DONE.1.notify_all();
+        };
+        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
+            crate::code_rule_dsl::logic::profile::behind_the_run();
+            READING.with(|r| r.set(true));
+            let _ = std::panic::catch_unwind(read);
+            done();
+            std::mem::forget(upkeep_jobs());
+            rerail_accel::upkeep::start();
+        });
+        if spawned.is_err() {
+            READING.with(|r| r.set(true));
+            let _ = std::panic::catch_unwind(read);
+            READING.with(|r| r.set(false));
+            done();
+            std::mem::forget(upkeep_jobs());
+            rerail_accel::upkeep::start();
+        }
+    });
+}
+
+/// Waits until the stored statistics are read, if `start` ran, beginning the read if nothing began it
+/// ([`begin_read`]): the executors' prices and the SQL plans' observations are read from here on, before the first
+/// wave (decision 0104).
+/// `true` once they are read, or when there is nothing to read; `false` on the read's own thread, which may ask the
+/// model it is putting in place (its warming, its training) and never waits for itself.
+pub fn ready() -> bool {
+    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+        return true;
+    }
+    if READING.with(std::cell::Cell::get) {
+        return false;
+    }
+    begin_read();
+    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
     while !*done {
         done = READ_DONE.1.wait(done).unwrap_or_else(|p| p.into_inner());
     }
+    true
+}
+
+thread_local! {
+    /// This thread is the read's (`begin_read`).
+    static READING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The statistics' upkeep jobs (decision 0190), registered: their store's SQLite file, and the model's
@@ -764,5 +797,42 @@ pub mod tests {
         }
         rerail_accel::forms::interpreted("test", "a key", "a form", 1);
         super::write();
+    }
+
+    /// A run that evaluates nothing reads no stored statistics (decision 0260): `start` keeps and writes samples
+    /// only, and the read runs once the run has work (`begin_read`) or an executor waits for it (`ready`). A child
+    /// process, as the statistics' state is the process's.
+    #[test]
+    fn a_run_with_no_work_reads_no_cost_statistics() {
+        if std::env::var_os("RERAIL_COSTS_READ_CHILD").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-costs-read-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        drop(super::open(&path).unwrap());
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "code_rule_dsl::logic::costs::tests::a_run_with_no_work_reads_no_cost_statistics_child", "--nocapture", "--test-threads=1"])
+            .env("RERAIL_COSTS_READ_CHILD", "1")
+            .env("RERAIL_COSTS", &path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{:?}\n{}\n{stderr}", out.status, String::from_utf8_lossy(&out.stdout));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The child of `a_run_with_no_work_reads_no_cost_statistics`.
+    #[test]
+    #[ignore = "run by a_run_with_no_work_reads_no_cost_statistics"]
+    fn a_run_with_no_work_reads_no_cost_statistics_child() {
+        if std::env::var_os("RERAIL_COSTS_READ_CHILD").is_none() {
+            return;
+        }
+        super::start();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(super::FITTED.lock().unwrap().is_none(), "read with no work to price");
+        super::ready();
+        assert_eq!(*super::FITTED.lock().unwrap(), Some((0, 0)), "read once an executor waits");
     }
 }
