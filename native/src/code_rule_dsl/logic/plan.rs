@@ -7212,7 +7212,7 @@ pub fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Resu
         given: None,
         kept: BTreeSet::new(),
     };
-    let out = run(&body::Placed::of_program(&lowered.program)?, db, inputs, Some(lowered.lowering()), Hooks::default());
+    let out = run(&lowered.placed()?, db, inputs, Some(lowered.lowering()), Hooks::default());
     super::native::flush_symbols(db)?;
     out
 }
@@ -7684,7 +7684,7 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, 
     connection::run(db,1,||super::native::register(db))?;
     connection::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
-    let out = run(&body::Placed::of_program(&lowered.program)?, db, inputs, Some(lowered.lowering()), hooks);
+    let out = run(&lowered.placed()?, db, inputs, Some(lowered.lowering()), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
     let flush = super::profile::span(|| "flush symbols".into());

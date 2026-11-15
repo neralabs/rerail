@@ -347,7 +347,7 @@ impl Cut {
         }
         program.outputs.retain(|o| !self.clean.contains(o));
         crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        lower::Lowered { program, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
+        lower::Lowered { program, version: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
@@ -1131,7 +1131,7 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {program:p.clone(),version:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
         assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
         let mut changed=inputs.clone();

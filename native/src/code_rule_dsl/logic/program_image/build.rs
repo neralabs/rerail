@@ -12,14 +12,15 @@
 //! ```
 //!
 //! What it makes:
-//! - **a view** when the edit only removes rules of a base or a view, and what is left is few ranges;
+//! - **a view** when the edit only removes rules, and what is left is few ranges (`max_ranges`: a quarter of the
+//!   parent's rules, decision 0244); a view of a view is of that view's parent;
 //! - **an overlay** otherwise: a delta holding only what it adds, numbered after the parent's ids;
 //! - **a fold** when the edit reaches half its parent: a new base of the result, keeping its atom and relation ids.
 //!
 //! A version's digest is made with it, from the parent's and the edit's hashes.
 use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, LitRef, RuleRef, TermRef};
-use super::version::{MAX_RANGES, Made, Version};
+use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
 use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
 use crate::code_rule_dsl::logic::program_facts::Facts;
@@ -428,16 +429,18 @@ impl<'p> Builder<'p> {
     }
 }
 
-/// The view of `parent` (a base or a view) less rules `removed`, if it is few enough ranges.
+/// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
+/// is of that view's parent, its ranges that view's less `removed`.
 fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
-    let (base, ranges): (_, Vec<(u32, u32)>) = match &**parent {
-        Version::Base { image, .. } => (image, vec![(0, image.rules() as u32)]),
-        Version::View { base, ranges, .. } => (base, ranges.clone()),
-        Version::Overlay { .. } => return None,
+    let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
+        Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
+        _ => (parent, vec![(0, parent.rule_end())]),
     };
+    let limit = max_ranges(over.size());
     let mut out = Vec::new();
     let mut gone = removed.iter().peekable();
     let mut digest = parent.digest();
+    let mut size = parent.size();
     for (s, e) in ranges {
         let mut start = s;
         while let Some(&&g) = gone.peek() {
@@ -448,7 +451,10 @@ fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
             if g < start {
                 continue;
             }
-            digest = digest.wrapping_sub(base.rule_hash(g));
+            // A rule `parent` does not have removes nothing (an overlay's parent's removed ids are in its ranges).
+            let Some(rule) = parent.rule(RuleId(g)) else { continue };
+            digest = digest.wrapping_sub(rule.hash());
+            size -= 1;
             if g > start {
                 out.push((start, g));
             }
@@ -457,11 +463,11 @@ fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
         if start < e {
             out.push((start, e));
         }
-        if out.len() > MAX_RANGES {
+        if out.len() > limit {
             return None;
         }
     }
-    Some(Version::view(base, out, digest))
+    Some(Version::view(over, out, size, digest))
 }
 
 /// A rule written term by term: its head, then its body's literals, in order. A rule refused (`finish`'s error) or
@@ -592,6 +598,20 @@ impl Version {
         Builder::on(self)
     }
 
+    /// A part of this version (decision 0244): a view of the rules whose head `rules` takes, and over it an overlay of
+    /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
+    /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
+    pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
+        let mut b = Builder::on(self);
+        b.retain(|r| rules(self.rel_name(r.head().rel())));
+        let (rules, _) = b.finish()?;
+        let mut b = Builder::on(&rules);
+        b.set_inputs(inputs);
+        b.set_outputs(outputs);
+        b.keep_relation_fields(fields.natives, fields.lattice, fields.gates);
+        b.finish_overlay()
+    }
+
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
     /// both programs (a test, the trace's replay); a pass states its edit instead.
     pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {
@@ -649,6 +669,13 @@ impl Version {
         }
         Ok(b)
     }
+}
+
+/// Which relations' fields a part keeps (`Version::part`): its natives', its lattices' and its gates' (by key).
+pub struct PartFields<'f> {
+    pub natives: &'f dyn Fn(&str) -> bool,
+    pub lattice: &'f dyn Fn(&str) -> bool,
+    pub gates: &'f dyn Fn(&str) -> bool,
 }
 
 /// Writes term `t`.

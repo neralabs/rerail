@@ -309,6 +309,18 @@ pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::
     }
 }
 
+/// The program `stored` holds, as `read_stored` reads it, and its version where it is kept as an image (decision
+/// 0244: the parts of a prepared program are made from it).
+pub fn read_stored_version(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), String> {
+    match stored {
+        Stored::Image(bytes) => {
+            let v = crate::code_rule_dsl::logic::program_image::Version::open(bytes)?;
+            Ok((v.program(lists)?, Some(v)))
+        }
+        Stored::Text(text) => Ok((read_in(text, lists)?, None)),
+    }
+}
+
 /// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95), and as its image,
 /// a source by `image_key` (decision 0173): the digest, and the sources written, which the caller names so collection
 /// keeps them. `None` when the text does not read back as `prog`: nothing is kept. An image that does not read back as
@@ -384,4 +396,11 @@ pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_ds
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
     Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
+}
+
+/// `load`, with the program's version where it is kept as an image (`read_stored_version`).
+pub fn load_version(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, Vec<SourceId>)>> {
+    let mut found = texts(store, &[*digest])?;
+    let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
+    Ok(read_stored_version(&stored, lists).ok().map(|(p, v)| (p, v, sources)))
 }

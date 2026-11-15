@@ -188,7 +188,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         None => input_views(&cross.program).into_keys().collect(),
         Some(k) => input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| k.has_old(&a.rel))).map(|(rel, _)| rel).collect(),
     };
-    Ok(Maintained { program: lower::Lowered { program, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
+    Ok(Maintained { program: lower::Lowered { program, version: None, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
 static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

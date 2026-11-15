@@ -401,6 +401,53 @@ impl Builder<'_> {
             self.set_about_rows(name, rows);
         }
     }
+    /// Keeps the natives, lattices and gates of the relations `keep` takes, by kind (decision 0244: a split part's
+    /// fields, as the tree's `natives`, `lattice` and `gates` retained by relation). The gates kept are numbered again
+    /// in their order, as the tree's list writes them; a gate is kept by its key (`Program::gates`' first). A kind
+    /// none of whose rows go is left as the parent's.
+    pub fn keep_relation_fields(&mut self, natives: &dyn Fn(&str) -> bool, lattice: &dyn Fn(&str) -> bool, gates: &dyn Fn(&str) -> bool) {
+        let named = |b: &Self, row: &[Cell], col: usize, keep: &dyn Fn(&str) -> bool| match row.get(col) {
+            Some(&Cell::Str(a)) => keep(b.text(a)),
+            _ => true,
+        };
+        let filter = |b: &mut Self, name: &str, keep: &dyn Fn(&Self, &[Cell]) -> bool| {
+            let rows = b.about_rows(name);
+            let n = rows.len();
+            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| keep(b, r)).collect();
+            if kept.len() != n {
+                b.set_about_rows(name, kept);
+            }
+        };
+        for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
+            filter(self, name, &|b, r| named(b, r, 1, natives));
+        }
+        for name in ["lattice", "lattice_merge", "lattice_widen"] {
+            filter(self, name, &|b, r| named(b, r, 1, lattice));
+        }
+        let main = self.about_rows("gate");
+        let number = |r: &[Cell]| match r.get(1) {
+            Some(&Cell::Int(k)) => Some(k),
+            _ => None,
+        };
+        let mut kept: Vec<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(|r| number(r)).collect();
+        if kept.len() == main.len() {
+            return;
+        }
+        kept.sort_unstable();
+        let again = |k: i64| kept.binary_search(&k).ok().map(|i| i as i64);
+        for name in ["gate", "gate_quiet", "gate_dep", "gate_src"] {
+            let rows: Vec<Vec<Cell>> = self
+                .about_rows(name)
+                .into_iter()
+                .filter_map(|mut r| {
+                    let k = again(number(&r)?)?;
+                    r[1] = Cell::Int(k);
+                    Some(r)
+                })
+                .collect();
+            self.set_about_rows(name, rows);
+        }
+    }
     /// Adds qualifiers `words` (relation, word) to the program's, kept in order of relation then word, each once, as
     /// the tree's map of sets.
     pub fn add_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {

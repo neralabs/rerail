@@ -666,3 +666,28 @@ ported, over the targeted tests and dl1.
        part's rules (constants sit among the file-local rules), and so the keys made of its text (the choices' key, the
        program digests), which must not change.
   - So step 9 waits for that decision; the trees on its path stay. Step 8 is done (above).
+  - Decided (2026-11-15): option 1, decision 0244.
+
+- **Item 7, step 9, E1: done** (2026-11-15). The split's parts are versions of the lowered program's, as decision
+  0244 has them, and a part's run reads its version.
+  - `Version::View` ranges over a parent version, never a view (a view of a view is of its parent); its rules, heads,
+    sources and readers are its parent's filtered by range, a base's read in place as before. The builder's `view`
+    takes any parent, and allows a quarter of the parent's rules as ranges, at least `MAX_RANGES` (`max_ranges`).
+  - `Version::part`: a view of the rules a head predicate keeps, and over it an overlay of the part's inputs, outputs
+    and the natives, lattices and gates of its relations (`Builder::keep_relation_fields`, gates numbered again in
+    order, as the tree writes them), never folded. `file_local::assemble` makes both parts so (`Programs::versions`),
+    from the stored image's version (`program_text::load_version`, `prepared_of`'s `version`), else from an image of
+    the lowered program made once at preparation; a run of a part read the image of its tree, made again each run.
+  - `Lowered::version`, read by `run_atoms` and `run_native_inputs` (`Lowered::placed`); `None` where the run edits
+    the part's tree (the cross memo's split, the cone of requests, the run's constants, `keep_copies`,
+    `drop_guards`, `supports`, `maintained_cross`), which E2 and E3 port: those runs make the image of their tree,
+    as before.
+  - Found on the way: an overlay's `.about` rows hid its parent's fact relations of the same name in `all_facts` (a
+    program's facts named `tape_column`, beside its about rows of that name); only fact relations hide now.
+  - Still trees, and why: the split's analyses and the parts' trees beside their versions (the program digests,
+    `memo::program_digest`, `cross_digest`, until decision 0173 step 6; `constant_relations`, the cone of requests,
+    the cross memo's split read the tree); the run's `shared_split.clone()` copies them.
+  - Checked: a temporary oracle in `Lowered::placed` (the version's program the image of the tree, by digest) over
+    the engine's pre-commit filters and the corpus tests, then removed; logic `plan::`; dl1 (alternately with the
+    baseline engine, load about 50 to 110): the same 48 findings cold and warm; cold 46.2 and 49.0 G instructions
+    against 49.1 and 50.1 G, warm 2.7 G on both.
