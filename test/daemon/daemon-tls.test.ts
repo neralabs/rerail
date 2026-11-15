@@ -82,11 +82,11 @@ describe("daemon transport arguments", () => {
 describe("TLS daemon", () => {
   let root: string;
   const daemons: RerailDaemon[] = [];
-  const leaseHolders: ChildProcess[] = [];
+  const fileHolders: ChildProcess[] = [];
   const originalRerailHome = process.env.RERAIL_HOME;
 
   afterEach(async () => {
-    for (const holder of leaseHolders.splice(0)) holder.kill();
+    for (const holder of fileHolders.splice(0)) holder.kill();
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
@@ -122,12 +122,54 @@ describe("TLS daemon", () => {
     // 1024 is F_SETLEASE on Linux, which older Pythons do not name.
     const script = "import fcntl, os, signal, sys, time\nsignal.signal(signal.SIGIO, signal.SIG_IGN)\n"
       + "fcntl.fcntl(os.open(sys.argv[1], os.O_RDONLY), 1024, fcntl.F_WRLCK)\nprint('held', flush=True)\ntime.sleep(60)\n";
-    const holder = spawn("python3", ["-c", script, file], { stdio: ["ignore", "pipe", "pipe"] });
-    leaseHolders.push(holder);
+    return await holdWith(spawn("python3", ["-c", script, file], { stdio: ["ignore", "pipe", "pipe"] }));
+  }
+
+  /**
+   * A PowerShell process holding an oplock on `file` that caches reads, writes and the handle, as Windows' SMB server
+   * holds one for a client that caches the file: another process's open that reads the file waits for the holder to
+   * acknowledge the break, which this one never does, until it ends. Resolves with "held", or with why it could not.
+   */
+  async function holdOplock(file: string): Promise<string> {
+    // FSCTL_REQUEST_OPLOCK (0x90240) on a handle opened for overlapped reads; the request stays pending while it holds.
+    const script = String.raw`$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+public static class Oplock {
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool DeviceIoControl(SafeFileHandle file, uint code, IntPtr input, uint inputSize, IntPtr output, uint outputSize, IntPtr returned, IntPtr overlapped);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern IntPtr CreateEventW(IntPtr security, bool manualReset, bool initialState, IntPtr name);
+  public static SafeFileHandle Held;
+  public static string Hold(string path) {
+    Held = CreateFileW(path, 0x80000000, 7, IntPtr.Zero, 3, 0x40000000, IntPtr.Zero);
+    if (Held.IsInvalid) return "open failed: " + Marshal.GetLastWin32Error();
+    IntPtr input = Marshal.AllocHGlobal(12), output = Marshal.AllocHGlobal(24), overlapped = Marshal.AllocHGlobal(32);
+    for (int at = 0; at < 32; at += 4) { if (at < 24) Marshal.WriteInt32(output, at, 0); Marshal.WriteInt32(overlapped, at, 0); }
+    Marshal.WriteInt16(input, 0, 1); Marshal.WriteInt16(input, 2, 12); Marshal.WriteInt32(input, 4, 7); Marshal.WriteInt32(input, 8, 1);
+    Marshal.WriteInt16(output, 0, 1); Marshal.WriteInt16(output, 2, 24);
+    Marshal.WriteIntPtr(overlapped, 24, CreateEventW(IntPtr.Zero, true, false, IntPtr.Zero));
+    bool done = DeviceIoControl(Held, 0x90240, input, 12, output, 24, IntPtr.Zero, overlapped);
+    return !done && Marshal.GetLastWin32Error() == 997 ? "held" : "oplock refused: " + Marshal.GetLastWin32Error();
+  }
+}
+'@
+[Oplock]::Hold($env:RERAIL_TEST_HELD_FILE)
+Start-Sleep 60`;
+    return await holdWith(spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: { ...process.env, RERAIL_TEST_HELD_FILE: file }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+    }));
+  }
+
+  /** Resolves with the first line `holder` prints, or with why it ended first; it is ended after the test. */
+  async function holdWith(holder: ChildProcess): Promise<string> {
+    fileHolders.push(holder);
     let said = "";
-    holder.stderr.on("data", (chunk: Buffer) => { said += chunk.toString(); });
-    const held = once(holder.stdout, "data").then(([chunk]) => String(chunk).trim());
-    const ended = once(holder, "close").then(() => `python3 ended: ${said.trim()}`, (error: Error) => `python3 did not start: ${error.message}`);
+    holder.stderr?.on("data", (chunk: Buffer) => { said += chunk.toString(); });
+    const held = once(holder.stdout!, "data").then(([chunk]) => String(chunk).trim());
+    const ended = once(holder, "close").then(() => `it ended: ${said.trim()}`, (error: Error) => `it did not start: ${error.message}`);
     return await Promise.race([held, ended]);
   }
 
@@ -240,12 +282,35 @@ describe("TLS daemon", () => {
       if (lease !== "held") skip(`python3 could not hold a lease here: ${lease}`);
       // An open that waited for the lease would hold the start past `rerail daemon start`'s 15 s wait, and the daemon
       // would serve this computer after the start reported failure. Main refuses the key without opening either file.
+      const started = performance.now();
       const refused = loadDaemonTls(files);
       await expect(refused).rejects.toThrow(`${files.keyFile} is open to other users (mode 0644)`);
       await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
-      for (const holder of leaseHolders.splice(0)) holder.kill();
+      expect(performance.now() - started).toBeLessThan(1_000);
+      for (const holder of fileHolders.splice(0)) holder.kill();
     }
   }, 5_000);
+
+  it.skipIf(process.platform !== "win32")("stops the start within seconds, as main does, when another program holds an oplock on the key others can read or on its certificate", async ({ skip }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    for (const held of [files.keyFile, files.certFile]) {
+      const oplock = await holdOplock(held);
+      if (oplock !== "held") skip(`PowerShell could not hold an oplock here: ${oplock}`);
+      // No open skips the wait for an oplock's holder to give up its write cache, and this one never does: the start
+      // stops waiting after its bound and refuses the key as main does, which reads only the key's ACL.
+      const started = performance.now();
+      const refused = loadDaemonTls(files, shared);
+      await expect(refused).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
+      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+      expect(performance.now() - started).toBeLessThan(5_000);
+      for (const holder of fileHolders.splice(0)) holder.kill();
+    }
+  }, 30_000);
 
   it("reads at most a mebibyte of a key others can read and of its certificate, so a huge file gets main's refusal at once", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
