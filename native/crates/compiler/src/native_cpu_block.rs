@@ -2260,6 +2260,38 @@ enum RuleMode {
 /// one (`RuleMode::Short`): its key in the calls, `LONG_CALL | rule`.
 const LONG_CALL: u16 = 0x0400;
 
+/// A rule function's results in two words (`rule_fn`), where every reader's tag fits: the
+/// last and the tag, `(last + 1) | (tag + 1) << 32`, and the hits with the refusal as their
+/// sign bit, `hits | refuse & 1 << 63`. Two words come back in two registers, as a lexer's
+/// function returns its token; four went through memory, a store each in the callee and a
+/// load each in the loop. A last is a record's `u32` (or `-1`), a tag a code (a `u32`, `-1`
+/// for none), a hit a mark's bit (`records::check_hits`, a `u32`).
+fn packs(r: &crate::records::Records) -> bool {
+    r.readers.iter().all(|x| x.retag.is_none_or(|(kind, marks)| (u64::from(kind) | u64::from(marks) << crate::records::MARK_SHIFT) < u64::from(u32::MAX)))
+}
+
+/// A rule function's four results packed (`packs`).
+fn pack_rule(f: &mut FunctionBuilder<'_>, l: Value, refuse: Value, tag: Value, hits: Value) -> [Value; 2] {
+    let l1 = f.ins().iadd_imm(l, 1);
+    let t1 = f.ins().iadd_imm(tag, 1);
+    let t1 = f.ins().ishl_imm(t1, 32);
+    let a = f.ins().bor(l1, t1);
+    let sign = f.ins().band_imm(refuse, i64::MIN);
+    let b = f.ins().bor(hits, sign);
+    [a, b]
+}
+
+/// A packed rule function's results (`pack_rule`) as its four: the refusal is the second
+/// word, as only its sign is read.
+fn unpack_rule(f: &mut FunctionBuilder<'_>, a: Value, b: Value) -> [Value; 4] {
+    let l1 = f.ins().band_imm(a, 0xffff_ffff);
+    let l = f.ins().iadd_imm(l1, -1);
+    let t1 = f.ins().ushr_imm(a, 32);
+    let tag = f.ins().iadd_imm(t1, -1);
+    let hits = f.ins().band_imm(b, 0xffff_ffff);
+    [l, b, tag, hits]
+}
+
 /// The arms whose reads `read_fn` joins with their rule's count tests: a closer, and its
 /// tests' masks, the bytes make.
 fn read_fused(bw: &crate::native_cpu_bytes::Bytewise<'_>, a: &crate::records::ReadArm, tests: &[crate::records::TokenCheck]) -> bool {
@@ -2402,7 +2434,12 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
     let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, &mut heads);
-    f.ins().return_(&[l, refuse, tag, hits]);
+    if packs(r) {
+        let got = pack_rule(&mut f, l, refuse, tag, hits);
+        f.ins().return_(&got);
+    } else {
+        f.ins().return_(&[l, refuse, tag, hits]);
+    }
     f.seal_all_blocks();
     f.finalize();
     let own: Vec<cranelift_codegen::ir::UserExternalName> = calls.iter().map(|x| cranelift_codegen::ir::UserExternalName::new(0, x.1.as_u32())).chain(carries.iter().cloned()).collect();
@@ -2773,7 +2810,11 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             let signature = f.import_signature(sig.clone());
             let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
             let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
-            let got: Vec<BlockArg> = f.inst_results(call).iter().map(|&v| v.into()).collect();
+            let mut got = f.inst_results(call).to_vec();
+            if packs(r) {
+                got = unpack_rule(f, got[0], got[1]).to_vec();
+            }
+            let got: Vec<BlockArg> = got.iter().map(|&v| v.into()).collect();
             f.ins().jump(done, &got);
             continue;
         }
@@ -3763,6 +3804,12 @@ const STATE_WORDS: usize = 6;
 /// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
 const GAP_FLAG: i64 = 1 << 62;
 
+/// In the marks so far (`pending`): the cursor's block is read again from the cursor, as a run
+/// of pairs goes on across the token's end (`record_tokens`' `chained`), set by the token and
+/// cleared by the refill. Without it, a refill whose cursor's block the token before started in
+/// reads the next block: that one's starts are spent. Past every mark's bit.
+const REREAD_FLAG: i64 = i64::MIN;
+
 /// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
 /// `(mark, output)`, a gap mark of its mask alone (no token test, no `else escape`, not the
 /// extras'), made from the bytes. The token loop sets none of them; tier 2 reads the mask from
@@ -4046,6 +4093,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // (decision 0177), so `from` is in the token's block: its test in the registers, as the
     // lean lexer's window has its masks. Where the bytes make the words, waiting on no block.
     let mut folded = false;
+    // Whether a refill reads the block after a spent one (`REREAD_FLAG`): with the lean
+    // lexer's starts, the marks folded, in one part.
+    let mut skips = false;
     match walked {
         Some(o) => {
             // The next start, the first of the block's left (`cand`); none left, the cursor's
@@ -4053,6 +4103,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let cand = h[STATE_WORDS];
             let refill_limit = if rd.bytewise(o) && outs.iter().all(|&k| rd.bytewise(k)) { None } else { limit };
             folded = !lift.is_empty() && refill_limit.is_none();
+            skips = folded && lean.is_some();
             let (from_cand, refill, from_word) = (f.create_block(), f.create_block(), f.create_block());
             f.append_block_param(from_word, types::I64);
             f.append_block_param(from_word, types::I64);
@@ -4077,16 +4128,33 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             f.append_block_param(more, types::I64);
             f.append_block_param(more, types::I64);
             f.append_block_param(more, types::I64);
-            let q0 = f.ins().ushr_imm(h[1], 6);
+            let qc = f.ins().ushr_imm(h[1], 6);
             let sh = f.ins().band_imm(h[1], 63);
             let ones = f.ins().iconst(types::I64, -1);
-            let m0 = f.ins().ishl(ones, sh);
+            let mc = f.ins().ishl(ones, sh);
+            // The cursor's block read already: the token before started in it, so its starts
+            // are spent (a token past it moves the cursor on). The next block then, whole, as
+            // the lean lexer's next window; not this one again from the cursor. But where the
+            // token before asks it (`REREAD_FLAG`: pairs on across its end), this one from
+            // the cursor. Where the loop does not skip (`skips`), it reads it again.
+            let fr = c.after_last_start(f, h[0]);
+            let h3 = f.ins().band_imm(h[3], !REREAD_FLAG);
+            let (q0, m0) = if skips {
+                let qc64 = f.ins().ishl_imm(qc, 6);
+                let spent = f.ins().icmp(IntCC::UnsignedGreaterThan, fr, qc64);
+                let reread = f.ins().icmp_imm(IntCC::SignedLessThan, h[3], 0);
+                let reread = f.ins().bnot(reread);
+                let here = f.ins().band(spent, reread);
+                let qn = f.ins().iadd_imm(qc, 1);
+                (f.ins().select(here, qn, qc), f.ins().select(here, ones, mc))
+            } else {
+                (qc, mc)
+            };
             // The gap marks' bits before the cursor's block (a token across blocks): by the
             // bytes, a word at a time, cold. Then from the cursor's block, each passed one's.
             let acc0 = if folded {
                 let q064 = f.ins().ishl_imm(q0, 6);
                 let before = f.ins().iadd_imm(q064, -1);
-                let fr = c.after_last_start(f, h[0]);
                 marks_in(f, &rd, c, &lift, fr, before, None, false, heads)
             } else {
                 zero
@@ -4099,9 +4167,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let (pend_q, from_q) = if folded {
                 let q64 = f.ins().ishl_imm(q, 6);
                 let fr = c.after_last_start(f, h[0]);
-                (f.ins().bor(h[3], acc), f.ins().umax(fr, q64))
+                (f.ins().bor(h3, acc), f.ins().umax(fr, q64))
             } else {
-                (h[3], h[4])
+                (h3, h[4])
             };
             // From the bytes, the block's words wait on no block (`Reads`).
             // From the bytes, no block past the file's last.
@@ -4587,6 +4655,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let k1 = c.step(f, cv[0]);
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.
+    // The marks so far flagged where the refill reads this block again (`REREAD_FLAG`).
+    let mut reread: Option<Value> = None;
     if let Some(g) = &regs {
         let left = if let (true, Some(_)) = (common, lean) {
             // A fused rule's token covers no start after its own (`lean_starts`): its bit
@@ -4613,8 +4683,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let put = f.ins().bor(left, back);
                 left = if chained {
                     // A run of pairs across the token's end: their order is read again from the
-                    // byte after it, by a refill.
+                    // byte after it, by a refill of this block (`REREAD_FLAG`).
                     let across = f.ins().band(pl, bit);
+                    if skips {
+                        let flagged = f.ins().bor_imm(pending, REREAD_FLAG);
+                        reread = Some(f.ins().select(across, flagged, pending));
+                    }
                     f.ins().select(across, zero, put)
                 } else {
                     put
@@ -4625,6 +4699,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let same = f.ins().icmp(IntCC::Equal, qa, qs);
             f.ins().select(same, left, zero)
         };
+        if let Some(p) = reread {
+            back[3] = p.into();
+        }
         back.push(left.into());
         back.extend(g.runs.iter().map(|&(_, v)| BlockArg::from(v)));
     }
@@ -5291,7 +5368,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let t = records.map(|(_, t, _)| t).expect("records");
         for k in (0..rec.rules.len()).filter(|&k| k < 0xff && rule_bytewise(rec, &bytewise, k)) {
             let mut sig = words_signature(module, 6);
-            for _ in 0..4 {
+            for _ in 0..if packs(rec) { 2 } else { 4 } {
                 sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
             }
             let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;

@@ -128,11 +128,21 @@ fn a_short_tokens_function_calls_only_its_whole() {
     let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules).expect("compiles");
     let ir = &c.parser.tier1.ir;
     let calls = rerail_compiler::native_cpu_block::calls_of;
-    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && f.signature.returns.len() == 4).filter(|(_, f)| {
+    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && matches!(f.signature.returns.len(), 2 | 4)).filter(|(_, f)| {
         let made = calls(f);
         made.first().is_some_and(|&one| made.iter().all(|&x| x == one) && ir.iter().any(|(id, g)| *id == one && g.signature == f.signature))
     });
     assert!(short.count() >= 3, "a number's, a comment's and a string's short functions");
+}
+
+/// A rule's function returns its token in two words (`native_cpu_block::pack_rule`): two
+/// registers, as a lexer's function returns its token, not four words through memory.
+#[test]
+fn a_rules_function_returns_two_words() {
+    let src = include_str!("tier1_aot.rs");
+    let six = "a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64)";
+    assert!(src.contains(&format!("{six} -> (u64, u64) {{")), "no rule function of two words");
+    assert!(!src.contains(&format!("{six} -> (u64, u64, u64, u64) {{")), "a rule function of four words");
 }
 
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU

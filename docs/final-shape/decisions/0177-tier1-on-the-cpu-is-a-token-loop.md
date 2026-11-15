@@ -1518,36 +1518,54 @@ Tried and dropped along the way:
   and more of the loop's values spill.
 - Not marking the rule calls cold. rustc's code did not change.
 
-## A spent block is read twice (open)
+## A spent block is read once; a rule returns two words
 
-**Intro.** A lexer that reaches the end of a block's tokens reads the
-next block. Ours reads the cursor's block again first. When a block's
-starts run out, the refill classifies the block holding the cursor,
-from the cursor. After a token that ends inside its block, that is
-the same block, so the pass finds nothing past the token. Only then
-is the next block classified. Lean's loop moves on to its next window.
+**Intro.** A lexer that reaches the end of a window's tokens reads
+the next window, and a lexer's function returns its token in
+registers. Ours did neither. When a block's starts ran out, the
+refill classified the cursor's block again from the cursor. After a
+token that ends inside its block that is the same block, and the
+pass found nothing. A rule's function returned four words, which
+Rust passes through memory: four stores in the callee, a vector
+load and lane moves in the loop.
 
-Counted by stepping the loop one instruction at a time, on a line of
-one word and 63 spaces (one token a block): 471 instructions a block.
-That is 27 to 42 for the token, then 218 for the empty pass and 184
-for the next block. A block with no token costs 207. Lean costs 327
-for the same line.
+**The changes.**
 
-**Tried.** At the refill, read the next block whole where the token
-before started in the cursor's block, unless a run of pairs goes on
-across that token's end. A flag in the marks so far (`pending`'s
-sign bit) marks that case for the refill. The one-token line went
-483→357. But every word and punctuation token got 4 to 5 instructions
-longer (46→50 for a short word, five stack accesses where there were
-three, and two more branches). Words went +3, punctuation +4 and
-numbers +8. The first attempt, which tested the pair word at the
-refill, kept that word live into the refill and spilled the record
-pointer (+5 a token). Both were dropped.
+- The refill reads the next block whole where the token before
+  started in the cursor's block, since that block's starts are
+  spent (`skips`). One case reads the block again from the cursor:
+  a run of pairs going on across another rule's token's end. The
+  token sets a flag for it in the marks so far (`REREAD_FLAG`, their
+  sign bit, next to `GAP_FLAG`), and the refill clears it. No test
+  reaches that case: no `.rr` token ends in a pair's first byte with
+  pairs chained, and a mutation that never sets the flag passes.
+- A rule's function returns `(last + 1) | (tag + 1) << 32` and
+  `hits | refusal << 63` (`pack_rule`), where every reader's tag
+  fits in 32 bits (`packs`). The loop unpacks them; only the
+  refusal's sign is read.
 
-The same thing blocked the two-register return. The loop has more
-values live across its rule calls than the callee-saved registers
-hold, so any change in it moves rustc's spills about the token path.
-Lean's loop spills too (two loads a token, its word and pair masks),
-so the spills themselves are not the difference. What differs is
-how far a change in a cold part moves the hot path. Changes inside
-the rule functions (the string gates) did not move it.
+Stepped by instruction, a block holding one token: 471 → 349, one
+refill where there were two. The loop's calls now have no result
+slot and no vector reloads (none of either in `f0`), and the short
+number function ends `add x0 …; orr x1 …; ret`.
+
+`the_cpus_records_are_the_interpreters` has a token alone in its
+block followed by spaces to and past the block's end, after words,
+strings, comments, pairs and floats. `a_rules_function_returns_two_words`
+checks the generated source.
+
+Counts, reported, not the criterion. rustc placed the token path's
+spills differently, and that path is now longer:
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 97.4 | 104.1 | 97.9 |
+| Punctuation | 54.3 | 61.6 | 53.5 |
+| Mixed | 58.6 | 64.6 | 63.1 |
+| Strings | 285.3 | 288.5 | 240.6 |
+| Numbers | 167.8 | 171.9 | 107.3 |
+| Comments | 263.4 | 265.2 | 193.3 |
+
+Still apart from lean: the spent block's gap marks are re-read by
+the bytes (`marks_in`, a call a block), and the token path has more
+stack accesses than lean's two loads.

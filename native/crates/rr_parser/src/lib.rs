@@ -1736,6 +1736,14 @@ pub mod tests {
                 inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
             }
         }
+        // A token alone in its block, then spaces to and past the block's end (a spent block:
+        // the refill reads the next one), after a word, a string, a comment and pairs.
+        for gap in [1usize, 30, 61, 62, 63, 64, 65, 126, 127, 128] {
+            for t in ["x", "\"s\"", "/* c */", "=>", "\"s\"=>=>", "1.5"] {
+                inputs.push(format!("{t}{}y=>=.\n", " ".repeat(gap)).into_bytes());
+                inputs.push(format!("{}{t}{}y.\n", " ".repeat(gap), " ".repeat(gap)).into_bytes());
+            }
+        }
         // A long string with none: no test's function.
         for n in [64usize, 65, 127, 128, 129, 200] {
             inputs.push(format!("a(\"{}\", 1).\n", "s".repeat(n)).into_bytes());
