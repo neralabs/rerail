@@ -212,12 +212,12 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
 
 export interface AsIsOpenOptions {
   /**
-   * False for a reader that has another place to ask, which then gives up at once where another process holds the
-   * file: its statements wait on no lock (`SQLITE_BUSY` at the first read that meets one), and on Windows a file that
-   * Windows refuses to open now is refused before SQLite opens it ({@link openableNow}). True, the default, waits as
-   * every connection does.
+   * True for a reader beside a running daemon, which it asks instead where this open cannot read the file whole and at
+   * once: its statements wait on no lock (`SQLITE_BUSY` at the first read that meets one), and a file without its WAL
+   * or the WAL's index, or on Windows one of the three that Windows refuses to open now, is refused before SQLite opens
+   * it ({@link wholeNow}). False, the default, opens as every connection does and waits as every connection waits.
    */
-  wait?: boolean;
+  besideDaemon?: boolean;
 }
 
 /**
@@ -229,7 +229,7 @@ export interface AsIsOpenOptions {
 export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = {}): RerailDatabase {
   const migrations = RERAIL_MIGRATIONS;
   const supported = schemaVersionOf(migrations);
-  const database = options.wait === false ? openReadOnlyAtOnce(path, supported) : openChecked(path, true, migrations, supported);
+  const database = options.besideDaemon === true ? openReadOnlyAtOnce(path, supported) : openChecked(path, true, migrations, supported);
   const upgrade = upgradeBeforeReading(path, database, migrations);
   if (upgrade === undefined) return database;
   database.$client.close();
@@ -240,22 +240,28 @@ export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = 
 }
 
 /**
- * Throws at once where Windows refuses to open the file at `path` now: another program holds it without sharing, or
- * this user may not read it. SQLite's own open retries such a refusal for about 1.4 s, which no busy timeout bounds.
- * Elsewhere it does nothing: SQLite's open there fails at once, and on POSIX closing a descriptor of a database file
- * would drop every lock SQLite holds on it in this process.
+ * Throws at once where the database at `path` cannot be read whole and at once beside a running daemon. The daemon's
+ * open connection keeps the WAL and the WAL's index (`-wal`, `-shm`) beside the file, so a missing one was removed from
+ * under it: SQLite would make new empty ones and read the file alone, without what the daemon wrote since its last
+ * checkpoint. On Windows each of the three must also open now: another program may hold one without sharing, or this
+ * user may not read it, and SQLite's own open retries such a refusal for about 1.4 s, which no busy timeout bounds.
+ * Elsewhere SQLite's open fails at once, and on POSIX closing a descriptor of a database file would drop every lock
+ * SQLite holds on it in this process.
  */
-function openableNow(path: string): void {
-  if (process.platform === "win32") closeSync(openSync(path, "r"));
+function wholeNow(path: string): void {
+  const companions = [`${path}-wal`, `${path}-shm`];
+  const missing = companions.find(file => !existsSync(file));
+  if (missing !== undefined) throw new Error(`${missing} is missing beside the database a daemon holds open`);
+  if (process.platform === "win32") for (const file of [path, ...companions]) closeSync(openSync(file, "r"));
 }
 
 /**
- * `openChecked`'s read-only steps over a connection that waits on no lock, after {@link openableNow}: a file that is
- * not SQLite and a stamp this build cannot read are refused as `openChecked` refuses them. Its own function, so
+ * `openChecked`'s read-only steps over a connection that waits on no lock, after {@link wholeNow}: a file that is not
+ * SQLite and a stamp this build cannot read are refused as `openChecked` refuses them. Its own function, so
  * `openChecked`, which every other open goes through, stays as it is.
  */
 function openReadOnlyAtOnce(path: string, supported: number): RerailDatabase {
-  openableNow(path);
+  wholeNow(path);
   let database: RerailDatabase;
   try {
     database = connectSqlite(path, true, 0);
