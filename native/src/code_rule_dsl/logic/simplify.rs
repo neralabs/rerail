@@ -1669,6 +1669,13 @@ fn canonical(rule: &Rule, label: &dyn Fn(&str) -> Name, names_made: &CanonicalNa
     Rule { head, body: body.into() }.to_string()
 }
 
+/// A rule as `congruence` compares it (`canonical`): its relations named by `label`, its variables numbered in order
+/// of first appearance in every position (atoms, comparisons, aggregates' `over` and `by`, `nearest`, AST matches),
+/// its head `@`. For a check of what `merge_identical` left (the dropping test's widened copies).
+pub fn canonical_rule(rule: &Rule, label: &dyn Fn(&str) -> Name) -> String {
+    canonical(rule, label, &CanonicalNames::new())
+}
+
 /// The names `canonical` writes, made once by its caller: the variables `v0`, `v1`, …, the head's `@`, and the
 /// placeholder of the relations a template reads.
 struct CanonicalNames {

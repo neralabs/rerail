@@ -155,6 +155,21 @@ into notes once the queue is done).
     `combine_read` (against `COMBINING`); `RERAIL_SOURCES_PHASE` is keyed through the facts it adds,
     `RERAIL_DUMP_PROGRAMS` and `RERAIL_TIMELINE` change nothing. `keeps.rs` is the plan's, not preparation's (Q14).
     `native_stratum_`: nothing found.
+  - *Review 5* (0442f34dd; by me, the user stopped subagents): (1) `RERAIL_SHOWN_COPIES` changes the rules
+    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rr` lowering
+    `combine_read`'s `rr::parse` runs reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and,
+    through `syntax::definition_ids`, `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`), and `combine_read`
+    itself `RERAIL_SAME` (`same_relations`): all change the combined program, kept in memory and in the store
+    without them; (3) `RERAIL_INLINE` and `RERAIL_INLINE_ONLY` were in `PREPARING` though only `keeps.rs` reads
+    them (plan time, keyed by `choices::key`): a session went cold for nothing; (4) the guard saw neither callees
+    nor helpers. Fixed: `COMBINING` holds the five switches that change combining (libraries, requests, scope
+    guards, node sources, raw order, node ids, same); the store's combined plan (`combined.rs`) reads it too;
+    `PREPARING` gains `RERAIL_SHOWN_COPIES` and loses the two plan-time switches. The guard checks combining code
+    (`logic/rr`, `front`, `scoping.rs`, `combine_read`) against `COMBINING` and preparing code (the passes,
+    `run_observed`'s region and the modules it calls: hiding, memo, prepared, session, profile, costs) against
+    both; a short function of the tree that names a switch (unique name) counts as read where it is called; and a
+    listed switch must be read in combining, preparing or what hangs off the prepared key (`run_observed`,
+    `facts/vtab/syntax.rs`). Verified live under Relax (9/9) and under cargo.
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -225,6 +240,11 @@ into notes once the queue is done).
     attribute; test `an_unread_relation_names_its_own_copys_class_only` (with the near name `same_q`). Not changed:
     a copy's name has no program prefix, so a class holding one never takes the shared-namespace arm; a copy whose
     source has no rules is not "left with its relation's own rules" (Done-when).
+  - *Review 5* (0442f34dd; by me): the comparison renamed only `Var("…")` and an aggregate's `var`, not `over`,
+    `Join`'s `by`, `nearest` or AST matches, so an equal copy differing there still dropped out unchecked. It now
+    compares as `congruence` does, `simplify::canonical_rule` (the engine's own canonical form). The exact copy
+    name and the new test hold: under the suffix rule `same_q` would name the class and `out` read it, which the
+    test refuses. Verified live under Relax (9/9) and under cargo.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -361,7 +381,27 @@ program, not the plans.
 - **Done when**: each switch the plan reads is either in the plan cache's key or shown not to change a kept plan
   (a session that turns one on mid-run gets the plans it asks for), with a guard like Q2's over `plan.rs` and
   `plan/`.
-- **Record**: —
+- **Record**: closed, no defect. `keeps::choose`'s choices are reused through `choices::key` (plan.rs 8867,
+  `choices::lookup`), which hashes `RERAIL_INLINE`, `RERAIL_INLINE_ONLY` and `RERAIL_OBSERVED_STEPS`
+  (choices.rs 70). `PlanKey` keys join plans, not what a relation keeps. The cost model (`RERAIL_COSTS`) steers
+  choices that keep the program's meaning (plan.rs 8865): a stale one costs time, not results.
+
+### Q15. Relax runs killed by macOS on a warm `target/relax`
+
+(Found running Relax, 2026-11-15.) A warm `relax test` stops at a native build script or at `relax` itself,
+SIGKILLed: `syspolicyd` logs "Unable (errno: 2) to read file … for pid N" then "Terminating process due to
+Malware rejection" (kernel: "ASP: Security policy would not allow process"). Relax hard-links its own binary for
+every program it starts, build scripts included (`selfexe.rs` 198, `link_loader`): the installed `bin/relax` had
+209 links, every `cargo-target*/release/build/*/build_script_build-*` among them. When cargo replaces a build
+script it deletes one of those links; the exec scan of the shared file can then resolve it by the deleted name,
+fail to read it, and kill the process. Not load: 200 concurrent starts of `bin/relax` and of a link pass. A cold
+run has no stale link to delete, which is why `relax clean` (AGENTS.md) and the farm's cold check (419610c9a)
+pass.
+
+- **Done when**: Relax's links to its loader are APFS clones (`clonefile`: their own file, the loader's blocks)
+  where they would be hard links on macOS, or the farm's owner chooses another fix; a warm run after a build
+  script change passes. This is the pinned Relax's code (`scripts/dev/relax`), the farm branch's.
+- **Record**: workaround in use: `relax clean` before a session whose build scripts changed.
 
 ## Questions for the user
 

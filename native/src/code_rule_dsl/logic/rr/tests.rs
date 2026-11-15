@@ -3477,34 +3477,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
                 at.to_owned()
             };
-            let variable = regex::Regex::new(r#"Var\("([^"]+)"\)|var: "([^"]+)""#).unwrap();
+            // Each as `congruence` compares rules (`simplify::canonical_rule`): up to variable names in every position,
+            // as `simplify` renames inlined variables apart with one counter for the whole program (`_f<k>`, `_t<k>`).
             let rules_as = |rel: &str, same: &BTreeSet<String>| {
-                let name = |n: &str| if same.contains(n) { source(n) } else { n.to_owned() };
-                p.rules
-                    .iter()
-                    .filter(|x| x.head.rel == rel)
-                    .map(|x| {
-                        let mut x = x.clone();
-                        x.head.rel = name(&x.head.rel).as_str().into();
-                        for l in x.body.make_mut().iter_mut() {
-                            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                                a.rel = name(&a.rel).as_str().into();
-                            }
-                        }
-                        // Up to variable names: `simplify` renames inlined variables apart with one counter for the
-                        // whole program (`_f<k>`, `_t<k>`), so a copy and its relation inlining one filter differ there.
-                        let text = format!("{x:?}");
-                        let mut vars: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                        variable
-                            .replace_all(&text, |c: &regex::Captures| {
-                                let name = c.get(1).or(c.get(2)).unwrap().as_str().to_owned();
-                                let n = vars.len();
-                                let k = *vars.entry(name).or_insert(n);
-                                if c.get(1).is_some() { format!("Var(\"v{k}\")") } else { format!("var: \"v{k}\"") }
-                            })
-                            .into_owned()
-                    })
-                    .collect::<BTreeSet<_>>()
+                let label = |n: &str| front::Name::new(&if same.contains(n) { source(n) } else { n.to_owned() });
+                p.rules.iter().filter(|x| x.head.rel == rel).map(|x| crate::code_rule_dsl::logic::simplify::canonical_rule(x, &label)).collect::<BTreeSet<_>>()
             };
             let mut same: BTreeSet<String> = p.decls.keys().filter(|w| source(w) != w.as_str()).map(|w| w.to_string()).collect();
             loop {

@@ -78,11 +78,23 @@ pub mod world;
 pub mod connections;
 pub mod reuse;
 
-/// The switches that change the combined program (`combine_read`): its key (`texts_digest`) holds their values, so a
-/// combined program kept or stored under one value is not another's (`RERAIL_LIBRARIES=copied`,
-/// `RERAIL_REQUESTS=copied`: the copies to compare; `RERAIL_SCOPE_GUARDS=off`, decision 0091's measurement). Every
-/// prepared key holds the combined program's.
-pub const COMBINING: &[&str] = &["RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"];
+/// The switches that change the combined program (`combine_read`, with the `.rr` lowering its `rr::parse` runs): its
+/// key (`texts_digest`, in memory and in the store) holds their values, so a combined program kept or stored under
+/// one value is not another's. Every prepared key holds the combined program's.
+pub const COMBINING: &[&str] = &[
+    // `combine_read`: the copies to compare (`=copied`) and decision 0091's measurement (`scoping::guard`).
+    "RERAIL_LIBRARIES",
+    "RERAIL_REQUESTS",
+    "RERAIL_SCOPE_GUARDS",
+    // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
+    // (`front::finish`'s `order_nodes`).
+    "RERAIL_NODE_SOURCES",
+    "RERAIL_ORDER_RAW",
+    // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
+    "RERAIL_NODE_IDS",
+    // Identical relations merged (`same_relations`, in combining and again in preparing).
+    "RERAIL_SAME",
+];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
@@ -91,13 +103,10 @@ pub const COMBINING: &[&str] = &["RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RER
 /// (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
-    "RERAIL_NODE_SOURCES",
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
     "RERAIL_NODE_ANCHORS",
-    "RERAIL_NODE_IDS",
     "RERAIL_NEAREST_BUFFERS",
-    "RERAIL_ORDER_RAW",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
     "RERAIL_CROSS_MEMO",
@@ -112,10 +121,9 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_DEMAND",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
-    "RERAIL_SAME",
     "RERAIL_RULE_ORDER",
-    "RERAIL_INLINE",
-    "RERAIL_INLINE_ONLY",
+    // Guests' copies kept unfolded (`hiding::fold_own`).
+    "RERAIL_SHOWN_COPIES",
 ];
 
 pub mod phase0;
