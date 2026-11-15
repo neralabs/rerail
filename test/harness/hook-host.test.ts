@@ -668,17 +668,16 @@ describe("hooks where Rerail does not run", () => {
 
   it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without waiting for a busy daemon that last answered stopped there, ending their request", async ({ run }) => {
     const root = await temporaryDirectory({ started: false });
-    startTestRepository(root);
-    stopTestRepository(root);
+    const app = stoppedApp(root);
     const answered = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
     try {
-      expect(await run(root)).toEqual({});
+      expect(await run(app)).toEqual({});
     } finally {
       await answered.close();
     }
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
-      expect(await answeredWellBeforeReadLimit(run(root))).toEqual({});
+      expect(await answeredWellBeforeReadLimit(run(app))).toEqual({});
       const { asked, ended } = await endedStartChecks(daemon);
       expect(ended).toBe(asked);
     } finally {
@@ -980,10 +979,13 @@ async function daemonAnsweringAfterProof(
   return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran(), { scopeOf: host.daemonScope, ...options });
 }
 
-/** The file of the daemon's last answer of stopped the hook keeps for `folder`, from the daemon `daemon.json` names by `startedAt`. */
-function keptAnswerFile(folder: string, startedAt = 1): string {
+/**
+ * The file of the daemon's last answer of stopped the hook keeps for `folder`, from the daemon `daemon.json` names by
+ * `pid` and `startedAt` (`countingDaemon`'s, unless given).
+ */
+function keptAnswerFile(folder: string, { pid = process.pid, startedAt = 1 }: Pick<StandInOptions, "pid" | "startedAt"> = {}): string {
   const name = createHash("sha256").update(realpathSync.native(folder)).digest("hex").slice(0, 32);
-  return join(process.env.RERAIL_HOME!, "stopped-answers", `${process.pid}-${startedAt}`, `${name}.json`);
+  return join(process.env.RERAIL_HOME!, "stopped-answers", `${pid}-${startedAt}`, `${name}.json`);
 }
 
 /** The answer kept for `folder`, as it was kept but at `at`. */
@@ -1003,7 +1005,7 @@ async function keptStopped(host: StartCheckHost, workspace: string, options: Sta
     const opened = host.opened.length;
     expect({
       started: await host.hookRerailStarted("claude-code", workspace), checked: host.proofs.found.at(-1), requests: daemon.requests,
-      ended: daemon.ended(), opened: host.opened.slice(opened), kept: existsSync(keptAnswerFile(workspace, options.startedAt)),
+      ended: daemon.ended(), opened: host.opened.slice(opened), kept: existsSync(keptAnswerFile(workspace, options)),
     }).toEqual({ started: false, checked: false, requests: ["/api/presentation"], ended: 0, opened: [], kept: true });
   } finally {
     await daemon.close();
@@ -1742,12 +1744,14 @@ describe("the hook start check", () => {
     mkdirSync(join(app, "src"));
     const host = await startCheckHost();
     await keptStopped(host, join(app, "src"));
-    // A daemon that would say started: an answer of stopped is the repeat of the one kept.
+    // A daemon that would say started: an answer of stopped is the repeat of the one kept. The Git the first daemon ran
+    // to name its checkout is not the hook's.
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
       host.proofs.nextCheck();
+      const gitBefore = host.git.length;
       const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", join(app, "src")));
-      expect({ started, git: host.git, proofs: host.proofs.found, ...await endedStartChecks(daemon) })
+      expect({ started, git: host.git.slice(gitBefore), proofs: host.proofs.found, ...await endedStartChecks(daemon) })
         .toEqual({ started: false, git: [], proofs: [false, true], asked: 1, ended: 1 });
     } finally {
       await daemon.close();
