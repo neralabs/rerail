@@ -1285,3 +1285,50 @@ exact and a string's are not.
 | Numbers | 197 | 183 | 107 |
 
 Other kinds did not change.
+
+## A short number calls nothing
+
+**Intro.** A lexer reads a number's few digits and returns. The
+number rule's function did the same work, but it first saved ten
+registers and restored them at the end: about 26 instructions a
+number. They were saved because its rare paths call other functions:
+a run past its first 16 bytes reads on a word at a time, and a long
+token's counts are a call.
+
+**The change.** A run rule whose bytes the CPU reads gets two
+functions. The whole one (`RuleMode::Only`) is as before. The short
+one (`RuleMode::Short`) is the one the loop calls:
+
+```
+short(bytes, len, blocks, s, raw, entry):
+    run = the rule's mask over bytes s+1 .. s+16   // one vector
+    if the run ends inside it:
+        the token's tests, knowing it is 16 bytes at most
+        return
+    return whole(bytes, len, blocks, s, raw, entry)
+```
+
+The token's tests know its length bound (`tested`'s `most`). A count
+whose mask is exact needs no "does it fit" branch and no call. A
+test that needs more bytes than the token can have is not made (a
+number of 19 digits or more). The short function is kept only where
+it calls nothing but its whole function (`calls_of`). Otherwise the
+loop calls the whole function as before.
+`a_short_numbers_function_calls_only_its_whole` checks the shape.
+
+The short function still saves two registers. The rules return four
+values through memory, so its long case can't hand its caller's
+result slot straight on.
+
+**Tried and dropped.** Returning two registers (the last, and the
+hits with the refusal as their sign bit) made the long case a plain
+tail call: numbers 163. But it changed how rustc allocated the main
+loop's registers around the call. Words rose 3, punctuation and mixed
+code about 2, so the realistic mix got worse. It waits on the main
+loop's register pressure.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Numbers | 183 | 176 | 107 |
+
+Other kinds did not change.

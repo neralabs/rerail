@@ -106,6 +106,23 @@ fn a_bitmask_is_pairwise_adds() {
     assert!(src.contains("vcombine_u8(d, d)"), "no bitmask reduced by halves");
 }
 
+/// A number's short function (`native_cpu_block::RuleMode::Short`): a rule's function whose
+/// one call is its whole function's, of its own signature (a run past 16 bytes), so its way
+/// for a short number calls nothing, as a lexer reads a few digits.
+#[test]
+fn a_short_numbers_function_calls_only_its_whole() {
+    use rerail_compiler::native_cpu_stream;
+    native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+    let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules).expect("compiles");
+    let ir = &c.parser.tier1.ir;
+    let calls = rerail_compiler::native_cpu_block::calls_of;
+    let short = ir.iter().filter(|(_, f)| f.signature.params.len() == 6 && f.signature.returns.len() == 4).filter(|(_, f)| match calls(f)[..] {
+        [one] => ir.iter().any(|(id, g)| *id == one && g.signature == f.signature),
+        _ => false,
+    });
+    assert_eq!(short.count(), 1, "the number rule's short function");
+}
+
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU
 /// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
 /// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a

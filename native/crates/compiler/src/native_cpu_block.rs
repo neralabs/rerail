@@ -2250,7 +2250,15 @@ enum RuleMode {
     /// Rule `k`'s block alone, and those it goes on to (`Reader::other`), entered at once: the
     /// body of its function.
     Only(usize),
+    /// Rule `k`'s block alone, a run's: its token where the run ends in its first 16 bytes, and
+    /// else the call of its whole function (`LONG_CALL`), returned at once. A lexer's short
+    /// number: no call on its way, so no register saved (`rule_fn`).
+    Short(usize),
 }
+
+/// A run rule's whole function (`rule_fn`, `RuleMode::Only`), where the loop calls its short
+/// one (`RuleMode::Short`): its key in the calls, `LONG_CALL | rule`.
+const LONG_CALL: u16 = 0x0400;
 
 /// The arms whose reads `read_fn` joins with their rule's count tests: a closer, and its
 /// tests' masks, the bytes make.
@@ -2377,7 +2385,7 @@ fn rule_bytewise(r: &crate::records::Records, bw: &crate::native_cpu_bytes::Byte
 /// its tag and its tests' hits (`rule_last`'s). The loop calls it for a token of the rule; its
 /// registers are the common tokens'.
 #[allow(clippy::too_many_arguments)]
-fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, bw: &crate::native_cpu_bytes::Bytewise<'_>, outputs: usize, k: usize, calls: &[ByteCall], carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
+fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, bw: &crate::native_cpu_bytes::Bytewise<'_>, outputs: usize, mode: RuleMode, calls: &[ByteCall], carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(func, &mut builder_context);
     let entry = f.create_block();
@@ -2392,7 +2400,7 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
-    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, RuleMode::Only(k), &mut heads);
+    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, &mut heads);
     f.ins().return_(&[l, refuse, tag, hits]);
     f.seal_all_blocks();
     f.finalize();
@@ -2710,7 +2718,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, heads);
+            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(to, &[l_sel.into(), untag.into()]);
         }
@@ -2720,7 +2728,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // alone (`records::NO_RULE`, past the table).
     // Rule `k` alone: its block, and the rules it goes on to.
     let needed: Vec<usize> = match mode {
-        RuleMode::Only(k) => {
+        RuleMode::Only(k) | RuleMode::Short(k) => {
             let mut v = vec![k];
             let mut at = 0;
             while at < v.len() {
@@ -2736,7 +2744,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
         _ => (0..r.rules.len()).collect(),
     };
-    if let RuleMode::Only(k) = mode {
+    if let RuleMode::Only(k) | RuleMode::Short(k) = mode {
         f.ins().jump(blocks[k], &[]);
     } else {
         let none = f.create_block();
@@ -2769,7 +2777,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
         // the token, as a lexer checks the token it reads.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(c, _)| usize::from(c.rule) == k).map(|(c, &b)| (*c, b)).collect();
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, heads) };
+        // A short run's token is 16 bytes at most (`RuleMode::Short`).
+        let short = matches!((mode, rule), (RuleMode::Short(_), EndRule::Run(o)) if rd.bytewise(o));
+        let most = short.then_some(16);
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
@@ -2831,6 +2842,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             f.ins().brif(short, ended, &[l.into(), untag.into()], long, &[]);
                             f.switch_to_block(long);
                             f.set_cold_block(long);
+                            // The short function's long run: its whole function's, returned.
+                            if let (RuleMode::Short(_), Some((_, id, sig))) = (mode, rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16)) {
+                                let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+                                let signature = f.import_signature(sig.clone());
+                                let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+                                let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+                                let got = f.inst_results(call).to_vec();
+                                f.ins().return_(&got);
+                                continue;
+                            }
                         }
                         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
                         inside_or_past(f, inside, first_word, limit, ended, &[s.into(), untag.into()]);
@@ -3319,7 +3340,7 @@ fn needs_wide(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, b
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
 /// `least` bits from `s` compared at once, from one word or two.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
@@ -3344,7 +3365,11 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let mut hits = f.ins().iconst(types::I64, always.1);
     // The count tests, fused into one call (`tests_fn`) where the loop has it.
     let rule = tests.first().map_or(0, |(t, _)| t.rule);
-    let fused = rd.calls.iter().find(|x| x.0 == TESTS_CALL | u16::from(rule)).cloned();
+    // A test of more bytes than the token has (`most`, its longest) never holds: none made.
+    let never = |t: &crate::records::TokenCheck| most.is_some_and(|m| t.least > m);
+    let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = tests.iter().filter(|(t, _)| !never(t)).copied().collect();
+    let tests = &tests[..];
+    let fused = rd.calls.iter().find(|x| x.0 == TESTS_CALL | u16::from(rule)).cloned().filter(|_| tests.iter().any(|(t, _)| t.count && !t.always()));
     if let Some((_, id, sig)) = &fused {
         let least = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| t.least).min().unwrap_or(0);
         let (on, join) = (f.create_block(), f.create_block());
@@ -3361,10 +3386,17 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         // 16 bytes at most has its counts from one vector each, as a lexer counts a float's `.`
         // as it reads it, and the call is made for a longer one alone.
         let exacts: Option<Vec<crate::native_cpu_bytes::Needs>> = rd.bytes.and_then(|(b, _)| counts.iter().map(|t| crate::native_cpu_bytes::exact(b.native, t.o)).collect());
+        // Every token in one vector (`most`): no call.
+        let mut called = true;
         if let Some(ex) = exacts.filter(|v| v.iter().all(|n| (-8..=8).contains(&n.lo) && (1..=4).contains(&n.ranges().len()))) {
             let (vec, call) = (f.create_block(), f.create_block());
-            let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 16);
-            f.ins().brif(fits, vec, &[], call, &[]);
+            if most.is_some_and(|m| m <= 16) {
+                f.ins().jump(vec, &[]);
+                called = false;
+            } else {
+                let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 16);
+                f.ins().brif(fits, vec, &[], call, &[]);
+            }
             f.switch_to_block(vec);
             let (mut r, mut h) = (refuse, hits);
             let mut made: Vec<(crate::native_cpu_bytes::Needs, Value)> = Vec::new();
@@ -3393,7 +3425,9 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
                 }
             }
             f.ins().jump(join, &[r.into(), h.into()]);
-            f.switch_to_block(call);
+            if called {
+                f.switch_to_block(call);
+            }
         } else if let Some(n) = rd.bytes.and_then(|(b, _)| counts_need(b.native, &counts)) {
             let (vec, call) = (f.create_block(), f.create_block());
             let span = f.ins().iadd_imm(len, i64::from(n.hi - n.lo));
@@ -3404,16 +3438,18 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             f.ins().brif(some, call, &[], join, &[refuse.into(), hits.into()]);
             f.switch_to_block(call);
         }
-        let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
-        let signature = f.import_signature(sig.clone());
-        let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
-        let call = f.ins().call(callee, &[c.bytes, c.len, s, l]);
-        let got = f.inst_results(call)[0];
-        let no = f.ins().sshr_imm(got, 63);
-        let refuse2 = f.ins().bor(refuse, no);
-        let marks = f.ins().band_imm(got, i64::MAX);
-        let hits2 = f.ins().bor(hits, marks);
-        f.ins().jump(join, &[refuse2.into(), hits2.into()]);
+        if called {
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+            let call = f.ins().call(callee, &[c.bytes, c.len, s, l]);
+            let got = f.inst_results(call)[0];
+            let no = f.ins().sshr_imm(got, 63);
+            let refuse2 = f.ins().bor(refuse, no);
+            let marks = f.ins().band_imm(got, i64::MAX);
+            let hits2 = f.ins().bor(hits, marks);
+            f.ins().jump(join, &[refuse2.into(), hits2.into()]);
+        }
         f.switch_to_block(join);
         refuse = f.block_params(join)[0];
         hits = f.block_params(join)[1];
@@ -5121,8 +5157,28 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             }
             let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
-            rule_fn(&mut func, rec, t, &bytewise, made.outputs.len(), k, &ids, &carry_names)?;
-            byte_calls.push((RULES_CALL | k as u16, id, sig, func));
+            rule_fn(&mut func, rec, t, &bytewise, made.outputs.len(), RuleMode::Only(k), &ids, &carry_names)?;
+            // A run's short function (`RuleMode::Short`), where it calls nothing but its whole
+            // one: the loop calls it, a lexer's short number with no register saved.
+            let mut short = None;
+            if matches!(rec.rules[k], crate::records::EndRule::Run(o) if bytewise.can(o)) {
+                let mut with = ids.clone();
+                with.push((LONG_CALL | k as u16, id, sig.clone()));
+                let mut sfunc = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, u32::MAX), sig.clone());
+                rule_fn(&mut sfunc, rec, t, &bytewise, made.outputs.len(), RuleMode::Short(k), &with, &carry_names)?;
+                if calls_of(&sfunc) == [id.as_u32()] {
+                    let sid = module.declare_function(&format!("{name}_rule{k}_short"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+                    sfunc.name = cranelift_codegen::ir::UserFuncName::user(0, sid.as_u32());
+                    short = Some((sid, sfunc));
+                }
+            }
+            match short {
+                Some((sid, sfunc)) => {
+                    byte_calls.push((LONG_CALL | k as u16, id, sig.clone(), func));
+                    byte_calls.push((RULES_CALL | k as u16, sid, sig, sfunc));
+                }
+                None => byte_calls.push((RULES_CALL | k as u16, id, sig, func)),
+            }
         }
     }
     let byte_ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();
@@ -5532,7 +5588,7 @@ fn bodiless_body(native: &BlockNative, slot_of: &[u16], records: bool) -> bool {
 
 /// The functions `func` calls (their user names' indexes, a `FuncId` each), by its calls left
 /// in its layout: a name declared but no longer called is not one.
-pub(crate) fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
+pub fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
     let mut v = Vec::new();
     for b in func.layout.blocks() {
         for inst in func.layout.block_insts(b) {
