@@ -77,6 +77,17 @@ The next chunk's size is chosen from that.
 | 8 at once | 25.4 s | 45.0 s | 7.7 s | 491 B | 1.40 GB | 7,080 (the same set) |
 | 8 at once, warm (all memo hits) | 5.7 s | 2.2 s | 2.0 s | | 0.33 GB | 7,080 |
 
+All of PostHog (29,885 files, the same rule, cold store, profiling build, an M3 Max with load average 5–11 from
+other work):
+
+| | wall | user | sys | instructions | peak | violations |
+|---|---|---|---|---|---|---|
+| one at a time (`RERAIL_CHUNKS_AT_ONCE=1`) | 113.8 s | 234.1 s | 150.8 s | 2,989 B | 2.78 GB | 29,747 |
+| 8 at once | 50.3 s | 242.0 s | 67.0 s | 2,645 B | 2.91 GB | 29,747 (the same set) |
+
+System time halves: the pool's threads evaluate chunks instead of waking for a component's small jobs and
+yielding.
+
 ## Open
 
 - Peak memory rises with K: 1.40 GB against the 1 GB budget on `posthog/`. Each chunk in flight holds its sources
