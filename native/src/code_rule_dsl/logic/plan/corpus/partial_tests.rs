@@ -126,3 +126,59 @@ fn a_partial_hit_hands_on_the_base_rows_of_spans_its_chunk_does_not_make() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fresh);
 }
+
+const LISTED: &[(&str, &str)] = &[
+    ("a.py", "def helper(x):\n    return x\n"),
+    ("sub/b.py", "def other(y):\n    return y\n"),
+    ("sub/c.py", "x = 1\n"),
+];
+
+/// A cross-file rule over a directory's entries (`dir_entry`, answered on request) and every file's exports. The
+/// directory is computed (`cat`, as the libraries' `env.rr` computes theirs), or a constant (a request fact).
+fn listing_program(dir: &str) -> String {
+    format!(
+        r#"
+.decl dir_entry(dir: symbol, name: symbol, is_dir: number)
+.decl defined(d: node, x: symbol)
+defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
+.decl listed(n: symbol, x: symbol)
+listed(n, x) :- defined(_, x), {dir}.
+.output listed
+"#
+    )
+}
+
+/// The same program over the same files, run again and again: the directory's entries are as they were, so the
+/// cross-file part sees no input changed, on the second run (after the one that kept it) and every later one.
+fn listing_is_no_change(dir: &str) {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let root = corpus(&format!("listing-{}", dir.len()), &marker, &[]);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for (path, source) in LISTED {
+        std::fs::write(root.join(path), format!("# {marker}\n{source}")).unwrap();
+    }
+    let program = listing_program(dir);
+    let (_, first) = run(&root, &program, &["listed"]);
+    assert_eq!(first[0].len(), 4, "two entries of sub, two functions: {first:?}");
+    for k in 2..=3 {
+        let (again, rows) = run(&root, &program, &["listed"]);
+        assert_eq!(rows, first, "run {k}: the rows of the first");
+        assert!(again.cross_kept.is_some(), "run {k}: the cross-file part is kept");
+        assert!(again.cross_changed.is_empty(), "run {k}: the cross-file part's inputs are as the last run's: {:?} changed", again.cross_changed);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_unchanged_directory_listing_is_no_change_of_the_cross_part() {
+    listing_is_no_change(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#);
+}
+
+/// A constant directory lowers to a request fact (`rr_dir_req("sub")`). The first run answers it (`world::asks`);
+/// the next fails: "rr_dir_req: kept as clean, but its rows are not kept" (work queue: a constant world request in
+/// the kept cross part).
+#[test]
+#[ignore = "a constant world request is not kept by the cross part (work queue)"]
+fn an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part() {
+    listing_is_no_change(r#"dir_entry("sub", n, 0)"#);
+}

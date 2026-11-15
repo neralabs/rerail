@@ -363,6 +363,15 @@ program, not the plans.
   `plan/`.
 - **Record**: —
 
+### Q15. A constant world request in the kept cross part
+
+- **Found**: `dir_entry("sub", n, 0)` lowers to the request fact `rr_dir_req("sub")` (`rr::lower`'s `world_demand`).
+  `world::wanted` and `world::answers` counted only request rules, so such a run failed ("no columns for
+  dir_entry"); they now count request facts (`world::asks`). The run after the one that kept the cross part then
+  fails: "rr_dir_req: kept as clean, but its rows are not kept".
+- **Done when**: `an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part` (partial_tests.rs,
+  ignored) passes, unignored.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
