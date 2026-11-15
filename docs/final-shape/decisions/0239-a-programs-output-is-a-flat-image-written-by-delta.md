@@ -1,6 +1,6 @@
 # 0239: A program's output is a flat image, written by delta
 
-Status: draft (2026-11-14); stages 1–3 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
+Status: draft (2026-11-14); stages 1–4 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
 0140 (the tape is the engine's bytes, read in place), 0209 (statistics are one flat table) and 0212 (kept frames
 are of content). Follows 0230, whose "still open" list it replaces at its top.
 
@@ -86,12 +86,22 @@ each whole. An output whose stratum was clean is read from the image below it, n
 strings, documents and places are its own. A relation is read from the last image that holds it. Past eight
 images, the run writes one base again, copying the outputs it did not make from the stack (`Builder::take`).
 
-**Stage 4: overlays of rows.** A session's run knows each output's delta: the rows gone and added (`__minus`,
-`__plus`, the run's `Outcome::deltas`). It appends an overlay that holds, per relation, the positions of the rows
-gone and the rows added, with the strings and documents they add. Ids then continue the stack's, as an overlay of
-a program image numbers its atoms after its parent's (0173). An output with no delta writes nothing. A reader views
-the base's rows less those gone, merged with those added, in order. The stack is folded into one base when its
-overlays hold more than an eighth of the base's rows, or after eight overlays.
+**Stage 4: overlays of rows.** Each relation entry has a kind: whole, rows added, or rows gone. A row is named by a
+128-bit hash of what it shows (`Rel::hash`): a text by its bytes, an int by its value, a node by its document's path
+and first node and its local part, a `@place` by its shown text, each cell with its type. So a row hashes the same
+in every image and every process, whatever indexes its strings and documents have there. The session keeps, per
+output directory, each relation's sorted row hashes as the stack reads it, with the stack's depth and the rows its
+overlays changed (`session::Stack`). A run makes its outputs' image in memory and hashes each output's rows. An
+output whose hashes are the same writes nothing. One that changed writes its gone rows' hashes (two int columns)
+and its added rows, with the strings, documents and places they need. Where the change is at least half its rows,
+it is written whole. A run that changed nothing writes nothing, so its file is as it was. A reader composes a
+`View`: the last whole entry, less each later overlay's gone rows (by hash), plus its added rows. The stack is folded
+into one base at eight images, or when its overlays changed more than an eighth of its rows.
+
+The run's own deltas (`__minus`, `__plus`) were the first plan. They are not the outputs' change: an output is
+gathered from the memo's file-local rows and the cross-file part's, filtered for loaded documents. Hashing the made
+rows needs no second account of where each row came from. Its cost is one pass over the rows the run made, which
+the run builds anyway.
 
 ### 4. Text is a reader
 
@@ -122,7 +132,8 @@ typing rounds, `typing::outputs`) read the columns.
    `rerail-engine csv <out> [<to>]` writes the `.csv` files for the scripts that read them (the bench and pack
    scripts, the explorer, `sql-executor.py`, the data-layer probes), which call it after each run. Typing rounds'
    golden files and `rrlab` (Soufflé's own outputs) are not the engine's outputs, and stay.
-4. **Overlays of rows** (§3).
+4. **Overlays of rows** (§3, built): format 2 (an entry's kind), `Rel::hash`, `View`, `Builder::added`/`gone`,
+   the corpus writer's overlay, the session's hashes.
 
 ## Measured
 
@@ -138,6 +149,28 @@ The baseline still had the `mentions` fault fixed in b62a05bc7 (some typing deri
 whole replay (cold run included), the output code is now 260 of 4,912 samples: `decoded_outputs` 52 (117 before),
 rendering the `.csv` lines from the image (`Rel::lines`) 149, putting the rows in the image 23. The `.csv` lines are
 what is left: stage 3 moves the readers onto the image, and stage 4 writes only what changed.
+
+Stage 3 (3cbb4cbb3) against the same baseline, two rounds each, on a loaded machine (load 40–90; instructions):
+
+| step | 12 | 13 | 14 | 15 | 16 | process |
+|---|---|---|---|---|---|---|
+| before, cross G | 11.65 | 6.18 | 3.31 | 3.96 | 4.38 | 135.8 |
+| stage 3, cross G | 11.15 | 5.80 | 2.96 | 3.66 | 4.04 | 128.3 |
+
+Stage 4 against stage 3 is the same in instructions: cross within 0.1 G each step (11.43 / 6.05 / 3.18 / 3.82 / 4.22
+against 11.44 / 5.97 / 3.17 / 3.83 / 4.23), process 135.3 against 134.5 G. Hashing each string and document once
+per image (`Seen`), not each cell, brought the hashing from 0.75% of the replay's samples to 0.14%. What it changes
+is what is written. Each step writes 33–482 KB, where its outputs whole are 2.3 MB:
+
+| step | outputs unchanged | written by rows | rows written | bytes written | outputs whole |
+|---|---|---|---|---|---|
+| 12 | 7 of 18 | 10 (and 1 whole) | 24,434 | 481,968 | 2,321,264 |
+| 13 | (folded: step 12 changed more than an eighth of the rows) | | | | |
+| 14 | 8 | 10 | 1,592 | 32,960 | 2,324,832 |
+| 15 | 9 | 9 | 5,348 | 107,088 | 2,324,960 |
+| 16 | 7 | 11 | 5,518 | 101,104 | 2,325,696 |
+
+Every run's outputs are a full run's ("same as full").
 
 ## Tests
 
@@ -156,3 +189,11 @@ what is left: stage 3 moves the readers onto the image, and stage 4 writes only 
   and `without_first`.
 - `a_damaged_image_is_refused`: magic, a region out of bounds, a text value naming no string, a stack that starts
   with an overlay.
+- `a_directorys_outputs_are_read_from_its_stack`: `text`, `lines`, `rows` (a tab in a value), `names`,
+  `put_lines` over a stack and folded at its depth, `base_of`, `to_csv`.
+- `an_overlay_of_rows_gone_and_added_reads_as_the_relation_they_make`: hashes the same across images, a second
+  overlay taking away a row the first added and one of the base's, the fold, an entry of rows gone refused in a
+  base.
+- `a_nodes_hash_is_its_documents_not_its_key`: one document under two keys hashes the same.
+- `a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed` (session): a run that changed nothing writes
+  nothing; ten edits, each read equal to a fresh run's outputs, overlays holding rows gone, folded at the depth.

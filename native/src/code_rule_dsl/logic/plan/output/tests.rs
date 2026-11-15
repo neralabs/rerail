@@ -164,7 +164,7 @@ fn a_folded_stack_shows_what_the_stack_showed() {
     let stack = Image::stack(&bytes).unwrap();
     let mut fold = Builder::new(flags::OWN | flags::DEFINITION_IDS, false);
     for name in ["type_of", "gone"] {
-        fold.take(name, find(&stack, name).unwrap());
+        fold.take(name, &find(&stack, name).unwrap());
     }
     let folded = Image::stack(&fold.finish()).unwrap();
     assert_eq!(folded.len(), 1);
@@ -322,4 +322,77 @@ fn a_directorys_outputs_are_read_from_its_stack() {
     assert_eq!(to_csv(&dir, &to).unwrap(), 3);
     assert_eq!(std::fs::read_to_string(to.join("a.csv")).unwrap(), text(&dir, "a").unwrap());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_overlay_of_rows_gone_and_added_reads_as_the_relation_they_make() {
+    let l = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<String>>();
+    let mut base = Builder::new(0, false);
+    base.lines("r", &[], &[1], &l(&["a\t1", "b\t2", "c\t3"]), &|_, v| v.to_owned());
+    base.lines("q", &[], &[], &l(&["x"]), &|_, v| v.to_owned());
+    let base = base.finish();
+    // The run's new rows, an image of their own: "b" gone, "d" added.
+    let mut made = Builder::new(0, false);
+    made.lines("r", &[], &[1], &l(&["d\t4", "c\t3", "a\t1"]), &|_, v| v.to_owned());
+    let made = Image::one(&made.finish()).unwrap();
+    let (old, new) = (Image::one(&base).unwrap().rel("r").unwrap().hashes(), made.rel("r").unwrap().hashes());
+    // The same rows hash the same in both images, their strings held at other indexes.
+    assert_eq!(old.iter().filter(|h| new.binary_search(h).is_ok()).count(), 2);
+    let r = made.rel("r").unwrap();
+    let added: Vec<usize> = (0..r.rows).filter(|&i| old.binary_search(&r.hash(i)).is_err()).collect();
+    let gone: Vec<u128> = old.iter().copied().filter(|h| new.binary_search(h).is_err()).collect();
+    assert_eq!((added.len(), gone.len()), (1, 1));
+    let mut overlay = Builder::new(0, true);
+    overlay.added("r", r, &added);
+    overlay.gone("r", &gone);
+    let mut bytes = base.clone();
+    bytes.extend(overlay.finish());
+    let stack = Image::stack(&bytes).unwrap();
+    let view = find(&stack, "r").unwrap();
+    assert_eq!(view.lines(), ["a\t1", "c\t3", "d\t4"]);
+    assert_eq!(view.hashes(), new);
+    assert_eq!(find(&stack, "q").unwrap().lines(), ["x"]);
+    // A second overlay takes away a row the first added, and one of the base's.
+    let gone2: Vec<u128> = view.each().filter(|(r, i)| r.shown(*i, 0) != "c").map(|(r, i)| r.hash(i)).collect();
+    let mut overlay = Builder::new(0, true);
+    overlay.gone("r", &gone2);
+    bytes.extend(overlay.finish());
+    let stack = Image::stack(&bytes).unwrap();
+    assert_eq!(find(&stack, "r").unwrap().lines(), ["c\t3"]);
+    // Folded, it reads the same.
+    let mut fold = Builder::new(0, false);
+    for name in ["q", "r"] {
+        fold.take(name, &find(&stack, name).unwrap());
+    }
+    let folded = Image::stack(&fold.finish()).unwrap();
+    assert_eq!(folded.len(), 1);
+    assert_eq!(find(&folded, "r").unwrap().lines(), ["c\t3"]);
+    // An entry of rows gone or added is refused in a base.
+    let mut bad = Builder::new(0, false);
+    bad.gone("r", &gone);
+    assert!(Image::one(&bad.finish()).is_err());
+}
+
+#[test]
+fn a_nodes_hash_is_its_documents_not_its_key() {
+    // One document under two keys, in two images: its nodes hash the same; another document's differ.
+    let mut a = Builder::new(flags::OWN, false);
+    a.doc(3, &Doc { path: Some("m.py".into()), first: None });
+    a.rows("n", &[col::NODE], vec![3 << 32 | 7]);
+    let mut b = Builder::new(flags::OWN, false);
+    b.doc(5, &Doc { path: Some("m.py".into()), first: None });
+    b.doc(6, &Doc { path: Some("o.py".into()), first: None });
+    b.rows("n", &[col::NODE], vec![5 << 32 | 7, 6 << 32 | 7]);
+    let (a, b) = (Image::one(&a.finish()).unwrap(), Image::one(&b.finish()).unwrap());
+    let (ra, rb) = (a.rel("n").unwrap(), b.rel("n").unwrap());
+    assert_eq!(ra.hash(0), rb.hash(0));
+    assert_ne!(rb.hash(0), rb.hash(1));
+    // Every row's hash at once is each row's.
+    assert_eq!(rb.each_hash(), [rb.hash(0), rb.hash(1)]);
+    let mut t = Builder::new(0, false);
+    t.lines("t", &[], &[1], &["a\t1".to_owned(), "b\t2".to_owned(), "a\t3".to_owned()], &|_, v| v.to_owned());
+    let t = Image::one(&t.finish()).unwrap();
+    let rt = t.rel("t").unwrap();
+    assert_eq!(rt.each_hash(), (0..3).map(|i| rt.hash(i)).collect::<Vec<_>>());
+    assert_eq!(ra.lines(), ["m.py:7"]);
 }

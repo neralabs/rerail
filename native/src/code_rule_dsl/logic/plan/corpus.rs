@@ -7464,23 +7464,15 @@ fn run_observed(
             }
         }
     }
-    // The outputs as one flat image (decision 0239), the file every reader reads (`output::lines`, `output::rows`):
-    // over the session's stack, an overlay of the outputs this run made again; otherwise a base of them all. The image
-    // is made from the runs' rows as they are.
+    // The outputs as one flat image (decision 0239), the file every reader reads (`output::lines`, `output::rows`).
+    // The outputs this run made are an image in memory, from the runs' rows as they are. Over the session's stack,
+    // only what changed is written: an overlay of each output's rows gone and added, an output whole where most of
+    // it changed, nothing where none did. Otherwise, or at the stack's depth, a base of them all.
     {
         let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
-        // An unchanged output is in the stack as the session's last run left it (`unchanged_outputs`); the stack is
-        // read only to fold it, past its depth.
-        let depth = if unchanged_outputs.is_empty() { 0 } else { session.as_ref().and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).map(|k| k.depth)).unwrap_or(0) };
-        let overlay = depth > 0 && depth < output::MAX_DEPTH;
-        let mut image = output::Builder::new(flags, overlay);
-        if !unchanged_outputs.is_empty() && !overlay {
-            let old = output::read(out).map_err(Error::Plan)?;
-            for rel in unchanged_outputs.keys() {
-                let held = output::find(&old, rel).ok_or_else(|| Error::Plan(format!("{rel}: unchanged, but not in {}", out.display())))?;
-                image.take(rel, held);
-            }
-        }
+        // The session's stack here as its last run left it, if it stands (a stat, not a read).
+        let held: Option<session::Stack> = session.as_ref().and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).filter(|k| k.stands(out)).cloned());
+        let mut image = output::Builder::new(flags, false);
         // A node column's value as the writer showed it, for a column the image holds as text (one holding a value
         // that is no integer): by its document, or as it was.
         let shown = |_: usize, v: &str| match v.parse::<i64>() {
@@ -7545,16 +7537,97 @@ fn run_observed(
             made.push(rel);
         }
         let bytes = image.finish();
-        output::write(out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
         let made_image = output::Image::one(&bytes).map_err(Error::Plan)?;
-        for rel in made {
-            rows.insert(rel.to_owned(), made_image.rel(rel).expect("made").rows);
+        let made_stack = std::slice::from_ref(&made_image);
+        for rel in &made {
+            rows.insert((*rel).to_owned(), made_image.rel(rel).expect("made").rows);
+        }
+        // Each made output's rows' hashes, per row and as a set (a session's runs only).
+        let hashed: BTreeMap<&str, (Vec<u128>, Vec<u128>)> = if session.is_some() {
+            made.iter()
+                .map(|&rel| {
+                    let r = made_image.rel(rel).expect("made");
+                    let each = r.each_hash();
+                    let mut set = each.clone();
+                    set.sort_unstable();
+                    set.dedup();
+                    (rel, (each, set))
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+        let total: usize = hashed.values().map(|(_, set)| set.len()).sum::<usize>()
+            + held.as_ref().map_or(0, |h| unchanged_outputs.keys().filter_map(|r| h.rels.get(r)).map(|set| set.len()).sum());
+        let (mut overlay, mut changed) = (output::Builder::new(flags, true), 0usize);
+        let (mut whole, mut partly) = (0usize, 0usize);
+        let over = held.as_ref().filter(|h| h.depth < output::MAX_DEPTH).filter(|h| h.deltas * 8 <= total.max(8)).map(|h| {
+            for &rel in &made {
+                let (each, set) = &hashed[rel];
+                let r = made_image.rel(rel).expect("made");
+                match h.rels.get(rel) {
+                    Some(old) if **old == *set => {}
+                    Some(old) => {
+                        let gone: Vec<u128> = old.iter().copied().filter(|x| set.binary_search(x).is_err()).collect();
+                        let added: Vec<usize> = (0..r.rows).filter(|&i| old.binary_search(&each[i]).is_err()).collect();
+                        if (gone.len() + added.len()) * 2 >= set.len().max(1) {
+                            overlay.take(rel, &output::find(made_stack, rel).expect("made"));
+                            changed += set.len();
+                            whole += 1;
+                        } else {
+                            overlay.added(rel, r, &added);
+                            overlay.gone(rel, &gone);
+                            changed += gone.len() + added.len();
+                            partly += 1;
+                        }
+                    }
+                    None => {
+                        overlay.take(rel, &output::find(made_stack, rel).expect("made"));
+                        changed += set.len();
+                        whole += 1;
+                    }
+                }
+            }
+            h.clone()
+        });
+        let mut wrote = 0usize;
+        let (depth, deltas, base) = match &over {
+            Some(h) if overlay.is_empty() => (h.depth, h.deltas, false),
+            Some(h) => {
+                let image = overlay.finish();
+                wrote = image.len();
+                output::write(out, &image).map_err(|e| Error::Plan(e.to_string()))?;
+                (h.depth + 1, h.deltas + changed, false)
+            }
+            None if unchanged_outputs.is_empty() => {
+                output::write(out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
+                (1, 0, true)
+            }
+            None => {
+                // The stack folded into one base: the made outputs, and the unchanged ones as the stack reads them.
+                let old = output::read(out).map_err(Error::Plan)?;
+                let mut folded = output::Builder::new(flags, false);
+                for &rel in &made {
+                    folded.take(rel, &output::find(made_stack, rel).expect("made"));
+                }
+                for rel in unchanged_outputs.keys() {
+                    let view = output::find(&old, rel).ok_or_else(|| Error::Plan(format!("{rel}: unchanged, but not in {}", out.display())))?;
+                    folded.take(rel, &view);
+                }
+                output::write(out, &folded.finish()).map_err(|e| Error::Plan(e.to_string()))?;
+                (1, 0, true)
+            }
+        };
+        if over.is_some() {
+            crate::code_rule_dsl::logic::profile::decision("the outputs' overlay (0239 stage 4)", || {
+                format!("{} of {} outputs unchanged, {whole} written whole, {partly} by their rows gone and added ({changed} rows); {wrote} bytes written, where the outputs whole are {}; depth {depth}", made.len() - whole - partly, made.len(), bytes.len())
+            });
         }
         // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes
         // forget it. A base holds no output an earlier run wrote but this one did not make or keep.
         if let Some(s) = session.as_ref() {
             let mut written = s.written.lock().expect("the session's written outputs");
-            if !overlay {
+            if base {
                 written.retain(|p, _| p.parent() != Some(out));
             }
             for (rel, n) in &rows {
@@ -7565,7 +7638,18 @@ fn run_observed(
             }
             let mut stacks = s.stacks.lock().expect("the session's stacks");
             match session::Stack::stat(out) {
-                Some(stack) => stacks.insert(out.to_path_buf(), session::Stack { depth: if overlay { depth + 1 } else { 1 }, ..stack }),
+                Some(stat) => {
+                    // A base holds the made outputs and the unchanged ones; an overlay leaves the rest as they read.
+                    let mut rels: HashMap<String, Arc<Vec<u128>>> = match held {
+                        Some(h) if base => unchanged_outputs.keys().filter_map(|r| h.rels.get(r).map(|set| (r.clone(), Arc::clone(set)))).collect(),
+                        Some(h) => h.rels,
+                        None => HashMap::new(),
+                    };
+                    for (rel, (_, set)) in hashed {
+                        rels.insert(rel.to_owned(), Arc::new(set));
+                    }
+                    stacks.insert(out.to_path_buf(), session::Stack { depth, deltas, rels, ..stat })
+                }
                 None => stacks.remove(out),
             };
         }

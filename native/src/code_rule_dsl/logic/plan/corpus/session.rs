@@ -160,19 +160,22 @@ impl Held {
 // Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
 
-/// An output stack as a run left it: its file's length and modification time, and its images.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// An output stack as a run left it: its file's length and modification time, its images, the rows its overlays
+/// added or took away since its base, and each relation's rows' hashes as it reads them (`output::Rel::hash`).
+#[derive(Clone, Debug)]
 pub(super) struct Stack {
     pub len: u64,
     pub modified: std::time::SystemTime,
     pub depth: usize,
+    pub deltas: usize,
+    pub rels: std::collections::HashMap<String, Arc<Vec<u128>>>,
 }
 
 impl Stack {
-    /// The stack in `out` as a stat finds it (its depth not known: 0).
+    /// The stack in `out` as a stat finds it (no image of it known).
     pub fn stat(out: &std::path::Path) -> Option<Stack> {
         let m = std::fs::metadata(out.join(crate::code_rule_dsl::logic::plan::output::FILE)).ok()?;
-        Some(Stack { len: m.len(), modified: m.modified().ok()?, depth: 0 })
+        Some(Stack { len: m.len(), modified: m.modified().ok()?, depth: 0, deltas: 0, rels: Default::default() })
     }
     /// Whether the stack in `out` is as `self` (its file not written since).
     pub fn stands(&self, out: &std::path::Path) -> bool {

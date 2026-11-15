@@ -41,6 +41,53 @@ fn a_session_reruns_what_an_edit_changed() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// A session's runs write their outputs over one stack (decision 0239 stage 4): an edit's run appends an overlay of
+/// the rows it changed (or nothing, where none did), and the stack reads as a fresh run's outputs at every step,
+/// folded at its depth.
+#[test]
+fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
+    use crate::code_rule_dsl::logic::plan::output;
+    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let base = std::env::temp_dir().join(format!("rerail-session-overlays-{}", std::process::id()));
+    let (src, out, fresh) = (base.join("src"), base.join("out"), base.join("fresh"));
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..6 {
+        std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\npickle.loads(b'{i}')\n")).unwrap();
+    }
+    let rule = packs().join("bandit-b301-pickle.rr");
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = |to: &std::path::Path| super::super::run(&program, &src, None, to, "program", Binding::Cpu, 1 << 18).unwrap();
+    let names = |dir: &std::path::Path| output::names(dir).unwrap();
+    start(&base.join("session")).unwrap();
+    run(&out);
+    assert_eq!(output::read(&out).unwrap().len(), 1, "a session's first run writes a base");
+    let len = || std::fs::metadata(out.join(output::FILE)).unwrap().len();
+    let before = len();
+    run(&out);
+    assert_eq!(len(), before, "nothing changed: nothing written");
+    let mut partly = false;
+    for step in 0..(output::MAX_DEPTH + 2) {
+        // One file's finding moves, another's goes or comes back.
+        let i = step % 6;
+        std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\n\n{}pickle.loads(b'{step}')\n", "\n".repeat(step))).unwrap();
+        if step % 2 == 1 {
+            std::fs::write(src.join("m5.py"), if step % 4 == 1 { "x = 1\n".to_owned() } else { "import pickle\npickle.loads(b'5')\n".to_owned() }).unwrap();
+        }
+        run(&out);
+        full(|| run(&fresh));
+        let stack = output::read(&out).unwrap();
+        assert!(stack.len() <= output::MAX_DEPTH, "step {step}: folded at its depth");
+        partly |= stack.iter().any(|i| i.entry("violation", output::kind::GONE).is_some());
+        assert_eq!(names(&out), names(&fresh), "step {step}");
+        for rel in names(&fresh) {
+            assert_eq!(output::text(&out, &rel).unwrap(), output::text(&fresh, &rel).unwrap(), "step {step}: {rel}");
+        }
+    }
+    assert!(partly, "an edit's overlay holds the rows it changed");
+    stop();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A session keeps its cross-file part (decision 0077): a run over unchanged files evaluates no cross-file stratum,
 /// a run after an edit evaluates those whose inputs changed, and every run's findings are a full run's.
 #[test]
