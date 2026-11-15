@@ -206,10 +206,11 @@ changes, about 30 lines in all:
 | `relax run` of the CLI: E0425 `vdup_lane_u32` (sha1dc), E0277 `AsRef<[T]>` for `vec::IntoIter` and `slice::Iter` (roaring), `core::array::IntoIter::new` (dary_heap) | Relax's std lacks them | added to Relax's std (below) | 23 lines |
 | `--unattended` | none: it is an option of `run`, so it goes before the package | — | — |
 
-The std additions are in Relax's source tree, not in this repository (`tmp/relax-src`, uncommitted):
-an `AsRef<[T]>` impl on each of the two iterators, the deprecated `IntoIter::new` of an array, and
-`vdup_lane_u32` as `uint32x2_t([a.0[N as usize]; 2])`. Relax reads its std from source, so they
-need no rebuild of Relax.
+The std additions are `scripts/dev/relax/std.patch`: an `AsRef<[T]>` impl on each of the two
+iterators, the deprecated `IntoIter::new` of an array, and `vdup_lane_u32` as
+`uint32x2_t([a.0[N as usize]; 2])`. `scripts/dev/relax/build` builds the Relax measured here (its
+commit pinned, the patch applied) into `~/.local/share/rerail-relax`. Relax reads its std from
+source, so a change to the patch needs no rebuild of Relax.
 
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
@@ -259,7 +260,7 @@ of 60–90), because the M3 is idle.
 `scripts/dev/live-test-remote` makes it one command:
 
 ```
-RELAX=<relax binary> RELAX_STD=<its std> scripts/dev/live-test-remote rerail-engine --lib -- <filter>
+scripts/dev/live-test-remote rerail-engine --lib -- <filter>    # the Relax of scripts/dev/relax/build
 ```
 
 It sends the checkout and Relax to the first `"mirror"` host, starts the live session there, and

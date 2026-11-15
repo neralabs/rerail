@@ -45,17 +45,22 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `status` | what the farm can use now: each host probed, and why one is not usable |
 | `setup` | installs all of it here, a configuration to fill in, and the toolchain on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
-| `sccache-patches/` | the farm's patch on sccache, on top of #3021 and #3022 |
+| `build-sccache` | builds the patched sccache from upstream and runs `setup` with it |
+| `sccache-patches/` | the patches on upstream sccache: `0000` PRs #3021 and #3022, `0001` the farm's own |
 | `farm.example.json` | a configuration to start from (generic names), copied to `~/.config/rerail-farm/farm.json` |
 
 ## Setup
 
 ```
-scripts/build/farm/setup path/to/patched/sccache
+scripts/build/farm/build-sccache     # the patched sccache, then setup with it
+scripts/build/farm/setup             # setup alone (keeps the installed sccache)
 ```
 
-The sccache is upstream main with PRs #3021 (`SCCACHE_BASEDIRS_REMAP_PATHS`) and #3022
-(`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) merged in, and `sccache-patches/` applied. The patch caches
+The sccache is upstream at the commit `build-sccache` pins, with PRs #3021
+(`SCCACHE_BASEDIRS_REMAP_PATHS`) and #3022 (`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) as merged on it
+(`sccache-patches/0000`), and the farm's patch (`0001`). Its source and build stay in
+`~/Library/Caches/rerail-farm/sccache-src`. Until the PRs land upstream, a newer base means
+merging them again and exporting `0000` anew. The farm's patch caches
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
 engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C

@@ -69,6 +69,36 @@ The farm's compiler wrapper is opt-in: the global cargo configuration uses plain
 dependency misses to the hosts. `RERAIL_FARM_LOCAL=1` keeps every compile here, and
 `RERAIL_FARM_LOG=FILE` logs where each compile ran.
 
+### Relax: the live test loop
+
+[Relax](https://github.com/makepad/relax) runs the engine's tests from source and patches each
+saved function body into the running tests: a body edit reaches a verdict in 2–9 s, against
+about 48 s for a cargo rebuild (t37, §3). Use it for the inner loop of one area's tests. Keep
+cargo for everything else: builds, the quick tier, the gate, wasm, release and CI. Commit only
+after the same tests pass under cargo, because Relax's std is its own.
+
+```
+scripts/dev/relax/build        # once: the pinned Relax with std.patch, into ~/.local/share/rerail-relax
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+  nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
+scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
+```
+
+The engine needs std items that upstream Relax lacked. They are `scripts/dev/relax/std.patch`,
+and the build script applies it. When a Relax run stops on a missing std item, add the item to
+the patch, not to the engine. A live session holds about 6 GB, and `target/relax` grows to
+about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
+
+### Special builds
+
+- **sccache for the farm** is patched (upstream PRs #3021 and #3022, and the farm's own patch in
+  `scripts/build/farm/sccache-patches/`). `scripts/build/farm/build-sccache` builds it from a
+  pinned upstream commit and installs it. The global cargo configuration's plain sccache needs no
+  patch.
+- **Relax** is pinned and patched: `scripts/dev/relax/build` (above).
+- Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
+  Don't build them in a worktree's `tmp/`, and don't run binaries from there.
+
 `rerail-rr-aot`'s generated tiers (about 700 KB of Rust) are written by its build script only
 with the `generated` feature, so a workspace build leaves them out. To test them:
 `nice -n 19 cargo test -p rerail-rr-aot --features generated --profile profiling`.

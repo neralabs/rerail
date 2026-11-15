@@ -9,8 +9,8 @@ prints its verdicts here. Each file saved in this checkout is sent to the host t
 live mirror, where Relax's own watcher sees it written and patches the running tests: the JIT,
 the live process and Relax's store are the host's, and this machine spends only the send.
 
-Relax is `$RELAX` (else `relax` on PATH), its std `$RELAX_STD` if set; both are sent to the same
-paths on the host. Ctrl-C stops the session on the host too.
+Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
+PATH; its std is `$RELAX_STD` if set. Both are sent to the same paths on the host. Ctrl-C stops the session on the host too.
 """
 import ctypes
 import ctypes.util
@@ -101,11 +101,15 @@ def main(argv):
             sys.exit("live-test-remote: no usable host with \"mirror\": true" + (f" ({'; '.join(reasons)})" if reasons else "")
                      + "; run `relax test --live` here instead")
         host = hosts[0]["name"]
-    relax = os.environ.get("RELAX") or subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip()
+    installed = os.path.expanduser("~/.local/share/rerail-relax")
+    relax = os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
+                                        else subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip())
     if not relax:
-        sys.exit("live-test-remote: set RELAX to Relax's binary")
+        sys.exit("live-test-remote: no Relax: run scripts/dev/relax/build, or set RELAX to Relax's binary")
     relax = os.path.realpath(relax)
     std = os.environ.get("RELAX_STD")
+    if std is None and relax == os.path.realpath(os.path.join(installed, "bin/relax")):
+        std = os.path.join(installed, "src/libs/relax/compiler/std")
 
     started = time.time()
     roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
