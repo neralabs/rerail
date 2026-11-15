@@ -114,8 +114,8 @@ slots        size << 1, or a leaf's sibling slot        a language's width, in w
                                                         every language measured)
 gaps         start − the previous node's start          a language's width (8 bits measured)
 lengths      end − start                                a language's width (8 bits measured)
-checkpoints  the absolute start of nodes 0, 8, 16, …     a file's width, in whole bytes (24 bits for
-                                                        files under 16 MB)
+checkpoints  the absolute start of nodes 0, 8, 16, …     a file's width from its source length, in
+                                                        whole bytes (24 bits for files under 16 MB)
 ```
 
 Every array but the checkpoints has one width for every file of the language, fixed with the
@@ -521,7 +521,29 @@ there is no `finish` that moves columns, no code table, no width guess and no re
 - **One definition.** simdjson, the lean parser and tier 2's Cranelift, AOT and Metal backends call
   or generate from the crate's constants. There are no copies (t35 46–47).
 
-E6 measures the writer's cost a node against decision 0140's floor.
+**Measured (E28, `tape16 f16w`).** The lab's writer takes exactly these calls. Each node's open and
+close are driven from the captured trees as a parser makes them, and its output equals the reader's
+tape byte for byte on every file. It is set against format 15's writer (`preorder_image`) over the
+same nodes:
+
+```text
+instructions / ns a node, M1 Max at load 3–6
+                     format 15      format 16 (of which finish)
+data-layer Python    227 / 12.2     190 / 12.2   (27 / 1.6)
+data-layer JSON      198 /  9.0     177 /  8.8   (19 / 1.1)
+rerail Rust          194 / 11.6     185 / 13.1   (25 / 1.6)
+rerail TypeScript    200 / 10.9     194 / 12.0   (29 / 1.7)
+rerail .rr           200 /  9.4     180 /  9.1   (17 / 0.8)
+rerail SQL           186 /  8.9     193 / 11.1   (36 / 2.3)
+```
+
+- **The same cost as format 15's writer:** 3–16% fewer instructions on the large sets. The time is
+  level on Python, JSON and `.rr`, and 10–25% more on Rust, TypeScript and SQL.
+- **`finish`** lays the side lists in parts: 17–44 instructions a node.
+- **On `.rr`**, the lean parse with format 15's write takes 454 instructions a node, and with format
+  16's 437 (M5 Max).
+- **It writes at the language's widths as constants**, as generated code would, and the checkpoint
+  width comes from the source length, known before the first node.
 
 ## 8. SQL
 
@@ -837,6 +859,8 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   every CPU core, with each block's side-list part inside it.
 - E27 (2026-11-15, t39 step 19): the side lists read in their parts, as stored (1.5), and the version
   mark (1.0) on every tape, checked before every load.
+- E28 (2026-11-15, t39 step 20): the writer (7): format 15's cost a node, 3–16% fewer instructions,
+  every tape equal to the reader's.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

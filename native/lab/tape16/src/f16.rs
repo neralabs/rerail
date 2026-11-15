@@ -84,6 +84,11 @@ pub fn revision(tag: u8) -> u8 {
 }
 pub const MARK_LONG: u8 = 255;
 
+/// The checkpoints' width for a file of `source_len` bytes: whole bytes.
+pub fn ckpt_width(source_len: u64) -> u32 {
+    bits_for(source_len).max(1).next_multiple_of(8)
+}
+
 /// A language's statistics, gathered file by file (nothing held), then fixed by `finish`.
 #[derive(Default)]
 pub struct Learner {
@@ -180,7 +185,8 @@ impl<'a> F16<'a> {
         let gap = Esc::new(&g, lang.widths[1]).use_parts(n);
         let len = Esc::new(&l, lang.widths[2]).use_parts(n);
         let starts: Vec<u64> = c.start.iter().step_by(K).copied().collect();
-        let cw = starts.iter().map(|&v| bits_for(v)).max().unwrap_or(0).max(1).next_multiple_of(8);
+        // The file's width: whole bytes for its length, which a writer knows before the first node (E28).
+        let cw = ckpt_width(c.source_len);
         let ckpt = Packed::new_width(&starts, cw);
         let chunks = (K - 1).div_ceil(gap.per());
         assert!(lang.version != 0 && lang.version != MARK_LONG, "a language's choices are marked before a tape is written");

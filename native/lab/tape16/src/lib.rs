@@ -19,6 +19,7 @@ pub mod blocks;
 pub mod capture;
 pub mod code8;
 pub mod f16;
+pub mod f16w;
 #[cfg(feature = "grammar")]
 pub mod gcodes;
 pub mod nofield;

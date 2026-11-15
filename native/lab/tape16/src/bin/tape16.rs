@@ -1766,6 +1766,21 @@ fn cmd_f16_gpu(path: &str) {
     }
 }
 
+/// E28 (t39 step 20): format 16's writer against format 15's (`f16w.rs`).
+fn cmd_f16w(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n\n{path}\n", rerail_tape_lab::measure::machine());
+    rerail_tape_lab::f16w::print_header();
+    for (tag, fs) in &by_tag {
+        let r = rerail_tape_lab::f16w::run(fs);
+        rerail_tape_lab::f16w::print(capture::language(*tag), &r);
+    }
+}
+
 /// E22 (t39 step 14): the field taken out of the code (`nofield.rs`).
 fn cmd_nofield(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1835,6 +1850,7 @@ fn main() {
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
         "f16" => cmd_f16(path),
+        "f16w" => cmd_f16w(path),
         #[cfg(target_os = "macos")]
         "f16-gpu" => cmd_f16_gpu(path),
         #[cfg(feature = "grammar")]

@@ -1135,6 +1135,44 @@ file's mark before its blocks are queued.
 `tape16 f16`'s fixed blocks now carry their side parts too (step 18's form), with an 8-byte index
 entry a block and the mark byte a file: 0.048 B a node of index on the small capture.
 
+### Step 20: format 16's writer (E28)
+
+`f16w.rs` is 0156 §7's writer: `open(number, start)`, `close(end)`, `finish()`.
+- **`open`** writes the code byte (or the prefix, and a side entry), the gap, every 8th
+  checkpoint, and the slot of the leaf before it.
+- **`close`** writes the length and an inner node's slot.
+- **`finish`** writes the last node's slot and lays each array's side list in parts.
+
+`tape16 f16w` drives it from each captured tree as a parser makes the nodes (its own stack of open
+ends). It checks the output against `F16::new` byte for byte on every file, and times it against
+format 15's `preorder_image` over the same nodes, the best of three.
+
+The first version took 487 instructions a node, 2.5× format 15's. Three changes brought it to
+180–200, each what generated code would do:
+- the cells written at the language's width as constants (`Writer<W>`), not through a runtime-width
+  copy;
+- the arrays grown by doubling and written by index, not appended a node at a time;
+- wrapping arithmetic in the hot path, as elsewhere in the lab, whose profile checks overflow.
+
+One format change came with it: the checkpoints' width is now the source length's, which a writer
+knows before the first node, not the largest checkpoint's.
+
+M1 Max at load 3–6, instructions / ns a node:
+
+```text
+                     format 15      format 16 (of which finish)
+data-layer Python    227 / 12.2     190 / 12.2   (27 / 1.6)
+data-layer JSON      198 /  9.0     177 /  8.8   (19 / 1.1)
+rerail Rust          194 / 11.6     185 / 13.1   (25 / 1.6)
+rerail TypeScript    200 / 10.9     194 / 12.0   (29 / 1.7)
+rerail .rr           200 /  9.4     180 /  9.1   (17 / 0.8)
+rerail SQL           186 /  8.9     193 / 11.1   (36 / 2.3)
+```
+
+Fewer instructions on every large set. The time is level on Python, JSON and `.rr`, and 10–25%
+more on Rust, TypeScript and SQL. With the lean `.rr` parser (M5 Max, `--features lean`), parse
+and write take 454 instructions a node with format 15's writer, and 437 with format 16's.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1320,3 +1358,5 @@ In order. Each step is measured on all three corpora, every answer checked.
     writer (E6), and the tape's own kernels reading the decoded blocks in place.
 19. **Side lists read in place; the version mark (E27).** Done: the parts as stored are what the
     readers read; byte 0 of every tape is its language's revision, checked before every load.
+20. **The writer (E28).** Done: format 15's cost a node (3–16% fewer instructions, time level to +25%),
+    every tape equal to the reader's. Next: the tape's own kernels on the decoded blocks.
