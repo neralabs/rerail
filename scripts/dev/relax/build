@@ -1,0 +1,25 @@
+#!/bin/sh
+# Builds the Relax this repository was measured with (docs/final-shape/notes/t37, §3): makepad/relax
+# at COMMIT, with std.patch, the std items the engine needs that Relax's std lacked. It installs
+# to ~/.local/share/rerail-relax, outside every worktree: `src/` (Relax reads its std from there:
+# src/libs/relax/compiler/std) and `bin/relax`. scripts/dev/live-test-remote uses both when
+# RELAX and RELAX_STD are unset. Usage: scripts/dev/relax/build
+set -eu
+COMMIT=63782848ef97129631167ec156b58a3d3796bd89
+here=$(cd "$(dirname "$0")" && pwd)
+# The repository's toolchain: outside the checkout rustup would pick its default.
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
+share=$HOME/.local/share/rerail-relax
+src=$share/src
+mkdir -p "$share/bin"
+[ -d "$src/.git" ] || git clone -q https://github.com/makepad/relax "$src"
+cd "$src"
+git cat-file -e "$COMMIT^{commit}" 2>/dev/null || git fetch -q origin "$COMMIT"
+# The patch adds no files: a forced checkout of COMMIT undoes an earlier run.
+git -c advice.detachedHead=false checkout -q -f "$COMMIT"
+git apply "$here/std.patch"
+PATH=$HOME/.cargo/bin:$PATH RUSTC_WRAPPER= nice -n 19 cargo "+$toolchain" build -q --release -p relax-runner --bin relax \
+  --target-dir "$HOME/Library/Caches/rerail-relax/target"
+install -m 0755 "$HOME/Library/Caches/rerail-relax/target/release/relax" "$share/bin/relax.tmp"
+mv "$share/bin/relax.tmp" "$share/bin/relax"
+echo "relax: $share/bin/relax (std: $src/libs/relax/compiler/std)"

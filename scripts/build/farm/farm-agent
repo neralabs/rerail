@@ -15,14 +15,25 @@ From the daemon:
   here, for the daemon to check against its own. A put under an NFS or automount (the shared volume, which
   this mode replaces) is refused, and every later run fails with code 70: nothing is written through
   to the build machine.
+
+The stream starts on ssh. The daemon's first frame may be {"op": "tcp", "port", "token"}: the agent
+then connects back to the build machine (at the address this connection came from: the fast link,
+which `farm.health` checked) on that port, sends the token, and every later frame both ways goes
+over that plain TCP connection, which costs no encryption and no ssh flow control. ssh stays open as
+the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
+{"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import json, os, struct, subprocess, sys, threading
+import json, os, socket, struct, subprocess, sys, threading
 
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 write_lock = threading.Lock()
-mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
-          subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+def read_mounts():
+    return [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+            subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+
+
+mounts = read_mounts()
 refused = []
 
 
@@ -51,8 +62,14 @@ def seen(path):
 
 
 def put(header, payload):
+    global mounts
     path = header["path"]
-    if any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts):
+    under = lambda: any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts)
+    # The list is read at start; a mount may have gone since (the shared volume unmounted), so it is
+    # read again before a write is refused.
+    if under():
+        mounts = read_mounts()
+    if under():
         refused.append(path)
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -96,10 +113,45 @@ def run(job):
           "stderr": stderr.decode("latin-1"), "read": read})
 
 
+def over_tcp(header):
+    """Moves the stream to a TCP connection back to the build machine (see above); False if none."""
+    global out, inp
+    client = os.environ.get("SSH_CONNECTION", "").split()[:1]
+    try:
+        if not client:
+            raise OSError("no SSH_CONNECTION")
+        sock = socket.create_connection((client[0], header["port"]), timeout=5)
+        sock.settimeout(None)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        for opt in (socket.SO_SNDBUF, socket.SO_RCVBUF):
+            sock.setsockopt(socket.SOL_SOCKET, opt, 8 << 20)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        # A dead link is noticed in about 10 s, not macOS's default 2 hours.
+        # (TCP_KEEPALIVE, the idle time, is 0x10 on macOS; Python names it only on some builds.)
+        for opt, v in ((getattr(socket, "TCP_KEEPALIVE", 0x10), 4), (socket.TCP_KEEPINTVL, 2), (socket.TCP_KEEPCNT, 3)):
+            sock.setsockopt(socket.IPPROTO_TCP, opt, v)
+        sock.sendall(header["token"].encode() + b"\n")
+    except (OSError, KeyError) as e:
+        send({"op": "tcp-failed", "why": repr(e)})
+        return False
+    lifeline = inp
+
+    def watch():
+        while lifeline.read(65536):
+            pass
+        os._exit(0)
+    out, inp = sock.makefile("wb"), sock.makefile("rb")
+    threading.Thread(target=watch, daemon=True).start()
+    return True
+
+
 while True:
     header, payload = receive()
     if header is None:
         break
+    if header["op"] == "tcp":
+        over_tcp(header)
+        continue
     if header["op"] == "put":
         try:
             put(header, payload)
@@ -112,3 +164,9 @@ while True:
         send({"op": "had", "id": header["id"], "seen": [seen(p) for p in header["paths"]]})
     elif header["op"] == "ping":
         send({"op": "pong", "id": header.get("id")})
+
+# The stream ended: the daemon is gone. Leave at once. A normal exit would finalize the interpreter
+# while the lifeline thread holds stdin's lock, or a compile's thread still runs, and Python aborts
+# ("Fatal Python error: _enter_buffered_busy"), which macOS reports as a crash on the host.
+sys.stderr.flush()
+os._exit(0)

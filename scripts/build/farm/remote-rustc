@@ -29,7 +29,8 @@ def seen(path):
 
 
 fresh = request.get("fresh", {})
-deadline = time.time() + 3
+started = time.time()
+deadline = started + 3
 while True:
     stale = []
     for path, (mtime, size) in fresh.items():
@@ -42,7 +43,9 @@ while True:
         sys.stderr.write(f"remote-rustc: stale after 3 s: {stale[:5]}\n")
         sys.exit(75)
     time.sleep(0.05)
+waited = time.time() - started
 done = subprocess.run(request["argv"], cwd=request["cwd"], env=request["env"], stdin=subprocess.DEVNULL)
+ran = time.time() - started - waited
 if request.get("depinfo") and done.returncode == 0:
     read = {}
     try:
@@ -55,5 +58,7 @@ if request.get("depinfo") and done.returncode == 0:
     except OSError:
         read = {"?": None}
     sys.stderr.flush()
+    # How long the view took to be fresh, and rustc's own time: the rest is the farm's.
+    read["\0times"] = [round(waited, 3), round(ran, 3)]
     sys.stderr.write(MARK + json.dumps(read) + "\n")
 sys.exit(done.returncode)

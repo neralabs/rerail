@@ -13,7 +13,7 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   the same in every checkout. A crate compiled in one worktree is a hit in all the others.
   This needs the engine not to write its checkout's path into its build (decision 0224).
 - **Spreading.** On a miss, a dependency's library crate compiles on another Mac when one has a free core
-  (the hosts in `~/.config/rerail-farm/hosts.json`, reached by ssh). The sources, the crate's dependencies' `.rmeta` files and
+  (the hosts of the local configuration, reached by ssh; see Configuration). The sources, the crate's dependencies' `.rmeta` files and
   its `OUT_DIR` are copied to the same absolute paths there, only what changed since the last copy,
   and the outputs are copied back.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
@@ -42,25 +42,35 @@ whose copy or run failed there: it runs here instead, and only that run's output
 | `remote-rustc` | runs one compile on a remote Mac (copy and shared modes) |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host |
-| `setup` | installs all of it, and `remote-rustc` on each host |
+| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
+| `setup` | installs all of it here, a configuration to fill in, and the toolchain on each host |
 | `shared-volume` | the NFS export here and the mount on each host |
-| `sccache-patches/` | the farm's patch on sccache, on top of #3021 and #3022 |
-| `hosts.example.json` | the hosts, copied to `~/.config/rerail-farm/hosts.json` |
+| `build-sccache` | builds the patched sccache from upstream and runs `setup` with it |
+| `sccache-patches/` | the patches on upstream sccache: `0000` PRs #3021 and #3022, `0001` the farm's own |
+| `farm.example.json` | a configuration to start from (generic names), copied to `~/.config/rerail-farm/farm.json` |
 
 ## Setup
 
 ```
-scripts/build/farm/setup path/to/patched/sccache
+scripts/build/farm/build-sccache     # the patched sccache, then setup with it
+scripts/build/farm/setup             # setup alone (keeps the installed sccache)
 ```
 
-The sccache is upstream main with PRs #3021 (`SCCACHE_BASEDIRS_REMAP_PATHS`) and #3022
-(`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) merged in, and `sccache-patches/` applied. The patch caches
+The sccache is upstream at the commit `build-sccache` pins, with PRs #3021
+(`SCCACHE_BASEDIRS_REMAP_PATHS`) and #3022 (`SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS`) as merged on it
+(`sccache-patches/0000`), and the farm's patch (`0001`). Its source and build stay in
+`~/Library/Caches/rerail-farm/sccache-src`. Until the PRs land upstream, a newer base means
+merging them again and exporting `0000` anew. The farm's patch caches
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
 engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
-file that uses `__TIME__` (mimalloc's) is cached. Each host needs ssh without a password (its name in
-`hosts.json` is a name ssh connects to: a `Host` entry of `~/.ssh/config`), the
-toolchain of `rust-toolchain.toml`, and a copy of `~/.cargo/registry/src` at the same path:
+file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
+`remote-rustc` and `farm-agent` are sent with each command and run by the host's `/usr/bin/python3`.
+Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
+entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it),
+`cargo-nextest` for `scripts/dev/test-remote`, and, for copy mode only, a copy of
+`~/.cargo/registry/src` at the same path:
 
 ```
 rsync -a ~/.cargo/registry/src/ HOST:.cargo/registry/src/
@@ -84,13 +94,69 @@ alone takes 90 s at a load of 80).
 `JEMALLOC_OVERRIDE` set to a prebuilt `libjemalloc_pic.a` saves `tikv-jemalloc-sys`'s 3-minute
 configure-and-make in every new target directory; its build script is never cached.
 
-## Hosts
+## Configuration
 
-`hosts.json` lists `{"name", "cores", "enabled", "shared"}`. A host takes a compile per core while
-nobody has touched its keyboard or mouse for 5 minutes, and half as many otherwise (`HIDIdleTime`,
-read at most every 30 s). Not its load average: macOS's background analysis (Photos, Spotlight)
-keeps that high on an idle Mac, at a priority every compile preempts. A host behind a slow link is
-better disabled.
+The farm's configuration is local to this Mac and never in git: `$RERAIL_FARM_CONFIG` if set, else
+`~/.config/rerail-farm/farm.json` (`farm.example.json` shows its shape). Without one there are no
+hosts, and everything compiles and tests here, as without the farm.
+
+| Key | Meaning |
+|---|---|
+| `hosts` | the hosts: `{"name", "cores", "enabled", "mirror", "tests", "shared", "link"}` |
+| `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
+| `enabled` | `false` leaves a host out (default `true`) |
+| `mirror`, `shared` | how its compiles get their inputs (Live mirror, Shared volume; else copied) |
+| `tests` | whether `scripts/dev/test-remote` runs there (default: `mirror`) |
+| `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
+| `min_free_gb` | free disk a host needs (default 40) |
+| `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
+| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported |
+| `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
+
+A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
+half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
+first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
+Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
+
+### The hosts' backups and indexing
+
+A host holds the farm's copies (`~/orca`, at this machine's paths), Relax and the caches. Left
+alone, Time Machine backs them up and Spotlight indexes every file the mirror writes (over 200,000
+on one host). `host-privacy` (run by `setup`) excludes them from Time Machine, which needs no
+root. Spotlight ignores a folder's `.metadata_never_index` (macOS 15), and the paths cannot take the
+`.noindex` suffix, so `host-privacy --spotlight` puts them in Spotlight's privacy list with sudo,
+once per host, from a terminal. Its report counts what Spotlight still has indexed.
+
+## Health
+
+Hosts come and go: they sleep, leave the network, fall back to WiFi, fill their disk, or have their
+copies cleaned. Nothing waits on one for long, and anything a host cannot do runs here.
+
+- **Probe.** Before a host is used its health is read: one ssh command (3 s to connect) reports the
+  interface the connection arrived on, its free disk, its idle time and its mounts; the round
+  trip is timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the
+  throughput. A host short of disk or past the limits is not used.
+- **Off its link: recovered.** A host's name (often an mDNS `.local` name) resolves to whichever
+  of its addresses answers first, so ssh can reach it over WiFi while its fast link is up. When
+  a probe arrives on another interface than `link`, the farm asks the host, over the connection
+  that works, for its addresses on `link`, tries each (3 s), and the first that arrives there
+  becomes the host's route: every later ssh goes to that address, the shared connections made
+  the other way are closed, and each route has its own. While no address works (the link is
+  down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
+  answering is dropped, and the host is reached by name, then recovered again.
+- **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
+  the others read). A host that does not answer is not probed again for 30 s, doubling to 30
+  minutes, so a sleeping host costs nothing; `status` probes every host now, whatever its
+  back-off.
+- **Lost mid-job.** A compile whose copy or run fails there runs here, and the host is marked down
+  when its connection or agent is gone, or its disk is full (agent code 70). A test run whose ssh
+  connection drops (exit 255) runs again here.
+- **Cleaned copies.** The mirror remembers what it sent each host, and a host restarted or cleaned
+  forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
+  what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
+
+`scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
+with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
 
 ## Shared volume
 
@@ -123,7 +189,17 @@ host over ssh. For each compile it scans what the compile may read (the checkout
 dependency directory, `OUT_DIR`, native library directories; one scan serves every compile that
 started before it), sends each file whose size or mtime differs from what it last sent, then the
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
-come back on the stream. Every file the compile read (its dep-info) must have the size and mtime
+come back on the stream.
+
+The stream starts on ssh, then moves to plain TCP: the daemon listens on a port of its own,
+sends the agent the port and a one-time token over ssh, and the agent connects back to the
+address it sees ssh arrive from (the host's `link`, which the health check confirmed) and sends
+the token. ssh's encryption and flow control capped the mirror at about 40–120 MB/s on a link
+that carries 600 MB/s; over TCP a fresh 330 MB tree reaches a host at 220–330 MB/s, the host's
+own disk writes included. ssh stays open as the lifeline: the agent ends when it does, and a
+dead TCP connection is noticed in about 10 s (keepalive). If the agent cannot connect back
+within 8 s, the stream stays on ssh. The data on the link is not encrypted: `tcp: false` keeps it
+on ssh. Every file the compile read (its dep-info) must have the size and mtime
 it has here, or the compile runs here. The agent refuses to write under an NFS mount or automount:
 a host with the shared volume runs `shared-volume client-off` first.
 

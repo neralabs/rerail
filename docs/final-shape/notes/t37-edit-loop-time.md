@@ -138,7 +138,9 @@ test by name.
 
 `scripts/dev/test-remote` sends this checkout to a farm host through the mirror and runs a command
 there (`scripts/dev/test-remote -- cargo nextest run --lib --profile gate`). The host builds in
-its own warm `target/`, so the suite spends the host's CPU, not this machine's. On an M3 Max at
+its own warm target directory (outside the mirrored checkout: the mirror writes this machine's
+`.rmeta` files into `<checkout>/target`, and a host build there found an `.rmeta` and `.rlib` of
+one name with different SVHs, E0463), so the suite spends the host's CPU, not this machine's. On an M3 Max at
 `-j 16`:
 
 | Run | Tests | Wall |
@@ -206,10 +208,11 @@ changes, about 30 lines in all:
 | `relax run` of the CLI: E0425 `vdup_lane_u32` (sha1dc), E0277 `AsRef<[T]>` for `vec::IntoIter` and `slice::Iter` (roaring), `core::array::IntoIter::new` (dary_heap) | Relax's std lacks them | added to Relax's std (below) | 23 lines |
 | `--unattended` | none: it is an option of `run`, so it goes before the package | — | — |
 
-The std additions are in Relax's source tree, not in this repository (`tmp/relax-src`, uncommitted):
-an `AsRef<[T]>` impl on each of the two iterators, the deprecated `IntoIter::new` of an array, and
-`vdup_lane_u32` as `uint32x2_t([a.0[N as usize]; 2])`. Relax reads its std from source, so they
-need no rebuild of Relax.
+The std additions are `scripts/dev/relax/std.patch`: an `AsRef<[T]>` impl on each of the two
+iterators, the deprecated `IntoIter::new` of an array, and `vdup_lane_u32` as
+`uint32x2_t([a.0[N as usize]; 2])`. `scripts/dev/relax/build` builds the Relax measured here (its
+commit pinned, the patch applied) into `~/.local/share/rerail-relax`. Relax reads its std from
+source, so a change to the patch needs no rebuild of Relax.
 
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
@@ -259,7 +262,7 @@ of 60–90), because the M3 is idle.
 `scripts/dev/live-test-remote` makes it one command:
 
 ```
-RELAX=<relax binary> RELAX_STD=<its std> scripts/dev/live-test-remote rerail-engine --lib -- <filter>
+scripts/dev/live-test-remote rerail-engine --lib -- <filter>    # the Relax of scripts/dev/relax/build
 ```
 
 It sends the checkout and Relax to the first `"mirror"` host, starts the live session there, and
@@ -386,6 +389,24 @@ remote in each.
   dependency directory listed before cargo wrote the new `.rmeta` (E0463). The farm now checks
   every file a compile read against this machine's and compiles here when one differs. The server
   tuning (16 nfsd threads at a higher priority, 1 s directory caching) is not yet measured.
+- **Measured again (2026-11-15), with the server tuning on.** The compile's reads were replayed on
+  each host, against its mirrored copy and over NFS: the dependency directory listed, then the
+  engine's 219 dep-info inputs (7.6 MB) stat'ed and read, three rounds, at a load of 30–45 here.
+
+  | Step | Mirrored copy | NFS |
+  |---|---|---|
+  | list the dependency directory (45,833 entries) | 33–140 ms | 1.8–9.8 s, with any mount options |
+  | the same for 3,000 entries (a clean target's size) | | 35 ms; 1 ms within the 1 s cache |
+  | stat the 219 inputs | under 1.5 ms | 50–450 ms (one call: 0.23–0.78 ms, the link's round trip at this load) |
+  | read them | 5–15 ms | 0.3–3.1 s cold; 22 ms with attributes cached 1 s |
+
+  The 7.3 s a compile took over NFS was mostly the listing: rustc lists each `-L dependency=`
+  directory in every process, and this one had grown to 45,833 entries of stale artifacts (4,588
+  crate names). Larger directory reads (`dsize`) and `rdirplus` did not change it. With a lean
+  target directory and attributes cached for 1 s (the read check then catches what is stale), a
+  compile would pay about 0.1–0.5 s, near the mirror's; with attributes uncached, the cold reads
+  alone cost more than the mirror's whole sync. Not yet measured: a build end to end on a clean
+  target directory, and writing the outputs over NFS.
 - The mirror wins on moving files: no ssh session or tar per compile, and one scan of the checkout
   (11,298 files, 0.36 s) serves every compile that starts while it runs. The first compile on a
   fresh host sends the whole checkout (346 MB, 13 s). Its daemon used 5 s of CPU.
