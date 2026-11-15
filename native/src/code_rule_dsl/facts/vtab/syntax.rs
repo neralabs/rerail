@@ -515,6 +515,16 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
         d
     };
     let derived_id: HashMap<&str, u32> = derived.iter().enumerate().map(|(i, r)| (*r, i as u32)).collect();
+    // A base relation's name the program gives rules of its own: a relation like any other there, which narrows
+    // nothing by the base relation's meaning. `kind(n, k) :- node(_, n, k, _, _)` (the lowering's projection,
+    // `rr::lower` `projections`, and the data-layer prelude's) is `kind` itself, not a rule of the program's.
+    let projection = |r: &crate::code_rule_dsl::logic::front::ast::Rule| {
+        r.head.rel == "kind"
+            && matches!((r.head.args.as_ref(), r.body.as_ref()),
+                ([Term::Var(n), Term::Var(k)], [Literal::Atom(a)])
+                    if !a.neg && a.rel == "node" && matches!(a.args.as_ref(), [_, Term::Var(an), Term::Var(ak), _, _] if an == n && ak == k))
+    };
+    let redefined: BTreeSet<&str> = program.rules.iter().filter(|r| !projection(r)).map(|r| r.head.rel.as_str()).filter(|r| ["kind", "node", "field", "child"].contains(r)).collect();
     /// What fixes a variable's kinds where an atom reads it.
     enum Fix {
         /// A derived relation's column.
@@ -529,15 +539,17 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                 if !matches!(t, Term::Var(x) if x == v) {
                     continue;
                 }
+                // The base relations narrow by their meaning only where the program gives no rules of its own to
+                // one of that name (`redefined`): there it is a relation like any other (its columns).
                 out.push(match (a.rel.as_str(), c, a.args.get(1)) {
-                    ("kind", 0, Some(Term::Str(k))) => Fix::Known(Some(vec![intern(bare(k))])),
-                    ("kind", _, _) => Fix::Known(None),
+                    ("kind", 0, Some(Term::Str(k))) if !redefined.contains("kind") => Fix::Known(Some(vec![intern(bare(k))])),
+                    ("kind", _, _) if !redefined.contains("kind") => Fix::Known(None),
                     // T's base `node(d, n, kind, …)` (a program that declares its base relations itself): `n` of `kind`.
-                    ("node", 1, _) if !derived_id.contains_key("node") => Fix::Known(match a.args.get(2) {
+                    ("node", 1, _) if !redefined.contains("node") => Fix::Known(match a.args.get(2) {
                         Some(Term::Str(k)) => Some(vec![intern(bare(k))]),
                         _ => None,
                     }),
-                    ("node", _, _) if !derived_id.contains_key("node") => Fix::Known(None),
+                    ("node", _, _) if !redefined.contains("node") => Fix::Known(None),
                     (rel, c, _) => match derived_id.get(rel) {
                         Some(&d) => Fix::Column(d, c),
                         None if c == 0 && let Some(root) = roots.get(rel) => Fix::Known(root.clone()),
@@ -705,7 +717,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
     };
     // The fields `v` is a node in (`field(_, "F", v)`).
     let fields_of = |body: &[Literal], v: &str| -> BTreeSet<String> {
-        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field").filter_map(|a| match (a.args.get(1), a.args.get(2)) {
+        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field" && !redefined.contains("field")).filter_map(|a| match (a.args.get(1), a.args.get(2)) {
             (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(f.clone()),
             _ => None,
         }).map(String::from).collect()
@@ -715,7 +727,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
     let parents_of = |body: &[Literal], v: &str| -> Option<(BTreeSet<String>, BTreeSet<String>)> {
         let (mut kinds, mut fields) = (BTreeSet::new(), BTreeSet::new());
         let mut any = false;
-        for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "child") {
+        for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "child" && !redefined.contains("child")) {
             if let (Some(Term::Var(p)), Some(Term::Var(x))) = (a.args.first(), a.args.get(1))
                 && x == v
             {
@@ -777,7 +789,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
             }
             match fixed {
                 Some(k) => kinds.extend(k),
-                None if leaf_field(&rule.body, v) || short_constant(text) || twinned(&rule.head.rel, v) => {}
+                None if !redefined.contains("field") && leaf_field(&rule.body, v) || short_constant(text) || twinned(&rule.head.rel, v) => {}
                 None => any.push((r, i)),
             }
         }

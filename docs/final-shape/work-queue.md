@@ -30,7 +30,9 @@ into notes once the queue is done).
   node's text; the syntax tests pass.
 - **Record**: —
 
-### Q2. Text tests over `node_text` answered on request use the vocabulary
+### Q2. Text tests over `node_text`, `token` and `value` answered on request use the vocabulary
+
+(All three are answered on request since 0174 step 2, and my filter took all three out of the vocabulary.)
 
 - **Keep**: 0174 (`node_text` answered by rules, interned only where read: atoms 467 → 55 MB); the vocabulary's
   chunked matching of text tests (contains, prefix, the literal sets) with no per-row scans; correct results
@@ -38,6 +40,17 @@ into notes once the queue is done).
 - **Done when**: a text test over node_text answered on request is answered from a vocabulary of the answered
   texts, measured on a data-layer rule that tests node_text (work and atoms before/after), with the same findings.
   The `vocabulary_columns` filter added in 36625e820 is gone.
+- **Design (draft)**: before 0174, `node_text` was a batch input in `TEXT_COLUMNS`: the batch interned its strings
+  and `Vocabulary::rows` (strings.rs 255) tested each new string once against every test's compiled searchers.
+  Answered on request, its strings are atoms made during the run (`@rr_node_text_any`), after the batch's
+  vocabulary was tested. A text test whose string comes from such a derived column is turned, as now, into an
+  atom over a test relation, but that relation is made natively: a native step (like `Native::MatchAll`,
+  plan.rs 5082, which reads the distinct strings of a derived relation's column) reads the distinct strings of
+  the column, runs `Vocabulary::rows` over them (all tests at once, each string once per run through `seen`) and
+  inserts the passing symbols. `vocabulary_columns` then seeds every `TEXT_COLUMNS` relation again; a derived one
+  is answered by the native step. This holds for any derived string column, not only `node_text`. To check: the
+  Metal path (no host work, the guard test), the session's maintenance of the test relation, and the planner's
+  cardinality for it (`card`, plan.rs 1694).
 - **Record**: —
 
 ### Q3. No duplicate widened copies; the dropping test strict again
@@ -55,6 +68,11 @@ into notes once the queue is done).
   derived independently, or the comparison is of the pre-request programs plus a separate check of the requests;
   either `difference` compares inputs in order, or evidence shows input order carries no meaning anywhere
   (every reader of `Program::inputs` listed).
+- **Found**: input order is not meaningless. `plan.rs` `program_digest` (3855) hashes `prog.inputs` in order, so
+  the same program with its inputs in another order is another key. 0174's lowering declares `node_order` in
+  `finish`, after its requests, where the `.rdl` reads it first. So either the lowering's order is canonical
+  (inputs in one order wherever they come from, e.g. sorted at `finish`), or the digest hashes them as a set.
+  Sorting in the test hid a key difference between equal programs.
 - **Record**: —
 
 ### Q5. Node texts: isolated per run and available on every evaluation path
@@ -74,6 +92,13 @@ into notes once the queue is done).
 - **Done when**: either lowering is idempotent over its own output (printing the lowered program needs no undo), or
   `undo_on_request` is shown exact by a test over every pack's programs (lower, undo, lower again: equal); the
   tools' outputs are compared before and after.
+- **Found**: `undo_on_request` (lower.rs) is not exact: it appends the restored input at the end of `inputs`, not
+  at its place (a different `program_digest`, Q4), and it removes a `node_text` declaration that is unread, even
+  one the author wrote.
+- **Design (draft)**: make `sources_on_request` idempotent (an attribute whose request relation is declared is
+  already answered: skip it), so a printed lowered program parses back to itself and `print` prints what lowering
+  made, with no undo. The converter's `overlay` (test-only) merges the authored and converted programs before
+  the requests are made, not after: then `undo_on_request` has no caller and goes.
 - **Record**: —
 
 ### Q7. The 12 changed gate datalog files, explained or restored

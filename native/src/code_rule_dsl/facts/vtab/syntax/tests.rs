@@ -1153,6 +1153,32 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// A base relation's name (`kind`, `field`, `child`) the program gives rules of its own is a relation like any
+/// other: it narrows the nodes whose text is read only by what its rules give. Here they give nothing narrower than
+/// `edge`, so every node's text is read. `node`'s projection `kind(n, k) :- node(_, n, k, _, _)` is `kind` itself.
+#[test]
+fn a_derived_base_name_narrows_no_text() {
+    let decls = ".decl edge(a: node, b: node)\n.decl text(n: node, t: symbol)\n.decl node(d: node, n: node, k: symbol, s: number, e: number)\n.input edge, text, node\n\
+                 .decl kind(n: node, k: symbol)\n.decl field(p: node, f: symbol, c: node)\n.decl child(p: node, c: node, i: number)\n\
+                 .decl out(t: symbol)\n.output out\n";
+    for (derives, body) in [
+        ("kind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
+        ("field(p, \"name\", c) :- edge(p, c).", "out(t) :- field(_, \"name\", n), text(n, t)."),
+        ("field(p, \"attribute\", c) :- edge(p, c).", "out(t) :- field(_, \"attribute\", n), text(n, t)."),
+        ("child(p, c, 0) :- edge(p, c).\nkind(n, \"dotted_name\") :- edge(n, _).", "out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t)."),
+        // `node`'s projection and a rule of the program's own: `kind` is the program's.
+        ("kind(n, k) :- node(_, n, k, _, _).\nkind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{derives}\n{body}\n")).unwrap();
+        let demand = text_kind_demand(&program, &[]);
+        assert_eq!(demand.read, None, "{derives} / {body}: every node's text");
+        assert!(!demand.any.is_empty(), "{derives} / {body}: a text of a node of any kind");
+    }
+    // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
+    let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
+    assert_eq!(text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+}
+
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
 /// nodes its other literals bind, less those that read the text; a relation that reads `node_text` is read through
 /// its widened copy; a negation asks for the nodes it tests. A reader that binds its node by nothing else keeps it an
