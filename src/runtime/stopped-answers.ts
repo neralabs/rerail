@@ -11,8 +11,8 @@
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
  * home. It holds no path: the repository key the database records, how many folders up the checkout's top is, the
  * device and inode of the folder, the top and the top's `.git`, and when the daemon answered. A new daemon places every
- * folder again, so the first hook that keeps an answer from it removes the folders of the daemons before it. A link in
- * place of the file or of either folder above it is never followed.
+ * folder again, so a hook that writes an answer from it removes the folders of the daemons before it. A link in place
+ * of the file or of either folder above it is never followed.
  */
 import { createHash } from "node:crypto";
 import {
@@ -148,7 +148,8 @@ function placementOf(folder: string, top: string): Placement | undefined {
 /** Writes `kept` at `file`, unless what is there says the same and is younger than `REWRITE_AFTER_MS`. */
 async function rewritten(file: string, kept: KeptAnswer, now: number): Promise<void> {
   if (keptAlready(readKept(file), kept, now)) return;
-  madeForThisDaemon(dirname(file));
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  removeEarlierDaemons(dirname(file));
   await replaceFile(file, JSON.stringify(kept), { mode: 0o600, retryMs: 0 });
 }
 
@@ -162,11 +163,23 @@ function sameAnswer(left: Placement & { repository?: string }, right: KeptAnswer
     && left.folder === right.folder && left.checkout === right.checkout && left.git === right.git;
 }
 
-/** Makes `folder`, this daemon's; the hook that makes it removes the folders of the daemons before it, whose answers are never repeated. */
-function madeForThisDaemon(folder: string): void {
-  if (mkdirSync(folder, { recursive: true, mode: 0o700 }) === undefined) return;
-  const earlier = readdirSync(dirname(folder)).filter(name => name !== basename(folder));
-  for (const name of earlier) rmSync(join(dirname(folder), name), { recursive: true, force: true });
+/**
+ * Removes what is beside `folder`, this daemon's: the folders of the daemons before it, whose answers are never repeated.
+ * Each write looks, so a folder Windows refused to remove while a file in it was held is removed at a later one.
+ */
+function removeEarlierDaemons(folder: string): void {
+  for (const name of readdirSync(dirname(folder))) {
+    if (name !== basename(folder)) removeIfItCan(join(dirname(folder), name));
+  }
+}
+
+/** Removes `path`, a folder with what is in it, or a link alone, never what it leads to; a removal refused now is left for a later write. */
+function removeIfItCan(path: string): void {
+  try {
+    rmSync(path, { recursive: entryKind(path) === "folder", force: true });
+  } catch {
+    // Held a moment on Windows, or not this user's to remove: the next write tries again.
+  }
 }
 
 /**
