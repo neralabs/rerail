@@ -11,7 +11,7 @@
 
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod numbering;
 use numbering::Stored;
@@ -25,6 +25,132 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(7);
 /// file hands on its base rows as an evaluated one does.
 pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
+}
+
+/// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
+/// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
+/// when its identity now is among them; a relation with no rows for the file has no key in `rows`, so whether it
+/// is held is read here, not from `rows`. An `own:` key: it holds no symbol, and stays with the outputs' frame.
+pub(super) const COVERED: &str = "own:covered";
+
+/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
+/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
+/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
+/// running the slice. Not an output: they are no relation of the file-local part.
+pub(super) const GUESTS: &str = "guests:";
+
+/// An entry's `lines` key for round `round`'s lines of slice relation `rel`.
+pub(super) fn guest_key(round: usize, rel: &str) -> String {
+    format!("{GUESTS}{round}:{rel}")
+}
+
+/// The round and slice relation of a `guest_key`, `None` for an output's key.
+pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
+    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
+    Some((round.parse().ok()?, rel))
+}
+
+/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
+pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
+    let of = |e: &Entry| -> Vec<(String, Vec<String>)> {
+        e.lines.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, l))| {
+            let mut l = l.clone();
+            l.sort_unstable();
+            l.dedup();
+            (k.clone(), l)
+        }).filter(|(_, l)| !l.is_empty()).collect()
+    };
+    of(a) == of(b)
+}
+
+/// The words `identity` is held by in `COVERED`.
+pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
+    [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]
+}
+
+/// The identities `entry` holds (`COVERED`).
+pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
+    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+}
+
+/// Whether `a` and `b` hold the same rows (or lines) of relation `rel`, in any order.
+pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
+    let rows = |e: &Entry| -> Option<(usize, Vec<Vec<i64>>)> {
+        e.rows.get(rel).filter(|(_, v)| !v.is_empty()).map(|(w, v)| {
+            let mut rows: Vec<Vec<i64>> = v.chunks_exact((*w).max(1)).map(<[i64]>::to_vec).collect();
+            rows.sort_unstable();
+            (*w, rows)
+        })
+    };
+    let lines = |e: &Entry| -> Option<Vec<String>> {
+        e.lines.get(rel).filter(|(_, l)| !l.is_empty()).map(|(_, l)| {
+            let mut l = l.clone();
+            l.sort_unstable();
+            l
+        })
+    };
+    rows(a) == rows(b) && lines(a) == lines(b)
+}
+
+/// Records that `entry` holds the relations of `identities`.
+pub(super) fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
+    let mut words: Vec<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
+    words.sort_unstable();
+    words.dedup();
+    entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
+}
+
+/// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
+/// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
+/// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
+/// earlier phases' exports (`phased`). So an export's identity changes when a rule it is derived from does, and only
+/// then.
+pub(in crate::code_rule_dsl) fn identities(
+    local: &crate::code_rule_dsl::logic::front::Program,
+    rels: &BTreeSet<String>,
+    options: &serde_json::Value,
+    phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+) -> Result<BTreeMap<String, [u8; 32]>, String> {
+    use crate::code_rule_dsl::logic::front;
+    let (sccs, _) = front::strata(local).map_err(|e| e.to_string())?;
+    let by_stratum = front::rules_by_stratum(local, &sccs);
+    let ids = crate::code_rule_dsl::logic::plan::identities_of(local, &sccs, &by_stratum).map_err(|e| e.to_string())?;
+    // The value inputs each stratum reaches, in the strata's order.
+    let mut reach: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for (scc, rules) in sccs.iter().zip(&by_stratum) {
+        let mut leaves: BTreeSet<&str> = BTreeSet::new();
+        for a in rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()) {
+            let rel = a.rel.as_str();
+            if crate::code_rule_dsl::typing::file_local::option_input(rel) || phased.contains_key(rel) {
+                leaves.insert(rel);
+            } else if let Some(more) = reach.get(rel) {
+                leaves.extend(more.iter().copied());
+            }
+        }
+        for rel in scc {
+            reach.insert(rel.as_str(), leaves.clone());
+        }
+    }
+    let mut out = BTreeMap::new();
+    for rel in rels {
+        let Some(id) = ids.get(rel) else { continue };
+        let leaves = reach.get(rel.as_str()).cloned().unwrap_or_default();
+        if leaves.is_empty() {
+            out.insert(rel.clone(), *id);
+            continue;
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.corpus-local-identity/v1\0");
+        hash.update(id);
+        let options_read = leaves.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r));
+        if options_read {
+            hash.update(options.to_string().as_bytes());
+        }
+        let by_rows: Vec<&str> = leaves.into_iter().filter(|r| phased.contains_key(*r)).collect();
+        let digest = with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r])));
+        out.insert(rel.clone(), digest);
+    }
+    Ok(out)
 }
 
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
@@ -78,6 +204,45 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
             key as i64
         })
         .collect()
+}
+
+/// The memo's frames' program part (decision 0225 §2): the phase that runs, and the names of the file-local part's
+/// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
+/// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
+/// a rule's edit keeps the space, and misses only the relations it reaches.
+pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::front::Program, phase: Option<&str>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-space/v2\0");
+    hash.update(phase.unwrap_or("").as_bytes());
+    let derived: BTreeSet<&str> = local.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let inputs: BTreeSet<&str> = local.inputs.iter().map(String::as_str).collect();
+    for part in [ids.keys().map(String::as_str).collect::<BTreeSet<&str>>(), derived, inputs] {
+        hash.update(b"\x01");
+        for rel in part {
+            hash.update(rel.as_bytes());
+            hash.update(b"\0");
+        }
+    }
+    hash.finalize().into()
+}
+
+/// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+fn last_key(space: &[u8; 32]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-last/v1\0");
+    hash.update(space);
+    hash.finalize().into()
+}
+
+/// The whole file-local program whose run last wrote the entries of space `space`, if it ended (decision 0225 §2).
+/// What is kept of every file together (the kept statistics) is of that program's entries, and of no other's.
+pub(super) fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
+    store.stat_blob(last_key(space)).ok().flatten().and_then(|b| b.try_into().ok()).filter(|w: &[u8; 32]| *w != [0; 32])
+}
+
+/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way.
+pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
+    store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
 }
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
@@ -436,6 +601,9 @@ pub struct Frame {
     key: i64,
     digest: [u8; 32],
     frame: std::sync::Arc<crate::content_store::AdmittedFrame>,
+    /// Its outputs' frame (`outputs_rel`), for the identities it holds (`COVERED`): a run that derived the entry's
+    /// rows again and found them as they were writes only that frame (decision 0225 §2).
+    outputs: Option<std::sync::Arc<crate::content_store::AdmittedFrame>>,
 }
 
 impl Frame {
@@ -449,7 +617,7 @@ impl Frame {
         for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
             c.copy_from_slice(&v.to_le_bytes());
         }
-        Some(Frame { path, syms, key: key as i64, digest, frame })
+        Some(Frame { path, syms, key: key as i64, digest, frame, outputs: None })
     }
 
     fn entry(&self) -> StoreResult<Entry> {
@@ -459,7 +627,20 @@ impl Frame {
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
         // Read from the store (decision 0170): its symbols are the store's, this process's once mapped (another
         // process's past this one's end, or any once forked).
-        Stored::decoded(&self.frame.rows()?, keep)?.to_process(self.syms.as_ref(), self.key, self.frame.store_atoms().as_deref())
+        let mut entry = Stored::decoded(&self.frame.rows()?, keep)?.to_process(self.syms.as_ref(), self.key, self.frame.store_atoms().as_deref())?;
+        // The identities its rows hold: those it was written with, and those a later run found its rows hold too. A
+        // frame's rows are of its content under each identity it names, so both are true while it stands.
+        if let Some(outputs) = self.outputs.as_ref().filter(|_| keep(COVERED)) {
+            let more = Stored::decoded(&outputs.rows()?, &|k| k == COVERED)?.to_process(self.syms.as_ref(), self.key, outputs.store_atoms().as_deref())?;
+            let held: Vec<[i64; 2]> = covered(&more).into_iter().collect();
+            if !held.is_empty() {
+                let mut all: Vec<[i64; 2]> = covered(&entry).into_iter().chain(held).collect();
+                all.sort_unstable();
+                all.dedup();
+                entry.rows.insert(COVERED.to_owned(), (2, all.into_iter().flatten().collect()));
+            }
+        }
+        Ok(entry)
     }
 }
 
@@ -610,9 +791,18 @@ fn by_digest_from(store: &ContentStore, program: &Program, paths: &[&str], wante
     };
     // A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept manifest names its
     // content (`collect_unreachable_frames`), not by the runs that read it.
+    // An entry's outputs' frame beside it, for the identities a later run found its rows hold (`Frame::outputs`).
+    let mut outputs = if rel.name != entry_rel(plan).name {
+        HashMap::new()
+    } else if stored {
+        store.admit_parts_stored(&space, &outputs_rel(plan), &parts)?
+    } else {
+        store.admit_parts_of(&space, &outputs_rel(plan), &parts)?
+    };
     let mut out = Vec::new();
     for (i, digest, part) in wanted {
-        let Some(frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
+        let Some(mut frame) = frames.remove(&part).and_then(|f| Frame::of(f, Some(program.syms.clone()))) else { continue };
+        frame.outputs = outputs.remove(&part).and_then(|f| Frame::of(f, None)).filter(|o| o.digest == digest && o.path == frame.path).map(|o| o.frame);
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
             out.push((i, Found::Frame(frame)));
@@ -666,6 +856,14 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+}
+
+/// `remember_all`, each entry with whether its rows frame stands as stored (decision 0225 §2): its rows were derived
+/// again and found as they were, so only its outputs' frame is written, with the identities they now hold.
+pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+    let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
+    let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
     off();
     let plan = plan_digest(program);
     // The atom table the entries' symbols are numbered by: the writer maps them with it, or refuses them (below).
@@ -684,7 +882,9 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
     if held.is_empty() {
         return Ok(());
     }
-    let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
+    // What the writer writes, the queue's measure: of an entry whose rows frame stands, its outputs alone. The rest of
+    // it stays held for this process's readers (`pending`) until it is written; it was the chunk's already.
+    let bytes: usize = held.iter().map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { e.outputs_bytes() } else { e.bytes() }).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
         for (_, _, e) in &held {
@@ -724,7 +924,12 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
             let mut stored = store.source_digests(&ids)?.into_iter();
             // Each entry's symbols as the store numbers them, in the writer's transaction (decision 0170): every
             // entry's in one call, where this process forked from the store.
-            let mapped = numbering::to_store(&held.iter().map(|(_, _, e)| &**e).collect::<Vec<_>>(), &syms, store)?;
+            // Of an entry whose rows frame stands, only its outputs are written: only they are mapped and encoded.
+            let written: Vec<std::borrow::Cow<'_, Entry>> = held
+                .iter()
+                .map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { std::borrow::Cow::Owned(outputs_of(e)) } else { std::borrow::Cow::Borrowed(&**e) })
+                .collect();
+            let mapped = numbering::to_store(&written.iter().map(|e| &**e).collect::<Vec<_>>(), &syms, store)?;
             let mut puts = Vec::with_capacity(held.len());
             for ((content, path, _), e) in held.iter().zip(&mapped) {
                 let digest = match content {
@@ -735,7 +940,9 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
                 // A source collected since the run found it leaves the entry unwritten: the next run misses it.
                 let Some(digest) = digest else { continue };
                 let part = part_of(&digest, path);
-                puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.encode() });
+                if !standing.contains(&(path.clone(), e.key())) {
+                    puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.encode() });
+                }
                 puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key() as u64, reads: frame_reads(path, e.key(), &digest), rows: e.outputs().encode() });
             }
             let space = crate::content_store::local_space(&plan);
@@ -758,6 +965,11 @@ impl Entry {
     /// The bytes the entry holds (its rows and lines), about.
     fn bytes(&self) -> usize {
         self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
+    }
+
+    /// `bytes` of `outputs_of(self)`, the part written of an entry whose rows frame stands.
+    fn outputs_bytes(&self) -> usize {
+        self.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
     }
 }
 
@@ -950,6 +1162,16 @@ impl Memo<'_> {
 
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
     pub(super) fn remember_all(self, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+    }
+
+    /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
+    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+        let entries: Vec<(Content, String, i64, Entry, bool)> = entries;
+        if let Memo::Stored(store) = self {
+            return remember_all_but(store, program, entries);
+        }
+        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
         match self {
             Memo::Stored(store) => remember_all(store, program, entries),
             Memo::Held(_) => {
@@ -1047,6 +1269,20 @@ pub mod tests {
         .expect("a posting's columns are known");
         assert_eq!(entry.rows["own:postings:field:f"].1, vec![65_555, 10], "not mapped");
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "nor taken for an atom");
+    }
+
+    #[test]
+    fn an_entry_holds_the_identities_it_was_made_under_and_no_others() {
+        let (a, b, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        let mut entry = Entry { key: 7, ..Entry::default() };
+        cover(&mut entry, [a, b].iter());
+        cover(&mut entry, [b].iter());
+        let held = covered(&entry);
+        assert_eq!(held.len(), 2);
+        assert!(held.contains(&covered_words(&a)) && held.contains(&covered_words(&b)) && !held.contains(&covered_words(&c)));
+        // It is an `own:` key: the outputs' frame keeps it, and it names no symbol.
+        assert!(outputs_of(&entry).rows.contains_key(COVERED));
+        assert_eq!(Syms::default().columns(COVERED, 2), Some(vec![false, false]));
     }
 
     #[test]

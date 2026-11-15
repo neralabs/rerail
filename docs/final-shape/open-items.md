@@ -5220,3 +5220,12 @@ seed joins cut at 100k–200k rows of work, trials whose orders cost 5× their p
 statistics with a 449,720-row side, heavy-value splits (`xd_`, `xk_`) over 85–120k first-atom rows. A handoff whose
 replacement is cut too goes on unbounded ("the replacement goes on", `p68_rr_agg20`). The strata trace is written
 when the loop ends, so a killed run names no stratum.
+
+## O-corpus0-peak-memory. A run over corpus0 peaks at 2.5 GB (2026-11-14, decision 0225)
+
+Status: open. The main pack's 317 rules over corpus0's 300 files, profiling build: cold 2,533 MB peak footprint, a
+file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over decision 0126's 1 GB overall budget.
+50 files cold: 1,050 MB, as 5de418d7a's 991 MB, so the growth is in the files, not a regression of the stall's fix
+(2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
+`local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
+chunk.

@@ -369,6 +369,11 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     sets `RUSTFLAGS` and `CARGO_TARGET_DIR` on purpose to compare flags (lab code, not mine to change; for the
     tape16 owner). Relax builds stop on macOS refusing to exec (AppleSystemPolicy "Security policy would not allow
     process", the Relax binary and native build scripts, 15:29–15:42), intermittent: the user decides the route.
+  - At the rr-align roll-up (2026-11-15): a plain `cargo build -p rerail-engine --lib` (not the test profile) shows
+    "unused attribute" warnings in rerail-logic (logic.rs:28, 43, 65, 109; rr.rs:15, 97), rerail-lang-python
+    (lib.rs:329), rerail-w (lib.rs:27, 237) and rerail-device-metal (lib.rs:720), and two unfulfilled lint
+    expectations in blade/forte/ast.rs (52, 100). None is from the roll-up's merges. tape16's bench-pack.sh now
+    exempts only its native build (rr-align's form).
 
 ### Q14. Plan-time switches and the plan cache
 
@@ -403,6 +408,17 @@ pass.
   script change passes. This is the pinned Relax's code (`scripts/dev/relax`), the farm branch's.
 - **Record**: fixed by the farm branch (24955f4e8, merged in the roll-up of 2026-11-15): a stubbed build script is
   a shell script, not a hard link of Relax's binary (`scripts/dev/relax/rerail.patch`), on upstream 5b2d68c2.
+
+### Q16. A constant world request in the kept cross part
+
+(Numbered Q15 when written, on final-rerail-shape-rr-align; renumbered at the roll-up, the hub's Q15 being the Relax kills.)
+
+- **Found**: `dir_entry("sub", n, 0)` lowers to the request fact `rr_dir_req("sub")` (`rr::lower`'s `world_demand`).
+  `world::wanted` and `world::answers` counted only request rules, so such a run failed ("no columns for
+  dir_entry"); they now count request facts (`world::asks`). The run after the one that kept the cross part then
+  fails: "rr_dir_req: kept as clean, but its rows are not kept".
+- **Done when**: `an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part` (partial_tests.rs,
+  ignored) passes, unignored.
 
 ## Questions for the user
 

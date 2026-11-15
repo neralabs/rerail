@@ -37,6 +37,63 @@ pub use rerail_rr_syntax::tape;
 pub fn nodes(src: &str) -> Vec<tape::Node> {
     tape::nodes(&tape(src)).expect("the lean parser's image decodes")
 }
+/// `src` with each `.violation`'s message reduced to its placeholders (`lower::findings::message_skeleton`): the
+/// text a program's keys are made of (`corpus::texts_digest`). Lowering reads a message's placeholders alone, and the
+/// writer puts its texts in (decision 0225 §3), so an edit of a message's words is no edit of the program.
+pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
+    if !src.contains(".violation") {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let message = tape::Field::Message as u16;
+    let mut spans: Vec<(usize, usize)> = nodes(src).iter().filter(|n| n.field == message && !n.is_error()).map(|n| (n.start as usize, n.end as usize)).collect();
+    spans.sort();
+    let mut out = String::with_capacity(src.len());
+    let mut at = 0;
+    for (start, end) in spans {
+        let Some(literal) = src.get(start..end).filter(|l| start >= at && l.len() >= 2 && l.starts_with('"') && l.ends_with('"')) else { continue };
+        let Ok(template) = syntax::unescape(&literal[1..literal.len() - 1]) else { continue };
+        out.push_str(&src[at..start]);
+        out.push_str(&quote(&lower::findings::message_skeleton(&template)));
+        at = end;
+    }
+    out.push_str(&src[at..]);
+    std::borrow::Cow::Owned(out)
+}
+
+/// The message templates a text gives its findings, by (policy, clause): its `.violation`s', and the `.message`
+/// settings a printed program keeps them in (`lower::findings::MESSAGE`). The policy is the `.policy` setting's name,
+/// as lowering names it in each finding.
+pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
+    if !src.contains(".violation") && !src.contains(".message") {
+        return Vec::new();
+    }
+    let Ok(statements) = from_tape::statements(src, &nodes(src)) else { return Vec::new() };
+    let policy = statements
+        .iter()
+        .find_map(|(item, _)| match item {
+            syntax::Item::Setting { key, text } if key == "policy" => text.split('"').nth(1).map(str::to_owned),
+            _ => None,
+        })
+        .unwrap_or_default();
+    statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Violation { name, message, .. } => Some((name.clone(), message.clone())),
+            syntax::Item::Setting { key, text } if key == lower::findings::MESSAGE => setting_template(text),
+            _ => None,
+        })
+        .map(|(clause, template)| (policy.clone(), clause, template))
+        .collect()
+}
+
+/// A `.message` setting's clause and template (`B101 "…"`).
+pub fn setting_template(text: &str) -> Option<(String, String)> {
+    let (clause, literal) = text.trim().split_once(' ')?;
+    let literal = literal.trim();
+    let body = literal.strip_prefix('"')?.strip_suffix('"')?;
+    Some((clause.to_owned(), syntax::unescape(body).ok()?))
+}
+
 #[path = "rr"]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;

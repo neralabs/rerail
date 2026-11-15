@@ -42,6 +42,7 @@
 //!   as they are.
 
 use super::front::{AggOp, Atom, Literal, Name, Program, Rule, Term, Value};
+use super::front::template::{CanonicalNames, canonical, template};
 use std::collections::{BTreeMap, BTreeSet};
 // FxHash: these maps are keyed by names and rule shapes in the whole-program passes, where std's SipHash was 5% of
 // a cold batch's main thread. Their order was already random (std's hasher is seeded per process).
@@ -241,9 +242,13 @@ fn span_containment(rule: &mut Rule) -> usize {
 }
 
 /// Moves each part of a body that meets the rest only at a document variable into a relation of documents
-/// (`exists_<k>`, the module's list); returns the relations made.
+/// (`exists_<k>`, the module's list); returns the relations made. A part equal to one moved before (the same template,
+/// `template`) reads that relation: the same test in several rules, a library's in each policy, was a relation per
+/// rule that `merge` found equal again.
 fn project_existentials(prog: &mut Program) -> Vec<String> {
     let mut made = Vec::new();
+    let names = CanonicalNames::new();
+    let mut seen: HashMap<(Vec<Name>, String), String> = HashMap::default();
     let mut at = 0;
     while at < prog.rules.len() {
         let mut next = made.len();
@@ -257,8 +262,21 @@ fn project_existentials(prog: &mut Program) -> Vec<String> {
         match existential(&mut prog.rules[at], &name, &prog.decls) {
             // The same rule again: it may have another such part.
             Some((rule, columns)) => {
+                let key = (columns.iter().map(|(_, t)| t.clone()).collect(), template(&rule, &names));
+                if let Some(before) = seen.get(&key) {
+                    let before: Name = before.as_str().into();
+                    for l in prog.rules[at].body.make_mut() {
+                        if let Literal::Atom(a) = l
+                            && a.rel.as_str() == name
+                        {
+                            a.rel = before.clone();
+                        }
+                    }
+                    continue;
+                }
                 prog.decls.insert(name.clone().into(), columns.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 prog.rules.push(rule);
+                seen.insert(key, name.clone());
                 made.push(name);
             }
             None => at += 1,
@@ -1618,81 +1636,11 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
     before - rule.body.len()
 }
 
-/// A rule with every relation named by `label` and its variables numbered in order of first appearance.
-///
-/// Its variables are numbered by a scan of the few names seen so far, each `v<k>` one of `names`, made once for the
-/// caller's rules: a map and a `format!` per variable, and each name interned again (a lock the pool's threads share),
-/// were most of `congruence`'s templates, 9% of a cold batch's main thread.
-fn canonical(rule: &Rule, label: &dyn Fn(&str) -> Name, names_made: &CanonicalNames) -> String {
-    let mut names: Vec<String> = Vec::new();
-    let mut name = |v: &str| -> Name {
-        let k = names.iter().position(|n| n == v).unwrap_or_else(|| {
-            names.push(v.to_owned());
-            names.len() - 1
-        });
-        names_made.var(k)
-    };
-    fn term(t: &Term, name: &mut dyn FnMut(&str) -> Name) -> Term {
-        match t {
-            Term::Var(v) => Term::Var(name(v)),
-            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, name)).collect()),
-            t => t.clone(),
-        }
-    }
-    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> Name| Atom { rel: label(&a.rel), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
-    // The head is the relation the signature is of: `@`, so two relations' rules compare by their bodies.
-    let head = Atom { rel: names_made.head.clone(), ..atom(&rule.head, &mut name) };
-    let body: Vec<Literal> = rule
-        .body
-        .iter()
-        .map(|l| match l {
-            Literal::Atom(a) => Literal::Atom(atom(a, &mut name)),
-            Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, &mut name), op, r: term(r, &mut name) },
-            Literal::Agg { var, op, over, atom: a } => {
-                let var = name(var).as_str().to_owned();
-                let over = over.as_ref().map(|o| name(o).as_str().to_owned());
-                let op = match op {
-                    AggOp::Join { by, sep } => AggOp::Join { by: by.iter().map(|k| name(k).as_str().to_owned()).collect(), sep: sep.clone() },
-                    op => op.clone(),
-                };
-                Literal::Agg { var, op, over, atom: atom(a, &mut name) }
-            }
-            Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n).as_str().to_owned(), a: name(a).as_str().to_owned(), kindset: kindset.clone() },
-            Literal::Ast { document, node, matcher, captures } => Literal::Ast {
-                document: name(document).as_str().to_owned(),
-                node: name(node).as_str().to_owned(),
-                matcher: matcher.clone(),
-                captures: captures.iter().map(|(c, v)| (c.clone(), name(v).as_str().to_owned())).collect(),
-            },
-        })
-        .collect();
-    Rule { head, body: body.into() }.to_string()
-}
-
 /// A rule as `congruence` compares it (`canonical`): its relations named by `label`, its variables numbered in order
 /// of first appearance in every position (atoms, comparisons, aggregates' `over` and `by`, `nearest`, AST matches),
 /// its head `@`. For a check of what `merge_identical` left (the dropping test's widened copies).
 pub fn canonical_rule(rule: &Rule, label: &dyn Fn(&str) -> Name) -> String {
     canonical(rule, label, &CanonicalNames::new())
-}
-
-/// The names `canonical` writes, made once by its caller: the variables `v0`, `v1`, …, the head's `@`, and the
-/// placeholder of the relations a template reads.
-struct CanonicalNames {
-    vars: Vec<Name>,
-    head: Name,
-    placeholder: Name,
-}
-
-impl CanonicalNames {
-    fn new() -> Self {
-        CanonicalNames { vars: (0..64).map(|k| Name::new(&format!("v{k}"))).collect(), head: Name::new("@"), placeholder: Name::new("\u{1}") }
-    }
-
-    /// The variable name `v<k>`.
-    fn var(&self, k: usize) -> Name {
-        self.vars.get(k).cloned().unwrap_or_else(|| Name::new(&format!("v{k}")))
-    }
 }
 
 /// The coarsest partition of the mergeable relations in which every two of a class have the same column types and
@@ -2655,9 +2603,9 @@ pub mod tests {
         )
         .unwrap();
         let report = simplify(&mut prog);
-        // One relation per rule, the second merged into the first (equal once renamed).
-        assert_eq!(report.existentials, vec!["exists_0".to_owned(), "exists_1".to_owned()]);
-        assert_eq!(report.merged, vec![("exists_0".to_owned(), "exists_1".to_owned())]);
+        // One relation: the second rule's part is the first's once renamed, so it reads that one; nothing to merge.
+        assert_eq!(report.existentials, vec!["exists_0".to_owned()]);
+        assert!(report.merged.is_empty(), "{:?}", report.merged);
         let rules = |head: &str| prog.rules.iter().filter(|r| r.head.rel == head).map(|r| r.to_string()).collect::<Vec<_>>();
         assert_eq!(rules("exists_0").len(), 1);
         let exists = &rules("exists_0")[0];
