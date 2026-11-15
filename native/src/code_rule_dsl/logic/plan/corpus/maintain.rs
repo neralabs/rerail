@@ -311,7 +311,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         let lv = is_recursive && levels_wanted() && mine.iter().all(|r| r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })))
             && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
         if lv {
-            BY_LEVELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let not_join = mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
@@ -637,23 +637,10 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         }
     }
     part.program.rules = rules;
-    together(&mut part.program);
+    let together = together(&mut part.program);
+    TOGETHER.with(|n| n.set(n.get() + together));
     let views = views.into_keys().collect();
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
-}
-
-static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
-pub fn strata_by_levels() -> usize {
-    BY_LEVELS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The sets of pieces run as one component so far in this process (`together`).
-pub fn pieces_together() -> usize {
-    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
@@ -670,13 +657,32 @@ pub fn pieces_together() -> usize {
 /// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
 ///
 /// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
-fn together(prog: &mut front::Program) {
+thread_local! {
+    /// The recursive strata this thread's runs maintained by levels (decision 0090), and the sets of pieces they ran
+    /// as one component (`together`). Counted by thread, not by process: a test reads its own runs' counts while
+    /// other tests run beside it.
+    static BY_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOGETHER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The recursive strata maintained by levels so far by this thread's runs (decision 0090), not by delete-and-rederive.
+pub fn strata_by_levels() -> usize {
+    BY_LEVELS.with(std::cell::Cell::get)
+}
+
+/// The sets of pieces run as one component so far by this thread's runs (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.with(std::cell::Cell::get)
+}
+
+/// The sets of pieces it made into one component each.
+fn together(prog: &mut front::Program) -> usize {
     if std::env::var_os("RERAIL_PIECES_APART").is_some() {
-        return;
+        return 0;
     }
     if crate::code_rule_dsl::logic::plan::placement::device() {
         crate::code_rule_dsl::logic::profile::decision("pieces together (decision 0101 §3)", || "apart: the run's binding is the device, which takes no gates".to_owned());
-        return;
+        return 0;
     }
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut rules_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -745,6 +751,7 @@ fn together(prog: &mut front::Program) {
     let apart: BTreeSet<usize> = front::apart(prog).into_iter().collect();
     let sets: Vec<(usize, BTreeSet<String>)> = sets.into_iter().enumerate().filter(|(i, _)| !apart.contains(i)).map(|(_, s)| s).collect();
     prog.together.clear();
+    let mut made = 0;
     for (g, set) in sets {
         // Each negated piece's depth in the set (its gates' order), and what it reads there.
         let inner: BTreeMap<&String, BTreeSet<String>> = set.iter().map(|r| {
@@ -805,6 +812,7 @@ fn together(prog: &mut front::Program) {
         }
         prog.again[g].owned.extend(members.iter().cloned());
         prog.together.push(members);
-        TOGETHER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        made += 1;
     }
+    made
 }

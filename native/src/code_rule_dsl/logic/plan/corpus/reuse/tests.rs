@@ -10,7 +10,6 @@
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"), "def f():\n    return 1\n").unwrap();
         let out = dir.join("out");
-        let _no_session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let program = |name: &str| {
             let text = format!("#include \"core.rr\"\n.decl {name}(s: symbol)\n{name}(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output {name}\n");
@@ -71,7 +70,6 @@
         let src = dir.join("src"); std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
         std::fs::write(src.join("b.py"),"y = 2\n").unwrap();
-        let _guard = super::super::SESSION_TESTS.lock().unwrap_or_else(|e|e.into_inner());
         super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=Some(dir.join("store.sqlite")));
         let p = "#include \"core.rr\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
         let out=dir.join("out");

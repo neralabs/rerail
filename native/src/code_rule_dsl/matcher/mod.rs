@@ -425,6 +425,16 @@ impl Matcher for AstMatcher {
 // The composites, out of line: a debug build gives every arm of `match_node_with_env` its own stack
 // slots, and every level of utility recursion runs through several of its frames.
 impl AstMatcher {
+    /// Whether this is the test-only leaf (`TestUnknown`): code built where this crate's `test-hooks` is on but its
+    /// own is off (the engine's library in a test build) cannot name the variant, so it asks.
+    pub fn test_only(&self) -> bool {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if matches!(self, Self::TestUnknown(_)) {
+            return true;
+        }
+        false
+    }
+
     // Composites and relations follow ast-grep-config 0.45.3: one environment threads through every
     // sub-rule, is committed only when the whole composite matches, and a relation binds from the
     // first related node that matches (no backtracking). Verdicts are three-valued (`UNKNOWN`):

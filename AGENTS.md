@@ -16,10 +16,10 @@ This holds for background runs too, and for any long command a script starts.
 Build only the target the next step needs. The engine's unit tests live in its library, so
 its test target compiles the whole crate a second time:
 
-| Target | Measured (2026-11-10) |
+| Target | Measured (2026-11-14, O0, after a one-file edit in `logic`) |
 |---|---|
-| The CLI alone (`--bin rerail-engine`), after a one-file edit | 135 s wall, 629 s CPU |
-| The library's tests (`--lib --tests`), after a change in `accel` | 380 s wall |
+| The CLI alone (`--bin rerail-engine`) | 19 s wall, 22 s CPU |
+| The library's tests (`--lib --tests`) | 18 s wall, 26 s CPU (a `facts` edit: 31 s, 52 s) |
 
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.

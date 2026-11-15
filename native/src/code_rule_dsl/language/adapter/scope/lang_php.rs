@@ -195,11 +195,6 @@ impl ScopeRules for Php {
         None
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
-        false
-    }
-
     fn usage<D: Doc>(
         table: &ScopeTable,
         _: &Node<'_, D>,

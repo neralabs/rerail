@@ -62,7 +62,7 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 
 /// The typing program `name`'s text.
 fn source(name: &str) -> Result<String> {
-    let path = crate::code_rule_dsl::logic::rr::native_dir().join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
+    let path = rerail_store::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
     // Its `#include`s read in (`python/modules.rr`, …).
     crate::code_rule_dsl::logic::settings::program_text(&path).map_err(Error::Plan)
 }

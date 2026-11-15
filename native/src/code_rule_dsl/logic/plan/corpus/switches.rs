@@ -55,6 +55,14 @@ fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// What a thread does before it takes the switches, holding nothing: in a test build, the tests' store template is made
+/// (`test_store::ready`). Made later, from inside a run, its runs would wait behind a test waiting to `set`, which
+/// waits for the runs that wait on the template: none would end.
+fn before_taking() {
+    #[cfg(any(test, feature = "test-hooks"))]
+    super::test_store::ready();
+}
+
 /// Held by a run while it reads the switches.
 pub struct Reading {
     outermost: bool,
@@ -67,6 +75,7 @@ pub fn reading() -> Reading {
         d.get() == 1
     });
     if outermost {
+        before_taking();
         let mut s = state();
         while s.writer || s.waiting > 0 {
             s = CHANGED.wait(s).unwrap_or_else(std::sync::PoisonError::into_inner);
