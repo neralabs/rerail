@@ -573,8 +573,11 @@ Moving each audit's rule provenance to one shared copy is not part of a step: th
 the daemon moves the provenance once it starts, on a thread of its own, so it keeps answering hooks during the move.
 Each transaction moves as many audits as fit in about 100 ms, at most 100, with a pause between two, so the open that
 upgrades the file returns at once and other processes keep writing during the move. While another process holds the
-database, the move tries again for up to 5 s. A daemon stopped partway goes on at its next start, and a later start
-finds nothing left to move with one read and takes no write lock.
+database, as `rerail scrub` does for seconds on a large file, the move waits and tries again every 150 ms, then goes
+on; stopping the daemon ends that wait at once. A daemon stopped partway goes on at its next start. Each check the
+daemon makes on the thread that answers hooks, whether audits are left to move and whether an older Rerail recorded
+one in the last 7 days, reads one audit through an index, however long the history: a later start finds nothing left
+to move that way and takes no write lock.
 
 The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
 them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
@@ -582,16 +585,18 @@ on a large file, and another process's write fails once it has waited 5 s. `rera
 disk when you run it.
 
 A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
-one may still be using the database: it starts only once no audit an older Rerail recorded, with rules on or none, has
-begun for 7 days. The new version marks every audit it records with its shared copy, an empty one included, so an
-audit without that mark is an older Rerail's. The audits recorded before the update count too, so with only the new
-version running the move starts 7 days after the last audit recorded before the update, and an older Rerail reads
-the audits recorded before the update in full that week, as before. While it waits, the daemon writes why and until
-when to `daemon.log` when the wait begins, and again when it finds another audit to wait for, as when an older Rerail
-has recorded one since. It looks again an hour later, or when the wait ends if that comes first, so an older Rerail
-that keeps recording adds at most one line an hour, and after the computer sleeps the move starts at most an hour
-late. A move that finds such an audit before its next batch stops there and waits the same way; the audits it has not
-reached keep their provenance in their row.
+one may still be using the database: it starts only once the last audit an older Rerail recorded, with rules on or
+none, began 7 days ago. The new version marks every audit it records with its shared copy, an empty one included, and
+the move marks each audit it moves, so an audit without that mark is an older Rerail's. The audits recorded before the
+update count too, so with only the new version running the move starts 7 days after the last audit recorded before
+the update, and an older Rerail reads the audits recorded before the update in full that week, as before. While it
+waits, the daemon writes why and until when to `daemon.log` when the wait begins, and again when it finds another
+audit to wait for, as when an older Rerail has recorded one since. It looks again an hour later, or when the wait ends
+if that comes first, so an older Rerail that keeps recording adds at most one line an hour, and after the computer
+sleeps the move starts at most an hour late. A move that finds such an audit before its next batch stops there and
+waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
+the order they were recorded and stops at the first one an older Rerail recorded after the update, so it reads none of
+the later ones' rows.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
