@@ -3209,6 +3209,31 @@ fn counts_need_by_offset(native: &crate::block_native::BlockNative, tests: &[cra
 /// Whether the bytes `s + n.lo` on, `span` of them (16 at most), have one of `n`'s
 /// (`native_cpu_bytes::Needs`): one vector's compares, nonzero where some byte is in the set.
 fn needs_some(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, bytes: Value, s: Value, span: Value) -> Value {
+    let any = needs_lanes(f, n, bytes, s, span);
+    let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), any);
+    let w0 = f.ins().extractlane(wide, 0);
+    let w1 = f.ins().extractlane(wide, 1);
+    f.ins().bor(w0, w1)
+}
+
+/// How many of the bytes `s + n.lo` on, `span` of them (16 at most), are in `n`'s set
+/// (`native_cpu_bytes::exact`): the lanes' ones added, two words' bytes summed by a multiply.
+fn needs_count(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, bytes: Value, s: Value, span: Value) -> Value {
+    let any = needs_lanes(f, n, bytes, s, span);
+    let one = f.ins().iconst(types::I8, 1);
+    let one = f.ins().splat(types::I8X16, one);
+    let ones = f.ins().band(any, one);
+    let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), ones);
+    let w0 = f.ins().extractlane(wide, 0);
+    let w1 = f.ins().extractlane(wide, 1);
+    let w = f.ins().iadd(w0, w1);
+    let w = f.ins().imul_imm(w, 0x0101_0101_0101_0101);
+    f.ins().ushr_imm(w, 56)
+}
+
+/// The lanes of the bytes `s + n.lo` on, `span` of them (16 at most), in `n`'s set: all ones
+/// each, the others and those past the span zero.
+fn needs_lanes(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, bytes: Value, s: Value, span: Value) -> Value {
     let at = f.ins().iadd(bytes, s);
     let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, n.lo);
     let mut any: Option<Value> = None;
@@ -3238,11 +3263,7 @@ fn needs_some(f: &mut FunctionBuilder<'_>, n: &crate::native_cpu_bytes::Needs, b
     let index = f.func.dfg.constants.insert(index.into());
     let index = f.ins().vconst(types::I8X16, index);
     let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, span16);
-    let any = f.ins().band_not(any, past);
-    let wide = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), any);
-    let w0 = f.ins().extractlane(wide, 0);
-    let w1 = f.ins().extractlane(wide, 1);
-    f.ins().bor(w0, w1)
+    f.ins().band_not(any, past)
 }
 
 /// Whether the bytes `s + n.lo` on, `span` of them (64 at most), have one of `n`'s
@@ -3336,7 +3357,44 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         // bytes (and the few its masks look past) fit one vector has none of them where no byte
         // there is in the set, a compare a run of bytes, and the call is skipped.
         let counts: Vec<crate::records::TokenCheck> = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| *t).collect();
-        if let Some(n) = rd.bytes.and_then(|(b, _)| counts_need(b.native, &counts)) {
+        // Where each count's mask is its bytes exactly (`native_cpu_bytes::exact`), a token of
+        // 16 bytes at most has its counts from one vector each, as a lexer counts a float's `.`
+        // as it reads it, and the call is made for a longer one alone.
+        let exacts: Option<Vec<crate::native_cpu_bytes::Needs>> = rd.bytes.and_then(|(b, _)| counts.iter().map(|t| crate::native_cpu_bytes::exact(b.native, t.o)).collect());
+        if let Some(ex) = exacts.filter(|v| v.iter().all(|n| (-8..=8).contains(&n.lo) && (1..=4).contains(&n.ranges().len()))) {
+            let (vec, call) = (f.create_block(), f.create_block());
+            let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 16);
+            f.ins().brif(fits, vec, &[], call, &[]);
+            f.switch_to_block(vec);
+            let (mut r, mut h) = (refuse, hits);
+            let mut made: Vec<(crate::native_cpu_bytes::Needs, Value)> = Vec::new();
+            for (t, n) in counts.iter().zip(&ex) {
+                let k = match made.iter().find(|(m, _)| m == n) {
+                    Some(&(_, k)) => k,
+                    None => {
+                        let k = needs_count(f, n, c.bytes, s, len);
+                        made.push((*n, k));
+                        k
+                    }
+                };
+                let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, i64::from(t.least));
+                let hit = f.ins().sextend(types::I64, hit);
+                let hit = f.ins().ineg(hit);
+                match t.then {
+                    crate::records::CheckThen::Escape => r = f.ins().bor(r, hit),
+                    crate::records::CheckThen::At(b) => {
+                        let b = f.ins().band_imm(hit, 1i64 << b);
+                        h = f.ins().bor(h, b);
+                    }
+                    crate::records::CheckThen::After(b) => {
+                        let b = f.ins().band_imm(hit, 1i64 << (crate::records::AFTER_SHIFT + u32::from(b)));
+                        h = f.ins().bor(h, b);
+                    }
+                }
+            }
+            f.ins().jump(join, &[r.into(), h.into()]);
+            f.switch_to_block(call);
+        } else if let Some(n) = rd.bytes.and_then(|(b, _)| counts_need(b.native, &counts)) {
             let (vec, call) = (f.create_block(), f.create_block());
             let span = f.ins().iadd_imm(len, i64::from(n.hi - n.lo));
             let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, span, 16);

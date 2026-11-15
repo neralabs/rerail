@@ -1252,3 +1252,36 @@ kind rose about one instruction. Without it, no kind rose.
 | Numbers | 215 | 197 | 107 |
 
 Other kinds did not change.
+
+## A float's `.` is counted where it is read
+
+**Intro.** A lexer knows a number is a float because it read the
+`.`. rr's grammar says so with two counts at a number: a `.` makes
+it a float (`count(dot) at least 1`), and a second `.` is an error
+(`at least 2`). The CPU checked a short token's bytes for a `.` in
+one vector. Where none was there, it skipped the counts. A float has
+one, so every float called the counts' function, which counts a word
+at a time: about 14% of a number's time.
+
+**The change.** Where a count's mask is its token's bytes exactly
+(`native_cpu_bytes::exact`: byte tests and their unions at one
+offset), a token of 16 bytes at most is counted in the same vector.
+The lanes in the set are ones. The two halves are added, and a
+multiply sums their bytes. A `.` mask is used by both counts and is
+computed once. A longer token still makes the call. A mask that
+reads its neighbours (a string's bad escape) is not exact and keeps
+the old gate.
+
+```
+lanes = (bytes[s .. s+16] == '.') & (index < len)   // 0 or 1 each
+n     = ((lo64(lanes) + hi64(lanes)) * 0x0101..01) >> 56
+```
+
+`a_floats_dots_are_its_bytes` checks that the number's counts are
+exact and a string's are not.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Numbers | 197 | 183 | 107 |
+
+Other kinds did not change.

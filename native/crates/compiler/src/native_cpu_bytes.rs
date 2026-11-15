@@ -719,6 +719,26 @@ fn needs_at(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Nee
     n
 }
 
+/// Where output `o` is its bytes exactly (`Needs` with `lo == hi`): a bit at `p` where, and only
+/// where, the byte at `p + lo` is in `set`. Byte tests and their unions at one offset; a count
+/// of it over a token's bytes is then the count of its bytes in the set, one vector's compares.
+pub fn exact(native: &BlockNative, o: u16) -> Option<Needs> {
+    let x = usize::from(*native.outputs.get(usize::from(o))?);
+    let d = i32::from(native.output_delays[usize::from(o)]);
+    exact_at(native, x).map(|n| n.shift(d))
+}
+
+fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
+    match native.insts[x] {
+        BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => needs_at(native, x, &mut HashMap::new()),
+        BlockInst::Or(a, b) => {
+            let (p, q) = (exact_at(native, usize::from(a))?, exact_at(native, usize::from(b))?);
+            (p.lo == q.lo).then(|| p.union(q))
+        }
+        _ => None,
+    }
+}
+
 /// What an output needs of the bytes, offset by offset (`needs`'s, unmerged): a bit at `p`
 /// only where, for some `(d, set)`, the byte at `p + d` is in `set`. Where `needs` merges two
 /// tests at two offsets into one set over both (a control byte or a `\` before, so a newline

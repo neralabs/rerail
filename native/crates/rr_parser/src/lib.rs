@@ -1582,6 +1582,23 @@ pub mod tests {
         assert_eq!(set_range(set(&[0xfe, 0xff])), Some((0xfe, 0xff)));
     }
 
+    /// A float's `.` counts (`count(dot) at least 1`, `at least 2`): the mask is its bytes
+    /// exactly (`native_cpu_bytes::exact`), so a short number's counts are one vector's, as a
+    /// lexer counts the `.` it reads; a mask that looks at other bytes is not.
+    #[test]
+    fn a_floats_dots_are_its_bytes() {
+        let c = crate::compiled().expect("compiles");
+        let cpu = &c.native;
+        let r = c.program.block_programs[0].records.as_ref().expect("records");
+        let counts: Vec<_> = r.checks.iter().filter(|t| t.count && !t.always()).collect();
+        let exact: Vec<_> = counts.iter().filter_map(|t| rerail_compiler::native_cpu_bytes::exact(cpu, t.o).map(|n| (t, n))).collect();
+        assert!(exact.len() >= 2, "{counts:?}");
+        for (t, n) in &exact {
+            assert_eq!((n.lo, n.hi, n.ranges()), (0, 0, vec![(b'.', b'.')]), "{t:?}");
+        }
+        assert!(exact.len() < counts.len(), "a string's counts look past their bytes");
+    }
+
     /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
     /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
     /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer
