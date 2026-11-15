@@ -73,6 +73,30 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 /// What the bridged runs did: each program's report.
 pub(crate) type Runs = Vec<(String, Report)>;
 
+/// `typing_bridge_at(n, k, s, e)`: each node a bridged output names (`columns`: an output's node columns), with its
+/// kind and span, read from `node`. Declared, made and output as a text of them would be once read.
+fn add_spans(prog: &mut Program, columns: &BTreeMap<&str, Vec<bool>>) {
+    use crate::code_rule_dsl::logic::front::{Atom, Rule, Term};
+    const AT: &str = "typing_bridge_at";
+    let v = |n: &str| Term::Var(n.to_owned().into());
+    let atom = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
+    prog.decls.insert(AT.to_owned().into(), [("n", "node"), ("k", "sym"), ("s", "int"), ("e", "int")].iter().map(|(c, t)| ((*c).to_owned().into(), (*t).to_owned().into())).collect::<Vec<_>>().into());
+    for (output, nodes) in columns {
+        let vars: Vec<Term> = (0..nodes.len()).map(|i| v(&format!("typing_v{i}"))).collect();
+        for (i, _) in nodes.iter().enumerate().filter(|(_, n)| **n) {
+            let n = v(&format!("typing_v{i}"));
+            prog.rules.push(Rule {
+                head: atom(AT, vec![n.clone(), v("k"), v("s"), v("e")]),
+                body: vec![Literal::Atom(atom(output, vars.clone())), Literal::Atom(atom("node", vec![Term::Wild, n, v("k"), v("s"), v("e")]))].into(),
+            });
+        }
+    }
+    crate::code_rule_dsl::logic::rr::lower::base_relation(prog, "node");
+    if !prog.outputs.iter().any(|o| o == AT) {
+        prog.outputs.push(AT.to_owned());
+    }
+}
+
 /// The facts of the bridged relations `prog` reads, by relation, and each program's run. `scratch` holds the
 /// programs' runs (`<scratch>/typing-<program>`).
 #[allow(clippy::too_many_arguments)]
@@ -111,19 +135,14 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             }
             columns.insert(b.output.as_str(), nodes);
         }
-        // The spans of the nodes the bridged outputs name.
-        let mut spans = String::from("\n.decl typing_bridge_at(n: node, k: symbol, s: number, e: number)\n");
-        for (output, nodes) in &columns {
-            let vars: Vec<String> = (0..nodes.len()).map(|i| format!("typing_v{i}")).collect();
-            for (i, _) in nodes.iter().enumerate().filter(|(_, n)| **n) {
-                spans.push_str(&format!("typing_bridge_at(typing_v{i}, k, s, e) :- {output}({}), node(_, typing_v{i}, k, s, e).\n", vars.join(", ")));
-            }
-        }
-        spans.push_str(".output typing_bridge_at\n");
+        // The spans of the nodes the bridged outputs name: `typing_bridge_at(n, k, s, e)` for each node column of
+        // each, rules added to the program read (decision 0249), never text after its text.
+        let mut handed = program.clone();
+        add_spans(&mut handed, &columns);
         let out = scratch.join(format!("typing-{name}"));
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
-        let report = super::run_typed(&[&format!("{src}\n{spans}")], root, None, &out, modes, binding, chunk_nodes, &typing)?;
+        let report = super::run_read(&handed, root, &out, modes, binding, chunk_nodes, &typing, &serde_json::Value::Null)?;
         // The outputs' image, read where it is: a node by its document's path and value, nothing parsed.
         use crate::code_rule_dsl::logic::plan::output;
         let outputs = output::Outputs::open(&out).map_err(|e| Error::Plan(format!("{name}: {e}")))?;

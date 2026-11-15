@@ -400,7 +400,10 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
         // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
         let out = scratch.join(format!("phase-{name}"));
-        let text = format!("{src}\n.output {}\n", declared.exports.join(", "));
+        // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
+        // after it read again.
+        let mut handed = program.clone();
+        handed.outputs.extend(declared.exports.iter().cloned());
         let (upstream, upstream_runs) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
@@ -411,7 +414,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let report = {
             // The phase's own run, its jobs' spans under it (`profile::span_at`).
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
-            super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?
+            super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, options)?
         };
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
@@ -485,11 +488,11 @@ pub(super) fn sources(
     }
     let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
     let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
-    // Its documents are those it loads: it is given no file of its own, and its language is the run's.
-    let text = format!("{src}
-.language {label}
-.output {}
-", declared.exports.join(", "));
+    // Its documents are those it loads: it is given no file of its own, and its language is the run's. The program
+    // read, given that language and its exports as its outputs (decision 0249), not its text with directives after it.
+    let mut handed = program.clone();
+    handed.settings.push(("language".to_owned(), label.to_owned()));
+    handed.outputs.extend(declared.exports.iter().cloned());
     let mut options = options.clone();
     if let Some(o) = options.as_object_mut() {
         o.insert("inputFiles".to_owned(), serde_json::Value::Array(Vec::new()));
@@ -502,7 +505,7 @@ pub(super) fn sources(
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let text = |v: &Value| match v {

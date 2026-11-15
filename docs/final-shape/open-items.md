@@ -5164,6 +5164,11 @@ run over the default store, each its own root with an `a.py`: the annotation run
 (`parsed(s, "annotation", e)`) and the long-text fallback (`rr_long_text_node`) meet there or in a process-wide
 cache. Open.
 
+Still failing after the merge of django-bugs (cffa6bb2e): 2 of 3 module runs, 3 of 3 alone pass. That merge's
+message names `bf44cf353` as this item's fix: it is not; it is about a long-text twin's anchors (and its token count,
+fixed after it: the root's tokens between anchored subtrees were not counted). Anchors are made per program, not kept
+across a process, so they are not the shared state either.
+
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
 Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on

@@ -687,7 +687,7 @@ impl Image {
         if len > words.len() * 16 {
             return Err(bad("an image longer than its buffer"));
         }
-        Image::at(&std::sync::Arc::new(words), 0, len)
+        Image::at(&std::sync::Arc::new(Backing::Owned(words, len)), 0, len)
     }
     /// One image, base or overlay, read alone (the image a run just made).
     pub fn one(bytes: &[u8]) -> Result<Image, String> {

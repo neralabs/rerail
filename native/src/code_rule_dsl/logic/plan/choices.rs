@@ -56,7 +56,7 @@ pub(super) struct Chosen {
 }
 
 /// A digest of everything the rewrites read of a program, and of what else changes their choices.
-pub(super) fn key(prog: &Program) -> [u8; 32] {
+pub fn key(prog: &Program) -> [u8; 32] {
     struct Hashing(Sha256);
     impl std::fmt::Write for Hashing {
         fn write_str(&mut self, s: &str) -> std::fmt::Result {

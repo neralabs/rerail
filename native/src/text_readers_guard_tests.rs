@@ -12,19 +12,17 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 11] = [
+const ALLOWED: [(&str, usize, &str); 5] = [
     ("native/src/code_rule_dsl/logic/strings/git.rs", 1, "a consulted read's key (repository root, revision), made in memory and stored length-prefixed"),
     ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
     ("native/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger, a hand-kept document"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
-    ("native/crates/python_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
-    ("native/crates/php_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
-    ("native/crates/rust_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
-    ("native/crates/csharp_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
-    ("native/crates/ecma_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
-    ("native/crates/java_lean/src/oracle.rs", 1, "the lean parser's edit oracle: a recorded edit script"),
 ];
+
+/// Every lean parser's edit oracle (`native/crates/<language>_lean/src/oracle.rs`) reads a recorded edit script,
+/// whose head line is a path, a cut and an edit apart by tabs: one split each.
+const LEAN_ORACLE: (&str, &str, usize) = ("native/crates/", "_lean/src/oracle.rs", 1);
 
 #[test]
 fn no_rule_or_fact_is_read_from_text() {
@@ -42,7 +40,8 @@ fn no_rule_or_fact_is_read_from_text() {
         if at.is_empty() {
             continue;
         }
-        let allowed = ALLOWED.iter().map(|(f, n, _)| (*f, *n)).find(|(file, _)| *file == rel);
+        let oracle = rel.starts_with(LEAN_ORACLE.0) && rel.ends_with(LEAN_ORACLE.1);
+        let allowed = ALLOWED.iter().map(|(f, n, _)| (*f, *n)).find(|(file, _)| *file == rel).or(oracle.then_some((LEAN_ORACLE.1, LEAN_ORACLE.2)));
         match allowed {
             Some((_, n)) if n == at.len() => seen.push(rel),
             Some((_, n)) => bad.push(format!("{rel}: {} tab splits, where its allowance is {n} (lines {at:?})", at.len())),

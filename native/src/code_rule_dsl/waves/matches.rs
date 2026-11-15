@@ -55,29 +55,13 @@ const KEPT: &str = "
 matched(c, d, n) :- kept_match(c, d, n).
 span(d, n, s, e) :- kept_span(d, n, s, e).
 ";
-/// `SOURCE` or `KEPT`, read once for the process: constant texts of the engine's, parsed where they are written.
-fn parsed(text: &'static str) -> &'static crate::code_rule_dsl::logic::front::Program {
-    use std::sync::OnceLock;
-    static SOURCE_PROGRAM: OnceLock<crate::code_rule_dsl::logic::front::Program> = OnceLock::new();
-    static KEPT_PROGRAM: OnceLock<crate::code_rule_dsl::logic::front::Program> = OnceLock::new();
-    let slot = if std::ptr::eq(text, SOURCE) { &SOURCE_PROGRAM } else { &KEPT_PROGRAM };
-    slot.get_or_init(|| crate::code_rule_dsl::logic::rr::parse(text).expect("the wave's own rules parse"))
-}
-
-/// What the wave's plan is a function of in its program: its declarations, inputs, outputs, rules and facts (all a
-/// wave program holds).
-fn digest(prog: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
-    use sha2::Digest as _;
-    let facts: std::collections::BTreeMap<&String, _> = prog.facts.iter().collect();
-    let mut h = sha2::Sha256::new();
-    h.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", prog.decls, prog.inputs, prog.outputs, prog.rules, facts).as_bytes());
-    h.finalize().into()
-}
-
 /// `prog` with `more`'s declarations, inputs, outputs, rules (after its own) and facts: the program the two texts
 /// one after the other read as.
 fn joined(prog: &mut crate::code_rule_dsl::logic::front::Program, more: &crate::code_rule_dsl::logic::front::Program) {
     prog.decls.extend(more.decls.iter().map(|(k, v)| (k.clone(), v.clone())));
+    prog.nullary.extend(more.nullary.iter().cloned());
+    prog.lattice.extend(more.lattice.iter().map(|(k, v)| (k.clone(), v.clone())));
+    prog.kindsets.extend(more.kindsets.iter().map(|(k, v)| (k.clone(), v.clone())));
     for i in &more.inputs {
         if !prog.inputs.contains(i) {
             prog.inputs.push(i.clone());
@@ -134,6 +118,9 @@ pub(in crate::code_rule_dsl) struct Wave {
     pub(in crate::code_rule_dsl) route: Candidates,
     /// The policies' rules over the clauses, and their demand (`policies`, list step 21).
     logic: super::policies::Logic,
+    /// The planner's programs, made once for the wave: `SOURCE` and the policies' rules (`logic.rules`), then with
+    /// `KEPT` for a warm run; each with its digest (`choices::key`), the compiled plan's key (decision 0249).
+    sources: [(crate::code_rule_dsl::logic::front::Program, [u8; 32]); 2],
     /// The demand statement, planned on the run's store when its program is (`Logic::demand_sql`).
     demand_sql: std::sync::Mutex<Option<Option<String>>>,
     /// Each chunk's candidates, in order.
@@ -196,7 +183,16 @@ impl Wave {
         }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
         let lowered = LoweredWave::new(&matchers).map_err(invalid)?;
+        let mut cold = crate::code_rule_dsl::logic::rr::parse(SOURCE).map_err(invalid)?;
+        joined(&mut cold, &logic.rules);
+        let mut warm = cold.clone();
+        joined(&mut warm, &crate::code_rule_dsl::logic::rr::parse(KEPT).map_err(invalid)?);
+        let keyed = |p: crate::code_rule_dsl::logic::front::Program| {
+            let key = crate::code_rule_dsl::logic::plan::choices::key(&p);
+            (p, key)
+        };
         Ok(Self {
+            sources: [keyed(cold), keyed(warm)],
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
@@ -247,11 +243,12 @@ impl Wave {
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
         // The run's demand statement, its atoms this store's.
         *self.demand_sql.lock().expect("demand statement mutex poisoned") = Some(self.logic.demand_sql(store)?);
-        let (source, batch) = self.inputs(kept);
+        let batch = self.inputs(kept);
+        let (source, key) = &self.sources[usize::from(kept)];
         let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
             .text("rerail.wave-program/v1")
             .text(PROGRAM)
-            .bytes(&digest(&source))
+            .bytes(key)
             .u64(crate::code_rule_dsl::stats::plans::COMPILER_VERSION as u64);
         let mut inputs = batch.iter().collect::<Vec<_>>();
         inputs.sort_by(|a, b| a.0.cmp(b.0));
@@ -282,7 +279,7 @@ impl Wave {
             atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
             Ok(found)
         };
-        let mut program = emit::emit_program(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        let mut program = emit::emit_program(source, PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
@@ -337,9 +334,8 @@ impl Wave {
         }
     }
 
-    /// The planner's program (`SOURCE`, the policies' rules, and `KEPT` for a warm run, each a program: nothing
-    /// printed, decision 0249) and the batch inputs it reads, each with its source and estimate.
-    fn inputs(&self, kept: bool) -> (crate::code_rule_dsl::logic::front::Program, HashMap<String, (Source, f64)>) {
+    /// The batch inputs the planner's program (`sources`) reads, each with its source and estimate.
+    fn inputs(&self, kept: bool) -> HashMap<String, (Source, f64)> {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
@@ -362,14 +358,11 @@ impl Wave {
             };
             batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), rows));
         }
-        let mut source = parsed(SOURCE).clone();
-        joined(&mut source, &self.logic.rules);
         if kept {
-            joined(&mut source, parsed(KEPT));
             batch.insert("kept_match".to_owned(), (Source::positional(KEPT_MATCH, &["c0", "c1", "c2"]), 1000.0));
             batch.insert("kept_span".to_owned(), (Source::positional(KEPT_SPAN, &["c0", "c1", "c2", "c3"]), 1000.0));
         }
-        (source, batch)
+        batch
     }
 
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's

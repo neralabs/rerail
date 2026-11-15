@@ -1440,6 +1440,27 @@ Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A program `run-rr` read is handed to the run, keyed by its digest (decision 0249 §5). With a store, the run's
+/// whole-run cutoff asks whether it would read alike: of the program handed, never of its key as a text. Run twice
+/// over an unchanged root, the second finds what the first did.
+#[test]
+fn a_handed_program_run_again_finds_the_same() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrhanded");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "def f():\n    pass\n\nf()\n").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, ".policy \"handed-again\" revision 1\n.language python\n.violation Call(at: node) code \"CALL\" \"a call\"\nCall(n) :- kind(n, \"call\").\n").unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
+    let first = run("first").unwrap();
+    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    let again = run("again");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(again.unwrap(), first);
+}
+
 /// async_executor uses str.split('\n'), not physical lines or Python splitlines.
 #[test]
 fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
@@ -2139,6 +2160,11 @@ fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) 
     guests_run_with(name, files, rule, |o| outputs.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect())
 }
 
+/// Each output's rows as shown, a row's cells joined by tabs: for comparing with expected rows written as one string.
+fn joined(outputs: Vec<Vec<Vec<String>>>) -> Vec<Vec<String>> {
+    outputs.into_iter().map(|rows| rows.into_iter().map(|r| r.join("\t")).collect()).collect()
+}
+
 /// One row's values as shown, for comparing with `guests_run`'s.
 fn shown_row(values: &[&str]) -> Vec<String> {
     values.iter().map(|v| (*v).to_owned()).collect()
@@ -2319,7 +2345,7 @@ pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), lin
 guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
 .output calls, decls, pairs, guests
 "#;
-    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"])).unwrap();
+    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"]))).unwrap();
     assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
     assert_eq!(decls, ["color: red;\t9"]);
     assert_eq!(pairs, ["\"a\": 1\t7"]);
@@ -2344,7 +2370,7 @@ at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n,
 roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
 .output at, roles
 "#;
-    let [at, roles] = <[Vec<String>; 2]>::try_from(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"])).unwrap();
+    let [at, roles] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"]))).unwrap();
     assert_eq!(
         at,
         [

@@ -277,14 +277,15 @@ pub struct Report {
 /// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
 /// earlier phases, an explicit batch) is never judged unchanged.
 /// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
-    Ok(changes(programs, graphs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
+pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
+    Ok(changes(programs, graphs, read, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
-/// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
-pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+/// anything else changed, or the run cannot be compared (its documents named, typing, phases read). `read`: the
+/// program the run was handed (`run_read`), whose `programs` are its key, not a text to read.
+pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
@@ -297,7 +298,7 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     // The settings are `env` rows given to each program that declares `env` (decision 0249).
-    let (prog, _) = combine_keyed(programs, graphs, &added::Added::of(&settings, options), None, &front::Lists::default())?;
+    let (prog, _) = combine_keyed(programs, graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {
@@ -320,9 +321,11 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), world::World::new(root, &prog).still(&requests));
+    let mut world = world::World::new(root, &prog);
+    let moved = world.changed(&requests);
+    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), moved.is_none());
     if !(inputs_still && world_still) {
-        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests)", read.len(), requests.len()));
+        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests; first changed {moved:?})", read.len(), requests.len()));
     } else if !changed.is_empty() {
         trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
     }
@@ -2026,7 +2029,7 @@ fn run_handed(
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
     // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
-    let mut texts = match read {
+    let texts = match read {
         Some(read) => Texts::of_read(programs, read),
         None => Texts::of(programs)?,
     };

@@ -3617,15 +3617,7 @@ impl Lowerer {
 
     /// A base relation lowering reads (`child`, `node`), declared, and an input, when the program has not.
     fn base(&mut self, rel: &str) {
-        let cols: &[(&str, &str)] = match rel {
-            "child" => &[("p", "node"), ("c", "node"), ("i", "int")],
-            "node" => &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")],
-            other => unreachable!("no base relation {other}"),
-        };
-        self.prog.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-        if !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.rules.iter().any(|r| r.head.rel == rel) {
-            self.prog.inputs.push(rel.to_owned());
-        }
+        base_relation(&mut self.prog, rel);
     }
 
     /// `split_dot(q, m, x)`: q is m.x split at its last dot, so x has no dot: `q = @cat(m, x), !contains(".", x)`
@@ -4051,4 +4043,18 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
     let mut pieces = pieces.into_iter();
     let first = pieces.next()?;
     Some(pieces.fold(first, |acc, p| Term::Call("concat".into(), [acc, p].into())))
+}
+
+/// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
+/// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
+pub fn base_relation(prog: &mut Program, rel: &str) {
+    let cols: &[(&str, &str)] = match rel {
+        "child" => &[("p", "node"), ("c", "node"), ("i", "int")],
+        "node" => &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")],
+        other => unreachable!("no base relation {other}"),
+    };
+    prog.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
+    if !prog.inputs.iter().any(|i| i == rel) && !prog.rules.iter().any(|r| r.head.rel == rel) {
+        prog.inputs.push(rel.to_owned());
+    }
 }

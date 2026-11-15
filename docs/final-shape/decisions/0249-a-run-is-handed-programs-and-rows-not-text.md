@@ -59,10 +59,10 @@ A run with nothing added hashes as before, except that every key's version moved
 
 ### 4. The waves join programs
 
-`policies::Logic::rules` is a `Program` (`wave_program`: node columns as the wave's integers). `matches::inputs`
-joins `SOURCE`, the policies' program and `KEPT`, in that order, as programs (`joined`): declarations, inputs,
-outputs, rules after the ones before them, facts. `SOURCE` and `KEPT` are the engine's own constant texts, parsed
-once per process. The compiled plan is keyed by a digest of the joined program, not by its text.
+`policies::Logic::rules` is a `Program` (`wave_program`: node columns as the wave's integers). The wave joins
+`SOURCE`, the policies' program and `KEPT`, in that order, as programs (`joined`): declarations, inputs, outputs,
+rules after the ones before them, facts. `SOURCE` and `KEPT` are the engine's own constant texts, read once for
+each wave (§8). The compiled plan is keyed by the joined program's structural digest, not by its text.
 
 ### 5. A handed program is keyed by itself
 
@@ -96,13 +96,37 @@ string, an integer a number, a node its value as the run held it (`Row::raw`), N
 JSON text held. A pack's programs share the relations, as they share `violation` (`corpus::own_names`): each is
 named by its policy. `run_pack` gives each member the rows whose `policy` is its own.
 
+### 7. Phase programs and the typing bridge are handed
+
+A phase program is read once from its file (`phases::source`, its includes read in) and handed to its run
+(`run_read`): its exports pushed onto its outputs and, for phase 1, the run's language pushed onto its settings, as
+the `.output` and `.language` lines appended to its text once were. The typing bridge's `typing_bridge_at` is
+declared and its rules (one for each node column of each bridged output) are added to the program read
+(`bridge::add_spans`), reading `node` as lowering would have it (`rr::lower::base_relation`). Neither is lowered
+a second time.
+
+### 8. The wave's programs are made once, keyed by structure
+
+`Wave::with_logic` reads `SOURCE` and `KEPT` and joins them with the policies' rules into its two programs, cold
+and warm (`Wave::sources`), each keyed by `plan::choices::key`, the run's structural digest of a program. No
+process-wide memo of them is kept, and no key is a print of a program. `joined` takes every declaration-like
+field of the program it adds (declarations, nullary relations, lattices, kind sets), as reading the texts one after
+the other did.
+
+### 9. A handed program's cutoff reads the program
+
+The whole-run cutoff asks whether a run would read alike of the program it was handed (`corpus::changes`, its
+`read`), never of the handed program's key as a text. `rr::tests::a_handed_program_run_again_finds_the_same` runs
+a policy twice with a store: the second run, over an unchanged root, finds what the first did.
+
 ## Still text
 
-- Phase programs. `phases` appends `.output …` (and phase 1's `.language …`) to a phase program's source before
-  running it.
+- JSON policies (decision 0175). A JSON policy is run as the `.rr` text it translates to (`json_rules::Translator`,
+  `rr::json_program_shared`, `settings::program_texts`), which is then parsed. Handing its statements instead is a
+  change to 0175, open.
 - `test_store`'s template, which prints a parsed program to warm the store as the tests' printed programs do.
 
-External inputs stay text: the user's `.rr` files, `.input` files, JSON policies, the typing declaration files.
+External inputs stay text: the user's `.rr` files, `.input` files, the typing declaration files.
 
 ## Tests
 
