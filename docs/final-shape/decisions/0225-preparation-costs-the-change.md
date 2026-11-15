@@ -86,8 +86,13 @@ What `congruence` still merges:
 | dl1 | 24 | 16 | 384 | 1,051 | 69 | 82 | 233 |
 | 50 files, main pack | 17 | 11 | 538 | 5,338 | 37 | 61 | 440 |
 
-Most calls merge nothing. Where it does merge, most groups are unprefixed relations (library and engine-made rules),
-so libraries are still copied somewhere before `congruence` merges them back, though 0089 holds them once.
+Most calls merge nothing. Where it does merge, the groups are mostly not library copies (5–9 groups are) but
+helpers the engine made once per occurrence, over dl1:
+- `rr_ctx<k>` contexts: 127 groups, the two of a rule's two aggregates in most policies (`p10_rr_ctx7`, `p10_rr_ctx8`);
+- `exists_<k>`, simplify's document parts: 43;
+- `rr_agg<k>` and `rr_cover<k>`: 34;
+- each policy's scope relations (`p<k>_rr_scope_in`, `_drop`, `_not`), equal across policies of one scope: 34;
+- pushed joins (`fl<k>_`): 20.
 
 ## Decision (proposed)
 
@@ -134,9 +139,29 @@ after §2 and §3: preparation is 1–16% of an edit, and §2 and §3 remove mos
 
 ### 6. What `congruence` merges
 
-The calls that merge nothing (16 of 24 on dl1, 11 of 17 on the main pack) are dropped where the caller can tell
-beforehand. The merged unprefixed groups are traced to where a library's rules are still copied, and that copy is
-removed (0089), not merged back.
+A helper is made once by its generator, not made per occurrence and merged back: the lowerer keys each `rr_ctx`,
+`rr_cover` and `rr_agg` helper by its stem, column types and rule templates (`front::template`, variables numbered
+in order) and reads an equal one again; `project_existentials` does the same for `exists_<k>`. An aggregate's helper
+is shared only by clauses of the same heads: aggregate demand narrows it by its readers' contexts, so one shared
+with a reader the program does not reach was computed for that reader's rows too (b110's count beside `body_len`'s,
+which the pruning test caught when it was shared by all). A relation's clauses are reached, and kept, together.
+
+Done (2026-11-15). Over dl1, findings unchanged:
+
+| | Groups of the four generators | Groups in all | Instructions |
+|---|---|---|---|
+| before | 204 | 384 | 22.96 G |
+| contexts, covers, `exists_` | — | — | 23.1–23.4 G |
+| and aggregates, same heads | 106 (all shared) | 286 (all shared) | 21.5–21.9 G |
+
+Load was 36–111 across these runs; instructions vary about 1.5% run to run. The saving is the aggregates': a shared
+helper is evaluated once.
+
+What remains merges across programs: a policy's helper and a library's, and policies of one scope. That is
+`merge_identical`'s work after combining, not a copy to remove.
+
+The calls that merge nothing are not dropped. On dl1 they are 17 of 24 calls but about 15 ms of `congruence`'s 350:
+13 are over programs of 24–93 rules. Telling them apart beforehand would cost a mechanism for nothing.
 
 ### 7. A prepared program is kept as its image and analyses, per module
 
@@ -148,7 +173,7 @@ of everything.
 
 0173 stage 2 (the planner on the image: t36 item 7) belongs to the Typing-support-final-shape work, and is under way.
 §2 and §3 do not wait for it: they change the memo's and the prepared program's keys, not the passes. §5–§7 begin
-when stage 2 is merged, so the passes and the planner share one image and one set of ids. The order: §2, §3, §6,
+when stage 2 is merged, so the passes and the planner share one image and one set of ids. The order: §2, §3 (§6 done),
 then the split (§5), then the other questions, then §7.
 
 ## What this is not

@@ -3369,8 +3369,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
-        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
-        // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
+        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and dropped clauses no
+        // longer take numbers before them; a context or cover made once is read again where an equal one is asked for
+        // (`Lowerer::helper_once`), so its rules sit where the first asker, maybe a dropped clause, made them. So the
+        // programs are compared with every helper's number masked (`rr_agg#`), and a helper's rules by its stem alone
+        // (an aggregate's columns are its fresh variables in the order of their names, which the numbers change).
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
@@ -3383,29 +3386,23 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let p = front::prune(p);
-            let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            let mut renumber = |s: &str| -> String {
-                helper.replace_all(s, |c: &regex::Captures| {
-                    let n = names.len();
-                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
-                }).into_owned()
-            };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
             let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
-            // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
-            // numbers change) are compared by their number for each helper; every other rule exactly.
             let numbered = |rel: &str| helper.is_match(rel);
-            let mut rules: Vec<String> = p.rules.iter().filter(|r| !place_variant(r)).map(|r| {
-                let text = renumber(&format!("{r:?}"));
-                if numbered(r.head.rel.as_str()) { format!("helper {}", renumber(r.head.rel.as_str())) } else { text }
-            }).collect();
+            let mask = |s: &str| helper.replace_all(s, "rr_$1#").into_owned();
+            let mut rules: Vec<String> = p
+                .rules
+                .iter()
+                .filter(|r| !place_variant(r))
+                .map(|r| if numbered(r.head.rel.as_str()) { format!("helper {}", mask(r.head.rel.as_str())) } else { mask(&format!("{r:?}")) })
+                .collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
-            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", mask(r), c.len()) } else { format!("{r}{c:?}") }).collect();
             decls.sort();
-            let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
+            let natives: BTreeSet<String> = p.natives.keys().map(|n| mask(n)).collect();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
             // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
             let text = format!("{:?}{:?}", p.rules, p.natives);

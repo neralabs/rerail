@@ -215,7 +215,16 @@ struct Lowerer {
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
     printed_demands: BTreeSet<String>,
+    /// The helper relations made so far (`helper_once`), by their stem, columns and rules: an identical one is that
+    /// relation again.
+    helpers: std::collections::HashMap<HelperKey, String>,
+    /// The variable names a helper's rules are written with in its key (`front::template`), made once.
+    template_names: Option<crate::code_rule_dsl::logic::front::template::CanonicalNames>,
 }
+
+/// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
+/// names one occurrence made inside it do not tell it from another).
+type HelperKey = (String, Vec<String>, Vec<String>);
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
 /// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
@@ -647,6 +656,24 @@ impl Lowerer {
                 return name;
             }
         }
+    }
+
+    /// A helper relation named `name` (a `fresh` one of `stem`), with these columns and rules; or, when one made
+    /// before has the same stem, columns and rules, that relation. Each occurrence made its own: the two contexts of
+    /// a rule's two aggregates over the same variables were `rr_ctx7` and `rr_ctx8` in most of dl1's 44 policies, and
+    /// `congruence` merged them back after lowering (decision 0225 §6). An aggregate's helper, which demand narrows
+    /// by its readers, has its readers' heads in its stem (`aggregate`).
+    fn helper_once(&mut self, name: String, stem: &str, cols: Vec<(String, String)>, rules: Vec<(Vec<Term>, Vec<Literal>)>) -> String {
+        let rules: Vec<Rule> = rules.into_iter().map(|(args, body)| Rule { head: Atom { rel: name.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() }).collect();
+        let names = self.template_names.get_or_insert_with(crate::code_rule_dsl::logic::front::template::CanonicalNames::new);
+        let key = (stem.to_owned(), cols.iter().map(|(_, t)| t.clone()).collect(), rules.iter().map(|r| crate::code_rule_dsl::logic::front::template::template(r, names)).collect());
+        if let Some(made) = self.helpers.get(&key) {
+            return made.clone();
+        }
+        self.prog.decls.insert(name.clone().into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.rules.extend(rules);
+        self.helpers.insert(key, name.clone());
+        name
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
@@ -2733,13 +2760,10 @@ impl Lowerer {
         let context = self.covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars)?;
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
-        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).map(|(c, t)| (c.into(), t.into())).collect();
-        self.prog.decls.insert(ctx.clone().into(), types);
-        let head = Atom { rel: ctx.into(), args: vars.iter().map(|c| Term::Var(c.clone().into())).collect(), neg: false, gated: false };
-        for b in alts {
-            self.prog.rules.push(Rule { head: head.clone(), body: b.into() });
-        }
-        Ok(head)
+        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
+        let args: Vec<Term> = vars.iter().map(|c| Term::Var(c.clone().into())).collect();
+        let ctx = self.helper_once(ctx, "ctx", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
+        Ok(Atom { rel: ctx.into(), args: args.into(), neg: false, gated: false })
     }
 
     /// `context` without a `text(v, t)` whose node `v` nothing else in it binds: a text is read of a bound node
@@ -2912,12 +2936,9 @@ impl Lowerer {
                 lits
             };
             let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
-            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).map(|(c, t)| (c.into(), t.into())).collect();
-            self.prog.decls.insert(rel.clone().into(), types);
-            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| Term::Var(c.clone().into())).collect(), neg: false, gated: false };
-            for b in alts {
-                self.prog.rules.push(Rule { head: head.clone(), body: b.into() });
-            }
+            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
+            let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
+            let rel = self.helper_once(rel, "cover", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
             out.push(Lit::Atom { rel, args: cols.into_iter().map(STerm::Var).collect(), neg: false });
         }
         Ok(out)
@@ -3177,14 +3198,16 @@ impl Lowerer {
                 b.insert(0, Literal::Atom(ctx.clone()));
             }
         }
-        let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).map(|(c, t)| (c.into(), t.into())).collect();
-        self.prog.decls.insert(name.clone().into(), types);
+        let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect();
         let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
-        for b in bodies {
-            // The empty value inside the body is the constant, as in a rule's own body.
-            let (args, b) = unset(args.clone(), b)?;
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: args.into(), neg: false, gated: false }, body: b.into() });
-        }
+        // The empty value inside the body is the constant, as in a rule's own body.
+        let rules = bodies.into_iter().map(|b| unset(args.clone(), b)).collect::<Result<Vec<_>, _>>()?;
+        // Shared only by the clauses of the same heads: aggregate demand narrows a helper by its readers' contexts
+        // (`rr_demand_agg_…`), so one shared with a reader the program does not reach (`body_len`'s count beside
+        // `catch_all_body`'s in b110) was computed for that reader's rows too. A relation's clauses are reached, and
+        // kept (`rr::unreached_dropped`), together.
+        let stem = format!("agg {}", self.heads.iter().cloned().collect::<Vec<_>>().join(","));
+        let name = self.helper_once(name, &stem, types, rules);
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
         let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone().into()) } else { Term::Wild }).collect();
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name.into(), args, neg: false, gated: false } }])
