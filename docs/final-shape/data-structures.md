@@ -13,7 +13,10 @@ This page lists what has to move. For each structure it gives:
 
 - **Today:** its current form, and where it lives;
 - **Readers:** who reads it: host threads, device kernels, the store on disk;
-- **Block:** its block kind and regions (0266 §2 names the region forms), or why it stays a Rust structure.
+- **Block:** its part kind and regions (0266 §4 names the region forms), or why it stays a Rust structure. A
+  part is one structure inside a block. Small parts with one lifetime share a block (0266 §2): a chunk's tapes,
+  a wave's writes, a run's outputs. Integer columns written below as `records<i64>` are `packed` per column
+  (0266 §6).
 
 A structure stays an ordinary Rust structure only when all three of these hold:
 
@@ -24,7 +27,7 @@ A structure stays an ordinary Rust structure only when all three of these hold:
 That covers plans while they are compiled, schedulers, sessions' bookkeeping, and tallies of a few numbers. It
 does not cover anything a kernel, a wave or the store reads.
 
-Region forms used below (0266 §2): `items<T>` (a fixed-width array), `records<R>` (rows or columns, chosen by the
+Region forms used below (0266 §4): `items<T>` (a fixed-width array), `records<R>` (rows or columns, chosen by the
 writer), `strings` (bytes, ends and an optional hash), `csr` (offsets and ids), `hash<K,V>` (open-addressed
 buckets), `sorted<K>` (a sorted key array), `bits` (a bitset), `packed(w)` (integers at a width chosen at write),
 `links` (other blocks, by digest).
@@ -35,7 +38,7 @@ buckets), `sorted<K>` (a sorted key array), `bits` (a bitset), `packed(w)` (inte
 |---|---|---|---|
 | Source text | bytes read from the file, held per document; on Metal, copied into a residency slab | host lexers, Metal lexing passes | `Source`: `items<u8>`, the digest in the header. It is read in place, never copied into a second form. |
 | Tape | `crates/tape_format`: a header of offsets, aligned columns; held as `Vec<u8>`, or as zstd frames on disk | host matchers, native facts, Metal tape kernels (`metal_tape.metal`) | `Tape`: already in block form. Its header becomes the shared one: `code: items<u16>`, `size`/`off`/`tail: packed(w)`, `parent: items<u32>`, `strings`. Read in place, with no decoding (zstd on disk only). |
-| Tape residency view | `crates/metal/src/slabs.rs` `DocView` (96 bytes, `#[repr(C)]`), copied by hand as `DocView` in `metal_tape.metal`; `DocTable` per batch | Metal tape kernels | Gone as a hand-kept mirror: it is the tape block's header read through its `BlockRef` (0266 §3). The batch's `DocTable` becomes `items<BlockRef>`. |
+| Tape residency view | `crates/metal/src/slabs.rs` `DocView` (96 bytes, `#[repr(C)]`), copied by hand as `DocView` in `metal_tape.metal`; `DocTable` per batch | Metal tape kernels | Gone as a hand-kept mirror: it is the tape block's header read through its `PartRef` (0266 §3). The batch's `DocTable` becomes `items<PartRef>`. |
 | Residency slabs | `crates/metal` `MappedBuffer::slab`: 64 MiB anonymous mappings, one no-copy `MTLBuffer` each, bump-allocated at 16 bytes | the Metal path | The pool's slabs (0260 §2). `Slabs { s0..s3 }` (four bindings) becomes the block table (0266 §3). |
 | Long texts | `syntax::LongTexts`: bound per run, an index by document key | the `text` functions in `setfix` | `strings` of the run's batch, reached by document key through `sorted<i64>` → index. |
 | Python batch, documents | `syntax::Batch`, `value/python_ast::Document`, `matcher/python_facts::Batch` (`BTreeMap<NodeRange, Vec<NodeFacts>>`) | host matchers, vtab `Source::python_batch` | `PyFacts`: `records<NodeFacts>` sorted by range, `strings`. The `BTreeMap` goes, replaced by `sorted<(u32,u32)>` over ranges. |
@@ -71,7 +74,7 @@ buckets), `sorted<K>` (a sorted key array), `bits` (a bitset), `packed(w)` (inte
 | Native extension relations | `native/extension/setfix.rs` `InRel` (rows `Vec<i64>`) | the extension path | `Relation`. |
 | Vtab sources | `facts/vtab.rs` `Source`, `RowCells`, `RowStream`: an access interface over many producers | SQLite's virtual tables | It stays an interface. Its producers read blocks: `Source::row_at` over a `Relation` block is a slice read. |
 | Column maps, plan tables | `plan/table.rs` `ColMap<T>`, `Stats` | the planner | They stay Rust. |
-| Metal join state | `metal_join::Batch`, `Resident` (relations uploaded once per chunk); `accel/src/gpu/join.rs` `SortJob` (a struct of device pointers, mirrored by hand in MSL) | Metal | The relations are `Relation` blocks, resident by the pool. `SortJob` is an `item!` whose pointers are `BlockRef`s (0266 §3). |
+| Metal join state | `metal_join::Batch`, `Resident` (relations uploaded once per chunk); `accel/src/gpu/join.rs` `SortJob` (a struct of device pointers, mirrored by hand in MSL) | Metal | The relations are `Relation` blocks, resident by the pool. `SortJob` is an `item!` whose pointers are `PartRef`s (0266 §3). |
 | accel table and closure inputs | `table.metal` (`ushort` codes, `uint` offsets, `uint2` pairs), `closure.metal` (CSR `off`/`dst`, `R` bitsets) passed as positional buffers | accel kernels | `Codes`: `csr` over `items<u16>`; `Closure`: `csr` plus `bits`. Their kernels are declared with `kernel!` (0266 §5). |
 | SQL executor arenas | `sql_executor/component_loop/arena.rs` `Rows`/`Batch`, `temporal/cold_loop` `Rows<A>`/`Batch`, `work_graph/worker.rs` `Rows`, `reductions` `Batch` | the SQL executor | Not yet surveyed field by field. They take `Relation` when their path is ported. |
 
