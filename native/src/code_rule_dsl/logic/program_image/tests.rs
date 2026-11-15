@@ -939,7 +939,7 @@ fn fields_agree(p: &Program) {
 #[test]
 fn a_versions_fields_say_what_the_tree_says() {
     let mut n = 0;
-    for (path, prog) in pack_programs() {
+    for (_, prog) in pack_programs() {
         if encode(&prog).is_err() {
             continue;
         }

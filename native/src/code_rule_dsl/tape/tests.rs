@@ -2159,7 +2159,6 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
     let (mut equal, mut refused, mut corrected, mut bytes) = (0, 0, 0, 0);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
-    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     for path in &files {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
         match simdjson_tapes(&source) {

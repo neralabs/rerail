@@ -2,6 +2,9 @@
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 #![allow(dead_code, unused_imports)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -16,9 +19,7 @@ pub mod code_rule_dsl {
     pub mod json;
     pub mod language;
     pub mod lines;
-    #[path = "logic"]
     pub mod logic {
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;

@@ -315,7 +315,7 @@ impl Store {
 
 
 /// A file's index rows, built from the file alone so publication holds the corpus lock only to write.
-pub(super) struct Image<'a> {
+pub struct Image<'a> {
     doc: &'a TapeDoc,
     lang: u32,
     tape: crate::code_rule_dsl::tape::IndexImage,

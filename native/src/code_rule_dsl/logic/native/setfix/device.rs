@@ -116,8 +116,8 @@ enum TextOp {
     Replace { pattern: i64, with: i64, literal: bool },
 }
 
-/// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
-/// the constants, into `d`'s keys `0..` as slots or constants.
+// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
+// the constants, into `d`'s keys `0..` as slots or constants.
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };

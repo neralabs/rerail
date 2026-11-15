@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+"""A host's end of the farm's live mirror (scripts/build/farm/README.md, "Live mirror").
+
+The build machine's mirror daemon starts this over ssh and keeps it: one connection per host. Frames
+both ways are a 4-byte big-endian header length, a JSON header, and `size` bytes of payload.
+
+From the daemon:
+- {"op": "put", "path", "mtime_ns", "mode", "size"} + bytes: writes the file at that path (the
+  build machine's), with that mtime, through a temporary file, so a compile never reads half of it.
+- {"op": "have", "id", "paths"}: replies {"op": "had", "id", "seen"}, each path's [mtime_ns, size]
+  here (null when missing): what an earlier connection already wrote.
+- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo"}: runs the compile in a
+  thread of its own. Replies with a "file" frame per output, then {"op": "done", "id", "code",
+  "stdout", "stderr", "read"}: `read` maps each file the dep-info lists to [mtime_ns, size] as seen
+  here, for the daemon to check against its own. A put under an NFS or automount (the shared volume, which
+  this mode replaces) is refused, and every later run fails with code 70: nothing is written through
+  to the build machine.
+"""
+import json, os, struct, subprocess, sys, threading
+
+out = sys.stdout.buffer
+inp = sys.stdin.buffer
+write_lock = threading.Lock()
+mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+          subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+refused = []
+
+
+def send(header, payload=b""):
+    header = dict(header, size=len(payload))
+    data = json.dumps(header).encode()
+    with write_lock:
+        out.write(struct.pack(">I", len(data)) + data + payload)
+        out.flush()
+
+
+def receive():
+    head = inp.read(4)
+    if len(head) < 4:
+        return None, None
+    header = json.loads(inp.read(struct.unpack(">I", head)[0]))
+    return header, inp.read(header.get("size", 0))
+
+
+def seen(path):
+    try:
+        st = os.stat(path)
+        return [st.st_mtime_ns, st.st_size]
+    except OSError:
+        return None
+
+
+def put(header, payload):
+    path = header["path"]
+    if any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts):
+        refused.append(path)
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.farm-{os.getpid()}-{threading.get_ident()}"
+    with open(tmp, "wb") as f:
+        f.write(payload)
+    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
+    os.utime(tmp, ns=(header["mtime_ns"], header["mtime_ns"]))
+    os.replace(tmp, path)
+
+
+def run(job):
+    if refused:
+        send({"op": "done", "id": job["id"], "code": 70, "stdout": "", "read": {},
+              "stderr": f"a file was not written: {refused[0]}"})
+        return
+    for d in job["dirs"]:
+        os.makedirs(d, exist_ok=True)
+    try:
+        done = subprocess.run(job["argv"], cwd=job["cwd"], env=job["env"], stdin=subprocess.DEVNULL, capture_output=True)
+        code, stdout, stderr = done.returncode, done.stdout, done.stderr
+    except OSError as e:
+        code, stdout, stderr = 127, b"", str(e).encode()
+    read = {}
+    if code == 0:
+        for path in job["outputs"]:
+            try:
+                data = open(path, "rb").read()
+            except OSError:
+                continue
+            send({"op": "file", "id": job["id"], "path": path}, data)
+        try:
+            text = open(job["depinfo"]).read().replace("\\\n", " ") if job.get("depinfo") else ""
+        except OSError:
+            text, read = "", {"?": None}
+        for line in text.splitlines():
+            if not line.startswith("#") and ":" in line:
+                for path in line.split(":", 1)[1].split():
+                    read[path] = seen(os.path.join(job["cwd"], path))
+    send({"op": "done", "id": job["id"], "code": code, "stdout": stdout.decode("latin-1"),
+          "stderr": stderr.decode("latin-1"), "read": read})
+
+
+while True:
+    header, payload = receive()
+    if header is None:
+        break
+    if header["op"] == "put":
+        try:
+            put(header, payload)
+        except OSError as e:
+            print(f"farm-agent: {header['path']}: {e}", file=sys.stderr, flush=True)
+            refused.append(f"{header['path']} ({e})")
+    elif header["op"] == "run":
+        threading.Thread(target=run, args=(header,), daemon=True).start()
+    elif header["op"] == "have":
+        send({"op": "had", "id": header["id"], "seen": [seen(p) for p in header["paths"]]})
+    elif header["op"] == "ping":
+        send({"op": "pong", "id": header.get("id")})

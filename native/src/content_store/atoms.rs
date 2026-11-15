@@ -1500,7 +1500,7 @@ impl Atoms {
 
     /// A run's end: the lease is given back with its next commit, as before the run.
     pub fn run_over(&self) {
-        let _ = self.runs.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        let _ = self.runs.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run

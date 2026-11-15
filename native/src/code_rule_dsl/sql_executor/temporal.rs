@@ -19,7 +19,7 @@ use frame::Frame;
 const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
 #[derive(Clone)]
-struct Relation {
+pub struct Relation {
     indexes: Vec<usize>,
     width: usize,
     keys: usize,

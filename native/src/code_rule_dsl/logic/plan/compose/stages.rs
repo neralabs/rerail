@@ -57,6 +57,7 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
             input(prog,&rel);
             resident.insert(rel.clone());
             QUIET_STRATA.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+            count_quiet(|c| { c.strata.fetch_add(1,std::sync::atomic::Ordering::Relaxed); });
             super::super::super::profile::decision("composed quiet relation",||format!("{rel}: shares its retained rows; no deletions or insertions"));
         }
         if before==(empty.len(),prog.rules.len(),prog.inputs.len()) { break; }

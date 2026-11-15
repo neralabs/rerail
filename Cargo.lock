@@ -3320,7 +3320,6 @@ dependencies = [
  "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
- "rerail-engine",
  "rerail-facts",
  "rerail-html-lean",
  "rerail-java-lean",
@@ -4247,14 +4246,6 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
-]
-
-[[package]]
-name = "rerail-rr-aot-gen"
-version = "0.1.0"
-dependencies = [
- "rerail-compiler",
- "rerail-rr-parser",
 ]
 
 [[package]]

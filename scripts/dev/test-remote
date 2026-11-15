@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+"""Runs a test command on another Mac, in this checkout's copy there (docs/final-shape/notes/t37, §2).
+
+    scripts/dev/test-remote [--host NAME] [--dir native] [--tree DIR]... -- COMMAND...
+
+e.g. `scripts/dev/test-remote -- cargo nextest run --profile gate` for the full suite, or
+`scripts/dev/test-remote -- cargo test --lib -- some::filter`.
+
+Sends what changed of this checkout to a host of the build farm (scripts/build/farm: a host with
+`"mirror": true`, the first one by default), then runs COMMAND there, at `nice -n 10`, from the
+checkout's `native/` (or `--dir`), and prints its output here as it comes. The host builds in its
+own `target/`, which stays warm between runs: a full suite is the host's CPU, not this machine's.
+The exit status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host too.
+
+`--tree DIR` also sends DIR whole (untracked files too, at the same absolute path): a run's inputs and a
+program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a benchmark run on the host.
+"""
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import time
+
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+sys.path.insert(0, os.path.join(CHECKOUT, "scripts/build/farm"))
+import farm  # noqa: E402
+import mirror  # noqa: E402
+
+
+def main(argv):
+    host, directory, trees = None, "native", []
+    while argv and argv[0] in ("--host", "--dir", "--tree"):
+        if argv[0] == "--host":
+            host = argv[1]
+        elif argv[0] == "--tree":
+            trees.append([os.path.realpath(argv[1]), "tree"])
+        else:
+            directory = argv[1]
+        argv = argv[2:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    if not argv:
+        sys.exit(__doc__)
+    if host is None:
+        hosts = [h for h in farm.hosts() if h.get("enabled", True) and h.get("mirror")]
+        if not hosts:
+            sys.exit("test-remote: no host has \"mirror\": true in " + farm.HOSTS)
+        host = hosts[0]["name"]
+
+    started = time.time()
+    reply = mirror.compile({"host": host, "since": started, "roots": [[CHECKOUT, "checkout"]] + trees, "files": [],
+                            "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
+    if reply is None or reply.get("code") != 0:
+        sys.exit(f"test-remote: could not send the checkout to {host}: {(reply or {}).get('why')}")
+    t = reply.get("times", {})
+    print(f"test-remote: {host}: checkout sent ({t.get('files')} files, {t.get('sync')} s)", file=sys.stderr, flush=True)
+
+    # The farm's wrapper is this machine's; the host's cargo builds as it would alone.
+    command = "RUSTC_WRAPPER= exec nice -n 10 " + " ".join(shlex.quote(a) for a in argv)
+    # Without a terminal the host's sshd does not stop a command whose connection closed: the
+    # command stops when its input (this connection) ends.
+    # A command over ssh starts at the host's default of 256 open files; a terminal there has many
+    # more, and the engine's tests run out at 256 (t37 §2). Raise it to what the kernel allows a process.
+    remote = f"ulimit -n $(sysctl -n kern.maxfilesperproc) 2>/dev/null; cd {shlex.quote(os.path.join(CHECKOUT, directory))} && export PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH && " \
+             f"( {command} ) & p=$!; ( cat >/dev/null; kill $p 2>/dev/null ) & wait $p"
+    farm.CHANNEL[0] = "test"
+    proc = subprocess.Popen(farm.ssh(host, remote), stdin=subprocess.PIPE)
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
+    try:
+        code = proc.wait()
+    except KeyboardInterrupt:
+        print(f"test-remote: stopping it on {host}", file=sys.stderr, flush=True)
+        proc.stdin.close()
+        try:
+            code = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            code = 130
+    print(f"test-remote: {host}: exit {code} after {time.time() - started:.0f} s", file=sys.stderr, flush=True)
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

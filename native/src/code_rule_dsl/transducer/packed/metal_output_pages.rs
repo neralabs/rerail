@@ -300,7 +300,7 @@ impl SavedOutput {
     fn metadata(resident: &ResidentInput, errors: Vec<Option<Error>>) -> Result<Self, Error> {
         let grid = &resident.input.grid;
         let generation = NEXT_GENERATION
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| Error::BackendCapacity)?;
         let lane = grid
             .semantic_span_order

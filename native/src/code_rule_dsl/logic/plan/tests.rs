@@ -881,6 +881,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 .output name
 "#;
     let out = dir.join("out");
+    #[cfg(target_os = "linux")]
     let store = out.join("store.sqlite");
     for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
         let root = dir.join(format!("corpus-{i}"));

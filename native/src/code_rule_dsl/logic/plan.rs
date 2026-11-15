@@ -998,6 +998,39 @@ pub fn quiet_strata() -> usize {
     QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The quiet strata (`QUIET_STRATA`) and quiet relations held with no column measured (`UNMEASURED_QUIET`) of the
+/// runs of one caller: a test reads its own runs' counts while other tests' sessions run beside it (decision 0204),
+/// which the process's counts would add in.
+#[derive(Default)]
+pub struct QuietCounts {
+    pub strata: std::sync::atomic::AtomicUsize,
+    pub unmeasured: std::sync::atomic::AtomicU64,
+}
+
+thread_local! {
+    /// This run's `QuietCounts`, if its caller counts them: a job of the run adds to its caller's.
+    static QUIET_COUNTS: std::cell::RefCell<Option<Arc<QuietCounts>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Counts this thread's runs' quiet strata and unmeasured quiet relations into the result, until the guard drops.
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn counting_quiet() -> (Arc<QuietCounts>, impl Drop) {
+    struct Reset(Option<Arc<QuietCounts>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            let was = self.0.take();
+            QUIET_COUNTS.with(|c| *c.borrow_mut() = was);
+        }
+    }
+    let counts = Arc::new(QuietCounts::default());
+    let was = QUIET_COUNTS.with(|c| c.replace(Some(Arc::clone(&counts))));
+    (counts, Reset(was))
+}
+
+fn count_quiet(f: impl FnOnce(&QuietCounts)) {
+    QUIET_COUNTS.with(|c| c.borrow().as_deref().map(f));
+}
+
 /// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
 /// kept relation native, the deleted one of a lower stratum.
 /// Under decision 0090's levels the rows gone are `h__gone`'s, decided in level order, not `h__del`'s.
@@ -1273,7 +1306,7 @@ type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
 /// decision 0116 step 2), taken into `kept` when a rule is first planned.
 #[derive(Default)]
-struct RunPlans {
+pub struct RunPlans {
     kept: rustc_hash::FxHashMap<PlanKey, Kept>,
     stored: Arc<StoredPlans>,
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
@@ -1539,7 +1572,7 @@ pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
 /// A kept plan's last price: the corpus's nodes and the rows of each relation its body reads when priced, and the
 /// price. A price reads statistics only; while no size moved over `PRICE_DRIFT` times it is taken as it is, not
 /// worked out again (decision 0090 step 5: a session's run re-priced 7,400 kept plans, two thirds of its CPU).
-struct Priced {
+pub struct Priced {
     sizes: Vec<f64>,
     got: (Plan, Option<super::profile::RulePlan>),
 }
@@ -1644,6 +1677,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
     c.copy(&["NO_SHAPES"], &NO_SHAPES);
     c.copy(&["SKEWING"], &SKEWING);
     c.copy(&["STEP_ROWS"], &STEP_ROWS);
+    c.cloned(&["QUIET_COUNTS"], &QUIET_COUNTS);
 }
 
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
@@ -2518,7 +2552,7 @@ impl Model {
     }
 
     /// `plan_for_rows` under `cx`: its runners-up handed back there (decision 0207's trials).
-    pub(in crate::code_rule_dsl) fn plan_for_rows_in(&mut self, prog: &Program, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
+    fn plan_for_rows_in(&mut self, prog: &Program, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
         let rel = b.atom(at).map(|a| b.rel(a).to_owned())?;
         let was = self.stats.delta_rows.insert(rel.clone(), rows.max(1.0));
         let got = self.plan_inner_in(prog, b, Some(at), None, false, cx).ok().map(|((order, _, _), _)| order);
@@ -4322,7 +4356,7 @@ struct Driving {
     wholes: HashMap<usize, Vec<Step>>,
 }
 
-struct Run<'a, 'b> {
+pub struct Run<'a, 'b> {
     prog: &'a Program,
     /// The run's connection; only its scope in a stratum run off the run's thread (`strand`, decision 0113).
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
@@ -6360,6 +6394,7 @@ impl<'a> Run<'a, '_> {
                     super::native::component::hold_as(self.db, r, o);
                 }
                 QUIET_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                count_quiet(|c| { c.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed); });
                 super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: nothing deleted, nothing to derive; each relation is its kept one".to_owned());
                 self.native_rels.extend(scc.iter().cloned());
                 return Ok(Native::Ran);
@@ -7994,6 +8029,7 @@ fn quiet_card(model: &mut Model, prog: &Program, rel: &str, o: &Arc<super::nativ
     }
     if !model.stats.lazy.0.contains_key(rel) {
         UNMEASURED_QUIET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        count_quiet(|c| { c.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed); });
     }
     seeded
 }
