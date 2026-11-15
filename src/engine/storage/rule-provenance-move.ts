@@ -369,10 +369,11 @@ function sayWaitsForOlder(path: string, { at, until }: { at: number; until: numb
 /**
  * The line for each audit a batch left as it is (`moveBatch`), from the batch that reaches it. A later batch of the
  * same move starts after it, and once that move has ended a later start's checks pass over it (`takes`), so a move
- * that runs to its end names it once. A move stopped before its end starts again at the next start from the first
- * audit that names no stored copy, and names it again; a file whose audits left to move are all such audits starts no
- * move, and no line names them. The move's thread writes it to its stderr, which Node pipes to the daemon's,
- * `daemon.log`.
+ * that runs to its end names it once. A move stopped before its end starts again from the first audit that names no
+ * stored copy, and names it again: when an older Rerail's audit stopped it, in the same run once the wait for that
+ * audit ends (`moveRuleProvenancesInWorker`), and otherwise at the next start. A file whose audits left to move are
+ * all such audits starts no move, and no line names them. The move's thread writes it to its stderr, which Node pipes
+ * to the daemon's, `daemon.log`.
  */
 function sayLeftAsItIs(path: string, auditIds: readonly string[]): void {
   for (const auditId of auditIds) {
