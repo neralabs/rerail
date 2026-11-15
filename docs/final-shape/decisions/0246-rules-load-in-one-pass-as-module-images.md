@@ -79,6 +79,18 @@ The lean parser already reads a rule file into its tape (0162). The loader walks
 straight into the image builder: each surface form becomes the core rules it lowers to, emitted as image nodes. There
 are no statements, and no `front::Program` tree.
 
+Lowering has two halves today (`rr::lower::lower`), and they go to different places (decided 2026-11-15):
+
+- **Per clause, into the builder.** Rewriting a clause (`match`, a finding, a setting, an aggregate, a text test)
+  into core rules reads the clause and the declarations in scope. It writes image nodes through the builder's rule
+  writer (`Builder::rule`, `RuleBuilder`), in the tape walk. It moves form by form; until a form has moved, its
+  output from the tree path is the check, compared by digest.
+- **Whole program, at link time.** The findings' rules, `declare_core`, projections, kind sets, boolean relations,
+  `front::finish`, aggregate demand's `optimize`, removing repeated rules and literals, and widening cyclic contexts
+  need the program with its includes. Today that is why every program copies its libraries' declarations in. They
+  run once over the linked base (§2), as rules where their questions are rules (§3), and as one pass over the base
+  where they are not yet.
+
 A module image holds:
 
 - **Its own relations**, by name. A relation the module only reads, declared by a module it includes, is a name
@@ -88,8 +100,7 @@ A module image holds:
 - **Its includes**, as module digests, not paths. The include graph is these rows.
 - **Its own analysis rows** (§3): what each analysis derives from the module alone.
 
-A module is read only if the store does not already hold its image (0173 stage 1: the image is a source of the
-store, under an alias of the module's digest). Each included file is read once per run, whatever includes it, and
+A module is read only if the store does not already hold its image (kept as below, "Aligned with django-bugs"). Each included file is read once per run, whatever includes it, and
 once per store, whatever runs read it.
 
 The run's record of the files it read takes their names from the module images' declaration region. There is no
@@ -100,12 +111,21 @@ second resolution.
 Linking makes one **base**: the run's program, under one set of ids for the run. It holds:
 
 - each library module once;
-- each request's cone once per distinct request (0089 §3, keyed by the canonical text of the request's rules);
+- each request's cone once per distinct request (0089 §3, keyed by the canonical text of the request's rules). A
+  cone is made at link time (decided 2026-11-15): linking appends the library module's cone rules once more for
+  each distinct request, under relation ids of its own. A copy is a renumbering, and linking numbers anyway, so a
+  cone is never stored apart;
 - each program's own rules, its relations numbered apart (0089's `p{i}_` names become distinct relation ids, with
   the program's index as the name's qualifier, printed only when a program is printed as text).
 
 Linking appends module images under the run's ids. Each module's string table is interned once into the base's,
 and its relation, rule and atom ids are offset. Nothing is lowered, cloned as a tree, or parsed again.
+
+How a module's names become the run's ids is one interface, `LinkIds` (decided 2026-11-15): given a module image,
+it gives the run's atom, relation and rule ids for the module's own. The first implementation re-interns each
+module's string table into the base's and offsets the module's relation and rule ids. 0173 stage 4 (images keyed on
+the store's atoms) would be a second implementation that only offsets; nothing outside `LinkIds` knows which one
+runs.
 
 This is a new builder entry, `Builder::link(modules)`, beside `derive` and `under`. Its cost is the size of what it
 links: about 1 MB of image for the Python pack. A view's machinery (0244) does not need it: a linked base is a base.
@@ -184,7 +204,8 @@ Each stage ends with the intro's measurement: one file outside any earlier run, 
 already holds the rules, and warm; on one thread and on the pool; CPU and instructions. Findings are compared with the stage before.
 
 1. **Merge Typing-support's 0244 work** (parts as views with their fields overlaid, `Version::part`), and the
-   steps it builds on, into this branch. Every later stage edits versions, not trees.
+   steps it builds on, into this branch, once Typing-support has committed it (decided 2026-11-15: wait for the
+   commit, never merge work in progress). Every later stage edits versions, not trees.
 2. **Module images.** Lowering writes into the builder from the tape (`rr::lower` → the builder), one module at a
    time. Library modules first: each is read once and stored under its digest. Programs keep their current path
    until stage 3.
@@ -198,6 +219,19 @@ already holds the rules, and warm; on one thread and on the pool; CPU and instru
    No nested run re-reads a text.
 7. **The stored form is the image** (§6), and loading's pool loops go (§7).
 
+## Aligned with django-bugs (decisions 0239, 0240)
+
+- **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as
+  0239's output images and 0240 §4's memo entries do (and 0212's frames). So a module image means the same in every
+  process and every store, and nothing maps ids at the store's edge. `LinkIds`'s first implementation is exactly
+  that interning.
+- **The stored form.** A module image is kept as 0240 §4 keeps a memo entry: one image, compressed where it is made
+  (0240 §2), appended to the store's pack, found by a row keyed by the module's digest. The writer only writes
+  (0240 §1): no run waits on it, and a queued image is read from memory until it is written.
+- **One image format.** A module image is a program image (0173), built by the same builder. No third format.
+- **Ids continue the stack's.** An overlay of a module image numbers its ids after its parent's, as 0173's overlays
+  and 0239 stage 4's do.
+
 ## What this is not
 
 - **Not a cache.** A module image is a module's facts, kept as any source's are (decision 0104). Linking and the
@@ -207,13 +241,11 @@ already holds the rules, and warm; on one thread and on the pool; CPU and instru
 
 ## Open questions
 
-- **The ids a module image is linked under.** Linking re-interns each module's names into the run's string table
-  (§2), which costs the size of the names. The alternative is 0173 stage 4: images keyed on the store's atoms, so
-  linking only offsets relation and rule ids. Stage 4 is not built.
-- **Where lowering's whole-module checks go.** `tape_type::check`, `check_names` and `front::declared` run once per
-  module. Some of them need the module's includes, and so run at link time.
-- **Request cones.** Whether a cone is a module of its own (stored under its request's digest), or a derivation of
-  its library's module made at link time.
+- **Where lowering's checks go.** `tape_type::check`, `check_names` and `front::declared` run once per module. Those
+  that need the module's includes run at link time, with lowering's whole-program half.
+- **One layer of regions and strings.** The program image (0173) and django-bugs' output image (0239) have the same
+  layout (header, fixed-width regions, string bytes and ends) in two codebases. Whether they share one reader and
+  writer of regions and strings is for whichever change touches both first.
 
 ## The surveyed pipeline (2026-11-15, this branch)
 
