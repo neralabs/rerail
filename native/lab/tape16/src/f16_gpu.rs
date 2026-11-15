@@ -179,6 +179,8 @@ pub fn run(a: &AtRest) -> Result<Row, String> {
         device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())
     };
     let (p_thread, p_simd) = (pipe("lz4_thread")?, pipe("lz4_simd")?);
+    // Each tape's version mark, read on the host before its blocks are queued: one byte a file.
+    let marked = a.marks.iter().all(|&(at, v)| a.data[at as usize] == v);
     let mut dicts = Vec::new();
     let mut at = Vec::new();
     for d in &a.dicts {
@@ -314,12 +316,12 @@ pub fn run(a: &AtRest) -> Result<Row, String> {
         cpu1,
         cpun,
         cores,
-        correct: ok1 && ok2 && ok3 && ok4,
+        correct: marked && ok1 && ok2 && ok3 && ok4,
     })
 }
 
 pub fn print_header() {
-    println!("| language | files | nodes | blocks (LZ4) | stored MB | at rest, B a node (E24's form) | decoded MB | largest block (blocks past {ROOM} B) | GPU thread a block | GPU simd group a block | one block alone | CPU 1 thread | CPU every core | right |");
+    println!("| language | files | nodes | blocks (LZ4) | stored MB | at rest, B a node (side lists whole: one LZ4 block a file) | decoded MB | largest block (blocks past {ROOM} B) | GPU thread a block | GPU simd group a block | one block alone | CPU 1 thread | CPU every core | right |");
     println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 }
 

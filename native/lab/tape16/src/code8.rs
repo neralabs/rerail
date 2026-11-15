@@ -615,6 +615,8 @@ pub struct Rank8 {
     /// Per 64-node group: the nodes past the cutoff before it in its block (E23: the rank read).
     sub: Vec<u8>,
     nodes: usize,
+    /// E27: the side list in parts, read in place (`use_parts`); the start/off/low lists are then empty.
+    parts: Option<Parts>,
 }
 
 const GROUP: usize = 64;
@@ -704,7 +706,16 @@ impl Rank8 {
         }
         // Padded to whole groups (zeros, never the prefix) so a group reads as 8 words.
         bytes.resize(groups * GROUP, 0);
-        Rank8 { bytes, cut, per, start, off, low, low_w, sub, nodes: n }
+        Rank8 { bytes, cut, per, start, off, low, low_w, sub, nodes: n, parts: None }
+    }
+    /// E27: keep the side list in parts of PART nodes, as stored, and read it there.
+    pub fn use_parts(mut self) -> Rank8 {
+        let p = Parts::new(&self.start, &self.off, |k| u64::from(self.low[k]), self.low_w, self.nodes);
+        self.start = Vec::new();
+        self.off = Vec::new();
+        self.low = Vec::new();
+        self.parts = Some(p);
+        self
     }
     #[inline(always)]
     pub fn byte(&self, i: usize) -> u8 {
@@ -723,6 +734,9 @@ impl Rank8 {
     #[cold]
     #[inline(never)]
     fn tail(&self, i: usize, v: u32) -> u32 {
+        if let Some(p) = &self.parts {
+            return self.cut + (v - self.cut) * self.per + p.get(i) as u32;
+        }
         let b = i / BLOCK;
         let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
         let k = self.off[s..e].binary_search(&((i % BLOCK) as u8)).expect("a node past the cutoff is listed");
@@ -764,13 +778,18 @@ impl Rank8 {
         let g = i / GROUP;
         let base = g * GROUP;
         let k = i - base;
-        let mut r = self.start[i / BLOCK] as usize + usize::from(self.sub[g]);
+        let mut r = usize::from(self.sub[g]);
         let words: &[u8; GROUP] = self.bytes[base..base + GROUP].try_into().expect("padded to whole groups");
         for w in 0..GROUP / 8 {
             let word = u64::from_le_bytes(words[w * 8..w * 8 + 8].try_into().unwrap());
             let before = if 8 * w + 8 <= k { u64::MAX } else if 8 * w < k { (1u64 << ((k - 8 * w) * 8)) - 1 } else { 0 };
             r += (ff_bytes(word) & before).count_ones() as usize;
         }
+        if let Some(p) = &self.parts {
+            let (_, at) = p.block(i / BLOCK);
+            return self.cut + (v - self.cut) * self.per + p.value(at + r * p.vw) as u32;
+        }
+        r += self.start[i / BLOCK] as usize;
         self.cut + (v - self.cut) * self.per + u32::from(self.low[r])
     }
     /// E23: a block decoded whole, in order: the bytes widened (vectorised), then the block's side-list
@@ -780,6 +799,14 @@ impl Rank8 {
         let e = (s + BLOCK).min(self.len());
         for (o, &x) in out.iter_mut().zip(&self.bytes[s..e]) {
             *o = u32::from(x);
+        }
+        if let Some(p) = &self.parts {
+            let (offs, at) = p.block(b);
+            for (k, &o) in offs.iter().enumerate() {
+                let o = usize::from(o);
+                out[o] = self.cut + (out[o] - self.cut) * self.per + p.value(at + k * p.vw) as u32;
+            }
+            return e - s;
         }
         let (ls, le) = (self.start[b] as usize, self.start[b + 1] as usize);
         for j in ls..le {
@@ -805,6 +832,9 @@ impl Rank8 {
     }
     /// The stored bytes and the side list apart, as an at-rest form blocks them.
     pub fn split(&self) -> (Vec<u8>, Vec<u8>) {
+        if let Some(p) = &self.parts {
+            return (self.bytes[..self.nodes].to_vec(), p.stored().to_vec());
+        }
         let mut side = Vec::new();
         for v in &self.start {
             side.extend_from_slice(&v.to_le_bytes());
@@ -816,14 +846,21 @@ impl Rank8 {
         (self.bytes[..self.nodes].to_vec(), side)
     }
     pub fn tail_nodes(&self) -> usize {
-        self.off.len()
+        self.parts.as_ref().map_or(self.off.len(), Parts::entries)
     }
     /// E26: the side list cut to fixed blocks of `part` nodes (a multiple of BLOCK), each block's part on its
     /// own (`side_parts`): u16 ends, offsets, low parts.
     pub fn side_parts(&self, part: usize) -> Vec<Vec<u8>> {
+        if let Some(p) = &self.parts {
+            assert_eq!(part, PART);
+            return (0..p.count()).map(|k| p.part(k).to_vec()).collect();
+        }
         side_parts(&self.start, &self.off, |k, out| out.extend_from_slice(&self.low[k].to_le_bytes()[..self.low_w]), self.nodes, part)
     }
     pub fn side_bytes(&self) -> usize {
+        if let Some(p) = &self.parts {
+            return p.bytes();
+        }
         self.start.len() * 4 + self.off.len() + self.low.len() * self.low_w
     }
     /// The stored bytes with the side list after them, as written to disk.
@@ -880,4 +917,83 @@ pub fn side_parts(start: &[u32], off: &[u8], val: impl Fn(usize, &mut Vec<u8>), 
             out
         })
         .collect()
+}
+
+/// Nodes a side-list part covers: one fixed block at rest (`f16::N`).
+pub const PART: usize = 1024;
+const SUB: usize = PART / BLOCK;
+
+/// E27: a side list in parts of PART nodes, read in place as it is stored (0156 §1.5): each part a u16 end
+/// for each of its BLOCK-node blocks, the offsets, then the values at `vw` bytes. `base` is where each part
+/// starts (the block index's entry), one more at the end.
+pub struct Parts {
+    pub bytes: Vec<u8>,
+    pub base: Vec<u32>,
+    pub vw: usize,
+    blocks: usize,
+    entries: usize,
+}
+
+impl Parts {
+    /// From a side list as `start` (a BLOCK-node block) and `off`, with entry k's value `val(k)`.
+    pub fn new(start: &[u32], off: &[u8], val: impl Fn(usize) -> u64, vw: usize, nodes: usize) -> Parts {
+        let parts = side_parts(start, off, |k, out| out.extend_from_slice(&val(k).to_le_bytes()[..vw]), nodes, PART);
+        let mut bytes = Vec::new();
+        let mut base = Vec::with_capacity(parts.len() + 1);
+        for p in &parts {
+            base.push(bytes.len() as u32);
+            bytes.extend_from_slice(p);
+        }
+        base.push(bytes.len() as u32);
+        // Room for one value's unaligned 8-byte load past the end.
+        bytes.resize(bytes.len() + 8, 0);
+        Parts { bytes, base, vw, blocks: nodes.div_ceil(BLOCK), entries: off.len() }
+    }
+    /// Block b's offsets, and the byte where its first value is.
+    #[inline(always)]
+    pub fn block(&self, b: usize) -> (&[u8], usize) {
+        let p = b / SUB;
+        let (at, next) = (self.base[p] as usize, self.base[p + 1] as usize);
+        if at == next {
+            return (&[], 0);
+        }
+        let nsub = SUB.min(self.blocks - p * SUB);
+        let end = |j: usize| usize::from(u16::from_le_bytes([self.bytes[at + 2 * j], self.bytes[at + 2 * j + 1]]));
+        let j = b % SUB;
+        let (s, e) = (if j == 0 { 0 } else { end(j - 1) }, end(j));
+        let total = end(nsub - 1);
+        let offs = at + 2 * nsub;
+        (&self.bytes[offs + s..offs + e], offs + total + s * self.vw)
+    }
+    /// The value at byte `at`, `vw` bytes little-endian.
+    #[inline(always)]
+    pub fn value(&self, at: usize) -> u64 {
+        let w = u64::from_le_bytes(self.bytes[at..at + 8].try_into().unwrap());
+        if self.vw >= 8 { w } else { w & ((1u64 << (8 * self.vw)) - 1) }
+    }
+    /// Node i's value (it is listed).
+    #[inline]
+    pub fn get(&self, i: usize) -> u64 {
+        let (offs, at) = self.block(i / BLOCK);
+        let k = offs.binary_search(&((i % BLOCK) as u8)).expect("a listed node");
+        self.value(at + k * self.vw)
+    }
+    /// In memory: the parts and their starts.
+    pub fn bytes(&self) -> usize {
+        self.stored().len() + self.base.len() * 4
+    }
+    /// The parts as stored, end to end.
+    pub fn stored(&self) -> &[u8] {
+        &self.bytes[..*self.base.last().unwrap() as usize]
+    }
+    /// Part p as stored.
+    pub fn part(&self, p: usize) -> &[u8] {
+        &self.bytes[self.base[p] as usize..self.base[p + 1] as usize]
+    }
+    pub fn count(&self) -> usize {
+        self.base.len() - 1
+    }
+    pub fn entries(&self) -> usize {
+        self.entries
+    }
 }

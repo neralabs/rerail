@@ -46,6 +46,8 @@ pub struct F16Lang {
     pub cut: u32,
     /// The code table's size, from the grammar (`grammar_codes`).
     pub table: usize,
+    /// The revision its tapes are marked with (`revision`).
+    pub version: u8,
     /// Slots, gaps, lengths, in bits (multiples of 8).
     pub widths: [u32; 3],
     /// Sets compiled to numbers, once per set (a rule's set is compiled once, not per file).
@@ -71,6 +73,16 @@ pub fn grammar_codes(tag: u8) -> usize {
         _ => 0,
     }
 }
+
+/// The tape's version mark (0156 §1.0): byte 0 of every tape, in memory and at rest, the language's tape
+/// revision. One number covers every choice a reader must share with the writer: the layout, the code table
+/// and its numbering, the widths, K and N, the dictionaries. 1–254 are revisions; 0 is never written (zeroed
+/// bytes are not a tape); 255 says the revision goes on in the next two bytes.
+pub fn revision(tag: u8) -> u8 {
+    let _ = tag;
+    1
+}
+pub const MARK_LONG: u8 = 255;
 
 /// A language's statistics, gathered file by file (nothing held), then fixed by `finish`.
 #[derive(Default)]
@@ -106,11 +118,16 @@ impl Learner {
         // One prefix, 255, when the grammar's table passes 256 codes: the low part past it is one byte to 511
         // codes, two beyond (E25). The codes the corpus never showed are numbered after those it did.
         let cut = if table <= 256 { 256 } else { 255 };
-        F16Lang { num, by_num, cut, table, widths: [self.hs.width_bytes(), self.hg.width_bytes(), self.hl.width_bytes()], sets: RefCell::default() }
+        F16Lang { version: 0, num, by_num, cut, table, widths: [self.hs.width_bytes(), self.hg.width_bytes(), self.hl.width_bytes()], sets: RefCell::default() }
     }
 }
 
 impl F16Lang {
+    /// The same choices, marked with the language's revision.
+    pub fn marked(mut self, tag: u8) -> F16Lang {
+        self.version = revision(tag);
+        self
+    }
     /// From the language's code table and the files the choices are learned on.
     pub fn learn<'a>(codes: &Codes, table: usize, files: impl Iterator<Item = &'a Cols>) -> F16Lang {
         let mut l = Learner::default();
@@ -140,6 +157,8 @@ impl F16Lang {
 /// One file's format 16 tape, read in place.
 pub struct F16<'a> {
     lang: &'a F16Lang,
+    /// Byte 0: the version mark.
+    mark: u8,
     n: usize,
     codes: Rank8,
     slot: Esc,
@@ -153,16 +172,38 @@ pub struct F16<'a> {
 impl<'a> F16<'a> {
     pub fn new(c: &Cols, lang: &'a F16Lang) -> F16<'a> {
         let ids: Vec<u32> = c.code.iter().map(|&k| k as u32).collect();
-        let codes = Rank8::of_table(&ids, &lang.num, lang.cut, lang.table);
-        let slot = Esc::new(&sib_slots(c, K), lang.widths[0]);
+        // The side lists in parts of N nodes, as stored at rest and read there (E27).
+        let n = c.len();
+        let codes = Rank8::of_table(&ids, &lang.num, lang.cut, lang.table).use_parts();
+        let slot = Esc::new(&sib_slots(c, K), lang.widths[0]).use_parts(n);
         let (g, l) = gaps(c);
-        let gap = Esc::new(&g, lang.widths[1]);
-        let len = Esc::new(&l, lang.widths[2]);
+        let gap = Esc::new(&g, lang.widths[1]).use_parts(n);
+        let len = Esc::new(&l, lang.widths[2]).use_parts(n);
         let starts: Vec<u64> = c.start.iter().step_by(K).copied().collect();
         let cw = starts.iter().map(|&v| bits_for(v)).max().unwrap_or(0).max(1).next_multiple_of(8);
         let ckpt = Packed::new_width(&starts, cw);
         let chunks = (K - 1).div_ceil(gap.per());
-        F16 { lang, n: c.len(), codes, slot, gap, len, ckpt, chunks }
+        assert!(lang.version != 0 && lang.version != MARK_LONG, "a language's choices are marked before a tape is written");
+        F16 { lang, mark: lang.version, n: c.len(), codes, slot, gap, len, ckpt, chunks }
+    }
+    /// Array k's side list in parts of N nodes, one a fixed block (empty for the checkpoints).
+    pub fn side_parts_of(&self, k: usize) -> Vec<Vec<u8>> {
+        match k {
+            0 => self.codes.side_parts(N),
+            1 => self.slot.side_parts(self.n, N),
+            2 => self.gap.side_parts(self.n, N),
+            3 => self.len.side_parts(self.n, N),
+            _ => Vec::new(),
+        }
+    }
+    /// Byte 0, the version mark.
+    pub fn mark(&self) -> u8 {
+        self.mark
+    }
+    /// Whether a tape marked `mark` can be read with `lang`'s choices: the same revision, else the tape is
+    /// rewritten (re-parsed, or converted from its revision) before any read.
+    pub fn readable(mark: u8, lang: &F16Lang) -> Result<(), String> {
+        if mark == lang.version { Ok(()) } else { Err(format!("tape revision {mark}, this reader's {}", lang.version)) }
     }
     /// Bytes by part: codes, structure (slots), start (gaps and checkpoints), end (lengths).
     pub fn parts(&self) -> [usize; 4] {
@@ -196,7 +237,7 @@ impl<'a> F16<'a> {
 
 impl Reader for F16<'_> {
     fn bytes(&self) -> usize {
-        self.parts().iter().sum()
+        1 + self.parts().iter().sum::<usize>()
     }
     fn id_of(&self, preorder: usize) -> usize {
         preorder
@@ -352,7 +393,7 @@ use crate::measure::cost;
 
 pub const STREAMS: [&str; 5] = ["codes", "slots", "gaps", "lengths", "checkpoints"];
 /// Nodes a fixed block at rest.
-pub const N: usize = 1024;
+pub const N: usize = crate::code8::PART;
 const DICT: usize = 64 << 10;
 /// An LZ4 block is kept only if it saves at least a tenth of the raw bytes.
 const KEEP: f64 = 0.9;
@@ -400,7 +441,7 @@ pub fn run(files: &[&File]) -> Report {
     let cols: Vec<Cols> = files.iter().map(|f| Cols::of_tree(&read(f), &codes)).collect();
     let train_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 0).collect();
     let test_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 1).collect();
-    let lang = F16Lang::learn(&codes, grammar_codes(files[0].tag), train_idx.iter().map(|&i| &cols[i]));
+    let lang = F16Lang::learn(&codes, grammar_codes(files[0].tag), train_idx.iter().map(|&i| &cols[i])).marked(files[0].tag);
     let mut r = Report { files: files.len(), measured_files: test_idx.len(), codes: codes.table.len(), cut: lang.cut, widths: lang.widths, ..Report::default() };
     let streams = |i: usize| -> Streams { F16::new(&cols[i], &lang).streams() };
     let train: Vec<Streams> = train_idx.iter().map(|&i| streams(i)).collect();
@@ -415,7 +456,6 @@ pub fn run(files: &[&File]) -> Report {
     let f15_dict = if split { Dictionary::train(&train_idx.iter().map(|&i| files[i].image.clone()).collect::<Vec<_>>(), DICT) } else { Dictionary::none() };
     drop(train);
     let mut lz: Vec<Lz4> = dicts.iter().map(|d| Lz4::new(true, &d.bytes)).collect();
-    let mut lz_side = Lz4::new(true, &[]);
     let (mut block_ns, mut blocks_lz) = (0u64, 0u64);
     for &i in &test_idx {
         let c = &cols[i];
@@ -447,34 +487,41 @@ pub fn run(files: &[&File]) -> Report {
         }
         // Fixed blocks of N nodes: a block of an array covers N nodes' fixed-width bytes (the checkpoints'
         // N / K entries), stored raw (checkpoints, and blocks LZ4 does not shrink by a tenth) or as LZ4 HC
-        // over the dictionary. The side lists are one LZ4 block a file and array.
+        // over the dictionary. Each block carries its nodes' side-list part after its fixed-width bytes (E26),
+        // and an 8-byte index entry (where it is stored, and where its side part goes). The file's first byte
+        // is the version mark.
+        r.index += 1;
+        let stored_mark = t.mark();
         let mut stored: Vec<Vec<(bool, Vec<u8>, usize)>> = Vec::new();
+        let mut expect: Vec<Vec<u8>> = vec![Vec::new(); 5];
         for k in 0..5 {
             let main = &s[k].0;
             let per = if k == 4 { (N / K) * (t.widths()[3] as usize / 8) } else { N * t.widths_bytes(k) };
+            let parts = t.side_parts_of(k);
             let mut v = Vec::new();
-            for blk in main.chunks(per.max(1)) {
-                r.index += 4;
+            for (b, blk) in main.chunks(per.max(1)).enumerate() {
+                r.index += 8;
+                let side: &[u8] = parts.get(b).map_or(&[], Vec::as_slice);
+                let plain: Vec<u8> = [blk, side].concat();
+                expect[k].extend_from_slice(&plain);
                 if k == 4 {
-                    r.blocked[k] += blk.len() as u64;
-                    v.push((false, blk.to_vec(), blk.len()));
+                    r.blocked[k] += plain.len() as u64;
+                    v.push((false, plain.clone(), plain.len()));
                     continue;
                 }
-                let z = lz[k].compress(blk);
-                if (z.len() as f64) < KEEP * blk.len() as f64 {
+                let z = lz[k].compress(&plain);
+                if (z.len() as f64) < KEEP * plain.len() as f64 {
                     r.blocked[k] += z.len() as u64;
-                    v.push((true, z, blk.len()));
+                    v.push((true, z, plain.len()));
                 } else {
-                    r.blocked[k] += blk.len() as u64;
-                    v.push((false, blk.to_vec(), blk.len()));
+                    r.blocked[k] += plain.len() as u64;
+                    v.push((false, plain.clone(), plain.len()));
                 }
-            }
-            if !s[k].1.is_empty() {
-                r.blocked[k] += lz_side.compress(&s[k].1).len() as u64;
             }
             stored.push(v);
         }
         let (got, kk) = cost(|| {
+            F16::readable(stored_mark, &lang).expect("a tape of this revision");
             stored.iter().enumerate().map(|(k, v)| {
                 let mut out = Vec::with_capacity(s[k].0.len());
                 let mut buf = vec![0u8; v.iter().map(|b| b.2).max().unwrap_or(0)];
@@ -491,10 +538,10 @@ pub fn run(files: &[&File]) -> Report {
         });
         r.load_blocks += kk.nanos;
         for k in 0..5 {
-            r.wrong += u64::from(got[k] != s[k].0);
+            r.wrong += u64::from(got[k] != expect[k]);
         }
         // One codes block decoded alone, each LZ4 block of the file.
-        let mut buf = vec![0u8; N * 2];
+        let mut buf = vec![0u8; stored[0].iter().map(|b| b.2).max().unwrap_or(0)];
         for (is_lz, b, len) in &stored[0] {
             if *is_lz {
                 let (m, kk) = cost(|| lz4_decode(b, &mut buf[..*len], &dicts[0].bytes));
@@ -534,6 +581,8 @@ pub struct AtRest {
     pub blocks: Vec<Stored>,
     pub data: Vec<u8>,
     pub expected: Vec<u8>,
+    /// Each file's version mark in `data`, and the revision the reader expects.
+    pub marks: Vec<(u32, u8)>,
     /// E24's form of the same files: each block without its side part, and each side list one LZ4 block a
     /// file and array, B.
     pub e24_bytes: u64,
@@ -543,7 +592,7 @@ impl AtRest {
     /// Several languages' blocks as one set, as one dispatch decodes them: each part's offsets moved past the
     /// parts before it, and each block's `array` made its dictionary's index (part × 5 + array).
     pub fn merge(parts: &[AtRest]) -> AtRest {
-        let mut m = AtRest { files: 0, nodes: 0, dicts: Vec::new(), blocks: Vec::new(), data: Vec::new(), expected: Vec::new(), e24_bytes: 0 };
+        let mut m = AtRest { files: 0, nodes: 0, dicts: Vec::new(), blocks: Vec::new(), data: Vec::new(), expected: Vec::new(), marks: Vec::new(), e24_bytes: 0 };
         for (p, a) in parts.iter().enumerate() {
             let (src, out) = (m.data.len() as u32, m.expected.len() as u32);
             m.files += a.files;
@@ -551,6 +600,7 @@ impl AtRest {
             m.e24_bytes += a.e24_bytes;
             m.dicts.extend(a.dicts.iter().cloned());
             m.blocks.extend(a.blocks.iter().map(|b| Stored { array: (p * 5) as u8 + b.array, src: b.src + src, out: b.out + out, side_out: b.side_out + out, ..*b }));
+            m.marks.extend(a.marks.iter().map(|&(at, v)| (at + src, v)));
             m.data.extend_from_slice(&a.data);
             m.expected.extend_from_slice(&a.expected);
         }
@@ -568,7 +618,7 @@ pub fn at_rest(files: &[&File]) -> AtRest {
     let cols: Vec<Cols> = files.iter().map(|f| Cols::of_tree(&read(f), &codes)).collect();
     let train_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 0).collect();
     let test_idx: Vec<usize> = (0..files.len()).filter(|i| !split || i % 2 == 1).collect();
-    let lang = F16Lang::learn(&codes, grammar_codes(files[0].tag), train_idx.iter().map(|&i| &cols[i]));
+    let lang = F16Lang::learn(&codes, grammar_codes(files[0].tag), train_idx.iter().map(|&i| &cols[i])).marked(files[0].tag);
     let dicts: Vec<Vec<u8>> = (0..5)
         .map(|k| {
             if !split || k == 4 {
@@ -580,25 +630,22 @@ pub fn at_rest(files: &[&File]) -> AtRest {
         .collect();
     let mut lz: Vec<Lz4> = dicts.iter().map(|d| Lz4::new(true, d)).collect();
     let mut lz_side = Lz4::new(true, &[]);
-    let mut a = AtRest { files: test_idx.len(), nodes: 0, dicts: dicts.clone(), blocks: Vec::new(), data: Vec::new(), expected: Vec::new(), e24_bytes: 0 };
+    let mut a = AtRest { files: test_idx.len(), nodes: 0, dicts: dicts.clone(), blocks: Vec::new(), data: Vec::new(), expected: Vec::new(), marks: Vec::new(), e24_bytes: 0 };
     let mut sides: Vec<u8> = Vec::new();
     for &i in &test_idx {
         let t = F16::new(&cols[i], &lang);
         let n = cols[i].len();
         a.nodes += n as u64;
+        // The file's first stored byte: its version mark.
+        a.marks.push((a.data.len() as u32, lang.version));
+        a.data.push(t.mark());
         let s = t.streams();
         for k in 0..5 {
             if !s[k].1.is_empty() {
                 a.e24_bytes += lz_side.compress(&s[k].1).len() as u64;
             }
             let per = if k == 4 { (N / K) * (t.widths()[3] as usize / 8) } else { N * t.widths_bytes(k) };
-            let parts = match k {
-                0 => t.codes.side_parts(N),
-                1 => t.slot.side_parts(n, N),
-                2 => t.gap.side_parts(n, N),
-                3 => t.len.side_parts(n, N),
-                _ => Vec::new(),
-            };
+            let parts = t.side_parts_of(k);
             for (b, blk) in s[k].0.chunks(per.max(1)).enumerate() {
                 let side: &[u8] = parts.get(b).map_or(&[], Vec::as_slice);
                 let plain: Vec<u8> = [blk, side].concat();

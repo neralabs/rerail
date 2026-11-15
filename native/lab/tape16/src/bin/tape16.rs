@@ -1116,7 +1116,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             learn.entry(f.tag).or_default().add(&Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
-        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)))).collect()
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)).marked(t))).collect()
     };
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
@@ -1394,7 +1394,7 @@ fn cmd_prim(path: &str) {
             learn.entry(f.tag).or_default().add(&rerail_tape_lab::inplace::Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
-        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)))).collect()
+        learn.into_iter().map(|(t, l)| (t, l.finish(&codes[&t], rerail_tape_lab::f16::grammar_codes(t)).marked(t))).collect()
     };
     // Rows: (primitive, set) → per candidate cost and count.
     let mut rows: Vec<String> = Vec::new();

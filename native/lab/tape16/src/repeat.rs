@@ -48,12 +48,20 @@ pub struct Esc {
     folds: Vec<(u32, u64)>,
     /// Each field's low w − 1 bits, over a word's `per` fields (for the exact all-ones test).
     low: u64,
+    /// E27: the escapes in parts, read in place (`use_parts`); start/off/val are then empty.
+    parts: Option<crate::code8::Parts>,
+    count: usize,
 }
 
 impl Image for Esc {
     fn image(&self, out: &mut Vec<u8>) {
         out.push(self.w as u8);
         raw(out, &self.words);
+        if let Some(p) = &self.parts {
+            raw(out, &p.base);
+            out.extend_from_slice(p.stored());
+            return;
+        }
         raw(out, &self.start);
         raw(out, &self.off);
         self.val.image(out);
@@ -165,7 +173,8 @@ impl Esc {
         for f in 0..per {
             low |= ((1u64 << (w - 1)) - 1) << (f * w as usize);
         }
-        Esc { w, words, start, off, val: Packed::new(&val), per, folds, low }
+        let count = off.len();
+        Esc { w, words, start, off, val: Packed::new(&val), per, folds, low, parts: None, count }
     }
     #[inline(always)]
     pub fn get(&self, i: usize) -> u64 {
@@ -182,8 +191,42 @@ impl Esc {
         }
         self.escaped(i)
     }
+    /// E27: keep the escapes in parts of `code8::PART` nodes, as stored (values at whole bytes), and read them
+    /// there.
+    pub fn use_parts(mut self, n: usize) -> Esc {
+        let vb = (self.val.w as usize).div_ceil(8).max(1);
+        let p = crate::code8::Parts::new(&self.start, &self.off, |k| self.val.get(k), vb, n);
+        self.start = Vec::new();
+        self.off = Vec::new();
+        self.val = Packed::new(&[]);
+        self.parts = Some(p);
+        self
+    }
+    /// Block b's escape offsets, and entry k's value.
+    #[inline(always)]
+    fn list(&self, b: usize) -> (&[u8], usize) {
+        match &self.parts {
+            Some(p) => p.block(b),
+            None => {
+                let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
+                (&self.off[s..e], s)
+            }
+        }
+    }
+    #[inline(always)]
+    fn list_val(&self, at: usize, k: usize) -> u64 {
+        match &self.parts {
+            Some(p) => p.value(at + k * p.vw),
+            None => self.val.get(at + k),
+        }
+    }
     #[cold]
     fn escaped(&self, i: usize) -> u64 {
+        if self.parts.is_some() {
+            let (offs, at) = self.list(i / BLOCK);
+            let k = offs.binary_search(&((i % BLOCK) as u8)).expect("an escape is listed");
+            return self.list_val(at, k);
+        }
         let b = i / BLOCK;
         let (s, e) = (self.start[b] as usize, self.start[b + 1] as usize);
         let j = (i % BLOCK) as u8;
@@ -195,15 +238,22 @@ impl Esc {
         (self.w, v, (v == (1u64 << self.w) - 1).then(|| self.escaped(i)))
     }
     pub fn bytes(&self) -> usize {
-        1 + self.words.len() * 8 + self.start.len() * 4 + self.off.len() + self.val.bytes()
+        let side = match &self.parts {
+            Some(p) => p.bytes(),
+            None => self.start.len() * 4 + self.off.len() + self.val.bytes(),
+        };
+        1 + self.words.len() * 8 + side
     }
     pub fn escapes(&self) -> usize {
-        self.off.len()
+        self.count
     }
     /// The fixed-width array of `n` values as little-endian bytes (escapes as all-ones), and apart from it
     /// the escapes' lists (E19 blocks the first and keeps the second whole).
     pub fn split(&self, n: usize) -> (Vec<u8>, Vec<u8>) {
         let main = le_bytes(&self.words, (n * self.w as usize).div_ceil(8));
+        if let Some(p) = &self.parts {
+            return (main, p.stored().to_vec());
+        }
         let mut side = Vec::new();
         raw(&mut side, &self.start);
         raw(&mut side, &self.off);
@@ -212,6 +262,10 @@ impl Esc {
     }
     /// E26: the escapes cut to fixed blocks of `part` nodes (`code8::side_parts`), each value at whole bytes.
     pub fn side_parts(&self, n: usize, part: usize) -> Vec<Vec<u8>> {
+        if let Some(p) = &self.parts {
+            assert_eq!(part, crate::code8::PART);
+            return (0..p.count()).map(|k| p.part(k).to_vec()).collect();
+        }
         let vb = (self.val.w as usize).div_ceil(8).max(1);
         crate::code8::side_parts(&self.start, &self.off, |k, out| out.extend_from_slice(&self.val.get(k).to_le_bytes()[..vb]), n, part)
     }
@@ -282,13 +336,11 @@ impl Esc {
     /// What the escapes in `from..to` (one block) add over their all-ones slots.
     #[cold]
     fn escaped_in(&self, from: usize, to: usize) -> u64 {
-        let b = from / BLOCK;
-        let (bs, be) = (self.start[b] as usize, self.start[b + 1] as usize);
-        let list = &self.off[bs..be];
+        let (list, at) = self.list(from / BLOCK);
         let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
         let (a, z) = (list.partition_point(|&o| o < lo), list.partition_point(|&o| o <= hi));
         let esc = (1u64 << self.w) - 1;
-        (a..z).map(|k| self.val.get(bs + k) - esc).sum()
+        (a..z).map(|k| self.list_val(at, k) - esc).sum()
     }
     fn sum_any(&self, from: usize, to: usize, chunks: usize) -> u64 {
         // Wrapping arithmetic throughout: the lab's profile checks overflow, generated code would not.
@@ -315,16 +367,13 @@ impl Esc {
             s = s.wrapping_add(v);
         }
         if esc > 0 {
-            let b = from / BLOCK;
-            let bs = self.start[b] as usize;
-            let be = self.start[b + 1] as usize;
-            let list = &self.off[bs..be];
+            let (list, at) = self.list(from / BLOCK);
             let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
             let a = list.partition_point(|&o| o < lo);
             let z = list.partition_point(|&o| o <= hi);
             let esc = (1u64 << self.w) - 1;
             for k in a..z {
-                s += self.val.get(bs + k) - esc;
+                s += self.list_val(at, k) - esc;
             }
         }
         s

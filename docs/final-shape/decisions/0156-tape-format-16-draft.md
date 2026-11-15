@@ -79,8 +79,28 @@ in the store per algorithm (5).
 ## 1. The in-memory tape
 
 Rewritten on 2026-11-15 from what the lab measured
-([t39](../notes/t39-tape-primitives.md) steps 7–16). The event stream this section first proposed
+([t39](../notes/t39-tape-primitives.md) steps 7–19). The event stream this section first proposed
 is in Departures.
+
+### 1.0 The version mark
+
+Byte 0 of every tape, in memory and at rest, is its **version mark**: the language's tape revision.
+
+- **One number covers every choice** a reader must share with the writer: the layout, the code table
+  and its numbering, the widths, the checkpoint interval and block size, and the dictionaries. A
+  change to any of them is a new revision of that language.
+- **1–254 are revisions.** 0 is never written, so zeroed bytes are never taken for a tape. 255 says
+  the revision goes on in the next two bytes (little-endian), for when 254 run out.
+- **A reader reads only the revisions it knows.** Any other tape is rewritten before it is read:
+  re-parsed from its source, or converted from its revision. The check is one byte a tape, made
+  before its blocks are read or queued.
+- **The mark is the tape's only header.** The language is the row's that holds the tape, and the
+  node count is in the arrays' lengths.
+
+Format 15's header (an 8-byte magic, the tag, a u32 version, the widths and counts) is replaced by
+this byte. The revisions a build can read are listed with each language's code table. The lab marks
+every tape with revision 1 and checks it before every load and every device dispatch
+(`f16::revision`, E27).
 
 ### 1.1 Arrays, one entry a node
 
@@ -99,7 +119,7 @@ checkpoints  the absolute start of nodes 0, 8, 16, …     a file's width, in wh
 ```
 
 Every array but the checkpoints has one width for every file of the language, fixed with the
-language's code numbering (1.2) for the grammar build and the format version. A value too wide for
+language's code numbering (1.2) under the language's revision (1.0). A value too wide for
 its array is stored as the all-ones value, an escape that names nothing (1.5).
 
 So a writer knows every width before a file starts. A repeated subtree is the same bytes in its
@@ -262,9 +282,9 @@ block's entries are found from that start and two of the ends (E26).
 - **Measured shares** (E24, data-layer Python): 0.36% of codes past the cutoff, slots 1.8%, gaps
   0.05%, lengths 3.1%.
 
-The ends take 0.008 B a node per array, half the 4-byte start index first measured. The rest of a
-list is each entry's offset byte and value. The lab's readers still use the 4-byte start index; the
-parts' reads differ by one load in the cold path.
+The ends and part starts take 0.012 B a node per array, against 0.016 for the 4-byte start index
+first measured. The rest of a list is each entry's offset byte and value. The readers read the parts
+where they lie (E27), so the bytes a block decodes to are the bytes every read reads.
 
 ### 1.6 Lines and text
 
@@ -399,8 +419,9 @@ dictionaries. That is the smallest form measured: on data-layer Python, 1.90 B a
 
 ### 2.3 Dictionaries
 
-One dictionary per (language, format version, array), 64 KiB, trained on a corpus and stored once
-by content id. A new dictionary is a new id, and old blocks keep naming theirs. A 64 KiB dictionary
+One dictionary per (language, revision, array), 64 KiB, trained on a corpus and stored once by
+content id. The revision names its dictionaries (1.0), so a block does not: a new dictionary is a
+new revision, and tapes of the old one keep theirs. A 64 KiB dictionary
 takes most of what files share: compressing every file end to end with a 128 MiB window saves only
 3–12% more (t39 step 10).
 
@@ -814,6 +835,8 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   tree-sitter language, and no captured node outside it.
 - E26 (2026-11-15, t39 step 18): fixed LZ4 blocks decoded on Metal (2.1): 0.10–0.42 ns a node, 1.3–2.7×
   every CPU core, with each block's side-list part inside it.
+- E27 (2026-11-15, t39 step 19): the side lists read in their parts, as stored (1.5), and the version
+  mark (1.0) on every tape, checked before every load.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

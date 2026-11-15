@@ -1112,6 +1112,29 @@ rerail Rust, 4.57 TypeScript. That is the predicted +0.006–0.011 B a node; eve
 One more lab note. The remote copies had been synced with rsync, which skipped changed files whose
 size and time matched; they are now copied whole with tar and compared by checksum.
 
+### Step 19: the side lists read where they are stored; the version mark (E27)
+
+**Side lists.** Step 18 cut the side lists into parts of 1,024 nodes for storage, but the readers
+still kept the old form (a 4-byte start for each 256-node block). Now `code8::Parts` holds the parts
+exactly as a block decodes them, and `Rank8` and `Esc` read them there (`use_parts`). A part holds:
+- a u16 end for each of its 256-node blocks;
+- the offsets;
+- the values at whole bytes.
+
+A part's start is the block index's entry. A read past the cutoff, or of an escape, finds its
+256-node block's entries from that start and two ends. The rank read counts within its block as
+before. The start index goes from 0.016 to 0.012 B a node per array. Every question, primitive and
+decode checks right on the small capture. The older experiments keep the old form.
+
+**Version mark.** Byte 0 of every tape is the language's tape revision (0156 §1.0). It covers every
+choice a reader shares with the writer: layout, code table, widths, K, N, dictionaries. 1–254 are
+revisions, 0 is never written, and 255 continues in two more bytes. `f16::revision` gives 1 for
+every language today. `F16::readable` checks it before every load, and `f16_gpu` checks every
+file's mark before its blocks are queued.
+
+`tape16 f16`'s fixed blocks now carry their side parts too (step 18's form), with an 8-byte index
+entry a block and the mark byte a file: 0.048 B a node of index on the small capture.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1295,3 +1318,5 @@ In order. Each step is measured on all three corpora, every answer checked.
 18. **Fixed blocks on Metal (E26).** Done: 0.10–0.42 ns a node in one dispatch, 1.3–2.7× every CPU
     core, with each block's side-list part inside it. Next: the parts' reads in the lab's readers, the
     writer (E6), and the tape's own kernels reading the decoded blocks in place.
+19. **Side lists read in place; the version mark (E27).** Done: the parts as stored are what the
+    readers read; byte 0 of every tape is its language's revision, checked before every load.
