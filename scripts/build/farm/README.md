@@ -110,9 +110,11 @@ hosts, and everything compiles and tests here, as without the farm.
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150) |
 | `min_mbps` | the least throughput to it, MB/s (default 8) |
+| `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
-half as many otherwise (`HIDIdleTime`). Not its load average: macOS's background analysis (Photos,
+half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
+first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 
 ## Health
@@ -177,7 +179,17 @@ host over ssh. For each compile it scans what the compile may read (the checkout
 dependency directory, `OUT_DIR`, native library directories; one scan serves every compile that
 started before it), sends each file whose size or mtime differs from what it last sent, then the
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
-come back on the stream. Every file the compile read (its dep-info) must have the size and mtime
+come back on the stream.
+
+The stream starts on ssh, then moves to plain TCP: the daemon listens on a port of its own,
+sends the agent the port and a one-time token over ssh, and the agent connects back to the
+address it sees ssh arrive from (the host's `link`, which the health check confirmed) and sends
+the token. ssh's encryption and flow control capped the mirror at about 40–120 MB/s on a link
+that carries 600 MB/s; over TCP a fresh 330 MB tree reaches a host at 220–330 MB/s, the host's
+own disk writes included. ssh stays open as the lifeline: the agent ends when it does, and a
+dead TCP connection is noticed in about 10 s (keepalive). If the agent cannot connect back
+within 8 s, the stream stays on ssh. The data on the link is not encrypted: `tcp: false` keeps it
+on ssh. Every file the compile read (its dep-info) must have the size and mtime
 it has here, or the compile runs here. The agent refuses to write under an NFS mount or automount:
 a host with the shared volume runs `shared-volume client-off` first.
 

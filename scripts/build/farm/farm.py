@@ -628,12 +628,15 @@ def on_host(script):
 
 
 def remote_slot():
+    """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
+    one's first, then each one's second, ...), so every host works, not only the first listed."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    for host in hosts():
-        if not host.get("enabled", True):
-            continue
-        for i in range(capacity(host)):
+    open_hosts = [(h, capacity(h)) for h in hosts() if h.get("enabled", True)]
+    for i in range(max((c for _, c in open_hosts), default=0)):
+        for host, cap in open_hosts:
+            if i >= cap:
+                continue
             lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
             if lock.held:
                 CHANNEL[0] = str(i)
