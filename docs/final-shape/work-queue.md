@@ -401,7 +401,8 @@ pass.
 - **Done when**: Relax's links to its loader are APFS clones (`clonefile`: their own file, the loader's blocks)
   where they would be hard links on macOS, or the farm's owner chooses another fix; a warm run after a build
   script change passes. This is the pinned Relax's code (`scripts/dev/relax`), the farm branch's.
-- **Record**: workaround in use: `relax clean` before a session whose build scripts changed.
+- **Record**: fixed by the farm branch (24955f4e8, merged in the roll-up of 2026-11-15): a stubbed build script is
+  a shell script, not a hard link of Relax's binary (`scripts/dev/relax/rerail.patch`), on upstream 5b2d68c2.
 
 ## Questions for the user
 
