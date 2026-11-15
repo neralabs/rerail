@@ -1467,10 +1467,28 @@ CPU in all; the rest are cheaper on the CPU by price.
 - The tape's reads are `kind` first, by far: 11% of every row a python join reads, 6% of the
   data-layer's, with 2,000–2,800 steps. The point questions that follow are structure (`child`,
   `field`, `node_order`), text and the bulk primitives (`within`, `nearest` over a kind set).
-  `inside` and `has` (74 and 70 uses in the library and the rules) are lowered to climbs, which
-  run as derived relations, so the tables above count them as `derived`, not as tape reads. No
-  rule asks for the outermost. A bulk `has` or `inside` primitive would replace those climbs, so
-  their rows are the next thing to measure.
+  `inside` and `has` (74 and 70 uses in the library and the rules) mostly name a kind set, and
+  then they are tape reads already: `rr_inside_<set>` and `rr_has_<set>` (`front::AXIS`,
+  `DESCENDANTS`), made by `Within` as `nearest` is. Only over a set of nodes (a derived relation,
+  such as `loop_stop`) are they climbs (`lower.rs`, `node_axis`: `rr_up<k>` over the parent
+  column). Measured in the same runs, both are small:
+
+  ```text
+                               python, 10    data-layer, 10   data-layer, 50 (warm)
+  inside, kind set: steps        25              11               11
+                    rows in      1,935           246              4,030
+  has, kind set:    rows in      474             265              5,720
+  climbs (rr_up):   strata       14              15               0
+                    work         125k (1.2%)     1.6k             0
+  ```
+
+  The python climbs are two library rules, `in_loop_body` (`nearest(s, b, loop_stop)`) and
+  `run_scope`'s nearest region root, each seeded from every node of the shown documents (12.9k)
+  and stopping at the first stop. No rule asks for the outermost. So bulk `inside` and `has` cost
+  little on these mixes; the replacement for the node-set climbs is §4's rework item 2, the
+  derived set sorted into preorder driving the same sweep as a kind set, with rows out the
+  answer's and no seed per node. It is worth building with item 1 (the bulk axes on one code),
+  not ahead of it.
 - At 10 files, joins are 5–7% of a cold run's CPU; at 50 data-layer files, 37% of a run that
   evaluates again. A primitive twice as fast moves a small cold run by under 3% and a larger
   evaluation by up to a fifth: the share grows with the corpus, while making the program does not.
@@ -1689,5 +1707,6 @@ In order. Each step is measured on all three corpora, every answer checked.
 24. **Real rule mixes (E32).** Done: the python pack (317 rules) and the data-layer candidates (75)
     over small real samples, strict, with what each evaluated. Joins are 5–7% of a small cold run's
     CPU and 37% of a 50-file evaluation;
-    the tape's reads are `kind` first, then structure, text, `within` and `nearest`. Next: the climbs
-    `inside` and `has` lower to, measured as the bulk primitives that would replace them.
+    the tape's reads are `kind` first, then structure, text, `within` and `nearest`. `inside` and
+    `has` over kind sets are tape reads already, and the climbs over node sets are 1.2% of python's
+    work and less of data-layer's: §4's rework item 2 replaces them, with item 1.

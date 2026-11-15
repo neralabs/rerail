@@ -24,8 +24,9 @@ core_inputs = set()
 for line in open(CORE):
     if line.startswith('.input'):
         core_inputs.update(x for x in re.split(r'[\s,]+', line[len('.input'):].strip()) if x)
-# Engine-made relations that read the tape: nearest per kind set, the long text twin, the requests' named children.
-TAPE_HELPERS = re.compile(r'^(rr_nearest_ks\d+|rr_long_text_node|rr_token_named|rr_token_anon|rr_value_lit|node_order)$')
+# Engine-made relations that read the tape: nearest per kind set, inside and has per kind set (`front::AXIS`,
+# `DESCENDANTS`), the long text twin, the requests' named children.
+TAPE_HELPERS = re.compile(r'^(rr_nearest_ks\d+|rr_inside_\w+|rr_has_\w+|rr_long_text_node|rr_token_named|rr_token_anon|rr_value_lit|node_order)$')
 
 def split_lits(body):
     out, cur, depth = [], [], 0
@@ -51,6 +52,8 @@ def classify(lit):
             return 'scope', 'scope_not'
         base = rel in core_inputs or TAPE_HELPERS.match(rel)
         name = re.sub(r'^rr_nearest_ks\d+$', 'nearest(kind set)', rel) if base else rel
+        name = re.sub(r'^rr_inside_\w+$', 'inside(kind set)', name) if base else name
+        name = re.sub(r'^rr_has_\w+$', 'has(kind set)', name) if base else name
         return ('neg' if neg else ('base' if base else 'derived')), name
     if re.search(r'= @doc\(', lit):
         return 'scope', '@doc'
