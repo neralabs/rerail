@@ -413,6 +413,10 @@ impl<'a> P<'a> {
             && self.kind_at(3) == T::Gt
             && self.is_ident_at(4)
             && self.is_word_at(5, w::IN);
+        // `A<B<C>> x in`: comparisons too (`A < B<C> > x`); not read.
+        if self.is_ident_at(0) && self.kind_at(1) == T::Lt && self.scan_type(0).is_some_and(|e| self.kind_at(e - 1) == T::GtGt && self.is_ident_at(e) && self.is_word_at(e + 1, w::IN)) {
+            return self.refuse();
+        }
         if compared {
             let left = slot(f::LEFT, Ctx::Expr);
             let outer = self.open_in(K::BinaryExpression, left)?;
@@ -449,7 +453,8 @@ impl<'a> P<'a> {
         }
         self.leaf(K::TUsing, f::NONE, C_NONE)?;
         self.punct_tk(K::UsingStatement, T::LParen, awaited)?;
-        let declaration = self.scan_type(0).is_some_and(|e| self.is_ident_at(e) && matches!(self.kind_at(e + 1), T::Eq | T::Comma | T::RParen));
+        // `using (await t)`: an await expression, not a type `await`'s declaration.
+        let declaration = !self.is_word(w::AWAIT) && self.scan_type(0).is_some_and(|e| self.is_ident_at(e) && matches!(self.kind_at(e + 1), T::Eq | T::Comma | T::RParen));
         if declaration {
             self.variable_declaration(f::NONE)?;
         } else {

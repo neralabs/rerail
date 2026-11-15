@@ -133,7 +133,10 @@ impl<'a> P<'a> {
                 }
                 left = self.wrap(left, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
                 self.leaf(op, f::OPERATOR, C_NONE)?;
-                self.binary_expr(slot(f::RIGHT, Ctx::Expr), if right { p } else { p + 1 })?;
+                let saved = self.chain_left.replace(left.at + 1);
+                let r = self.binary_expr(slot(f::RIGHT, Ctx::Expr), if right { p } else { p + 1 });
+                self.chain_left = saved;
+                r?;
                 self.close(left);
                 continue;
             }
@@ -292,6 +295,59 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    /// Whether `(` … `)` (closing `close` tokens ahead) is a cast to an array type with sizes
+    /// (`(a[0])`, `(a.b[i][j])`): a dotted name, `[…]`s (one at least with a size), then an operand
+    /// or a `[`.
+    fn sized_cast_ahead(&mut self, close: usize) -> bool {
+        let Some(mut k) = self.scan_type_base(1) else { return false };
+        if !self.name_only(1, k) {
+            return false;
+        }
+        let mut sized = false;
+        while self.kind_at(k) == T::LBracket {
+            let Some(e) = self.matching(k) else { return false };
+            sized |= e > k + 1;
+            k = e + 1;
+        }
+        if k != close || !sized {
+            return false;
+        }
+        let after = self.peek_at(close + 1);
+        (starts_operand(after) || after.kind == T::LBracket)
+            && after.kind != T::AmpAmp
+            && !(after.kind == T::Name && matches!(after.word, w::AND | w::OR | w::WHEN | w::INTO | w::BY | w::ON | w::EQUALS | w::ASCENDING | w::DESCENDING))
+    }
+
+    /// Whether a cast's operand from `k` tokens ahead (`new`, names, `.`, calls, accesses, `!`)
+    /// holds a name with type arguments before `(`.
+    fn cast_operand_compares(&mut self, mut k: usize) -> bool {
+        if self.is_word_at(k, w::NEW) {
+            k += 1;
+        }
+        loop {
+            match self.kind_at(k) {
+                T::Name if self.is_ident_at(k) || matches!(self.word_at(k), w::THIS | w::BASE) => {
+                    if self.kind_at(k + 1) == T::Lt
+                        && let Some(e) = self.scan_type_args(k + 1)
+                    {
+                        if self.kind_at(e) == T::LParen {
+                            return true;
+                        }
+                        k = e;
+                    } else {
+                        k += 1;
+                    }
+                }
+                T::Dot | T::Bang | T::Question => k += 1,
+                T::LParen | T::LBracket => match self.matching(k) {
+                    Some(e) => k = e + 1,
+                    None => return false,
+                },
+                _ => return false,
+            }
+        }
+    }
+
     /// Whether `await` next is an await expression's (an operand follows it).
     fn await_ahead(&mut self) -> bool {
         let t = self.peek_at(1);
@@ -304,13 +360,21 @@ impl<'a> P<'a> {
         if self.kind_at(close + 1) == T::FatArrow && self.i + close + 1 != self.arm_arrow {
             return self.lambda(s);
         }
+        if self.sized_cast_ahead(close) {
+            // `(a[0])[1]`, `(a[i]) - b`: a cast to an array type with sizes, to tree-sitter.
+            let n = self.open_in(K::CastExpression, s)?;
+            self.tk(K::CastExpression, K::TLParen)?;
+            self.array_type_with_ranks(slot(f::TYPE, Ctx::Type))?;
+            self.punct_tk(K::CastExpression, T::RParen, false)?;
+            let v = self.unary(slot(f::VALUE, Ctx::Expr))?;
+            self.bare(v)?;
+            self.close(n);
+            return Ok(n);
+        }
         if self.cast_ahead(close) {
-            // `(T)a.b<C>(…)`: tree-sitter reads `(T)a.b < C > (…)` at times; not read.
-            let mut k = close + 1;
-            while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
-                k += 2;
-            }
-            if self.is_ident_at(k) && self.kind_at(k + 1) == T::Lt && self.scan_type_args(k + 1).is_some_and(|e| self.kind_at(e) == T::LParen) {
+            // `(T)a.b<C>(…)`, `(T)a.M().b<C>(…)`, `(T)new A<B>(…)`: tree-sitter reads the operand's
+            // type arguments as comparisons (`(T)a.b < C > (…)`); not read.
+            if self.cast_operand_compares(close + 1) {
                 return self.refuse();
             }
             let n = self.open_in(K::CastExpression, s)?;
@@ -335,7 +399,13 @@ impl<'a> P<'a> {
         self.punct_tk(K::ParenthesizedExpression, T::RParen, false)?;
         self.close(n);
         if self.lvalue_node(inner) {
-            self.w.set_key(n.at, key(K::ParenthesizedExpression, s.field, lvalue_class(s.ctx), false));
+            // In a slot with no class (a statement's), a postfix after it wraps it as an lvalue
+            // (`(t).M()`): the class says so until the wrap moves it to its new slot.
+            let mut c = lvalue_class(s.ctx);
+            if c == C_NONE && matches!(self.peek(), T::Dot | T::LBracket | T::LParen | T::Arrow | T::PlusPlus | T::MinusMinus) {
+                c = C_L;
+            }
+            self.w.set_key(n.at, key(K::ParenthesizedExpression, s.field, c, false));
         }
         let n = self.postfix(n, s)?;
         Ok(n)
@@ -412,8 +482,8 @@ impl<'a> P<'a> {
             self.split_at(close + 1, T::Amp, 1);
             return true;
         }
-        if after.kind == T::LBracket && self.kind_at(close + 2) == T::RBracket {
-            // `(T)[]`: a cast of an empty collection.
+        if after.kind == T::LBracket {
+            // `(T)[…]`, `(a)[1]`: a cast of a collection to tree-sitter.
             return true;
         }
         if !starts_operand(after) {
@@ -614,6 +684,18 @@ impl<'a> P<'a> {
                 None => false,
             };
             if generic {
+                // `f<(A a, B b)>(c)`: a tuple of declarations, then arguments, are comparisons to
+                // tree-sitter (`f < (A a, B b) > (c)`); not read.
+                // `C<I>(new L<V> { v })` likewise.
+                if expr
+                    && let Some((e, 0)) = self.scan_type_args_owing(1)
+                    && self.kind_at(e) == T::LParen
+                    && self.kind_at(e + 1) != T::RParen
+                    && let Some(m) = self.matching(e)
+                    && (self.named_tuple_args(2, e - 1) || self.generic_creation_alone(e, m))
+                {
+                    return self.refuse();
+                }
                 let n = self.open_in(K::GenericName, s)?;
                 self.ident(BARE)?;
                 self.type_argument_list()?;
@@ -721,21 +803,37 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// Whether a declaration expression (`var x`, `int x`, `A<B> c`) starts `k` tokens ahead: a
-    /// type and a name, then `,` or `)`.
+    /// Whether a declaration expression (`var x`, `int x`, `A<B> c`, `a * b`) starts `k` tokens
+    /// ahead: a type and a name, then `,`, `)` or `]`.
     pub(super) fn declaration_expression_ahead(&mut self, k: usize) -> bool {
         // `await x` there is an `await_expression` to tree-sitter, not a type `await`'s.
         if self.is_word_at(k, w::REF) || self.is_word_at(k, w::AWAIT) {
             return false;
         }
         let Some(e) = self.scan_type(k) else { return false };
-        self.is_ident_at(e) && matches!(self.kind_at(e + 1), T::Comma | T::RParen)
+        (self.is_ident_at(e) || self.keyword_name_at(e)) && matches!(self.kind_at(e + 1), T::Comma | T::RParen | T::RBracket)
+    }
+
+    /// Whether a keyword `k` ahead is a declaration's name: after a type, where only a name may
+    /// stand, tree-sitter's version reading the declaration lexes `null`, `this`, `true`… as
+    /// identifiers, and its dynamic precedence wins (`f(a * null)` declares `null`).
+    fn keyword_name_at(&mut self, k: usize) -> bool {
+        matches!(self.word_at(k), w::NULL | w::TRUE | w::FALSE | w::THIS | w::BASE | w::DEFAULT) && self.kind_at(k) == T::Name
     }
 
     /// `declaration_expression`: a type and a name.
     pub(super) fn declaration_expression(&mut self, s: Slot) -> R<N> {
+        // `out List<(A a, B b)> g`: comparisons to tree-sitter; not read.
+        if self.is_ident_at(0) && self.kind_at(1) == T::Lt && self.scan_type_args(1).is_some_and(|e| self.named_tuple_args(2, e - 1)) {
+            return self.refuse();
+        }
         let n = self.open_in(K::DeclarationExpression, s)?;
         self.ty(slot(f::TYPE, Ctx::Type))?;
+        if self.keyword_name_at(0) {
+            self.leaf_in(K::Identifier, slot(f::NAME, Ctx::Bare))?;
+            self.close(n);
+            return Ok(n);
+        }
         self.ident(slot(f::NAME, Ctx::Bare))?;
         self.close(n);
         Ok(n)
@@ -877,6 +975,10 @@ impl<'a> P<'a> {
             return false;
         }
         let Some(e) = self.scan_type_args(k + 1) else { return false };
+        // `new L<(A a, B b)> { … }`: comparisons too.
+        if self.kind_at(e) == T::LBrace && self.named_tuple_args(k + 2, e - 1) {
+            return true;
+        }
         if self.kind_at(e) != T::LParen {
             return false;
         }
@@ -886,20 +988,26 @@ impl<'a> P<'a> {
             return true;
         }
         // `new A<X>(new L<E> { … })`: one argument, a generic creation with an initializer.
-        if self.is_word_at(e + 1, w::NEW) && !self.top_comma_pub(e + 1, m) && self.kind_at(m - 1) == T::RBrace && (e + 2..m).any(|i| self.kind_at(i) == T::Lt) {
+        if self.generic_creation_alone(e, m) {
             return true;
         }
-        // `<(X x, Y y)>`: a tuple whose elements are named.
-        if self.kind_at(args) == T::LParen && self.matching(args) == Some(close - 1) && m > e + 1 && !self.top_comma_pub(e + 1, m) {
-            let mut j = args + 1;
-            while j < close - 1 {
-                if self.is_ident_at(j) && self.is_ident_at(j + 1) {
-                    return true;
-                }
-                j += 1;
-            }
+        // `<(X x, Y y)>`: a tuple whose elements are named, then any arguments.
+        m > e + 1 && self.named_tuple_args(args, close)
+    }
+
+    /// Whether the arguments `(` at `e` … `)` at `m` are one generic creation with an initializer
+    /// (`(new L<E> { … })`).
+    fn generic_creation_alone(&mut self, e: usize, m: usize) -> bool {
+        self.is_word_at(e + 1, w::NEW) && !self.top_comma_pub(e + 1, m) && self.kind_at(m - 1) == T::RBrace && (e + 2..m).any(|i| self.kind_at(i) == T::Lt)
+    }
+
+    /// Whether type arguments `from..to` (`>` at `to`) are one tuple whose elements are named
+    /// (`(X x, Y y)`).
+    fn named_tuple_args(&mut self, from: usize, to: usize) -> bool {
+        if self.kind_at(from) != T::LParen || self.matching(from) != Some(to - 1) {
+            return false;
         }
-        false
+        (from + 1..to - 1).any(|j| (self.is_ident_at(j) || w::is_predefined(self.word_at(j))) && self.is_ident_at(j + 1))
     }
 
     /// `stackalloc T[n] { … }` or `stackalloc[] { … }`.
@@ -995,14 +1103,21 @@ impl<'a> P<'a> {
         }
         let n = self.open_in(K::CollectionExpression, s)?;
         self.list(K::CollectionExpression, T::RBracket, true, true, |p| {
-            if p.element_splits_creation() {
+            // A declaration there (`[a * b]`) makes the brackets an element binding to
+            // tree-sitter (its dynamic precedence): not read.
+            if p.element_splits_creation() || p.declaration_expression_ahead(0) {
                 return p.refuse();
             }
             let e = p.open(K::CollectionElement, f::NONE, C_NONE)?;
             if p.peek() == T::DotDot {
                 let sp = p.open(K::SpreadElement, f::NONE, C_NONE)?;
                 p.leaf(K::TDotDot, f::NONE, C_NONE)?;
-                p.expr(EXPR)?;
+                // Its operand binds as a range's (`.. a ?? []` is `(.. a) ?? []`, an expression
+                // element): an operator after it is not read.
+                p.binary_expr(EXPR, P_RANGE + 1)?;
+                if !matches!(p.peek(), T::Comma | T::RBracket) {
+                    return p.refuse();
+                }
                 p.close(sp);
             } else {
                 let x = p.open(K::ExpressionElement, f::NONE, C_NONE)?;

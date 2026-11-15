@@ -309,6 +309,8 @@ struct P<'a> {
     arm_arrow: usize,
     /// A conditional access wrapped an operator's chain in this expression (`a || b?.c`).
     wrapped_chain: bool,
+    /// While an operator's right operand is read, the node of its left (`a` in `a && …`).
+    chain_left: Option<usize>,
     /// How the next constant pattern reads (set by `is`).
     cmode: Cmode,
     /// The tokens dropped since the last node written (`tk`): their token index, parent, kind,
@@ -343,6 +345,8 @@ struct Chain {
     others: u32,
     /// Where its last operand starts.
     last: usize,
+    /// The lowest precedence among its binary operators.
+    low: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -380,6 +384,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             arm_arrow: usize::MAX,
             cmode: Cmode::Plain,
             wrapped_chain: false,
+            chain_left: None,
             dropped: Vec::new(),
             bare_after: None,
             closes: 0,

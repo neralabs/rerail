@@ -3481,6 +3481,12 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         // `await` in an argument; a tuple type's array; a type's `,`s after `is` in parentheses;
         // positional patterns (by their first element) and tuple constants; a list pattern's `,`
         // before a discard; `switch` over a tuple in parentheses; a namespace's `;`.
+        // The left operand's leftmost operand decides too (a call's or `!a`'s lets the constant
+        // take the operators), as do operators all tighter than the one before the `is`; a
+        // relational pattern takes `and`'s conditional; keywords as a declaration's name after a
+        // type in arguments and brackets; casts to sized arrays and of collections; a
+        // parenthesized lvalue's class at a statement's start; `nameof(C)` in a case label.
+        "class A { void F() { a = p && b is X == 1; b = f() && b is X && 2; c = !a && r is V && p is W; d = (n == 1) && p[0] is L && 2; e = r is > 0 and < 5 ? 1 : 2; f(a * null); g = x[a * b]; h = (T[])[1]; i = (a[0]) - b; (t).ToString(); switch (y) { case nameof(C): break; } using (await t) { } j = y is 4 && b is 5; } }\n",
         "namespace N { class A { void F() { f(await t); x = new (A a, B b)[3]; y = (c is D<K, V> d && d.E); if (x is (_, 1) or (1, _)) { } if (x is (A a, B b) z) { } if (x is [1, _] or [_, _, 3]) { } switch ((a, b)) { case (_, _) when c: break; } } } };\n",
     ];
     let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
@@ -3506,8 +3512,10 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
     }
     // Valid, but tree-sitter reads its type arguments as comparisons (`(new S < A) > ((c) { })`,
     // elements `new S < A` and `B > { }` between an initializer's `,`s, a declaration's type split
-    // at its `,` in a tuple), or a dotted constant as a member access over its `is`: refused, not
-    // read as what it is.
+    // at its `,` in a tuple, `(x is A) < T > &&f`), a dotted constant as a member access over its
+    // `is`, `.. a ?? []` as a range, `[a * b]` as an element binding, or reads a chain whose
+    // grouping its parse versions decide past these rules (a comment in it): refused, not read as
+    // what it is.
     for odd in [
         "class A { object o = new S<A>(c) { }; }\n",
         "class A { object o = new List<(A a, B b)>(q); }\n",
@@ -3516,6 +3524,16 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { object o = (c is D<K, V> d, 1); }\n",
         "class A { bool b = p || x is A.B || 1; }\n",
         "class A { bool b = x is A.B ? 1 : 2; }\n",
+        "class A { object o = (P)S.W<R>(o); }\n",
+        "class A { object o = f<(A a, B b)>(c); }\n",
+        "class A { bool b = x is A<T> && f == 1; }\n",
+        "class A { bool b = r is var (a, b); }\n",
+        "class A { object o = [.. a ?? []]; }\n",
+        "class A { bool b = x is [.., var w] && w.K == k; }\n",
+        "class A { object o = [a * b]; }\n",
+        "class A { void F() { foreach (L<V<T>> b in c) { } } }\n",
+        "class A { bool b = a && y is not null && // c\n 1; }\n",
+        "class A { bool b = y is 4 && b is S.O; }\n",
     ] {
         assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{odd:?} reads with an error");
         assert!(csharp_lean::encode(&grammar, odd, &|| false).is_err(), "read {odd:?}");

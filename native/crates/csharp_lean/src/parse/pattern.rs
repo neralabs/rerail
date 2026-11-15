@@ -17,6 +17,15 @@ impl<'a> P<'a> {
     ///   access that wrapped the chain, a range ending at `?`) refuse.
     pub(super) fn is_tail(&mut self, left: N, s: Slot, min: u8) -> R<N> {
         let start = !self.in_constant;
+        // `x is A<T> && y`, `x is not A<T> - 1`: an operator after the type that may also start an
+        // operand lets tree-sitter read comparisons (`(x is A) < T > &&y`); not read.
+        let k = if self.is_word_at(1, w::NOT) { 2 } else { 1 };
+        if let Some(e) = self.scan_type(k)
+            && self.kind_at(e - 1) == T::Gt
+            && matches!(self.kind_at(e), T::Amp | T::AmpAmp | T::Star | T::Minus | T::Plus | T::Bang | T::Tilde | T::PlusPlus | T::MinusMinus)
+        {
+            return self.refuse();
+        }
         let is_expression = match self.is_type_ahead() {
             Some((false, _)) => true,
             // A name alone before an operator, where the `is` does not start its chain (or stands
@@ -28,7 +37,7 @@ impl<'a> P<'a> {
             Some((true, after)) if is_binary(after) && self.wrapped_chain => return self.refuse(),
             // With a left operand, as `constant_alone` reads it; a dotted name read alone is a
             // member access over the `is` (`(b is X).Y`): not read.
-            Some((true, after)) if is_binary(after) && min > P_CONST => match self.constant_alone(1) {
+            Some((true, after)) if is_binary(after) && min > P_CONST => match self.constant_alone(1, min) {
                 Some(true) if self.kind_at(2) == T::Dot => return self.refuse(),
                 Some(alone) => alone,
                 None => return self.refuse(),
@@ -78,11 +87,11 @@ impl<'a> P<'a> {
     /// The operators after a constant (from `from` tokens ahead) up to its chain's end: the end's
     /// index, the last `is` among them, their count, and where the last operand starts (after the
     /// last binary operator or `is`). `None` where tree-sitter's choice is not read (a conditional
-    /// with operators before its `?`, the text's end).
+    /// with operators before its `?`, `or`/`and` patterns with another `is`, the text's end).
     fn chain_scan(&mut self, from: usize) -> Option<Chain> {
         let (mut k, mut depth) = (from, 0u32);
-        let mut c = Chain { end: 0, last_is: None, others: 0, last: from };
-        let mut ops = 0u32;
+        let mut c = Chain { end: 0, last_is: None, others: 0, last: from, low: u8::MAX };
+        let (mut ops, mut combinator) = (0u32, false);
         loop {
             let t = self.peek_at(k);
             match t.kind {
@@ -95,6 +104,7 @@ impl<'a> P<'a> {
                 // stand between.
                 T::Question if ops == 0 && !matches!(self.kind_at(k + 1), T::Dot | T::LBracket) => break,
                 T::Question => return None,
+                T::Name if matches!(t.word, w::OR | w::AND) => combinator = true,
                 T::Name if t.word == w::IS => {
                     c.last_is = Some(k);
                     c.others += 1;
@@ -103,6 +113,7 @@ impl<'a> P<'a> {
                 k2 if is_binary(k2) => {
                     ops += 1;
                     c.last = k + 1;
+                    c.low = c.low.min(binary_prec(k2).expect("a binary operator"));
                 }
                 k2 if super::expr::assignment(k2).is_some() => break,
                 _ => {}
@@ -110,6 +121,11 @@ impl<'a> P<'a> {
             k += 1;
         }
         c.end = k;
+        // `or`/`and` patterns with another `is` in the chain (`y is A && b is C or D && …`):
+        // tree-sitter's grouping there is not read.
+        if combinator && c.others > 0 {
+            return None;
+        }
         Some(c)
     }
 
@@ -119,8 +135,14 @@ impl<'a> P<'a> {
     /// otherwise (tree-sitter's choice there is not read).
     fn constant_takes(&mut self) -> Option<bool> {
         let c = self.chain_scan(0)?;
+        // A comment among the operators moves where tree-sitter's readings meet: not read.
+        if c.low < u8::MAX && self.extras_between(0, c.end) {
+            return None;
+        }
         let Some(j) = c.last_is else { return Some(false) };
-        self.plain_is_ends(&c, j).then_some(true)
+        // A dotted name there is a member access over its `is` (`(b is S).O`): not read.
+        let dotted = (j + 1..c.end).any(|k| self.kind_at(k) == T::Dot);
+        (self.plain_is_ends(&c, j) && !dotted).then_some(true)
     }
 
     /// Whether the `is` at `j`, the last in a chain (`c`), has a plain constant that ends it (a
@@ -150,14 +172,73 @@ impl<'a> P<'a> {
         plain == c.end
     }
 
+    /// Whether a comment or a directive stands between tokens `from` and `to` (ahead).
+    fn extras_between(&mut self, from: usize, to: usize) -> bool {
+        (from..to).any(|k| {
+            let (a, b) = (self.peek_at(k).end, self.peek_at(k + 1).start);
+            self.src[a as usize..b as usize].iter().any(|&c| c == b'/' || c == b'#')
+        })
+    }
+
     /// After an `is` whose chain has a left operand (`a || b is X || …`), whether tree-sitter
     /// reads its constant alone (`(a || b is X) || …`) rather than taking the operators after it
-    /// (`a || b is (X || …)`), from `from` tokens ahead: its two parse versions meet where the
-    /// chain's last operand reduces, and the alone reading wins where that operand is a literal
-    /// (`1`, `"s"`, `null`, `-1`), `default`, `sizeof(…)`, `typeof(…)`, or an `is` with a plain
-    /// constant; the other wins where it is a name, a call, an access, a parenthesized or any
-    /// other expression. `None` where neither is read (an `is` with any other pattern last).
-    fn constant_alone(&mut self, from: usize) -> Option<bool> {
+    /// (`a || b is (X || …)`), from `from` tokens ahead (the operand before the `is` of
+    /// precedence `min`). Its two parse versions meet where the chain's last operand reduces, and
+    /// tree-sitter keeps the tree that compares smaller, symbol by symbol:
+    /// - operators that all bind tighter than `min` are the constant's;
+    /// - else the alone reading needs a last operand that is a literal (`1`, `"s"`, `null`,
+    ///   `-1`), `default`, `sizeof(…)`, `typeof(…)`, or an `is` with a plain constant (a name, a
+    ///   call, an access or any other expression lets the constant take the operators), and a
+    ///   left operand whose leftmost operand is no call, `!a`, `(…)`, `new A()`, `await` or `a++`.
+    ///
+    /// `None` where neither is read (an `is` with any other pattern last, a comment in the chain).
+    fn constant_alone(&mut self, from: usize, min: u8) -> Option<bool> {
+        // Operators that all bind tighter than the one before the `is` (`p && b is X == 1`): the
+        // constant takes them.
+        if self.chain_scan(from)?.low >= min {
+            return Some(false);
+        }
+        let alone = self.alone_by_last(from)?;
+        if !alone {
+            return Some(false);
+        }
+        // A comment in the chain is a node in both readings, and moves where they meet: not read.
+        let end = self.chain_scan(from)?.end;
+        if self.extras_between(from, end) {
+            return None;
+        }
+        // Where both readings meet, tree-sitter keeps the one whose left operand's leftmost
+        // operand has the smaller symbol through its supertypes: a `non_lvalue_expression`'s
+        // `binary_expression` (the alone reading's) beats an `lvalue_expression` (a name, an
+        // access), and loses to an `_expression_statement_expression` (a call, `!a`, `(…)`,
+        // `new A()`, `await`, `a++`).
+        let Some(mut at) = self.chain_left else { return Some(true) };
+        loop {
+            let (kind, _, class, _) = unkey(self.w.key(at));
+            let k = kind_of(kind);
+            if k == K::BinaryExpression {
+                at += 1;
+                continue;
+            }
+            if matches!(class, C_EL | C_L) {
+                // `(a)` and `*p` are lvalues' aliases whose symbols are not read.
+                return (!matches!(k, K::ParenthesizedExpression | K::PrefixUnaryExpression)).then_some(true);
+            }
+            return Some(!matches!(
+                k,
+                K::InvocationExpression
+                    | K::PrefixUnaryExpression
+                    | K::PostfixUnaryExpression
+                    | K::AwaitExpression
+                    | K::ObjectCreationExpression
+                    | K::ParenthesizedExpression
+                    | K::AssignmentExpression
+            ));
+        }
+    }
+
+    /// `constant_alone`'s reading by the chain's last operand alone.
+    fn alone_by_last(&mut self, from: usize) -> Option<bool> {
         let c = self.chain_scan(from)?;
         if let Some(j) = c.last_is
             && j + 1 == c.last
@@ -248,6 +329,11 @@ impl<'a> P<'a> {
                 n
             }
             T::Lt | T::Le | T::Gt | T::Ge => {
+                // An `is` in its operand (`>= a || o is A or B`): tree-sitter's grouping of the
+                // `or` after it is not read.
+                if self.is_in_operand(1) {
+                    return self.refuse();
+                }
                 let n = self.open_in(K::RelationalPattern, s)?;
                 self.leaf(punct(t.kind).expect("an operator"), f::NONE, C_NONE)?;
                 // Its operand is a whole expression to tree-sitter, a conditional's included
@@ -295,6 +381,8 @@ impl<'a> P<'a> {
                 }
             }
             T::Name if self.discard_at(0) => self.leaf_in(K::Discard, s)?,
+            // `x is var (a, b)` after `is`: an invocation over `x is var` to tree-sitter; not read.
+            T::Name if t.word == w::VAR && self.kind_at(1) == T::LParen && self.cmode != Cmode::Plain => return self.refuse(),
             T::Name if t.word == w::VAR && self.kind_at(1) == T::LParen => {
                 let n = self.open_in(K::VarPattern, s)?;
                 self.tk(K::VarPattern, K::TVar)?;
@@ -458,7 +546,9 @@ impl<'a> P<'a> {
     /// Whether `(` at `k` is a parenthesized designation: names and `_` between `,`s, `)`.
     fn designation_paren_ahead(&mut self, k: usize) -> bool {
         let Some(e) = self.matching(k) else { return false };
-        if e == k + 1 {
+        // `A(b)` after `is`: one name is a constant's invocation to tree-sitter (`x is nameof(T)`);
+        // in a `case` label, a declaration's.
+        if e == k + 1 || (e == k + 2 && self.cmode != Cmode::Plain) {
             return false;
         }
         let mut j = k + 1;
@@ -486,7 +576,7 @@ impl<'a> P<'a> {
             Cmode::Start(min) => {
                 // With a left operand, as `constant_alone` reads it.
                 let (alone, has_is) = if min > P_CONST {
-                    let Some(alone) = self.constant_alone(0) else { return self.refuse() };
+                    let Some(alone) = self.constant_alone(0, min) else { return self.refuse() };
                     let Some(c) = self.chain_scan(0) else { return self.refuse() };
                     (alone, c.others > 0)
                 } else {
@@ -595,6 +685,21 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Whether an `is` stands at the top level from `k` tokens ahead to the expression's end.
+    fn is_in_operand(&mut self, mut k: usize) -> bool {
+        let mut depth = 0u32;
+        loop {
+            match self.kind_at(k) {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace if depth > 0 => depth -= 1,
+                T::RParen | T::RBracket | T::RBrace | T::Semi | T::Comma | T::Colon | T::FatArrow | T::Eof if depth == 0 => return false,
+                T::Name if depth == 0 && self.is_word_at(k, w::IS) => return true,
+                _ => {}
+            }
+            k += 1;
+        }
+    }
+
     /// Whether a `discard` stands `k` tokens ahead: `_` that no expression continues.
     fn discard_at(&mut self, k: usize) -> bool {
         self.is_word_at(k, w::UNDERSCORE) && !self.continues_expression(k + 1)
@@ -609,8 +714,9 @@ impl<'a> P<'a> {
         for j in 1..close {
             if self.kind_at(j) == T::DotDot {
                 // `[a, ..]`: tree-sitter reads `..]` as a range and fails; `.. var r` (a slice
-                // with a pattern) is not in its grammar. Only `..,` is read.
-                if self.kind_at(j + 1) != T::Comma {
+                // with a pattern) is not in its grammar. Only `..,` is read, and not first
+                // (`[.., var w]` is a constant's element binding to tree-sitter).
+                if self.kind_at(j + 1) != T::Comma || j == 1 {
                     return self.refuse();
                 }
                 spread = true;
