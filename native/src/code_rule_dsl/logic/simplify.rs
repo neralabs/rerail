@@ -2093,6 +2093,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     }
     let mut rename: BTreeMap<String, String> = BTreeMap::new();
     let mut taken: BTreeSet<String> = prog.decls.keys().cloned().map(String::from).collect();
+    // The relations a rule or a native reads: a class is named after one of its members that is read, so an unread
+    // relation equal to a read one (facts `prune` keeps) never names it.
+    let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).chain(prog.natives.values().flat_map(|n| n.reads())).collect();
     for g in &groups {
         let suffixes: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(_, s)| s)).collect();
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
@@ -2120,7 +2123,7 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
                 taken.insert(name.clone());
                 name
             }
-            _ => g.iter().find(|r| !is_output(r)).unwrap_or(&g[0]).clone(),
+            _ => g.iter().find(|r| !is_output(r) && read.contains(r.as_str())).or_else(|| g.iter().find(|r| !is_output(r))).unwrap_or(&g[0]).clone(),
         };
         for r in g {
             if *r != to {

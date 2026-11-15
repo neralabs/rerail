@@ -1149,8 +1149,9 @@ fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, 
     }
 }
 
-/// Drops the rules and facts of relations no output reads, directly or through other rules, and the request rules
-/// none of whose readers is read (`reach`). T's `prune`.
+/// Drops the rules of relations no output reads, directly or through other rules, and the request rules none of
+/// whose readers is read (`reach`). T's `prune`. Facts stay: the engine reads some by name, read by no rule (`env`'s
+/// settings, `corpus::World`; `unconverged`, the pending round).
 pub fn prune(mut prog: Program) -> Program {
     let (need, kept) = reach(&prog, prog.outputs.clone(), true);
     // The record follows the rules kept: each request relation's kept rules, in order, with their readers.
@@ -1170,10 +1171,6 @@ pub fn prune(mut prog: Program) -> Program {
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));
-    // The facts of a relation nothing reads go with its rules: held, they would be loaded, and `simplify`'s merge
-    // could name a class after an unread relation equal to a read one.
-    let (inputs, outputs) = (&prog.inputs, &prog.outputs);
-    prog.facts.retain(|rel, _| need.contains(rel) || inputs.contains(rel) || outputs.contains(rel));
     prog
 }
 
