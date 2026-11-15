@@ -21,9 +21,13 @@ fn notes_and_exact_statistics_read_back_as_written() {
         proposals: vec![(vec![(2, None), (0, None), (1, Some(Mode::Climb)), (3, None), (4, None)], 80.0)],
         exact: Vec::new(),
         raised: Vec::new(),
+        walked: 2.5e5,
     };
     let key: PlanKey = (5u128 << 70) | 9;
-    assert_eq!(of_note_row(&note_row(key, &n)), Some((key, n)));
+    assert_eq!(of_note_row(&note_row(key, &n)), Some((key, n.clone())));
+    // Decision 0243: a row stored before the walked work was kept ends at its proposals, and reads as priced.
+    let row = note_row(key, &n);
+    assert_eq!(of_note_row(&row[..row.len() - 1]), Some((key, Note { walked: 0.0, ..n })));
     let sig: Sig = ("rel".into(), vec![(0, None), (2, Some(Constant::Int(-4))), (3, Some(Constant::Str("a=b".into())))]);
     let (ints, rel, cols, c) = exact_row(key, 7, &sig, [40, 400]);
     assert_eq!(of_exact_row(&ints, &rel, &cols, c), Some((key, 7, sig, [40, 400])));
@@ -122,7 +126,8 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
 
 /// `h(x, z) :- a(x, y), b(y, z)`: priced from its statistics, `a` (50 rows) leads and each probes `b` by `y` for a
 /// row. Exact statistics show `b` holds 1,000 rows a value of `a`'s: `b` leads once they are measured. And a line
-/// noted with its best order measured far over its price takes the other at its next plan.
+/// noted with its best order measured far over its price takes the other at its next plan, its wider search left to
+/// the background.
 #[test]
 fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
@@ -161,7 +166,8 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let ((order, _, _), _) = model.plan_rule_reused(&p, &b, None).unwrap();
     assert_eq!(lead(&order), "b", "corrected by what `a` first measured");
     let n = note(&key).unwrap();
-    assert!(!n.wants_search && !n.proposals.is_empty(), "the line's work paid for a wider search, made inline: {n:?}");
+    // Decision 0243: the wider search is the background's, asked for at the line's end; the plan makes none.
+    assert!(n.wants_search && n.proposals.is_empty(), "no wider search at the plan: {n:?}");
     clear();
 }
 
@@ -175,7 +181,7 @@ fn a_requested_search_proposes_its_orders() {
         let mut m = MEMO.write();
         noted_mut(&mut m, 400, 1).wants_search = true;
     }
-    request(400, 1.0, Box::new(|| vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)]));
+    request(400, 1.0, false, Box::new(|| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None, tried: Vec::new() }));
     assert_eq!(requests(), 1);
     assert!(!wants_request(&400), "one request a line");
     assert!(search_one());
@@ -353,4 +359,78 @@ fn a_sampled_probe_reads_its_limit_and_estimates_its_matches() {
     let mut sum = 0.0;
     for _ in 0..200 { sum += rel.probe_sample(&[2, 0], &[1, 7], 64, &mut draw, &mut |row| assert_eq!((row(0), row(2)), (7, 1))) }
     assert!((sum / 200.0 / 2_500.0 - 1.0).abs() < 0.03, "{}", sum / 200.0);
+}
+
+/// Decision 0243: a background search walks its orders over the line's relations as its request kept them
+/// (`WalkSnap`), each from its own lead: their walked work over the line is the work of running each from every one
+/// of its lead's rows, exactly where the samples hold every row, and it ranks them where their prices misled.
+#[test]
+fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
+    use std::collections::HashMap;
+    let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
+    let rule = &p.rules[0];
+    // The triangle's functions (decision 0232's test): 30 nodes each, 3 calls, 2 returns; function 1's calls have an
+    // edge to every node, function 2's one each.
+    let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
+    for f in [1i64, 2] {
+        let nodes: Vec<i64> = (0..30).map(|i| f * 1000 + i).collect();
+        for (i, &n) in nodes.iter().enumerate() {
+            r.push([f, n]);
+            k.push([n, if i < 3 { 1 } else if i < 5 { 2 } else { 3 }]);
+        }
+        for &c in &nodes[..3] {
+            if f == 1 { for &j in &nodes { e.push([c, j]) } } else { e.push([c, nodes[10]]) }
+        }
+    }
+    let table = |rel: &str| -> &Vec<[i64; 2]> { match rel { "r" => &r, "k" => &k, _ => &e } };
+    // An order run by hand from every row of its lead, each step adding the bindings it reads.
+    let run = |order: &[usize]| -> f64 {
+        let Literal::Atom(lead) = &rule.body[order[0]] else { unreachable!() };
+        let bind = |b: &HashMap<String, i64>, a: &crate::code_rule_dsl::logic::front::Atom, row: &[i64; 2]| -> Option<HashMap<String, i64>> {
+            let mut nb = b.clone();
+            for (t, &v) in a.args.iter().zip(row) {
+                match t {
+                    Term::Int(i) if *i != v => return None,
+                    Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) if w != v => return None, Some(_) => {}, None => { nb.insert(x.to_string(), v); } },
+                    _ => {}
+                }
+            }
+            Some(nb)
+        };
+        let mut binds: Vec<HashMap<String, i64>> = table(&lead.rel).iter().filter_map(|row| bind(&HashMap::new(), lead, row)).collect();
+        let mut work = 0.0;
+        for &at in &order[1..] {
+            work += binds.len() as f64;
+            let Literal::Atom(a) = &rule.body[at] else { unreachable!() };
+            binds = binds.iter().flat_map(|b| table(&a.rel).iter().filter_map(|row| bind(b, a, row)).collect::<Vec<_>>()).collect();
+        }
+        work
+    };
+    let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
+    let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None };
+    let steps = |o: &[usize]| -> Vec<Step> { o.iter().map(|&at| Step { at, mode: None }).collect() };
+    // From the returns, and from every node; the second priced as if far cheaper, and the order that ran.
+    let (good, poor) = ([3usize, 2, 0, 1, 4, 5, 6], [0usize, 5, 6, 4, 2, 3, 1]);
+    // And the good order with its lead and first check swapped: from every node, the returns' check first.
+    let checked = [2usize, 3, 0, 1, 4, 5, 6];
+    let found = snap.walk(rule, None, &steps(&poor), vec![(steps(&poor), 1.0), (steps(&good), 100.0), (steps(&checked), 50.0)]);
+    let of = |o: &[usize]| found.orders.iter().find(|w| w.0 == steps_of(o)).map(|w| w.1);
+    assert_eq!(of(&checked), Some(run(&checked)), "from the lead's rows past its check, with the check's work");
+    let (ran, best) = (found.walked.expect("walked"), found.orders.iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("orders"));
+    assert_eq!(best.0, steps_of(&good), "the walks rank the orders");
+    // The good order's samples hold every binding: exact. The poor one's expansions pass the walk's width, and are
+    // sampled.
+    assert_eq!(best.1, run(&good), "the good order's work over the line, from every row of its lead");
+    assert!((ran / run(&poor) - 1.0).abs() < 0.05, "{ran} against {}", run(&poor));
+    assert!(ran > 4.0 * best.1, "{ran} against {}", best.1);
+    // Each walked order's walk over its price is kept as an order tried; the order that ran keeps its run's alone.
+    let ratio = |o: &[usize]| found.tried.iter().find(|t| t.0 == steps_of(o)).map(|t| t.1);
+    assert_eq!((ratio(&good), ratio(&checked), ratio(&poor)), (Some(run(&good) / 100.0), Some(run(&checked) / 50.0), None));
+}
+
+fn steps_of(o: &[usize]) -> Vec<StoredStep> {
+    o.iter().map(|&at| (at as u16, None)).collect()
 }

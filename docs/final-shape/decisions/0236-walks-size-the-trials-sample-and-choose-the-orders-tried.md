@@ -104,6 +104,8 @@ before the line finished. The planning was not what took the time:
 
 ## Open
 
+Decision 0243 (2026-11-15) moves the wider search to the background, walking its orders; a line with walked proposals trials only those.
+
 - **The 328 files are not run to the end.** The seed rule's line there is about 1.6 G rows of work by its best order.
 - **The orders walked out are not tried, so the planner's correction (`put_tried`) learns nothing of them.** Their
   walked work is logged only.

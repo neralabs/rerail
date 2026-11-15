@@ -162,6 +162,9 @@ impl Drop for Durable {
     /// still held here (`KeepPlans` is let before this).
     fn drop(&mut self) {
         if let Some((store, prepared, _, _, _)) = DURABLE.with(|d| d.borrow_mut().take()) {
+            // Decision 0243: a one-shot run serves its waiting join searches here, within a share of its CPU, so their
+            // proposals are written with the memo.
+            super::joins::drain();
             // The join memo (decision 0203 §6) is written with the plans: where only it changed, the plans as read.
             let notes = super::joins::to_store().map(note_rows);
             let Some(plans) = super::plans_to_store().or_else(|| notes.as_ref().and_then(|_| super::stored_plans())) else { return };

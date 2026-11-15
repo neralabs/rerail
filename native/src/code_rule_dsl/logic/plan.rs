@@ -2373,8 +2373,8 @@ impl Model {
     }
 
     /// Decision 0203 §2: the choice of a searched line's order. `got` is the search's best; its runners-up
-    /// (`joins::searched_take`), the line's proposals re-priced now, and a wider search's orders where one is wanted
-    /// and the line's work pays for it many times, are its candidates. A line with no note and no batch pricer takes
+    /// (`joins::searched_take`) and the line's proposals re-priced now are its candidates. Decision 0243: a wider
+    /// search is not run here: the line asks for it at its end, and the background serves it. A line with no note and no batch pricer takes
     /// the search's best at once. In an open round (`joins::Round`) the choice is recorded and the best kept.
     fn decide(&self, prog: &Program, b: &Body<'_>, first: Option<usize>, key: PlanKey, got: (Plan, Option<super::profile::RulePlan>)) -> (Plan, Option<super::profile::RulePlan>) {
         let alternatives = joins::searched_take();
@@ -2388,16 +2388,7 @@ impl Model {
         let mut candidates = vec![joins::Candidate { order: got.0.0.clone(), est: got.0.1 }];
         candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { order, est }));
         if let Some(n) = &note {
-            let joins_n = (0..b.len()).filter(|&i| b.is_join(i)).count();
-            let wide_cost = 4.0 * search_rows(b, first) + (joins::RANDOM_ORDERS * joins_n) as f64;
-            let mut proposals = n.proposals.clone();
-            if n.wants_search && n.ran >= 100.0 * wide_cost {
-                let _span = super::profile::span(|| "wider search (decision 0203)".into());
-                let orders: Vec<(Vec<StoredStep>, f64)> = self.explore(prog, b, first).iter().map(|(o, w)| (joins::steps(o), *w)).collect();
-                joins::propose(key, orders.clone());
-                proposals = orders;
-            }
-            for (o, _) in &proposals {
+            for (o, _) in &n.proposals {
                 if let Ok(((order, est, _), _)) = self.plan_inner(prog, b, first, Some(&joins::unstored(o)), false)
                     && self.valid_live_driver(&order, b, first)
                 {
@@ -6485,19 +6476,29 @@ impl<'a> Run<'a, '_> {
 
     /// Decision 0203 §5: asks the `join-search` upkeep job for a wider search of rule `r`'s line `key` (its delta
     /// `first`), on a model of the relations it reads.
-    fn request_search(&mut self, r: &Rule, first: Option<usize>, rule: u64, key: PlanKey, weight: f64) -> Result<()> {
+    ///
+    /// Decision 0243: where the line ran (`ran`: its component, its line and the order it ran) and few requests hold
+    /// relations already (`joins::may_hold`), the request keeps what a walk reads (`WalkSnap`), and the search walks
+    /// its best-priced orders and the one that ran: its proposals are ranked by walked work.
+    fn request_search(&mut self, r: &Rule, first: Option<usize>, rule: u64, key: PlanKey, weight: f64, ran: Option<(&str, usize, &[Step])>) -> Result<()> {
         if !joins::wants_request(&key) {
             return Ok(());
         }
+        let snap = match ran { Some((name, line, order)) if joins::may_hold() => WalkSnap::take(self.db, name, line, r, first).map(|s| (s, order.to_vec())), _ => None };
+        let holds = snap.is_some();
         let prog = shared_program(self.prog);
         let rels: BTreeSet<String> = r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()).collect();
         let mut model = self.model.fork(self.prog, &rels, &[rule], rels.iter().map(String::as_str))?;
         model.stats.solve(self.model.stats.solving.clone());
         let rule = r.clone();
-        joins::request(key, weight, Box::new(move || {
-            let Ok(v) = body::alone(&rule) else { return Vec::new() };
+        joins::request(key, weight, holds, Box::new(move || {
+            let Ok(v) = body::alone(&rule) else { return joins::Searched { orders: Vec::new(), walked: None, tried: Vec::new() } };
             let b = body::nth(&v, 0);
-            model.explore(&prog, &b, first).into_iter().map(|(o, w)| (joins::steps(&o), w)).collect()
+            let priced = model.explore(&prog, &b, first);
+            match snap {
+                Some((snap, ran)) => snap.walk(&rule, first, &ran, priced),
+                None => joins::Searched { orders: priced.into_iter().map(|(o, w)| (joins::steps(&o), w)).collect(), walked: None, tried: Vec::new() },
+            }
         }));
         Ok(())
     }
@@ -7954,7 +7955,7 @@ impl<'a> Run<'a, '_> {
                     joins::put_exact(key, rule, exact);
                     self.heavy_for([r], true, Some(key));
                     replanned_at.force(k);
-                    self.request_search(r, Some(ai), rule, key, work)?;
+                    self.request_search(r, Some(ai), rule, key, work, Some((&name, line, &probes[k].2)))?;
                 }
             }
             // Decision 0123 §9: probes not planned yet whose delta has rows; planned now, as one round, and the run
@@ -8164,7 +8165,7 @@ impl<'a> Run<'a, '_> {
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
-                        self.request_search(r, None, rule, key, work)?;
+                        self.request_search(r, None, rule, key, work, Some((&name, line, &running)))?;
                         // With trials (decision 0207) the orders are measured below instead.
                         if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(prog, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
                             place!(new);
@@ -8189,12 +8190,24 @@ impl<'a> Run<'a, '_> {
                     let lead = first.unwrap_or(cut_order[0].at);
                     let left = if c.led { c.left } else { c.done + c.left };
                     let mut cands: Vec<Vec<Step>> = vec![running.clone(), cut_order.clone()];
-                    joins::searched_take();
-                    if let Some(best) = self.model.plan_for_rows(prog, &b, lead, left.max(1) as f64) {
-                        cands.push(best);
-                        cands.extend(joins::searched_take().into_iter().map(|(o, _)| o));
+                    // Decision 0243: where a background search walked the line's orders, the line searches nothing here:
+                    // it tries the proposals whose walked work beats the order it ran, the best two. Else, the
+                    // search as before (decision 0207), and its request waits for the background.
+                    match joins::walked(&key) {
+                        Some((ran_w, props)) => {
+                            let better: Vec<(Vec<Step>, f64)> = props.into_iter().filter(|(_, w)| *w < ran_w).take(2).collect();
+                            joins::log(|| format!("trials {}: the background's walked proposals, the order it ran at {ran_w:.0}: {}", r.head.rel, if better.is_empty() { "none better".to_owned() } else { better.iter().map(|(o, w)| format!("{} {w:.0}", o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."))).collect::<Vec<_>>().join(", ") }));
+                            cands.extend(better.into_iter().map(|(o, _)| o));
+                        }
+                        None => {
+                            joins::searched_take();
+                            if let Some(best) = self.model.plan_for_rows(prog, &b, lead, left.max(1) as f64) {
+                                cands.push(best);
+                                cands.extend(joins::searched_take().into_iter().map(|(o, _)| o));
+                            }
+                            cands.extend(joins::proposals(&key));
+                        }
                     }
-                    cands.extend(joins::proposals(&key));
                     let mut distinct: Vec<Vec<Step>> = Vec::new();
                     for o in cands {
                         if o.len() == r.body.len() && !distinct.iter().any(|d| same_order(d, &o)) { distinct.push(o); }
@@ -8550,7 +8563,7 @@ impl<'a> Run<'a, '_> {
                         0.0
                     };
                     if w >= joins::slow_rows() && joins::wants_request(&key) {
-                        self.request_search(r, first, rule, key, w)?;
+                        self.request_search(r, first, rule, key, w, Some((&name, line, order)))?;
                     }
                     runs.push(joins::LineRun { stratum: stratum.clone(), key, rule, order: joins::steps(order), work: w, est, wall: walled.get(line).copied().unwrap_or(0.0) });
                 }
@@ -11797,6 +11810,192 @@ struct HeavyParts {
     cold: Vec<u32>,
 }
 
+/// Decision 0243: what a background search's walks read, kept by its request while the engine holds it: the body's
+/// relations (shared, not copied), the rule's text constants' symbols, and for a probe's line a sample of its delta's
+/// rows with their count.
+struct WalkSnap {
+    rels: HashMap<String, std::sync::Arc<super::native::component::InRel>>,
+    syms: HashMap<String, i64>,
+    delta: Option<(Vec<Vec<i64>>, f64)>,
+}
+
+/// Orders a background search walks, at most: its best-priced, and the one that ran.
+const WALK_ORDERS: usize = 16;
+
+impl WalkSnap {
+    /// `None` where a positive atom's relation is not the engine's (the walk could not probe it).
+    /// Read by the scope alone (`Db`): a stratum off the run's thread asks too, and reads no SQL (decision 0113).
+    fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, r: &Rule, first: Option<usize>) -> Option<WalkSnap> {
+        use super::native::component as engine;
+        let mut rels = HashMap::new();
+        let mut syms = HashMap::new();
+        for l in &r.body {
+            let Literal::Atom(a) = l else { continue };
+            match engine::held(db, &a.rel) {
+                Some(rel) => { rels.insert(a.rel.to_string(), rel); }
+                None if !a.neg => return None,
+                None => {}
+            }
+            for t in a.args.iter() {
+                if let Term::Str(x) = t && let Ok(Some(id)) = engine::symbol_id(db, x) { syms.insert(x.to_string(), id); }
+            }
+        }
+        // A probe's line leads with its delta: a seeded uniform sample of the rows it read, as the lead's values.
+        let delta = first.and_then(|f| {
+            let Literal::Atom(a) = &r.body[f] else { return None };
+            let ids = engine::trial_ids(db, name, line).ok()??;
+            let src = engine::derived(db, &a.rel)?;
+            let mut v: Vec<(u64, u32)> = ids.iter().map(|&id| ((id as u64 + 3).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7, id)).collect();
+            v.sort_unstable();
+            // As wide as a lead's draw (`starts`): its checks may pass few.
+            let rows = v.into_iter().take(16 * joins::walk_rows()).map(|(_, id)| (0..a.args.len()).map(|c| src.value(id as usize, c)).collect()).collect();
+            Some((rows, ids.len() as f64))
+        });
+        Some(WalkSnap { rels, syms, delta })
+    }
+
+    /// The rows a walk of order `o` starts from, past its lead and the checks right after it: the lead's rows that
+    /// pass them, drawn until `walk_rows` pass, at most `16 * walk_rows` at a time and `64 * walk_rows` in all (a
+    /// check passing 2% of 2,048 left 40 rows, each a function's work, and the walk underestimated a skewed key
+    /// 5 to 70 times). With the lead's estimated rows, the checks' work per lead row (each reads what the checks
+    /// before it passed) and the share passing them all. `None` where too few pass a sample to measure (16).
+    fn starts(&self, r: &Rule, o: &[Step], first: Option<usize>) -> Option<Starts> {
+        let lead = o.first()?.at;
+        let Literal::Atom(a) = &r.body[lead] else { return None };
+        if a.neg { return None }
+        // The checks after the lead: atoms over the lead's variables and constants alone.
+        let lead_vars: Vec<&Term> = a.args.iter().filter(|t| matches!(t, Term::Var(_))).collect();
+        let checks: Vec<&crate::code_rule_dsl::logic::front::Atom> = o[1..].iter().map_while(|s| match &r.body[s.at] {
+            Literal::Atom(c) if c.args.iter().all(|t| !matches!(t, Term::Var(_)) || lead_vars.contains(&t)) => Some(c),
+            _ => None,
+        }).collect();
+        let value = |t: &Term, row: &[i64]| -> Option<i64> {
+            match t {
+                Term::Int(i) => Some(*i),
+                Term::Str(x) => self.syms.get(x.as_ref()).copied(),
+                _ => a.args.iter().position(|u| u == t).map(|c| row[c]),
+            }
+        };
+        // Each check's rows reached and passed, and the lead rows passing them all.
+        let mut reached = vec![0u64; checks.len()];
+        let mut passed = vec![0u64; checks.len()];
+        let mut survivors: Vec<Vec<i64>> = Vec::new();
+        let mut test = |row: Vec<i64>, survivors: &mut Vec<Vec<i64>>| {
+            for (i, c) in checks.iter().enumerate() {
+                reached[i] += 1;
+                let key: Option<Vec<i64>> = c.args.iter().map(|t| value(t, &row)).collect();
+                let found = key.is_some_and(|key| {
+                    let cols: Vec<usize> = (0..c.args.len()).collect();
+                    let mut found = false;
+                    if let Some(rel) = self.rels.get(c.rel.as_ref()) { rel.probe_each(&cols, &key, &mut |_| found = true) }
+                    found
+                });
+                if found == c.neg { return }
+                passed[i] += 1;
+            }
+            survivors.push(row);
+        };
+        let (rows, exact) = if Some(lead) == first {
+            // The delta's sample, as taken.
+            let (sample, rows) = self.delta.clone()?;
+            let exact = sample.len() as f64 >= rows;
+            for row in sample { test(row, &mut survivors) }
+            (rows, exact)
+        } else {
+            let rel = self.rels.get(a.rel.as_ref())?;
+            let (mut cols, mut key) = (Vec::new(), Vec::new());
+            for (c, t) in a.args.iter().enumerate() {
+                match t {
+                    Term::Int(i) => { cols.push(c); key.push(*i) }
+                    Term::Str(x) => { cols.push(c); key.push(*self.syms.get(x.as_ref())?) }
+                    _ => {}
+                }
+            }
+            let same: Vec<(usize, usize)> = a.args.iter().enumerate().filter_map(|(c, t)| a.args.iter().position(|u| u == t).filter(|&d| d < c && matches!(t, Term::Var(_))).map(|d| (d, c))).collect();
+            let mut seed = 0x0243_5eed_u64;
+            let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+            let batch = 16 * joins::walk_rows();
+            let (mut est, mut read, mut kept, mut exact) = (0.0, 0u64, 0u64, false);
+            while survivors.len() < joins::walk_rows() && (read as usize) < 64 * joins::walk_rows() {
+                let mut got = Vec::new();
+                let n = rel.probe_sample(&cols, &key, batch, &mut draw, &mut |row| got.push((0..a.args.len()).map(row).collect::<Vec<i64>>()));
+                est = n;
+                read += got.len() as u64;
+                // Read whole: every candidate once, and no more draws.
+                exact = n <= batch as f64 && got.len() as f64 == n;
+                for row in got {
+                    if same.iter().all(|&(d, c)| row[d] == row[c]) { kept += 1; test(row, &mut survivors) }
+                }
+                if exact || read == 0 { break }
+            }
+            (if read > 0 { est * kept as f64 / read as f64 } else { 0.0 }, exact)
+        };
+        if !exact && survivors.len() < 16 { return None }
+        // Per lead row: each check reads what passed the ones before it.
+        let (mut work, mut share) = (0.0, 1.0);
+        for i in 0..checks.len() {
+            work += share;
+            share *= if reached[i] > 0 { passed[i] as f64 / reached[i] as f64 } else { 0.0 };
+        }
+        Some(Starts { rows: survivors, lead_rows: rows, checks: checks.len(), checks_work: work, share })
+    }
+
+    /// The search's orders, the `WALK_ORDERS` best-priced and the one that ran, each walked from its own lead's rows
+    /// that pass the checks after it (`starts`): their walked work over the line. An order not measured is left out
+    /// (a price and a walked work are not one measure); where the order that ran is not walked, the priced orders are
+    /// kept instead.
+    fn walk(&self, r: &Rule, first: Option<usize>, ran: &[Step], mut priced: Vec<(Vec<Step>, f64)>) -> joins::Searched {
+        priced.sort_by(|a, b| a.1.total_cmp(&b.1));
+        priced.truncate(WALK_ORDERS);
+        if !priced.iter().any(|(o, _)| same_order(o, ran)) { priced.push((ran.to_vec(), f64::NAN)); }
+        let mut walkers: HashMap<usize, Walker<'_>> = HashMap::new();
+        // The starts by the lead and its checks: orders that share them share their rows.
+        let mut starts: HashMap<Vec<usize>, Option<Starts>> = HashMap::new();
+        let mut walked = Vec::new();
+        let mut ran_w = None;
+        for (o, price) in priced {
+            let Some(lead) = o.first().map(|s| s.at) else { continue };
+            let st = self.starts(r, &o, first);
+            let prefix: Vec<usize> = o.iter().take(1 + st.as_ref().map_or(0, |s| s.checks)).map(|s| s.at).collect();
+            let st = starts.entry(prefix).or_insert(st).as_ref();
+            let walker = walkers.entry(lead).or_insert_with(|| Walker::new(r, lead, joins::walk_width(), &|rel| self.rels.get(rel).cloned(), &|x| self.syms.get(x).copied()));
+            // From the rows past the checks: the walk tests them again, each passing, and goes on. Its work past the
+            // checks is the share passing them times its work less theirs. A walk whose sample ran out before its
+            // last step measured nothing past it, and is not ranked.
+            let est = st.and_then(|st| {
+                if st.rows.is_empty() { return Some(st.lead_rows * st.checks_work) }
+                let per = walker.work(&o, &st.rows);
+                (!walker.emptied()).then(|| st.lead_rows * (st.checks_work + st.share * (per - st.checks as f64).max(0.0)))
+            });
+            if same_order(&o, ran) { ran_w = est; }
+            walked.push((joins::steps(&o), est, price));
+        }
+        // Without the order that ran walked, the walks have nothing to be compared with: priced, as before.
+        let Some(ran_w) = ran_w.filter(|w| *w > 0.0) else {
+            return joins::Searched { orders: walked.into_iter().filter(|w| w.2.is_finite()).map(|(o, _, p)| (o, p)).collect(), walked: None, tried: Vec::new() };
+        };
+        // The order that ran stays among the proposals, so the next check compares the rest with it.
+        let ran_steps = joins::steps(ran);
+        let tried = walked.iter().filter(|(o, est, price)| *o != ran_steps && est.is_some() && price.is_finite() && *price > 0.0).map(|(o, est, price)| (o.clone(), est.expect("walked") / price)).collect();
+        let mut orders: Vec<(Vec<StoredStep>, f64)> = walked.into_iter().filter_map(|(o, est, _)| Some((o, est?))).collect();
+        orders.sort_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some(at) = orders.iter().position(|(o, _)| *o == ran_steps) && at >= joins::PROPOSALS {
+            orders.swap(joins::PROPOSALS - 1, at);
+        }
+        joins::Searched { orders, walked: Some(ran_w), tried }
+    }
+}
+
+/// A background walk's start (`WalkSnap::starts`): the lead's rows that pass the checks right after it, the lead's
+/// estimated rows, how many checks, their work per lead row, and the share passing them all.
+struct Starts {
+    rows: Vec<Vec<i64>>,
+    lead_rows: f64,
+    checks: usize,
+    checks_work: f64,
+    share: f64,
+}
+
 /// Decision 0232: an order's work per lead row, sampled. The walk starts from lead rows (their bindings), and carries
 /// a sample of at most `width` bindings through the order's steps after the lead:
 /// - an atom binding new variables is probed with the bound ones (its relation's own index, `InRel::probe_sample`, drawn by position past the reservoir); the
@@ -11821,6 +12020,8 @@ pub(super) struct Walker<'a> {
     seed: std::cell::Cell<u64>,
     /// Per body literal: its probes, the candidate rows they read, and their CPU seconds (the log's measure).
     spent: std::cell::RefCell<HashMap<usize, (u64, u64, f64)>>,
+    /// Decision 0243: whether the last walk's sample ran out of bindings before its last step.
+    emptied: std::cell::Cell<bool>,
 }
 
 impl<'a> Walker<'a> {
@@ -11839,7 +12040,13 @@ impl<'a> Walker<'a> {
                 _ => None,
             }).collect());
         }
-        Walker { rule, lead, slots, rels, consts, width: width.max(1), probes: std::cell::Cell::new(0), seed: std::cell::Cell::new(0x0227_5eed), spent: Default::default() }
+        Walker { rule, lead, slots, rels, consts, width: width.max(1), probes: std::cell::Cell::new(0), seed: std::cell::Cell::new(0x0227_5eed), spent: Default::default(), emptied: std::cell::Cell::new(false) }
+    }
+
+    /// Whether the last walk's sample ran out of bindings before its last step: where it was a sample, its zero is
+    /// only a bound (decision 0243).
+    pub(super) fn emptied(&self) -> bool {
+        self.emptied.get()
     }
 
     /// The probes made so far.
@@ -11873,9 +12080,13 @@ impl<'a> Walker<'a> {
             sample.push(b);
         }
         let (mut mult, mut work) = (1.0f64, 0.0f64);
+        self.emptied.set(false);
         for (si, s) in o.iter().enumerate() {
             if s.at == self.lead { continue }
-            if sample.is_empty() || mult == 0.0 { break }
+            if sample.is_empty() || mult == 0.0 {
+                self.emptied.set(sample.is_empty() && mult > 0.0);
+                break
+            }
             work += mult;
             let Literal::Atom(a) = &self.rule.body[s.at] else { continue };
             let Some(rel) = &self.rels[s.at] else {
