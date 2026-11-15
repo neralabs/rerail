@@ -66,7 +66,7 @@ connection) seals the run's wave before it and is a wave of its own, in transact
 | Boundary | Where | Seals |
 |---|---|---|
 | `Before` | before the chunks: the combined program, the prepared sources, the plan holds | yes |
-| `Chunk` | each chunk's `process` (tapes, tree counts, memo entries); a load in the cone is a chunk | yes |
+| `Chunk` | each chunk's Finish (tapes, tree counts, memo entries). Under 0254 the main thread files chunks in order, so a chunk's wave seals as it is filed, and what the pool's builders queued since the last boundary (their tapes) joins it. A hits-only chunk seals at its return. A load in the cone is a chunk | yes |
 | `ConeRound` | a round of the cone | no |
 | `Cross` | the cross part's end (`statements.enter("write")`): kept strata's frames, retained rows, rounds, statistics | yes |
 | `End` | the run's end (`written`, and the end of `run_waves`): cross memo, manifest, atoms, kept plans | yes |
