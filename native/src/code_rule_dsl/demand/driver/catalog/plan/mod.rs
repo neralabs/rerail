@@ -1,7 +1,8 @@
 mod execution;
 mod grouping;
-mod identity;
-mod physical;
+// The placed copies (05 Phase 5 rows 3 and 4) are this lowering's identities and SQL AST.
+use crate::code_rule_dsl::stats::identity;
+use crate::code_rule_dsl::logic::sql::physical;
 mod render;
 mod scope;
 #[cfg(test)]

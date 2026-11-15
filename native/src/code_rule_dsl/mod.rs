@@ -3123,8 +3123,6 @@ pub mod sql_admission {
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;
     #[cfg(test)]
-    pub mod plan;
-    #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::model::RegexOptions;
