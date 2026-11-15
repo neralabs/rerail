@@ -109,10 +109,46 @@ policy's rules misses only that policy's part, and what reads it, in every file.
 memo as a warm run reads them. The rule-body edit above should then cost a warm run plus one policy's local part
 over 300 files.
 
+The shape (2026-11-15):
+- **A row set's key is its relation's identity.** `plan::identities` (0103, used by the cross part's kept strata,
+  0077 §4) digests a relation's stratum's rules, declaration and facts with the identities of what it reads, down
+  to the inputs. Over the file-local part, an export's or an output's identity changes exactly when a rule it is
+  derived from does. The run's options and the earlier phases' rows are leaves of it, digested with their values.
+  A base relation's rows are keyed by the relation and the columns kept.
+- **One frame per file still** (0146 §1): the entry's sections are named by identity, not by relation name, and
+  the memo's space is the plan without the program (the build, the grammar, the node ids, the phase, the tree
+  demand, the modules). A section whose relation the run does not have is kept when the entry is written again,
+  so two packs over one tree do not undo each other; one this run replaces is dropped.
+- **A partial hit evaluates its missing cone.** A file whose entry lacks some identities is built, and its chunk
+  runs only the strata that derive the missing relations (`plan::Hooks::only`). The relations outside the cone are
+  the entry's. A semi-join's base rows (`file_local::semijoin_bases`) are taken again for the nodes all its
+  exports hold, the entry's and the run's.
+- **No new store, no new cache**: the entry is the frame 0146 made, its sections renamed.
+
 ### 3. A message is not the program
 
 A finding's message, and the other texts only the output reads, are kept beside the program, not in the digest that
 keys preparation and the memo. Changing one re-evaluates nothing: the findings are read again with the new text.
+
+Done (2026-11-15) for messages:
+- The lowered `rr_diagnostic` rule carries the message's values only (`"message":[v1,v2,…]`); its template is a
+  `.message` setting of the clause, which the choices' key leaves out.
+- The digests that key preparation, the memo and the prepared program's stored text read the rule texts with each
+  message's literal replaced by its skeleton (the template's holes, no text), so an edit of the words is not a change.
+- `rr_diagnostic` is never reused from the session's unchanged outputs; the writer composes each row's message from
+  the template and the row's values.
+
+Over dl1 the findings are byte-identical, and a cold run costs about 1% more instructions (the templates read
+once per run, ~12 ms). The edit profile (ep2: corpus0, the main pack, one store):
+
+| Step | Instructions | CPU |
+|---|---|---|
+| warm | 7.3 G | — |
+| one rule's message changed, before | 96.4 G | 10.8 s |
+| one rule's message changed, now | 25.5–29.5 G | 2.1–2.6 s |
+
+The prepared program is read back from the store, and the new message is in all 195 of that rule's rows. What
+remains over warm is the session's measure of the rows it holds and the run's own setup, not the edit.
 
 ### 4. The interim numberings are stand-ins
 
@@ -173,7 +209,7 @@ of everything.
 
 0173 stage 2 (the planner on the image: t36 item 7) belongs to the Typing-support-final-shape work, and is under way.
 §2 and §3 do not wait for it: they change the memo's and the prepared program's keys, not the passes. §5–§7 begin
-when stage 2 is merged, so the passes and the planner share one image and one set of ids. The order: §2, §3 (§6 done),
+when stage 2 is merged, so the passes and the planner share one image and one set of ids. The order: §2 (§3 for messages and §6 done),
 then the split (§5), then the other questions, then §7.
 
 ## What this is not

@@ -95,6 +95,8 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     });
     hash.0.update(b"\0rules\0");
     hash.0.update(rules_digest.to_le_bytes());
+    // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
+    let settings: Vec<&(String, String)> = settings.iter().filter(|(k, _)| k != crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE).collect();
     let again_names: Vec<(&BTreeSet<String>, &BTreeSet<String>, &Vec<String>, &Vec<String>)> = again.iter().map(|g| (&g.scc, &g.owned, &g.reads, &g.olds)).collect();
     let _ = std::fmt::Write::write_fmt(
         &mut hash,

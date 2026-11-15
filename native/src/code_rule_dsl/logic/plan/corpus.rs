@@ -298,7 +298,8 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
-    let (prog, _) = combine_keyed(&programs, graphs, "", None, &front::Lists::default())?;
+    let masked = masked(&programs);
+    let (prog, _) = combine_keyed(&programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, "", None, &front::Lists::default())?;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {
@@ -507,7 +508,8 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
-    combine_keyed(programs, &graphs, extra, None, &front::Lists::default()).map(|(program, _)| program)
+    let masked = masked(programs);
+    combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, extra, None, &front::Lists::default()).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -551,13 +553,13 @@ impl<'a> Texts<'a> {
 /// `combine`, the texts' include graphs' digests given (`Texts::graphs`), with the digest of its texts
 /// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
+fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
     static COMBINED: OnceLock<Mutex<HashMap<[u8; 32], front::Program>>> = OnceLock::new();
     const KEPT: usize = 32;
-    let key = texts_digest(programs, graphs, extra);
+    let key = texts_digest(masked, graphs, extra);
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -611,6 +613,9 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front:
 
 /// The digest of `combine`'s texts: what a combined program is a function of. `graphs`: each text's include graph's
 /// digest (`Texts::graphs`).
+/// `programs` are the texts with their messages masked (`masked`): a finding's message by its placeholders alone, its
+/// words the writer's, not the program's (decision 0225 §3), so an edit of them finds the program combined, prepared
+/// and memoised.
 fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
@@ -2090,6 +2095,46 @@ impl Drop for UnderWay {
 }
 
 
+/// `programs` with their messages masked (`rr::message_masked`), as the keys read them.
+fn masked<'a>(programs: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
+    programs.iter().map(|t| crate::code_rule_dsl::logic::rr::message_masked(t)).collect()
+}
+
+/// The run's message templates, by (policy, clause): its texts' (`rr::message_templates`), which a program read from
+/// the store may predate; then the program's own `.message` settings, by clause, for a finding no text declares.
+fn message_templates(programs: &[&str], settings: &[(String, String)]) -> HashMap<(String, String), String> {
+    let mut templates: HashMap<(String, String), String> = HashMap::new();
+    for (_, text) in settings.iter().filter(|(k, _)| k == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+        if let Some((clause, template)) = crate::code_rule_dsl::logic::rr::setting_template(text) {
+            templates.entry((String::new(), clause)).or_insert(template);
+        }
+    }
+    for text in programs {
+        for (policy, clause, template) in crate::code_rule_dsl::logic::rr::message_templates(text) {
+            templates.insert((policy, clause), template);
+        }
+    }
+    templates
+}
+
+/// `row` (a diagnostic's JSON, `rr::lower`'s `diagnostic_rule`) with its message's values (`"message":["…",…]`) made
+/// the message, from its policy's and clause's template; `None` for a row with its message written already.
+fn composed_message(row: &str, templates: &HashMap<(String, String), String>) -> Option<String> {
+    const KEY: &str = ",\"message\":[";
+    let at = row.find(KEY)? + KEY.len() - 1;
+    let mut values = serde_json::Deserializer::from_str(&row[at..]).into_iter::<Vec<String>>();
+    let parsed = values.next()?.ok()?;
+    let end = at + values.byte_offset();
+    let head: serde_json::Value = serde_json::from_str(&format!("{}}}", &row[..row.find(KEY)?])).ok()?;
+    let (policy, clause) = (head["policy"].as_str().unwrap_or_default(), head["clause"].as_str().unwrap_or_default());
+    let template = templates.get(&(policy.to_owned(), clause.to_owned())).or_else(|| templates.get(&(String::new(), clause.to_owned())));
+    let message = match template {
+        Some(t) => crate::code_rule_dsl::logic::rr::lower::findings::message_of(t, &parsed),
+        None => parsed.concat(),
+    };
+    Some(format!("{}{}{}", &row[..at], crate::code_rule_dsl::logic::strings::functions::json_str(&message), &row[end..]))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_observed(
     given: &Texts<'_>,
@@ -2122,6 +2167,9 @@ fn run_observed(
     // another program, lowered whole. Its graph is the text's own (facts include nothing).
     let read = given.read.filter(|_| with_settings.iter().zip(programs).all(|(with, text)| with == text));
     let programs: &[&str] = &with_settings.iter().map(String::as_str).collect::<Vec<_>>();
+    // The texts as the run's keys read them, messages masked (`texts_digest`), each masked once.
+    let masked_texts = masked(programs);
+    let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
     drop(setting);
     // What the run is of, whichever build runs it: its manifest's lane (`record_corpus_run_lane`).
     let lane: [u8; 32] = {
@@ -2199,7 +2247,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, "", read, &lists)?;
+    let (mut prog, mut texts) = combine_keyed(programs, masked, &given.graphs, "", read, &lists)?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
@@ -2401,7 +2449,7 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            (prog, texts) = combine_keyed(programs, &given.graphs, &facts, None, &lists)?;
+            (prog, texts) = combine_keyed(programs, masked, &given.graphs, &facts, None, &lists)?;
             add_bridged(&mut prog);
             (folded, constants_plans) = fold_constants(&mut prog)?;
         }
@@ -2582,7 +2630,8 @@ fn run_observed(
     // keeps it in memory only.
     // `Some(None)`: kept, under a source the store does not hold yet, which the store's writer stores with the
     // prepared program (decision 0104: a run's own threads only read).
-    let durable_text = (tapes.is_some() && t.is_none() && session.is_none()).then(|| programs.join("\0"));
+    // The texts with their messages masked, as the key is (`texts_digest`): a message's edit finds the program stored.
+    let durable_text = (tapes.is_some() && t.is_none() && session.is_none()).then(|| masked.join("\0"));
     let durable: Option<Option<crate::content_store::SourceId>> = match &durable_text {
         Some(text) => Some(memo::stored_source(store, text).map_err(|e| Error::Plan(e.to_string()))?),
         None => None,
@@ -6468,8 +6517,10 @@ fn run_observed(
                     written_key = Some(ckey);
                     if let Some(s) = session.as_ref() {
                         let written = s.written.lock().expect("the session's written outputs");
-                        // Not the findings nor typing's outputs, which this run reads as well as writes.
-                        for rel in cross.program.outputs.iter().filter(|r| cut.clean.contains(*r) && !matches!(r.as_str(), "finding" | "type_of")) {
+                        // Not the findings nor typing's outputs, which this run reads as well as writes, nor the
+                        // diagnostics, whose messages the writer puts in from the texts (a message's edit leaves
+                        // their rows as they were).
+                        for rel in cross.program.outputs.iter().filter(|r| cut.clean.contains(*r) && !matches!(r.as_str(), "finding" | "type_of" | "rr_diagnostic")) {
                             let file = out.join(format!("{rel}.csv"));
                             if let Some((_, n)) = written.get(&file).filter(|(k, _)| *k == ckey)
                                 && file.exists()
@@ -7357,6 +7408,7 @@ fn run_observed(
         outputs.entry(rel.clone()).or_default();
         node_columns.entry(rel.clone()).or_default();
     }
+    let templates: std::cell::OnceCell<HashMap<(String, String), String>> = std::cell::OnceCell::new();
     // A node column's value that is no node: `unset` (-1) is written as it is, and a `@place` (`rr::lower`'s
     // `PLACE`, `-2 - (path << 32 | line)`) as `@place("path", line)`.
     let mut places: HashMap<i64, String> = HashMap::new();
@@ -7400,6 +7452,15 @@ fn run_observed(
                     .join("\t")
             })
             .collect();
+        // A diagnostic's message from its template and its placeholders' values (decision 0225 §3).
+        if rel == "rr_diagnostic" {
+            let templates = templates.get_or_init(|| message_templates(programs, &prog.settings));
+            for row in &mut decoded {
+                if let Some(composed) = composed_message(row, templates) {
+                    *row = composed;
+                }
+            }
+        }
         decoded.sort();
         decoded.dedup();
         let mut text = decoded.join("\n");
