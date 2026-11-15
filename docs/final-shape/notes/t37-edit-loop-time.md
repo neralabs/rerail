@@ -209,9 +209,35 @@ changes, about 30 lines in all:
 
 The std additions are `scripts/dev/relax/std.patch`: an `AsRef<[T]>` impl on each of the two
 iterators, the deprecated `IntoIter::new` of an array, and `vdup_lane_u32` as
-`uint32x2_t([a.0[N as usize]; 2])`. `scripts/dev/relax/build` builds the Relax measured here (its
-commit pinned, the patch applied) into `~/.local/share/rerail-relax`. Relax reads its std from
-source, so a change to the patch needs no rebuild of Relax.
+`uint32x2_t([a.0[N as usize]; 2])`. `scripts/dev/relax/build` builds the pinned Relax with its patches into
+`~/.local/share/rerail-relax/v/<commit>-<patches' hash>`, a tree never changed once built, and
+installs its binary as `bin/relax`. The binary reads its std from the tree it was built from, so
+a change to a patch makes a new version. The script does not switch versions while a Relax
+session runs.
+
+Sharing between worktrees (2026-11-15). Relax keys a run's stores by its worktree's absolute
+paths, so another worktree's first run of the same code was cold: 288 s against 5–8 s warm. Upstream
+(5b2d68c2, Target B steps 3–6) shares sealed crates' code (registry crates whose dependencies
+have no OUT_DIR) in `~/.relax/code`, but only in its sandboxed `makepad` runs.
+`scripts/dev/relax/rerail.patch` lets bare `relax` share too under `RELAX_SHARED_OPEN=1`; the
+cache configuration hash keeps its entries apart from sandboxed ones. Measured on the session
+test, at a load of 75–90:
+
+| Run | Wall | CPU | Peak |
+|---|---|---|---|
+| worktree A, cold | 572 s | 785 s | 6.0 GB |
+| worktree C (same code), cold, A's shared code | 385 s | 702 s | 6.0 GB |
+| worktree A, warm | 27 s | 30 s | 3.7 GB |
+
+The shared code is 50 MB. The rest of the store (front_run, collected_graph and the workspace's
+own crates, 2.3 GB) is per worktree, so sharing saves about a tenth of a cold run. More waits on
+Target B's path-free payloads upstream.
+
+The patch also makes a stubbed build script (`--allow-c`'s cargo run) a two-line shell script.
+It was a hard link of Relax's own binary, and cargo removes and links build scripts' names as
+it rebuilds them. macOS's syspolicyd then could not read the file by the name it was scanning
+("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
+Malware rejection").
 
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
