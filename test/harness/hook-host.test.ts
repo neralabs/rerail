@@ -2061,6 +2061,27 @@ describe("the hook start check", () => {
     }
   });
 
+  it("keeps no answer where the checkout's clone id file is gone, which the daemon reads as no id, and waits for a late daemon there", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    rmSync(cloneIdFile(app));
+    const host = await startCheckHost();
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await prompt.close();
+    }
+    const late = await daemonAnsweringAfterProof(host, "stopped");
+    try {
+      host.proofs.nextCheck();
+      expect({ kept: existsSync(keptAnswerFile(app)), started: await host.hookRerailStarted("claude-code", app), checked: host.proofs.found.at(-1) })
+        .toEqual({ kept: false, started: false, checked: false });
+    } finally {
+      await late.close();
+    }
+  });
+
   it.for(gitFoldersThroughALink)("waits for a late daemon in a linked worktree whose .git file names its Git folder through $what, which it never follows", async ({ link, daemonSays, started }, { skip }) => {
     const root = await temporaryDirectory({ started: false });
     const app = gitRepository(join(root, "app"));
