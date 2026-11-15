@@ -109,8 +109,8 @@ hosts, and everything compiles and tests here, as without the farm.
 | `tests` | whether `scripts/dev/test-remote` runs there (default: `mirror`) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
-| `max_rtt_ms` | the slowest round trip a host may have (default 150) |
-| `min_mbps` | the least throughput to it, MB/s (default 8) |
+| `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
+| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and

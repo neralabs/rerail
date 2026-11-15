@@ -28,8 +28,12 @@ import json, os, socket, struct, subprocess, sys, threading
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 write_lock = threading.Lock()
-mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
-          subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+def read_mounts():
+    return [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+            subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+
+
+mounts = read_mounts()
 refused = []
 
 
@@ -58,8 +62,14 @@ def seen(path):
 
 
 def put(header, payload):
+    global mounts
     path = header["path"]
-    if any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts):
+    under = lambda: any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts)
+    # The list is read at start; a mount may have gone since (the shared volume unmounted), so it is
+    # read again before a write is refused.
+    if under():
+        mounts = read_mounts()
+    if under():
         refused.append(path)
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)

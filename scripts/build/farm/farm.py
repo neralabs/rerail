@@ -454,9 +454,13 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["min_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}"
-    elif h["rtt_ms"] > cfg["max_rtt_ms"]:
+    # The round trip and throughput stand in for the link when none is configured (a host that fell
+    # back to WiFi is slow). With `link` confirmed they are only reported: an ssh command's round
+    # trip measures how fast both machines schedule ssh, and a loaded build machine (a load of 70
+    # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
+    elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
         h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif (h["mbps"] or 0) < cfg["min_mbps"]:
+    elif not link and (h["mbps"] or 0) < cfg["min_mbps"]:
         h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
@@ -857,12 +861,13 @@ def run_shared(host, rustc, args, env, cwd, out_dir, crate, times, lap, give_up)
         read = json.loads(report)
     except ValueError:
         read = {"?": None}
+    waited, ran = read.pop("\0times", [None, None])
     stale = [p for p, seen in read.items() if seen != here(p)]
     if stale:
         return give_up(f"it read files that are not as they are here: {stale[:3]}")
     sys.stdout.buffer.write(run.stdout)
     sys.stderr.buffer.write(stderr)
-    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)}, {len(fresh)} fresh, {len(read)} read)")
+    log(f"{crate}: compiled on {host['name']}, shared ({', '.join(times)}, waited {waited}, rustc {ran}, {len(fresh)} fresh, {len(read)} read)")
     return True
 
 
@@ -960,8 +965,11 @@ def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
     survive an exec."""
     lock = local_slot()
+    # The farm's sccache server runs this, not cargo: cargo's jobserver descriptors are not open
+    # here, and rustc would warn on every crate ("failed to connect to jobserver").
+    env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS")}
     try:
-        code = subprocess.run([rustc] + args).returncode
+        code = subprocess.run([rustc] + args, env=env).returncode
     finally:
         lock.release()
     sys.exit(code)
