@@ -219,6 +219,43 @@ already holds the rules, and warm; on one thread and on the pool; CPU and instru
    No nested run re-reads a text.
 7. **The stored form is the image** (§6), and loading's pool loops go (§7).
 
+## Stage 2, as built (2026-11-15)
+
+Library modules are lowered one at a time and linked (`rr::library_modules`, `lower::lower_module_in`,
+`lower::link`). The test `library_modules_link_to_the_lowering_of_them_together` checks every pack's library: the
+linked program prints the same as the one lowering all its files together gives, and the same again when every
+module is read back from its image. What building it decided:
+
+- **A module is a file, or files that include each other.** `python/names.rr` and `python/imports.rr` include each
+  other ("one mutually dependent unit"): they are one module, their statements in the run's order.
+- **A module's scope is the modules it reaches, and only those.** Its clauses read their declarations, inputs,
+  natives, kind sets, lattices, `must, may` relations, `.violation`s and what their relations read (`Lowerer::seed`).
+  The result holds only its own (`Lowerer::unseed`), so its image is a function of its files and its scope's images.
+  Lowering all files together let a file read what a file it does not include declares. No library relies on that.
+- **What a module's text states is not what an include's lowering made.** A demand an include's lowering declared
+  (`typing.rr`'s parse request) is not a printed demand of the module that includes it. Taken as one, it dropped
+  `ruff-classes.rr`'s own requests, which would have missed findings.
+- **Helpers are numbered per module and renumbered at link time.** `fresh`'s `rr_<stem><n>`, and the Python
+  candidates serial, start at the module's first. Linking offsets them past the modules before it, which is the
+  numbering lowering them all together gives. A helper's columns are in order of name, helpers by number
+  (`helper_order`), so renumbering keeps their order. Linking also keeps each module's stated `.input`s before
+  those its lowering added.
+- **A module image is a program image** (one format, 0173). It holds the module's program, and its lowering's other
+  parts as `.about` relations of their own, `module_*` (`rr/module_image.rs`). It is kept in the store under an alias
+  of the image format, the engine build, its files' bytes and its scope's keys. A store that holds it reads it, and
+  lowering does not run. `RERAIL_MODULE_IMAGES=off` skips the store; `RERAIL_LIBRARY_LOWERING=whole` lowers the
+  files together, as before.
+
+Not yet, and why:
+
+- **Clauses are not written into the builder in the tape walk.** Each module's per-clause half still builds its
+  `front::Program`, encoded once into the image. Writing image nodes clause by clause is the form-by-form move §1
+  describes; the linked program's print is the check for each form.
+- **Programs keep their current path** until stage 3, as planned. So does `lower_library`'s process map of linked
+  libraries: stage 3's one link per run removes the reason for it.
+- **A module image is pinned while a run holds it, not named in the run's record.** Collection may drop it, and the
+  next run lowers that module again. Naming images in the record goes with stage 7 (the stored form).
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as

@@ -154,6 +154,7 @@ fn ty(t: &str) -> String {
 
 /// A `.violation V(at, …)`: its relation, its columns, its code, and whether its `at` is a node (else a span or a
 /// place); `places`: whether a rule gives it a `@place(path, line)`, kept in its place relation (`place_relation`).
+#[derive(Clone)]
 struct Violation {
     name: String,
     arity: usize,
@@ -166,6 +167,7 @@ struct Violation {
 }
 
 /// A finding's code: the violation's name, a column's value, or a constant.
+#[derive(Clone)]
 enum FindingCode {
     Name,
     Column(usize),
@@ -224,6 +226,13 @@ struct Lowerer {
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
     printed_demands: BTreeSet<String>,
+    /// The helper names `fresh` made, by stem and number: linking numbers a module's after those of the modules
+    /// linked before it (decision 0246 §2), as one lowering of them all would have.
+    made: Vec<(String, usize)>,
+    /// How many of its inputs, first in `prog.inputs`, its `.input` statements state: the rest are those its clauses'
+    /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
+    /// would order them.
+    stated: usize,
 }
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
@@ -307,12 +316,51 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
+/// `statements` lowered: one module (`lower_module`), linked alone (`link`).
 pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+    link(vec![lower_module(statements)?])
+}
+
+/// A rule file lowered alone (decision 0246 §1): each clause rewritten to the core rules it lowers to, its
+/// declarations, facts and settings, and what lowering's whole-program half reads of them (its `.violation`s, its
+/// `must, may` relations and heads, its kind sets). What needs the whole program is `link`'s.
+pub struct Module {
+    l: Lowerer,
+    /// Its relations' column types as written (`tape_type`), for the modules that include it.
+    written: BTreeMap<String, Vec<String>>,
+    /// Whether its `docof` is over `loc`s, when it declares `docof`.
+    docof: Option<bool>,
+    /// The `.violation`s of its includes that its rules give a `@place` (`Lowerer::clause`).
+    places: BTreeSet<String>,
+}
+
+/// The lowering half that reads one clause and the declarations in scope (decision 0246 §1, "per clause"), for a
+/// module that includes nothing.
+pub fn lower_module(statements: Vec<Statement>) -> Result<Module, Error> {
+    lower_module_in(statements, &[])
+}
+
+/// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
+/// declarations, inputs, lattices, kind sets and natives, and the result holds only its own (`Module`).
+pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
-    super::tape_type::check(&statements)?;
+    let written: BTreeMap<String, Vec<String>> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            Item::Decl { name, cols, .. } => Some((name.clone(), cols.iter().map(|(_, t)| t.clone()).collect())),
+            _ => None,
+        })
+        .collect();
+    let mut given: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for m in scope {
+        given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    super::tape_type::check_in(&statements, &given)?;
     drop(typing);
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
+    let declares_docof = statements.iter().any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == "docof"));
     let mut l = Lowerer::default();
+    let seeded = l.seed(scope);
     let mut clauses = Vec::new();
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
     let mut last_heads: Option<Vec<String>> = None;
@@ -380,16 +428,26 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         }
     }
     drop(reading);
+    let stated: BTreeSet<String> = l.prog.inputs.iter().filter(|r| !seeded.inputs.contains(*r)).cloned().collect();
     let rules = crate::code_rule_dsl::logic::profile::span(|| "lower the rules".to_owned());
     l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.facts.keys().cloned()).collect();
+    let mut own_deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (heads, body, ..) in &clauses {
         let mut rels = BTreeSet::new();
         lit_rels(body, &mut rels);
         for h in heads {
-            l.deps.entry(h.rel.clone()).or_default().extend(rels.iter().cloned());
+            own_deps.entry(h.rel.clone()).or_default().extend(rels.iter().cloned());
         }
     }
-    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d)).map(|d| (*d).to_owned()).collect();
+    for (rel, reads) in &own_deps {
+        l.deps.entry(rel.clone()).or_default().extend(reads.iter().cloned());
+    }
+    // The demands the text states (a printed program's): its own declarations, as read, and those its includes
+    // stated. A demand an include's lowering made is not one: this module makes its own.
+    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
+    for m in scope {
+        l.printed_demands.extend(m.l.printed_demands.iter().cloned());
+    }
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -417,6 +475,393 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         l.prog.shapes.push(shape);
     }
     drop(rules);
+    let places = l.unseed(seeded);
+    l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
+    l.deps = own_deps;
+    let docof = declares_docof.then_some(l.docof_of_locs);
+    Ok(Module { l, written, docof, places })
+}
+
+/// A module's parts as its image keeps them (decision 0246 §6): its program, and what lowering's whole-program half
+/// and the modules that include it read of it, each as rows of names and numbers.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleParts {
+    pub prog: Program,
+    /// Each `.violation`: name, arity, code (`name`, `column` with its index, or `constant` with its text), whether
+    /// its `at` is a node, whether it has a place relation, its columns, its message and its tag column.
+    pub violations: Vec<ViolationParts>,
+    pub three: BTreeSet<String>,
+    /// The rules a `must` or `may` head wrote, by index.
+    pub modal: Vec<(usize, String)>,
+    pub sets: BTreeSet<String>,
+    /// `.lattice` declarations: name, base type, `Lub` functor.
+    pub lattices: Vec<(String, String, String)>,
+    /// The helpers `fresh` made (stem, number), and its count.
+    pub made: Vec<(String, usize)>,
+    pub next: usize,
+    /// How many of `prog.inputs`, first, its `.input` statements state.
+    pub stated: usize,
+    /// What each derived relation's rules read.
+    pub deps: Vec<(String, String)>,
+    /// Its relations' column types as written.
+    pub written: Vec<(String, Vec<String>)>,
+    pub docof: Option<bool>,
+    pub places: BTreeSet<String>,
+    /// The demands its text, or an include's, states (`Lowerer::printed_demands`).
+    pub printed: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ViolationParts {
+    pub name: String,
+    pub arity: usize,
+    pub code: (String, usize, String),
+    pub node: bool,
+    pub places: bool,
+    pub columns: Vec<(String, String)>,
+    pub message: String,
+    pub tag: Option<usize>,
+}
+
+impl Module {
+    /// Its parts, as its image keeps them.
+    pub fn parts(&self) -> ModuleParts {
+        let l = &self.l;
+        ModuleParts {
+            prog: l.prog.clone(),
+            violations: l
+                .violations
+                .iter()
+                .map(|v| ViolationParts {
+                    name: v.name.clone(),
+                    arity: v.arity,
+                    code: match &v.code {
+                        FindingCode::Name => ("name".to_owned(), 0, String::new()),
+                        FindingCode::Column(i) => ("column".to_owned(), *i, String::new()),
+                        FindingCode::Constant(c) => ("constant".to_owned(), 0, c.clone()),
+                    },
+                    node: v.node,
+                    places: v.places,
+                    columns: v.columns.clone(),
+                    message: v.message.clone(),
+                    tag: v.tag,
+                })
+                .collect(),
+            three: l.three.clone(),
+            modal: l.modal.iter().map(|(i, m)| (*i, m.clone())).collect(),
+            sets: l.sets.clone(),
+            lattices: l.lattices.iter().map(|(n, (b, f))| (n.clone(), b.clone(), f.clone())).collect(),
+            made: l.made.clone(),
+            next: l.next,
+            stated: l.stated,
+            deps: l.deps.iter().flat_map(|(r, reads)| reads.iter().map(move |x| (r.clone(), x.clone()))).collect(),
+            written: self.written.iter().map(|(r, t)| (r.clone(), t.clone())).collect(),
+            docof: self.docof,
+            places: self.places.clone(),
+            printed: l.printed_demands.clone(),
+        }
+    }
+
+    /// The module its image's parts are.
+    pub fn of_parts(p: ModuleParts) -> Result<Module, Error> {
+        let mut l = Lowerer { prog: p.prog, three: p.three, sets: p.sets, made: p.made, next: p.next, stated: p.stated, printed_demands: p.printed, docof_of_locs: p.docof.unwrap_or(false), ..Lowerer::default() };
+        for v in p.violations {
+            let code = match v.code.0.as_str() {
+                "name" => FindingCode::Name,
+                "column" => FindingCode::Column(v.code.1),
+                "constant" => FindingCode::Constant(v.code.2),
+                other => return Err(Error::Syntax(format!("a module image's violation code {other:?}"))),
+            };
+            l.violations.push(Violation { name: v.name, arity: v.arity, code, node: v.node, places: v.places, columns: v.columns, message: v.message, tag: v.tag });
+        }
+        l.modal = p.modal.into_iter().collect();
+        l.lattices = p.lattices.into_iter().map(|(n, b, f)| (n, (b, f))).collect();
+        for (r, x) in p.deps {
+            l.deps.entry(r).or_default().insert(x);
+        }
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places })
+    }
+}
+
+/// What `Lowerer::seed` took from a module's includes, which `Lowerer::unseed` takes out again.
+struct Seeded {
+    decls: BTreeSet<String>,
+    inputs: BTreeSet<String>,
+    natives: BTreeSet<String>,
+    kindsets: BTreeSet<String>,
+    lattice: BTreeSet<String>,
+    tapes: BTreeSet<String>,
+    qualifiers: BTreeSet<String>,
+    lattices: BTreeSet<String>,
+    three: BTreeSet<String>,
+    /// The includes' `.violation`s, first in `violations`, and whether each had a place relation already.
+    violations: Vec<bool>,
+}
+
+impl Lowerer {
+    /// The names a module's clauses read from its includes (`scope`): their declarations, inputs, natives, kind sets,
+    /// lattices, `must, may` relations, `.violation`s and what each derived relation reads. Their helpers (`made`)
+    /// are their own: a module numbers its own from one.
+    fn seed(&mut self, scope: &[&Module]) -> Seeded {
+        let mut seeded = Seeded { decls: BTreeSet::new(), inputs: BTreeSet::new(), natives: BTreeSet::new(), kindsets: BTreeSet::new(), lattice: BTreeSet::new(), tapes: BTreeSet::new(), qualifiers: BTreeSet::new(), lattices: BTreeSet::new(), three: BTreeSet::new(), violations: Vec::new() };
+        for m in scope {
+            let helpers: BTreeSet<String> = m.l.made.iter().map(|(stem, n)| format!("rr_{stem}{n}")).collect();
+            let p = &m.l.prog;
+            for (rel, cols) in p.decls.iter().filter(|(r, _)| !helpers.contains(r.as_str())) {
+                seeded.decls.insert(rel.to_string());
+                self.prog.decls.insert(rel.clone(), cols.clone());
+            }
+            for rel in p.inputs.iter().filter(|r| !helpers.contains(*r)) {
+                if seeded.inputs.insert(rel.clone()) && !self.prog.inputs.contains(rel) {
+                    self.prog.inputs.push(rel.clone());
+                }
+            }
+            for (rel, n) in &p.natives {
+                seeded.natives.insert(rel.clone());
+                self.prog.natives.insert(rel.clone(), n.clone());
+            }
+            for (rel, k) in &p.kindsets {
+                seeded.kindsets.insert(rel.clone());
+                self.prog.kindsets.insert(rel.clone(), k.clone());
+            }
+            for (rel, d) in &p.lattice {
+                seeded.lattice.insert(rel.clone());
+                self.prog.lattice.insert(rel.clone(), d.clone());
+            }
+            for (rel, cols) in &p.tapes {
+                seeded.tapes.insert(rel.clone());
+                self.prog.tapes.entry(rel.clone()).or_default().extend(cols.iter().copied());
+            }
+            for (rel, q) in &p.qualifiers {
+                seeded.qualifiers.insert(rel.clone());
+                self.prog.qualifiers.entry(rel.clone()).or_default().extend(q.iter().cloned());
+            }
+            for (name, l) in &m.l.lattices {
+                seeded.lattices.insert(name.clone());
+                self.lattices.insert(name.clone(), l.clone());
+            }
+            seeded.three.extend(m.l.three.iter().cloned());
+            self.three.extend(m.l.three.iter().cloned());
+            for v in &m.l.violations {
+                seeded.violations.push(v.places || m.places.contains(&v.name));
+                let mut v = v.clone();
+                v.places = *seeded.violations.last().expect("pushed");
+                self.violations.push(v);
+            }
+            for (rel, reads) in &m.l.deps {
+                self.deps.entry(rel.clone()).or_default().extend(reads.iter().cloned());
+            }
+            if let Some(d) = m.docof {
+                self.docof_of_locs = d;
+            }
+        }
+        seeded
+    }
+
+    /// The module's own part: what `seed` took from its includes taken out. The includes' `.violation`s its rules
+    /// gave a place to are returned.
+    fn unseed(&mut self, seeded: Seeded) -> BTreeSet<String> {
+        let p = &mut self.prog;
+        p.decls.retain(|r, _| !seeded.decls.contains(r.as_str()));
+        p.inputs.retain(|r| !seeded.inputs.contains(r));
+        p.natives.retain(|r, _| !seeded.natives.contains(r));
+        p.kindsets.retain(|r, _| !seeded.kindsets.contains(r));
+        p.lattice.retain(|r, _| !seeded.lattice.contains(r));
+        p.tapes.retain(|r, _| !seeded.tapes.contains(r));
+        p.qualifiers.retain(|r, _| !seeded.qualifiers.contains(r));
+        self.lattices.retain(|r, _| !seeded.lattices.contains(r));
+        self.three.retain(|r| !seeded.three.contains(r));
+        let given: Vec<Violation> = self.violations.drain(..seeded.violations.len()).collect();
+        given.into_iter().zip(seeded.violations).filter(|(v, had)| v.places && !had).map(|(v, _)| v.name).collect()
+    }
+
+    /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
+    fn append(&mut self, m: Module) {
+        let Module { l: mut m, docof, places, .. } = m;
+        let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (stem, n) in &m.made {
+            if self.next > 0 {
+                rename.insert(format!("rr_{stem}{n}"), format!("rr_{stem}{}", n + self.next));
+            }
+            self.made.push((stem.clone(), n + self.next));
+        }
+        // A Python candidates relation is numbered by the natives made before it: another module's may hold the
+        // number for another native.
+        for (name, native) in &m.prog.natives {
+            if name.starts_with("rr_python_candidates_") && self.prog.natives.get(name).is_some_and(|n| n != native) {
+                let mut serial = self.prog.natives.len();
+                let new = loop {
+                    let new = format!("rr_python_candidates_{serial}");
+                    if !self.prog.decls.contains_key(new.as_str()) && !m.prog.decls.contains_key(new.as_str()) {
+                        break new;
+                    }
+                    serial += 1;
+                };
+                rename.insert(name.clone(), new);
+            }
+        }
+        if !rename.is_empty() {
+            rename_relations(&mut m.prog, &rename);
+        }
+        self.next += m.next;
+        let at = self.prog.rules.len();
+        self.modal.extend(m.modal.into_iter().map(|(i, s)| (i + at, s)));
+        for v in self.violations.iter_mut().filter(|v| places.contains(&v.name)) {
+            v.places = true;
+        }
+        self.violations.extend(m.violations);
+        self.three.extend(m.three);
+        self.sets.extend(m.sets);
+        self.lattices.extend(m.lattices);
+        if let Some(d) = docof {
+            self.docof_of_locs = d;
+        }
+        let (a, b) = (&mut self.prog, m.prog);
+        a.rules.extend(b.rules);
+        a.decls.extend(b.decls);
+        a.nullary.extend(b.nullary);
+        a.lattice.extend(b.lattice);
+        for (rel, rows) in b.facts {
+            a.facts.entry(rel).or_default().extend(rows);
+        }
+        for (k, rel) in b.inputs.into_iter().enumerate() {
+            if a.inputs.contains(&rel) {
+                continue;
+            }
+            if k < m.stated {
+                a.inputs.insert(self.stated, rel);
+                self.stated += 1;
+            } else {
+                a.inputs.push(rel);
+            }
+        }
+        for (list, more) in [(&mut a.outputs, b.outputs), (&mut a.demand, b.demand)] {
+            for rel in more {
+                if !list.contains(&rel) {
+                    list.push(rel);
+                }
+            }
+        }
+        a.kindsets.extend(b.kindsets);
+        a.demand_dropped.extend(b.demand_dropped);
+        a.gates.extend(b.gates);
+        a.policies.extend(b.policies);
+        a.settings.extend(b.settings);
+        a.natives.extend(b.natives);
+        a.rx_spans.extend(b.rx_spans);
+        a.ast_patterns.extend(b.ast_patterns);
+        a.answers.extend(b.answers);
+        for (rel, q) in b.qualifiers {
+            a.qualifiers.entry(rel).or_default().extend(q);
+        }
+        for (rel, cols) in b.tapes {
+            a.tapes.entry(rel).or_default().extend(cols);
+        }
+        a.shapes.extend(b.shapes);
+    }
+}
+
+/// A name's place in a helper's columns: its text, a helper's (`rr_<stem><n>`) as its stem and number.
+fn helper_order(v: &str) -> (&str, u64) {
+    if let Some(rest) = v.strip_prefix(RESERVED) {
+        let digits = rest.len() - rest.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        if digits > 0 && digits < rest.len() && let Ok(n) = rest[rest.len() - digits..].parse::<u64>() {
+            return (&v[..v.len() - digits], n);
+        }
+    }
+    (v, 0)
+}
+
+/// `prog`'s helpers named as `rename` says (a module's, numbered when it is linked): relations, and the variables and
+/// columns `fresh` named too.
+fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<String, String>) {
+    let to = |rel: &str| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
+    fn term(t: &mut Term, rename: &std::collections::HashMap<String, String>) {
+        match t {
+            Term::Var(v) => {
+                if let Some(r) = rename.get(v.as_str()) {
+                    *v = r.clone().into();
+                }
+            }
+            Term::Call(_, args) => args.make_mut().iter_mut().for_each(|a| term(a, rename)),
+            _ => {}
+        }
+    }
+    let atom = |a: &mut Atom| {
+        if let Some(r) = rename.get(a.rel.as_str()) {
+            a.rel = r.clone().into();
+        }
+        a.args.make_mut().iter_mut().for_each(|t| term(t, rename));
+    };
+    for rule in &mut prog.rules {
+        atom(&mut rule.head);
+        for l in rule.body.make_mut() {
+            match l {
+                Literal::Atom(a) => atom(a),
+                Literal::Agg { atom: a, var, over, .. } => {
+                    atom(a);
+                    *var = to(var);
+                    if let Some(o) = over {
+                        *o = to(o);
+                    }
+                }
+                Literal::Nearest { kindset, n, a } => {
+                    *kindset = to(kindset);
+                    *n = to(n);
+                    *a = to(a);
+                }
+                Literal::Cmp { l, r, .. } => {
+                    term(l, rename);
+                    term(r, rename);
+                }
+                Literal::Ast { document, node, captures, .. } => {
+                    *document = to(document);
+                    *node = to(node);
+                    for (_, v) in captures.iter_mut() {
+                        *v = to(v);
+                    }
+                }
+            }
+        }
+    }
+    let keyed = |m: &mut BTreeMap<String, _>| *m = std::mem::take(m).into_iter().map(|(k, v)| (to(&k), v)).collect();
+    keyed(&mut prog.facts);
+    prog.decls = std::mem::take(&mut prog.decls).into_iter().map(|(k, v)| (to(&k).into(), v.iter().map(|(c, t)| (to(c).into(), t.clone())).collect())).collect();
+    prog.lattice = std::mem::take(&mut prog.lattice).into_iter().map(|(k, v)| (to(&k), v)).collect();
+    prog.kindsets = std::mem::take(&mut prog.kindsets).into_iter().map(|(k, v)| (to(&k), v)).collect();
+    prog.qualifiers = std::mem::take(&mut prog.qualifiers).into_iter().map(|(k, v)| (to(&k), v)).collect();
+    prog.tapes = std::mem::take(&mut prog.tapes).into_iter().map(|(k, v)| (to(&k), v)).collect();
+    prog.natives = std::mem::take(&mut prog.natives)
+        .into_iter()
+        .map(|(k, mut n)| {
+            n.rename_reads(to);
+            (to(&k), n)
+        })
+        .collect();
+    prog.nullary = std::mem::take(&mut prog.nullary).into_iter().map(|r| to(&r)).collect();
+    for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
+        for r in list.iter_mut() {
+            *r = to(r);
+        }
+    }
+    for shape in &mut prog.shapes {
+        shape.head = to(&shape.head);
+        shape.lit = to(&shape.lit);
+        if let crate::code_rule_dsl::logic::front::ShapeWait::After(a) = &mut shape.wait {
+            *a = to(a);
+        }
+    }
+}
+
+/// The lowering half that needs the whole program (decision 0246 §1, "whole program, at link time"): the findings'
+/// rules, `declare_core`, projections, kind sets, boolean relations, `front::finish`, aggregate demand, removing
+/// repeated rules and literals, and widening cyclic contexts, over `modules` together.
+pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
+    let mut modules = modules.into_iter();
+    let Some(Module { mut l, .. }) = modules.next() else { return Ok(Program::default()) };
+    for m in modules {
+        l.append(m);
+    }
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
@@ -689,6 +1134,7 @@ impl Lowerer {
             self.next += 1;
             let name = format!("rr_{stem}{}", self.next);
             if !self.prog.decls.contains_key(name.as_str()) {
+                self.made.push((stem.to_owned(), self.next));
                 return name;
             }
         }
@@ -3322,7 +3768,11 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
+        // In order of name, a helper's (`rr_any12`) by its number: linking renumbers a module's helpers after the
+        // modules before it (decision 0246 §2), which keeps the order of numbers, not of their digits.
+        let mut ordered: Vec<String> = inner.iter().cloned().collect();
+        ordered.sort_by(|a, b| helper_order(a).cmp(&helper_order(b)));
+        let cols: Vec<String> = ordered.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         if let Some(v) = over.iter().chain(&by).find(|v| !cols.contains(v)) {
             return Err(Error::Syntax(format!("{agg}: {v} is not bound in its body")));
         }
@@ -3356,7 +3806,7 @@ impl Lowerer {
             // The context holds every variable the body shares with the rule, those the body binds too: projected on
             // the tested ones alone (`ctx(j)`), it crossed every row of the body (`child(al, a, k)`, every argument of
             // every call) with every j of the rule, 20.6M rows for 4,133 counts on 50 files.
-            let shared: Vec<String> = inner.iter().filter(|v| outer.contains(*v)).cloned().collect();
+            let shared: Vec<String> = ordered.iter().filter(|v| outer.contains(*v)).cloned().collect();
             let span_subject = body.iter().any(|l| matches!(l, Lit::Atom { rel, args, .. } if matches!(rel.as_str(), "match_all" | "match") && matches!(args.get(1), Some(STerm::Var(v)) if needed.contains(v))));
             self.span_context = span_subject;
             let ctx = self.context(&shared);

@@ -3611,3 +3611,69 @@ fn has_over_a_guest_holds_with_two_programs() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
 }
+
+/// Decision 0246 §1: a pack's library lowered one module at a time, each module against the modules it reaches, and
+/// linked, is the program lowering its files as one gives. Every pack's library, in the order a run of the pack
+/// lists its files (each program's includes first).
+#[test]
+fn library_modules_link_to_the_lowering_of_them_together() {
+    let packs = crate::code_rule_dsl::logic::rr::library().join("../packs");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    let mut checked = 0;
+    for dir in dirs {
+        let mut programs: Vec<PathBuf> = walk_rr(&dir);
+        programs.sort();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for p in &programs {
+            let Ok(src) = std::fs::read_to_string(p) else { continue };
+            let Ok(Some(m)) = modules(&src) else { continue };
+            for (path, _, _) in m.files {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+        if paths.is_empty() {
+            continue;
+        }
+        let files: Vec<(PathBuf, Vec<syntax::Statement>)> = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect())).collect();
+        let together = lower::lower(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        // Each module read back from its image (decision 0246 §6) links to the same program.
+        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        let linked = lower::link(modules).unwrap();
+        let from_images = print(&lower::link(images).unwrap()).unwrap();
+        let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
+        let differ = |what: &str, a: &str, b: &str| {
+            let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+            let first = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
+            // The lines one side has and the other not, helper numbers aside (`rr_agg169` and `rr_agg167` are one).
+            let plain = |l: &str| l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { w.trim_end_matches(|c: char| c.is_ascii_digit()) } else { w }).collect::<Vec<_>>().join(" ");
+            let (sa, sb): (BTreeSet<String>, BTreeSet<String>) = (la.iter().map(|l| plain(l)).collect(), lb.iter().map(|l| plain(l)).collect());
+            let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(30).cloned().collect::<Vec<_>>().join("\n    ");
+            panic!("{}: {} files; {what} differs at line {first} ({} lines and {}):\n  {:?}\n  {:?}\n  only the first:\n    {}\n  only the second:\n    {}", dir.display(), paths.len(), la.len(), lb.len(), la.get(first), lb.get(first), only(&sa, &sb), only(&sb, &sa));
+        };
+        if a != b {
+            differ("the library linked from its modules, from the one lowered together,", &a, &b);
+        }
+        if b != from_images {
+            differ("the library linked from its modules' images, from the one linked from its modules,", &b, &from_images);
+        }
+        checked += 1;
+    }
+    assert!(checked > 5, "{checked} packs with a library");
+}
+
+fn walk_rr(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk_rr(&p));
+        } else if p.extension().is_some_and(|x| x == "rr") {
+            out.push(p);
+        }
+    }
+    out
+}
