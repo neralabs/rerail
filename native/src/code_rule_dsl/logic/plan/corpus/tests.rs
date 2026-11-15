@@ -1082,6 +1082,10 @@ fn the_run_after_a_cold_one_writes_nothing() {
     std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
+    // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
+    // them inside it made the warm run's writes (the answers, the manifest, the statistics).
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
     let store = base.join("store.sqlite");
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();

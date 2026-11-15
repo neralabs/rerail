@@ -1851,6 +1851,13 @@ impl Drop for UsedStore {
     }
 }
 
+/// Whether the process names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
+/// one and not their own copy (`test_store::carried`).
+#[cfg(any(test, feature = "test-hooks"))]
+fn names_its_store() -> bool {
+    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.read().expect("the process's store").is_some()
+}
+
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(any(test, feature = "test-hooks"))]

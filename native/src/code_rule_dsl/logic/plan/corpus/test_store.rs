@@ -210,12 +210,14 @@ thread_local! {
 /// started it, not the process's.
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     let named = std::thread::current().name().is_some_and(|n| n.contains("::"));
-    // The store this thread's runs use: the one its test names (`TEST_TAPE_CACHE`), else the one it was handed, else
-    // its own.
+    // The store this thread's runs use (`tape_cache_path`'s order): the one its test names (`TEST_TAPE_CACHE`), else
+    // the one it was handed, else the process's when it names one (`RERAIL_TAPE_CACHE`, `use_store`: the job's runs
+    // find it themselves), else its own. Handed its own over the process's, a job wrote a fresh copy where the test's
+    // runs read the named store.
     let mine = super::TEST_TAPE_CACHE
         .with(|p| p.borrow().clone())
         .or_else(|| handed())
-        .or_else(|| named.then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
+        .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }
 

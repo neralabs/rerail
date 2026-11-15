@@ -71,6 +71,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "KEPT", Thread, "dialects by grammar: any thread's gives the same"),
     ("src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/logic/costs.rs", "READING", Thread, "the cost statistics' read runs on this thread: it never waits for itself"),
     ("src/code_rule_dsl/logic/derived.rs", "MEMO", Carried, ""),
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
     ("src/code_rule_dsl/logic/lanes.rs", "DEFERRED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
