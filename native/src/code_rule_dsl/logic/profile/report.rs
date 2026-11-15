@@ -254,7 +254,9 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
-    // The report.
+    // The report. The process's life (`life`) as it begins: put after the header once the report's own work is known.
+    let life = super::life::now();
+    let mut after: Vec<(String, f64, f64)> = Vec::new();
     let mut r = String::new();
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
@@ -350,7 +352,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             j.0 += work(steps) + made;
             j.1 += made;
         }
-        roofline::report(&mut r, &own, &charged, &joins);
+        let (wall, cpu, what) = roofline::report(&mut r, &own, &charged, &joins);
+        after.push((what, wall, cpu));
     }
 
     let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
@@ -545,6 +548,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     for (k, v) in state.notes.iter().filter(|(k, _)| !k.starts_with("plan:")) {
         let _ = writeln!(r, "{k}: {}", short(v, 600));
     }
+    r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
 }
 
