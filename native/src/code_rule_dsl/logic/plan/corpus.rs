@@ -7567,7 +7567,9 @@ fn run_observed(
         }
     }
     // The run ends with its writes in the store: what the writer did beside the run, and the first write that failed
-    // (decision 0102).
+    // (decision 0102). A phase's run (phase 1's, inside the run) leaves its writes queued: the store's one writer
+    // writes them behind the outer run, whose end waits for them and reports the first that failed (decision 0240).
+    // Nothing the outer run reads waits for them: a queued write is read from memory until it is written.
     if durable.is_some() {
         let waited = crate::code_rule_dsl::logic::profile::span(|| "the store's writer, the run's last writes".into());
         // The run's atoms still pending, appended by the writer with its last writes: none pending, no job (a warm
@@ -7576,7 +7578,7 @@ fn run_observed(
             store.queue_atoms_flush();
         }
         let drain = std::time::Instant::now();
-        let outcome = store.written();
+        let outcome = if phases::in_phase() { Ok(()) } else { store.written() };
         if std::env::var_os("RERAIL_WRITES").is_some() {
             eprintln!("RERAIL_WRITES drain {:.3} s ({})", drain.elapsed().as_secs_f64(), phases::current().unwrap_or_else(|| "main".to_owned()));
         }
@@ -7597,7 +7599,7 @@ fn run_observed(
         let text = || kinds.iter().map(|(k, n, b, c)| format!("{k}: {n} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect::<Vec<_>>().join("; ");
         crate::code_rule_dsl::logic::profile::decision("write-back by kind, this process so far (decision 0102)", text);
         if std::env::var_os("RERAIL_WRITES").is_some() {
-            eprintln!("RERAIL_WRITES {}", text());
+            eprintln!("RERAIL_WRITES queue peak {:.1} MB, producers held {} times ({:.3} s); {}", peak as f64 / 1048576.0, held.0, held.1, text());
         }
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }

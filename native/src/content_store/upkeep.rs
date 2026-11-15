@@ -1,6 +1,8 @@
 //! The store's upkeep jobs (decision 0190 §4): a SQLite file kept small and its statistics fresh ([`SqliteFile`]),
 //! and the store's collection ([`Collect`]), each a `rerail_accel::upkeep::Job`.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{CapacityState, ContentStore, CorpusPolicy};
 use rerail_accel::upkeep::{Due, Job, Slice, Step};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -181,7 +183,7 @@ impl Job for SqliteFile {
             self.work.checkpoint = true;
         } else if self.work.checkpoint {
             // TRUNCATE waits for no reader (busy: it checkpoints what it can, and is tried again at a later poll).
-            let busy: i64 = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).map_err(err)?;
+            let busy: i64 = db.query_row_cached("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).map_err(err)?;
             self.work.checkpoint = false;
             if busy != 0 {
                 return Ok(Step::Done);
@@ -267,7 +269,7 @@ mod tests {
         .unwrap();
         let tx = db.unchecked_transaction().unwrap();
         for i in 0..20_000 {
-            tx.execute("INSERT INTO rows(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
+            tx.execute_cached("INSERT INTO rows(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
         }
         tx.commit().unwrap();
         db.execute_batch("DELETE FROM rows WHERE k % 4 != 0; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
@@ -303,7 +305,7 @@ mod tests {
             let tbls: Vec<String> = db.prepare("SELECT DISTINCT tbl FROM sqlite_stat1").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
             assert!(!tbls.contains(&"facts".to_string()), "{tbls:?}");
             assert!(tbls.contains(&"rows".to_string()), "{tbls:?}");
-            assert_eq!(db.query_row("PRAGMA auto_vacuum", [], |r| r.get::<_, i64>(0)).unwrap(), 2, "{auto}: incremental after");
+            assert_eq!(db.query_row_cached("PRAGMA auto_vacuum", [], |r| r.get::<_, i64>(0)).unwrap(), 2, "{auto}: incremental after");
             assert_eq!(job.due(), Due::No);
         }
     }

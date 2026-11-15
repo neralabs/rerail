@@ -19,6 +19,8 @@
 //! A run is the outermost run (its token): the programs of one run that keep frames in one space (a phase's, P3's
 //! cross part, its loading cone) each mark what they used, and the space counts the run once.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{ContentStore, StoreResult};
 use rusqlite::{OptionalExtension as _, params};
 use std::collections::{HashMap, HashSet};
@@ -427,7 +429,7 @@ impl ContentStore {
     pub fn preload_frames_live(&self) -> StoreResult<(usize, usize)> {
         let spaces: Vec<[u8; 32]> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let has: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='corpus_plans'", [], |r| r.get(0))?;
+            let has: i64 = connection.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='corpus_plans'", [], |r| r.get(0))?;
             if has == 0 {
                 Vec::new()
             } else {
@@ -544,7 +546,7 @@ impl ContentStore {
             return Ok(snapshot.lock().expect("the frames' snapshot").confirmed.get(space).cloned().unwrap_or_default());
         }
         let connection = self.connection.lock().expect("content store mutex poisoned");
-        let row: Option<Vec<u8>> = connection.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
+        let row: Option<Vec<u8>> = connection.query_row_cached("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
         Ok(row.as_deref().map(decode_confirmed).unwrap_or_default())
     }
 
@@ -875,9 +877,9 @@ impl ContentStore {
             snapshot.lock().expect("the frames' snapshot").remove(space);
         }
         self.immediate_transaction_once(|t| {
-            let n = t.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
-            t.execute("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
-            t.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+            let n = t.execute_cached("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+            t.execute_cached("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
+            t.execute_cached("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
             Ok(n)
         })
     }
@@ -1107,8 +1109,8 @@ impl ContentStore {
             let run = match used {
                 Some((_, token, _)) => count_run(t, space, token)?,
                 None => {
-                    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
-                    t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
+                    t.execute_cached("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+                    t.query_row_cached("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
                 }
             };
             // Forked (decision 0170): the frames were encoded as they were made, in this process's ids; their symbol
@@ -1161,7 +1163,7 @@ impl ContentStore {
             // delta's head or forgotten here loses its confirmation in the same transaction: a confirmation never
             // vouches for rows written after it.
             if !(retags.is_empty() && rows.is_empty() && heads.is_empty() && gone.is_empty()) {
-                let was: Option<Vec<u8>> = t.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
+                let was: Option<Vec<u8>> = t.query_row_cached("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
                 if was.is_some() || !retags.is_empty() {
                     let mut map = was.as_deref().map(decode_confirmed).unwrap_or_default();
                     let before = map.clone();
@@ -1401,11 +1403,11 @@ pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
 
 /// The run of `space` that run `token` is: counted once per token (`0`: a run of its own, counted each time).
 fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
-    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
-    let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+    t.execute_cached("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+    let run: i64 = t.query_row_cached("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
     let mut counted = counted().lock().expect("the spaces' counted runs");
     if token == 0 || counted.get(space) != Some(&token) {
-        t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
+        t.execute_cached("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
         counted.insert(*space, token);
         return Ok(run + 1);
     }

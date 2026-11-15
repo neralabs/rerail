@@ -1,5 +1,7 @@
 //! The content store's SQLite schema: one current, idempotent DDL.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
@@ -759,7 +761,7 @@ impl ContentStore {
                 super::frames::forget_snapshot(path);
             }
         }
-        let id: Option<i64> = connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
         if let Some(id) = id {
             return Ok(id);
         }
@@ -770,7 +772,7 @@ impl ContentStore {
                 .spawn(|| -> StoreResult<()> {
                     super::hazards::behind_the_run();
                     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    transaction.execute("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    transaction.execute_cached("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
                     transaction.commit()?;
                     Ok(())
                 })
@@ -780,7 +782,7 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
+        Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
 }
 

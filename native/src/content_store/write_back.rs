@@ -22,6 +22,8 @@
 //! otherwise, or stays busy past the deadline, leaves the store as a cache that lacks that write:
 //! the next run misses and recomputes, as when the write never happened. Its error is reported at
 //! `written`.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;
@@ -159,14 +161,16 @@ enum Run {
 /// in about one transaction.
 const BATCH_IDLE: Duration = Duration::from_millis(500);
 
-/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
+/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it. Of
+/// the cap in force: with `RERAIL_WRITE_QUEUE_MB` under the default, a batch of half the default never committed
+/// before the queue was full, and every large job waited for `BATCH_IDLE`.
 fn batch_bytes() -> usize {
-    cap_bytes_default() / 2
+    cap_bytes() / 2
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
 fn small_job() -> usize {
-    cap_bytes_default() / 64
+    cap_bytes() / 64
 }
 
 struct Lane {
@@ -419,19 +423,22 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
         // come while it checkpoints are one.
-        let (told, tells) = mpsc::channel::<()>();
+        let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
             while tells.recv().is_ok() {
                 while tells.try_recv().is_ok() {}
                 let Ok(connection) = checkpointer.connection.lock() else { break };
-                if let Err(e) = connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
+                if let Err(e) = connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
                     eprintln!("rerail: the store's checkpoint failed: {e}");
                 }
             }
         })
         .expect("the store's checkpoint thread");
+        // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
+        // files after its owner removed them.
+        let mut checkpoints = Some(checkpoints);
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
@@ -441,7 +448,14 @@ impl ContentStore {
                 }
                 let mut next: Option<Queued> = None;
                 loop {
-                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else {
+                        // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
+                        drop(std::mem::replace(&mut told, mpsc::channel().0));
+                        if let Some(c) = checkpoints.take() {
+                            let _ = c.join();
+                        }
+                        break;
+                    };
                     let before = thread_cpu();
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
@@ -456,7 +470,7 @@ impl ContentStore {
                         continue;
                     }
                     // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
-                    // `batch_bytes`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    // `batch_bytes()`, or a job comes that runs alone (a wait for the writer sends one: `written`).
                     let mut batch = vec![first];
                     let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
                         let mut outcomes = Vec::new();
@@ -526,10 +540,6 @@ impl ContentStore {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
                 }
-                // The checkpointer ends with the writer: the last handle's drop (which joins this thread) returns
-                // with no connection of the store's left open, so the store's files may be moved or removed then.
-                drop(told);
-                let _ = checkpoints.join();
             })
             .expect("the store's writer thread");
         Lane { tx, thread }

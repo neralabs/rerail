@@ -33,6 +33,8 @@
 //! holds its committed blob's bytes. Its digest is the blob's, when the store has seen those bytes before
 //! (`git_alias`): a fresh clone or another worktree of the same repository is then not hashed.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
@@ -710,7 +712,7 @@ impl Observer {
                         let _ = one.execute([l.to_string_lossy()]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();
@@ -820,7 +822,7 @@ impl Observer {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
-                let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
+                let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
             });
         }
     }
@@ -923,7 +925,7 @@ impl Observer {
                         let _ = drop_key.execute([key]);
                     }
                     if let Some((key, cursor)) = at {
-                        let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                        let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
                     }
                 }
                 let _ = tx.commit();

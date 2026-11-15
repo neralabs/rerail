@@ -18,6 +18,8 @@
 //! beside the database (`<db>-atoms.lock`), which the operating system releases when its process
 //! dies. A process that waits for it holds a shared lock on `<db>-atoms.want`; the holder sees that
 //! at its next interning and flushes, which gives the lease back.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{StoreError, StoreResult};
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{Connection, OptionalExtension, ffi};
@@ -554,7 +556,7 @@ fn key_segments(connection: &Connection) -> StoreResult<()> {
     }
     keys.sort_unstable();
     super::bounded_insert::insert(connection, "INSERT OR IGNORE INTO atom_key(h, id)", "", keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h), rusqlite::types::Value::Integer(id)]))?;
-    connection.execute("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
+    connection.execute_cached("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
     Ok(())
 }
 
@@ -639,7 +641,7 @@ impl Atoms {
     }
 
     fn identity_read(connection: &Connection) -> rusqlite::Result<Option<i64>> {
-        let store: bool = connection.query_row(
+        let store: bool = connection.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'store_identity')",
             [],
             |row| row.get(0),
@@ -647,7 +649,7 @@ impl Atoms {
         if !store {
             return Ok(None);
         }
-        connection.query_row("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
+        connection.query_row_cached("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
     }
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
@@ -1016,7 +1018,7 @@ impl Atoms {
                             };
                             let c = rusqlite::Connection::open(&path)?;
                             c.busy_timeout(std::time::Duration::from_secs(60))?;
-                            c.execute("ATTACH ?1 AS donor", [&donor])?;
+                            c.execute_cached("ATTACH ?1 AS donor", [&donor])?;
                             c.execute_batch("BEGIN IMMEDIATE")?;
                             let held: std::collections::HashSet<String> = strings(&c, "main")?.into_iter().collect();
                             let mut seen = std::collections::HashSet::new();
@@ -1028,9 +1030,9 @@ impl Atoms {
                                     bytes.extend_from_slice(t.as_bytes());
                                     ends.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                                 }
-                                c.execute("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
+                                c.execute_cached("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
                             }
-                            let end: i64 = c.query_row("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
+                            let end: i64 = c.query_row_cached("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
                             c.execute_batch("COMMIT")?;
                             Ok((fresh.len(), end))
                         })
@@ -1442,7 +1444,7 @@ impl Atoms {
             return Ok(complete);
         }
         if !held() {
-            let bytes = self.with_reader(|connection| Ok(connection.query_row("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
+            let bytes = self.with_reader(|connection| Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
             if bytes as usize <= READ_WHOLE {
                 self.read_all()?;
             }
