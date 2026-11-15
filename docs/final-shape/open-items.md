@@ -5166,3 +5166,21 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
+
+## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
+
+Status: open. Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
+with the eager oracle (`RERAIL_NODE_SOURCES=eager`) and none on request, the default. In a combined run the
+answer rule for `value` runs in the cross-file part: its request `rr_value_req` has 592 rows and
+`$x1 = @rr_node_value($x0)` gives none, because `node_value_any` and `held_text` read the batch's texts, and a
+chunk's batch is gone by then. The same holds before and after 6cd50a2b4 (the requests made over the combined
+program). Ways out: answer a cross-file request from the documents loaded for it (0145's load), keep the
+batches the cross-file part asks of, or keep answers file-local. Until then E32 runs with the eager oracle.
+
+## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
+
+Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
+against 8.6 s over 10 (15.6× the lines), and the run's last part is a single `run_seed` →
+`run_join_in_each` on one stream worker while the others wait. Warm, the same evaluation's joins are 5.8 s
+in all. Next: one cold run with `RERAIL_STRATA_TRACE` to name the stratum, then its plan cold against warm
+(a plan made without the kept statistics is the likely cause).

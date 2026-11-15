@@ -1344,6 +1344,145 @@ with XF's. What the slot rule buys is the point parent, 10–20% faster. The poi
 of a rule's CPU (step 9), so that is 0.06–0.34%, against up to 1.6% more disk. So `FIT` stays 0,
 the E16 rule, with the curve above on record if point parents ever weigh more.
 
+### Step 24: what real rule packs evaluate (E32)
+
+The costs so far were per primitive. Which primitives a rule mix actually calls, how often and over
+how many rows, decides which costs matter. E32 runs two real packs over small real samples, most
+in a few seconds and the largest in under two minutes, and records what the engine evaluated: the pack's static composition, each join's
+literals and rows, the tape relations read, the text functions, the phases and the placement.
+
+**The runs.** Strict SQL (decision 0104) on every run. Node attributes are made eagerly
+(`RERAIL_NODE_SOURCES=eager`, 0174's oracle): on request, the default, loses findings when the
+asker is cross-file (O-cross-file-answers). Each run is cold (a new store, profiled, or not where the
+profile would pass the time cap), warm (the same store, profiled) and timed (the same store, no
+profile: the profile's own writing costs about 25 s of CPU after a cold run). The scripts are in
+`native/lab/tape16/scripts/e32` (`run.sh`, `static.py`, `analyze.py`).
+
+- **python:** rerail's python pack, 317 rules (`docs/rule-syntax/packs/python`), over 1, 10 and 50
+  files of the bench corpus0 (61, 2,218 and 13,734 lines).
+- **data-layer:** the gate's data-layer candidates, 75 rules (`gate/data-layer/packs/data-layer/candidates/rr`),
+  over every k-th `impl/*.py` of the data-layer repository: 10 files (1,508 lines) and 50 (23,491).
+
+```text
+run                 CPU s cold   CPU s warm   peak MB   findings
+                    (no profile) (no profile) (cold)
+python, 1 file          -            1.6         440         0
+python, 10 files         -           1.7         568         7
+python, 50 files       18.0          0.7         902        63
+data-layer, 10 files    8.6          2.9         458        36
+data-layer, 50 files  100.4          1.0         927        75
+```
+
+The python cold runs over 1 and 10 files were profiled only, so they have no cold figure here.
+"Warm" is the same inputs again, so a warm run without a profile mostly finds its outputs kept. The
+data-layer pack's cold cost is 4–6 ms of CPU a line, the python pack's 1.3. At 50 files the last
+part of the cold run is one seed join on one worker while the others wait (`sample`; the stack
+does not name the stratum), and no join stands out at 10 files: a stratum that grows faster than
+linearly cold, likely planned without the statistics a warm run has (O-cold-seed-join).
+
+**Static composition** (`static.py`: per rule, with the library files it includes).
+
+```text
+                                  python (317)          data-layer (75)
+library files a rule pulls in     median 8              median 5, max 10
+clauses with the library          median 613            median 435, p90 580, max 829
+body literals with the library    median 1,951          median 1,357, max 2,693
+the rule's own clauses            median 2, p90 8       median 21, p90 85, max 239
+the pack as one program           1,019 own clauses,    2,823 own clauses,
+                                  43 library files,     17 library files,
+                                  1,522 library clauses 1,046 library clauses
+```
+
+A python rule is a few clauses over a large shared library. A data-layer rule is a program of its
+own (61 of 75 have recursion, 68 negation, 61 aggregates) over a smaller one.
+
+**What was evaluated (cold, 10 files).** Rows of work are the bindings reaching each step.
+
+```text
+                                  python, 10 files      data-layer, 10 files
+native joins                      6,087 in 3,533 strata 6,776 in 3,836 strata
+rows of work                      10.8 M                4.8 M
+CPU in the joins                  0.66 s of 11.2 s      0.37 s of 8.0 s
+file-local share of the work      93%                   93%
+owner: library / rule / cones     62% / 36% / 2%        34% / 60% / 6%
+literals a join                   median 3, p90 10      median 3, p90 8
+rules' work (own strata)          median 104, max 600k  median 7,267, max 413k
+```
+
+Rows in by literal class:
+
+```text
+                  python    data-layer
+bound              23%        27%       a binding of the bound program (0058)
+scope              19%        24%       the run's scoping
+cmp                18%        10%
+base (tape)        16%        18%
+derived            11%        10%
+neg                11%         8%
+fn                  2%         2%
+agg                 0%         0%
+```
+
+The tape relations, by rows in (base reads, positive and negated):
+
+```text
+python, 10 files                      data-layer, 10 files
+kind          1,189,012  (2,823 steps)  kind        295,445  (2,001 steps)
+node_order      147,519                 text        147,460
+child           131,054                 child        58,651
+text            126,802                 src_line     51,416
+field            71,821                 within       48,883
+within           59,366                 field        42,099
+nearest(set)     45,002                 docof        30,592
+line             25,844                 node_order   27,806
+docof            13,733                 nearest(set) 26,203
+                                        long text    23,017
+```
+
+At 50 files (data-layer, the warm run profiled, which evaluates again): 74.8 M rows of work in
+4,970 joins over 2,643 strata, 5.8 s of CPU in the joins out of 15.7 s for the process. The shares
+hold: bound 28%, scope 21%, base 18%, cmp 14%; `kind` 4.0 M rows in, `text` 1.8 M, `src_line`
+1.6 M, `within` 0.9 M, `docof` 0.8 M, `child` 0.8 M; the median rule 155k rows. The GPU was rated
+cheaper for 490 strata there, and took none.
+
+Text functions by rows in: python's are `@equals` (37k), `@cat`, `@contains`, `@suffix`, `@prefix`;
+data-layer's `@glob` (16k), `@rr_node_text`, `@rx` (14k), `@contains`, `@equals`, `@replace_all`.
+
+**Where the time goes.** In the joins: 0.4–0.7 s of 8–11 s of cold CPU. The rest is making the
+program: combining the rule files (0.9–1.5 s), preparing it (prune, simplify, demand; pushing the
+file-local joins into the chunks: 0.9–1.2 s), lowering the rules, bounding the combined program
+(0.2–0.7 s), and the store writer's frames and programs. Warm, with the program and frames kept,
+the same runs take 1.6–2.9 s of CPU.
+
+**Placement.** No stratum ran on the GPU. The cost model rated it cheaper for 111 (python) and 59
+(data-layer) strata, which it cannot take: they need a computed term (104 and 253 strata) or a
+string join (9 and 17).
+
+**What this says for costing the tape.**
+- The tape's reads are `kind` first, by far: 11% of every row a python join reads, 6% of the
+  data-layer's, with 2,000–2,800 steps. The point questions that follow are structure (`child`,
+  `field`, `node_order`), text and the bulk primitives (`within`, `nearest` over a kind set).
+  `inside` and `has` (74 and 70 uses in the library and the rules) are lowered to climbs, which
+  run as derived relations, so the tables above count them as `derived`, not as tape reads. No
+  rule asks for the outermost. A bulk `has` or `inside` primitive would replace those climbs, so
+  their rows are the next thing to measure.
+- At 10 files, joins are 5–7% of a cold run's CPU; at 50 data-layer files, 37% of a run that
+  evaluates again. A primitive twice as fast moves a small cold run by under 3% and a larger
+  evaluation by up to a fifth: the share grows with the corpus, while making the program does not.
+- The python mix is wide and shallow: 253 rules with strata of their own, the median at 104 rows.
+  The data-layer mix is narrow and deep: 68 rules, the median at 7,267 rows. A mix for costing
+  should keep both shapes.
+- The GPU's blockers are the computed term and the string join, not the tape.
+
+**Engine fixes the runs needed.** The packs as they stand did not run strict on this branch:
+- the module images of 0246 stage 2 were written on the run's thread (833b39446);
+- node attributes on request were made per part, not over the combined program, and PYI062 with
+  PYI059 was not stratifiable (6cd50a2b4);
+- two library names clashed between data-layer and python files (2fa7e21df);
+- three strata the native engine declined: a head `@dot` with a computed part, `dfs_first_memo`
+  and `match_all` over held relations (they read and wrote tables), and an ordered comparison
+  with an extremum's value (89c0c7c1c).
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -1541,3 +1680,8 @@ In order. Each step is measured on all three corpora, every answer checked.
     by a bounded climb take format 16's bulk work level with XF's or faster, at no bytes. A leaf slot
     naming short parent distances (fit to 15) makes the point parent 10–20% faster for up to 1.6%
     more disk; measured and not taken (`FIT` = 0).
+24. **Real rule mixes (E32).** Done: the python pack (317 rules) and the data-layer candidates (75)
+    over small real samples, strict, with what each evaluated. Joins are 5–7% of a small cold run's
+    CPU and 37% of a 50-file evaluation;
+    the tape's reads are `kind` first, then structure, text, `within` and `nearest`. Next: the climbs
+    `inside` and `has` lower to, measured as the bulk primitives that would replace them.
