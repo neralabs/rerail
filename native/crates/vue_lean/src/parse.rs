@@ -77,6 +77,8 @@ struct P<'a> {
     b: &'a Blocks<'a>,
     w: Writer<Widths>,
     open: Vec<Open>,
+    /// The open tags' size as the scanner serializes them (`tags::serialized_size`).
+    serialized: usize,
     frames: Vec<Frame>,
     /// The open gap's tokens: kind, from, to.
     pending: Vec<(K, u32, u32)>,
@@ -97,6 +99,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             b: &b,
             w: Writer::new(0, widths, src.len() / 4 + 16),
             open: Vec::new(),
+            serialized: tags::SERIALIZED_EMPTY,
             frames: Vec::new(),
             pending: Vec::new(),
             at: 0,
@@ -287,8 +290,15 @@ impl<'a> P<'a> {
 
     /// The innermost element ended implicitly, at `at` (a token of no width there).
     fn end_implicitly(&mut self) -> R<()> {
-        let o = self.open.pop().expect("an open element");
+        let o = self.pop();
         self.close(o.node, self.at)
+    }
+
+    /// The innermost open element, taken off the stack.
+    fn pop(&mut self) -> Open {
+        let o = self.open.pop().expect("an open element");
+        self.serialized -= tags::serialized_size(o.ty, (o.name.1 - o.name.0) as usize);
+        o
     }
 
     // ---- The grammar.
@@ -558,7 +568,7 @@ impl<'a> P<'a> {
         self.at += 1;
         self.close(node, self.at)?;
         if closes {
-            let o = self.open.pop().expect("an open element");
+            let o = self.pop();
             self.close(o.node, self.at)?;
         }
         Ok(())
@@ -572,6 +582,11 @@ impl<'a> P<'a> {
         if end == from + 1 {
             // `<` and no name (white space, a digit's absence): the scanner reads none.
             return self.refuse();
+        }
+        // The scanner holds the tag from its name on (a self-closing one too, until its `/>`).
+        let len = end - from - 1;
+        if !tags::serializes(self.serialized, ty, len) {
+            return Err(Refusal::Parse(from as u32));
         }
         let (kind, holds) = match ty {
             tags::SCRIPT => (K::ScriptElement, Holds::Raw),
@@ -592,6 +607,7 @@ impl<'a> P<'a> {
                     self.at += 1;
                     self.close(tag, self.at)?;
                     self.open.push(Open { ty, name: (from as u32 + 1, end as u32), holds, node: element });
+                    self.serialized += tags::serialized_size(ty, len);
                     if holds == Holds::Raw {
                         return self.raw_text(ty);
                     }

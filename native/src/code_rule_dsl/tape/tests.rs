@@ -3827,10 +3827,22 @@ fn html_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["<div>\n", "<p a=\"x>\n", "a > b\n", "<script>x\n", "<!DOCTYPE>\n", "<p>open at the end\n", "</div>\n"] {
+    for invalid in ["<div>\n", "<p a=\"x>\n", "a > b\n", "<script>x\n", "<!DOCTYPE>\n", "<p>open at the end\n", "</div>\n", "<%include file=\"a\"/>\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(html_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
+    // The scanner serializes its open tags into tree-sitter's 1024-byte buffer: 127 custom tags of
+    // six letters fit (4 + 127 × 8 bytes), the 128th comes back nameless and its end tag is an
+    // error. Read to the limit, refused past it.
+    let nested = |k: usize| format!("{}{}", "<abcdef>\n".repeat(k), "</abcdef>\n".repeat(k));
+    let fits = nested(127);
+    let ours = html_lean::encode(&grammar, &fits, &|| false).unwrap_or_else(|why| panic!("refused 127 tags: {why:?}")).unwrap();
+    let tree = parser.parse(&fits, None).unwrap();
+    assert!(!tree.root_node().has_error(), "127 tags read with an error");
+    assert!(ours.to_bytes().unwrap() == TapeImage::encode(tree.root_node(), &grammar, &fits, &|| false).unwrap().primary.to_bytes().unwrap(), "the tapes of 127 tags differ");
+    let past = nested(128);
+    assert!(parser.parse(&past, None).unwrap().root_node().has_error(), "128 tags read without an error");
+    assert!(html_lean::encode(&grammar, &past, &|| false).is_err(), "accepted 128 tags");
 }
 
 /// The product reads HTML with the lean parser: a file's image through the engine's parse
@@ -4366,6 +4378,11 @@ fn vue_tapes_from_the_lean_parser_are_tree_sitters() {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(vue_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
+    // Past the scanner's 1024-byte serialized state (here 4 + 1 + 128 × 8 bytes) the innermost tag
+    // comes back nameless, and tree-sitter reads its end tag as an `erroneous_end_tag`: refused.
+    let nested = |k: usize| format!("<template>\n{}{}</template>\n", "<abcdef>\n".repeat(k), "</abcdef>\n".repeat(k));
+    assert!(vue_lean::encode(&grammar, &nested(127), &|| false).is_ok_and(|t| t.is_ok()), "refused 127 tags");
+    assert!(vue_lean::encode(&grammar, &nested(128), &|| false).is_err(), "accepted 128 tags");
 }
 
 /// The product reads Vue with the lean parser: a file's documents through the engine's parse
