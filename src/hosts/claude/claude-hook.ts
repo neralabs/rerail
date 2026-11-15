@@ -10,7 +10,7 @@ export { serveHook };
 const { required: requiredText } = hookText("Claude");
 
 /**
- * A session that starts with no daemon to record it, because `RERAIL_AUTOSTART` kept one from starting, says so in the
+ * A session that starts while no daemon runs, because `RERAIL_AUTOSTART` kept the hook from starting one, says so in the
  * line Claude Code shows the person under the session's start (`answerAutostartOff`).
  */
 export async function runClaudeHook(input: HookInput, options: HookOptions = {}): Promise<HookOutput> {

@@ -523,7 +523,7 @@ describe("engine service", () => {
         { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
         { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
       )).toEqual({
-        systemMessage: "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.",
+        systemMessage: "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.",
       });
       // The home holds only the database recording the repository start: no daemon state, log, or start lock.
       expect((await readdir(home)).filter(entry => !entry.startsWith("rerail.sqlite"))).toEqual([]);

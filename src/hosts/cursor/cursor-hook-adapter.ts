@@ -169,12 +169,13 @@ function relayedSteer(content: string, rules: readonly SteerRule[]): string {
 }
 
 /**
- * A session-start answer that tells the person `line` (`answerAutostartOff`'s, that Rerail records nothing in the
- * session): Cursor shows the person nothing from a hook, so the model is asked to relay it, as it relays a steer.
+ * A session-start answer that tells the person `line` (`answerAutostartOff`'s, that Rerail records nothing until its
+ * daemon runs): Cursor shows the person nothing from a hook, so the model is asked to relay it, as it relays a steer.
+ * The model is told no more than the line: a daemon that comes up later in the session checks what follows.
  */
 export function cursorRelayedLine(line: string): CursorHookOutput {
   return {
-    additional_context: `Rerail checks nothing in this session, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:\n${line}`,
+    additional_context: `Rerail checks nothing until its daemon runs, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:\n${line}`,
   };
 }
 

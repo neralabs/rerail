@@ -766,12 +766,14 @@ export class AutostartOffError extends Error {
 }
 
 /**
- * What `rerail status` says when no daemon runs. Under `RERAIL_AUTOSTART=0` it also says that nothing is recorded,
- * since hooks then start no daemon and log nothing about the missing one: that is what the person asked for.
+ * What `rerail status`, and a session's start (`answerAutostartOff`), say when no daemon runs. Under `RERAIL_AUTOSTART=0`
+ * it also says that nothing is recorded until the daemon runs, since hooks then start no daemon and log nothing about
+ * the missing one: that is what the person asked for. It says nothing of later: the one lookup behind it cannot tell
+ * whether a daemon comes up a moment after (a `rerail daemon start` in flight, the daemon's restart at its heap ceiling).
  */
 export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): string {
   return autostartOff(env)
-    ? `The Rerail daemon is not running, and RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.`
+    ? `The Rerail daemon is not running, and RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.`
     : "The Rerail daemon is not running. Start it with rerail daemon start.";
 }
 

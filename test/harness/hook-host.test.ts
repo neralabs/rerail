@@ -465,7 +465,7 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
   });
 
   const notRunning = (setting: string) =>
-    `The Rerail daemon is not running, and RERAIL_AUTOSTART=${setting} keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.`;
+    `The Rerail daemon is not running, and RERAIL_AUTOSTART=${setting} keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.`;
   const sessionStarts: Array<{
     host: "claude-code" | "codex" | "cursor";
     run: (input: HookInput, options: HookOptions) => Promise<HookOutput>;
@@ -478,15 +478,15 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
       host: "cursor", run: runCursorHook,
       input: cwd => ({ workspace_roots: [cwd], conversation_id: "s", hook_event_name: "sessionStart" }),
       told: line => ({
-        additional_context: `Rerail checks nothing in this session, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:\n${line}`,
+        additional_context: `Rerail checks nothing until its daemon runs, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:\n${line}`,
       }),
     },
   ];
 
-  // Nothing is recorded or checked in such a session, and a person who set `false` may not know it keeps the daemon off:
-  // the session's start says so where the person reads it, so they need not run `rerail status` to find out.
+  // Nothing is recorded or checked while no daemon runs, and a person who set `false` may not know it keeps the daemon
+  // off: the session's start says so where the person reads it, so they need not run `rerail status` to find out.
   it.each(sessionStarts.flatMap(start => ["0", "false"].map(setting => ({ ...start, setting }))))(
-    "tells the person in $host that nothing is recorded, with RERAIL_AUTOSTART=$setting",
+    "tells the person in $host that nothing is recorded until the daemon runs, with RERAIL_AUTOSTART=$setting",
     async ({ run, input, told, setting }) => {
       const root = await temporaryDirectory();
       vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -496,6 +496,39 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
       // What the person asked for is no failure, and nothing started a daemon.
       expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
       expect(existsSync(join(process.env.RERAIL_HOME!, "daemon.json"))).toBe(false);
+    },
+  );
+
+  const laterPrompts: Record<(typeof sessionStarts)[number]["host"], (cwd: string) => HookInput> = {
+    "claude-code": cwd => ({ cwd, session_id: "s", hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }),
+    codex: cwd => ({ cwd, session_id: "s", hook_event_name: "UserPromptSubmit", turn_id: "t1", prompt: "hi" }),
+    cursor: cwd => ({ workspace_roots: [cwd], conversation_id: "s", generation_id: "g1", hook_event_name: "beforeSubmitPrompt", prompt: "hi" }),
+  };
+
+  // The start's one lookup found no daemon, and one can come up later in the same session: a `rerail daemon start` that
+  // was in flight, the daemon's own restart at its heap ceiling, or the person following the line. The session's later
+  // events are then recorded, so the start says only what its lookup found, and nothing of the rest of the session.
+  it.each(sessionStarts)(
+    "tells the person in $host only what its lookup found, since a daemon that comes up records the session's later events",
+    { timeout: 20_000 },
+    async ({ host, run, input }) => {
+      const root = await temporaryDirectory();
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+      vi.stubEnv("RERAIL_AUTOSTART", "0");
+      const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+      const said = JSON.stringify(await run(input(root), daemonPath));
+      const engine = await heldEngine(root);
+      engine.answerFirst();
+      try {
+        // The daemon is up by the session's next hook, which finds it and sends its event there.
+        lookups.runningDaemonEngineEndpoint.mockClear().mockResolvedValueOnce({ status: "running", endpoint: { socketPath: engine.socketPath } });
+        await run(laterPrompts[host](root), daemonPath);
+        expect(engine.received.length).toBeGreaterThan(0);
+        expect(said).toContain("nothing is recorded until it runs");
+        expect(said).not.toContain("in this session");
+      } finally {
+        await engine.close();
+      }
     },
   );
 
