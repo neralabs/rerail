@@ -3,6 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Each move the daemon starts runs as it does; the test keeps what each start's call returned, to wait for its end.
+const moves = vi.hoisted(() => ({ started: [] as Array<Promise<number>> }));
+vi.mock("../../src/engine/storage/rule-provenance-move.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/storage/rule-provenance-move.js")>("../../src/engine/storage/rule-provenance-move.js");
+  return {
+    ...actual,
+    moveRuleProvenancesInWorker: (...args: Parameters<typeof actual.moveRuleProvenancesInWorker>): Promise<number> => {
+      const move = actual.moveRuleProvenancesInWorker(...args);
+      moves.started.push(move);
+      return move;
+    },
+  };
+});
+
 import { RerailDaemon } from "../../src/daemon/index.js";
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -33,6 +48,16 @@ function spyOnStderr(): { writes: () => string[] } {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   cleanups.push(() => stderr.mockRestore());
   return { writes: () => stderr.mock.calls.map(([chunk]) => String(chunk)) };
+}
+
+/**
+ * The move the daemon's last start began (`moveRuleProvenancesInWorker`, which the start calls before it returns): how
+ * many audits it took, once it ends, which is also once its thread has ended and what it wrote has reached the log.
+ */
+function lastMove(): Promise<number> {
+  const move = moves.started.at(-1);
+  if (move === undefined) throw new Error("the daemon started no move");
+  return move;
 }
 
 /** What the daemon wrote to its log about its move of audit rule provenance. */
@@ -229,7 +254,7 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(fileState(databasePath).inline).toBe(20);
   }, TEST_MS);
 
-  it("leaves an audit whose provenance in its row is not a JSON array as it is, says so once in its log, and not at the next start", async () => {
+  it("leaves an audit whose provenance in its row is not a JSON array as it is, names it in its log as its move passes it, and not at a start after that move has ended", async () => {
     const { home, databasePath, provenance } = databaseWithInlineAudits({ audits: 600, rules: 20 });
     // Only a damaged file or a hand edit leaves such text in an audit's row: the CHECK on audits refuses it on insert.
     const damaged = "older-300";
@@ -244,14 +269,17 @@ describe("the daemon's move of audit rule provenance", () => {
 
     const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
     cleanups.push(() => daemon.close());
-    await until(() => fileState(databasePath).inline === 1 && walEmpty(databasePath));
+    await expect(lastMove()).resolves.toBe(599);
     await daemon.close();
+    // The next start's move ends before that daemon closes, so a line it wrote is counted below: a start that took the
+    // left audit for one to move would start a move, which names it again once its first batch reaches it.
     const next = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
     cleanups.push(() => next.close());
+    await expect(lastMove()).resolves.toBe(0);
     await next.close();
 
-    // One line, naming the audit, with no stack, and no failure: a batch that failed on it ended the move there, with a
-    // failure and its stack at every start.
+    // One line over both starts, naming the audit, with no stack, and no failure: a batch that failed on it ended the
+    // move there, with a failure and its stack at every start.
     const left = log.writes().filter(write => write.includes(`leaves audit ${damaged} as it is`));
     expect(left).toHaveLength(1);
     expect(left[0]).toMatch(/^rerail: .+: moving the rule provenance of audits .+ leaves audit older-300 as it is: [^\n]+\.\n$/u);
