@@ -48,3 +48,18 @@ the first run that needs it and kept in a store that every project on the same e
   their scope's). Those go to the build's store and are shared by every project.
 - Stage 5 of 0246, preparation derived from the linked library, can take its base from the bundle. Preparation
   done once per build ships too.
+
+## Measured (2026-11-15)
+
+The Python pack, one file, a fresh project store, release, one thread, M3 Max. The bundle holds 362 images
+(the library's modules, the linked library, 317 programs, and the combined program's entry and image): 10.0 MB.
+
+| Run | Combining | Preparing | The whole run |
+|---|---|---|---|
+| No bundle, a fresh store for the build | 9.38 G | 9.32 G | 38.74 G instructions, 2.91 s |
+| No bundle, the build's store holding the images (a second project) | 5.79 G | 9.34 G | 35.16 G, 2.60 s |
+| The bundle | 0.84 G | 9.26 G | 30.93 G, 2.29 s |
+
+Every output relation is the same in all three. With the bundle, combining is a read. Preparing is not yet shipped:
+the prepared program holds atoms of the store that prepared it (`prepared_interned`, checked by `holds`), and a new
+project's store numbers its atoms in its own order.
