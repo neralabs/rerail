@@ -1,6 +1,9 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -10,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AdapterDelivery, defaultRerailDatabasePath, openRerailDatabase, recordCheckout, sessionStartNote } from "../../src/engine/index.js";
+import { adoptRemote, type AdapterDelivery, defaultRerailDatabasePath, lookupCheckout, openRerailDatabase, recordCheckout, sessionStartNote } from "../../src/engine/index.js";
 import {
   encodeRerailEventResult,
   type EngineEndpoint,
@@ -508,24 +511,27 @@ interface CountingDaemon {
  * does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
  * engine pipe exists (`recordedDaemonAlive`), so it holds one. It keeps the Rerail database open where there is one, as
  * a running daemon does, so the database's WAL and the WAL's index stay beside it, unless `holdsDatabase` is false: a
- * test whose daemon's connection is another process's gives that.
+ * test whose daemon's connection is another process's gives that. With an answer of stopped it names the checkout it
+ * placed the folder in, as a live daemon does (`scopeOf`, by default `daemonScope`). `daemon.json` names it by `pid`
+ * and `startedAt`, this process and 1 unless given.
  */
 async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
   answerWhen?: () => Promise<unknown>,
-  holdsDatabase = true,
+  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope }: StandInOptions = {},
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
   const asked: string[] = [];
   let ended = 0;
   const closing = Promise.withResolvers<void>();
   const answers: Record<string, (url: URL) => unknown> = {
-    "/healthz": () => ({ status: "ok", pid: process.pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } }),
-    "/api/presentation": url => ({
-      presence: "compact",
-      repositoryState: typeof repositoryState === "string" ? repositoryState : repositoryState(url.searchParams.get("repository") ?? ""),
-    }),
+    "/healthz": () => ({ status: "ok", pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } }),
+    "/api/presentation": url => {
+      const folder = url.searchParams.get("repository") ?? "";
+      const state = typeof repositoryState === "string" ? repositoryState : repositoryState(folder);
+      return { presence: "compact", repositoryState: state, scope: state === "stopped" ? scopeOf(folder) : null };
+    },
   };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -550,8 +556,8 @@ async function countingDaemon(
   const releaseEndpoint = await holdEngineEndpoint(kernelSocketPath);
   await mkdir(home, { recursive: true });
   await writeFile(join(home, "daemon.json"), JSON.stringify({
-    pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
-    databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home,
+    pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
+    databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt, packageRoot: home,
   }));
   const database = holdsDatabase ? heldOpen(join(home, "rerail.sqlite")) : undefined;
   return {
@@ -565,6 +571,29 @@ async function countingDaemon(
       await new Promise<void>(resolve => server.close(() => resolve()));
     },
   };
+}
+
+/** The checkout a daemon names for the folder it placed: its repository and its top. */
+type DaemonScope = { repositoryKey: string; checkoutPath: string } | null;
+
+/** How a stand-in daemon (`countingDaemon`) runs, where a test needs it otherwise than a plain one. */
+interface StandInOptions {
+  readonly holdsDatabase?: boolean;
+  readonly pid?: number | undefined;
+  readonly startedAt?: number | undefined;
+  readonly scopeOf?: (folder: string) => DaemonScope;
+}
+
+/** The checkout a live daemon names for `folder` in its answer (`lookupCheckout`); null where it knows none. */
+function daemonScope(folder: string): DaemonScope {
+  if (!existsSync(defaultRerailDatabasePath())) return null;
+  const database = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
+  try {
+    const checkout = lookupCheckout(database, folder);
+    return checkout === undefined ? null : { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
+  } finally {
+    database.$client.close();
+  }
 }
 
 /**
@@ -637,10 +666,16 @@ describe("hooks where Rerail does not run", () => {
     vi.unstubAllEnvs();
   });
 
-  it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without waiting for a busy daemon, ending their request", async ({ run }) => {
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without waiting for a busy daemon that last answered stopped there, ending their request", async ({ run }) => {
     const root = await temporaryDirectory({ started: false });
     startTestRepository(root);
     stopTestRepository(root);
+    const answered = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect(await run(root)).toEqual({});
+    } finally {
+      await answered.close();
+    }
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
       expect(await answeredWellBeforeReadLimit(run(root))).toEqual({});
@@ -761,7 +796,10 @@ const agentGitSettings: Array<{ variable: string; arrange: (root: string) => { w
   },
 ];
 
-/** What each proof of the hook start check (`stoppedWithoutGit`) found, in order. */
+/**
+ * What each check of the hook start check found, in order: whether it may repeat the daemon's last answer of stopped
+ * (`repeatsStoppedAnswer`).
+ */
 interface ProofLog {
   readonly found: Array<boolean | "threw">;
   /** How long each proof took, in ms, in the same order. */
@@ -814,11 +852,11 @@ interface StartCheckHost {
   git: string[];
   /** Each database it opens. */
   opened: string[];
-  /** Each folder whose Git search it walks on disk (`gitSearchEnds`). */
-  walked: string[];
   proofs: ProofLog;
   /** What the daemon answers for `folder` (`startStateReader`), with the folders' names spelled as this host spells them. */
   daemonReads: (folder: string) => string;
+  /** The checkout the daemon names for `folder` in its answer (`daemonScope`), spelled as this host spells it. */
+  daemonScope: (folder: string) => DaemonScope;
 }
 
 /**
@@ -872,11 +910,11 @@ function mockSpelling(spelling: Spelling): void {
 
 /**
  * The hook host over this machine's Git, database and folders, loaded afresh with its start check's seams recorded:
- * Git commands, database opens, walks of Git's search and proofs, which `proof` replaces when given. With `spelling`,
- * its realpaths answer as that system's do.
+ * Git commands, database opens and checks, which `proof` replaces when given. With `spelling`, its realpaths answer as
+ * that system's do.
  */
 async function startCheckHost(proof?: (workspace: string) => boolean, spelling?: Spelling): Promise<StartCheckHost> {
-  const seen = { git: [] as string[], opened: [] as string[], walked: [] as string[], proofs: proofLog() };
+  const seen = { git: [] as string[], opened: [] as string[], proofs: proofLog() };
   vi.resetModules();
   if (spelling !== undefined) mockSpelling(spelling);
   vi.doMock("../../src/engine/git.js", async () => {
@@ -905,42 +943,71 @@ async function startCheckHost(proof?: (workspace: string) => boolean, spelling?:
     };
     return { ...actual, openRerailDatabase, openRerailDatabaseAsIs };
   });
-  vi.doMock("../../src/engine/catalog/repository-identity.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
-    const gitSearchEnds: typeof actual.gitSearchEnds = workspace => {
-      seen.walked.push(workspace);
-      return actual.gitSearchEnds(workspace);
-    };
-    return { ...actual, gitSearchEnds };
-  });
-  vi.doMock("../../src/runtime/repository-start.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js");
-    const stoppedWithoutGit: typeof actual.stoppedWithoutGit = (workspace, databasePath) =>
-      seen.proofs.run(() => proof === undefined ? actual.stoppedWithoutGit(workspace, databasePath) : proof(workspace));
-    return { ...actual, stoppedWithoutGit };
+  vi.doMock("../../src/runtime/stopped-answers.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/runtime/stopped-answers.js")>("../../src/runtime/stopped-answers.js");
+    const repeatsStoppedAnswer: typeof actual.repeatsStoppedAnswer = (workspace, now) =>
+      seen.proofs.run(() => proof === undefined ? actual.repeatsStoppedAnswer(workspace, now) : proof(workspace));
+    return { ...actual, repeatsStoppedAnswer };
   });
   const host = await import("../../src/harness/hook-host.js");
   const { startStateReader: reader } = await import("../../src/runtime/index.js");
-  const daemonReads = (folder: string): string => {
+  const { lookupCheckout: lookup } = await import("../../src/engine/index.js");
+  const withDatabase = <T>(read: (database: ReturnType<typeof openRerailDatabase>) => T): T => {
     const database = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
     try {
-      return reader(database)(folder);
+      return read(database);
     } finally {
       database.$client.close();
     }
   };
-  return { ...seen, hookRerailStarted: host.hookRerailStarted, daemonReads };
+  const daemonReads = (folder: string): string => withDatabase(database => reader(database)(folder));
+  const daemonScope = (folder: string): DaemonScope => withDatabase(database => {
+    const checkout = lookup(database, folder);
+    return checkout === undefined ? null : { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
+  });
+  return { ...seen, hookRerailStarted: host.hookRerailStarted, daemonReads, daemonScope };
 }
 
 /**
- * A daemon recorded in the Rerail home that answers each start check only once the hook has run its own proof for it,
- * as a daemon busy with other checkouts answers after the hook's grace: the hook's own answer, where it gives one,
- * comes first, and anywhere else it takes the daemon's.
+ * A daemon recorded in the Rerail home that answers each start check only once the hook has run its own check for it,
+ * as a daemon busy with other checkouts answers after the hook's grace: the hook's repeat of the daemon's last answer,
+ * where it gives one, comes first, and anywhere else it takes this daemon's. It names the checkout it placed a folder in
+ * as `host` reads it.
  */
 async function daemonAnsweringAfterProof(
-  host: StartCheckHost, repositoryState: string | ((repository: string) => string), holdsDatabase = true,
+  host: StartCheckHost, repositoryState: string | ((repository: string) => string), options: StandInOptions = {},
 ): Promise<CountingDaemon> {
-  return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran(), holdsDatabase);
+  return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran(), { scopeOf: host.daemonScope, ...options });
+}
+
+/** The file of the daemon's last answer of stopped the hook keeps for `folder`, from the daemon `daemon.json` names by `startedAt`. */
+function keptAnswerFile(folder: string, startedAt = 1): string {
+  const name = createHash("sha256").update(realpathSync.native(folder)).digest("hex").slice(0, 32);
+  return join(process.env.RERAIL_HOME!, "stopped-answers", `${process.pid}-${startedAt}`, `${name}.json`);
+}
+
+/** The answer kept for `folder`, as it was kept but at `at`. */
+function keptAt(folder: string, at: number): void {
+  const file = keptAnswerFile(folder);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")) as object, at }));
+}
+
+/**
+ * The first start check in `workspace` beside a daemon that answers stopped late, after the hook's own check: with no
+ * answer of the daemon's kept there yet, the hook waits for it and takes it, opening no database, and keeps it.
+ */
+async function keptStopped(host: StartCheckHost, workspace: string, options: StandInOptions = {}): Promise<void> {
+  const daemon = await daemonAnsweringAfterProof(host, "stopped", options);
+  try {
+    host.proofs.nextCheck();
+    const opened = host.opened.length;
+    expect({
+      started: await host.hookRerailStarted("claude-code", workspace), checked: host.proofs.found.at(-1), requests: daemon.requests,
+      ended: daemon.ended(), opened: host.opened.slice(opened), kept: existsSync(keptAnswerFile(workspace, options.startedAt)),
+    }).toEqual({ started: false, checked: false, requests: ["/api/presentation"], ended: 0, opened: [], kept: true });
+  } finally {
+    await daemon.close();
+  }
 }
 
 /** A Git repository at `<root>/app`, started and then stopped in its checkout, as `rerail stop` leaves it. */
@@ -978,8 +1045,6 @@ const foldersTheDaemonDecides = [
     folder: "a new clone of a started repository", daemonSays: "stopped", started: false,
     make: (root: string) => { startedApp(root); return newClone(join(root, "clone")); },
   },
-  // Each of the next two reads stopped only for what is not there: no `.git` above the folder and no record of it, or
-  // no record of the worktree and none around it. A `.git` or a record the walk missed would make it started.
   {
     folder: "a folder outside Git that no record names", daemonSays: "started", started: true,
     make: (root: string) => {
@@ -1334,26 +1399,28 @@ function recordTypedCheck(found: TypedChecksFound, folder: MiscasedFolder, { nam
 }
 
 /**
- * The longest the hook's own read may take where it cannot read the database: it gives up at once there, where it took
- * 1.5 to 5 s waiting on another process's lock, and about 1.4 s on Windows inside SQLite's retries of an open Windows
- * refused. A whole read takes a median 7 to 9 ms.
+ * The longest the hook's own check may take where it cannot read the database: it gives up at once there, where a read
+ * took 1.5 to 5 s waiting on another process's lock, and about 1.4 s on Windows inside SQLite's retries of an open
+ * Windows refused.
  */
 const GIVEN_UP_WITHIN_MS = 200;
 
 /**
- * The start check in `workspace`, beside `daemon`, which answers started only once the hook's own read has run: the
- * hook waits for it and takes its answer, well before its read of the daemon would give up, and its own read gave up
+ * The start check in `workspace`, beside `daemon`, which answers started only once the hook's own check has run: the
+ * hook waits for it and takes its answer, well before its read of the daemon would give up, and its check gave up
  * within `GIVEN_UP_WITHIN_MS`.
  */
 async function startedFromLateDaemon(host: StartCheckHost, daemon: CountingDaemon, workspace: string): Promise<void> {
+  host.proofs.nextCheck();
   const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", workspace));
-  expect({ started, proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended() })
-    .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0 });
-  expect(host.proofs.took[0]).toBeLessThan(GIVEN_UP_WITHIN_MS);
+  expect({ started, checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended() })
+    .toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+  expect(host.proofs.took.at(-1)).toBeLessThan(GIVEN_UP_WITHIN_MS);
 }
 
 /** Another process holding the Rerail database, until `end` ends it. */
 interface DatabaseHolder {
+  readonly pid?: number | undefined;
   end(): Promise<void>;
 }
 
@@ -1392,7 +1459,7 @@ async function holdingProcess(command: string, args: readonly string[]): Promise
     await end();
     throw error;
   }
-  return { end };
+  return { pid: child.pid, end };
 }
 
 /**
@@ -1465,16 +1532,15 @@ function retried<T>(step: () => T): T {
 /** How a folder is away: moved aside, or moved aside with a file left at its path. */
 type Away = "moved" | "a file in its place";
 
-/** `step`, run while `folder` is away as `away` says; then the folder is back. */
-function whileAway<T>(folder: string, away: Away, step: () => T): T {
+/** `folder` moved away as `away` says, until {@link backFromAway}. */
+function goAway(folder: string, away: Away): void {
   retried(() => renameSync(folder, `${folder}.aside`));
   if (away === "a file in its place") writeFileSync(folder, "");
-  try {
-    return step();
-  } finally {
-    if (away === "a file in its place") retried(() => rmSync(folder));
-    retried(() => renameSync(`${folder}.aside`, folder));
-  }
+}
+
+function backFromAway(folder: string, away: Away): void {
+  if (away === "a file in its place") retried(() => rmSync(folder));
+  retried(() => renameSync(`${folder}.aside`, folder));
 }
 
 /** The error code of `error`, or its name. */
@@ -1482,81 +1548,32 @@ function codeOf(error: unknown): string {
   return error instanceof Error && "code" in error ? String(error.code) : String(error);
 }
 
-/**
- * `checkout-control.ts` with `physicalPath` of `top` failing once, as it fails when `folder` goes away between its look
- * for the path and its realpath of it: it takes the realpath itself while the folder is away, and adds the error's code
- * to `thrown`. In a start check beside a stand-in daemon, only the hook's own read resolves `top`.
- */
-function physicalPathFailingOnce(top: string, folder: string, away: Away, thrown: string[]): void {
-  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
-    const realpath = process.platform === "win32" ? realpathSync.native : realpathSync;
-    return {
-      ...actual,
-      physicalPath: (path: string, platform?: NodeJS.Platform) => {
-        if (thrown.length > 0 || path !== top) return actual.physicalPath(path, platform);
-        try {
-          return whileAway(folder, away, () => realpath(path));
-        } catch (error) {
-          thrown.push(codeOf(error));
-          throw error;
-        }
-      },
-    };
-  });
-}
-
-/**
- * Ways a checkout's path stops resolving for a moment while the hook's own read resolves it, with the code Node's
- * realpath fails with on this system.
- */
+/** Ways a checkout's folder is away for a moment while the hook checks the answer it kept there. */
 const checkoutPathsGoneAWhile = [
-  { what: "the checkout's folder is moved away", away: "moved" as const, folderOf: (top: string) => top, code: "ENOENT" },
-  {
-    what: "the checkout's parent folder is replaced by a file", away: "a file in its place" as const, folderOf: (top: string) => dirname(top),
-    code: process.platform === "win32" ? "ENOENT" : "ENOTDIR",
-  },
+  { what: "the checkout's folder is moved away", away: "moved" as const, folderOf: (top: string) => top },
+  { what: "the checkout's parent folder is replaced by a file", away: "a file in its place" as const, folderOf: (top: string) => dirname(top) },
 ];
 
 /**
- * `checkout-control.ts` with `top` moved away as soon as the hook's walk has the real path of the folder it starts from
- * (`storedPath`, which only the walk calls in a start check), and back on the next turn of the event loop, once the
- * hook's own read is over; `moves` gets the path the walk started from.
+ * `checkout-control.ts` with `step` run as soon as the hook's check of the answer it kept has the real path of the folder
+ * (`storedPath`, which only that check calls in a start check) in the start check numbered `check`, and `undo` on the
+ * next turn of the event loop, once the check is over: a folder moved away and back, or a `.git` folder turning into a
+ * `gitdir:` file as `git init --separate-git-dir` and `git submodule absorbgitdirs` leave a checkout for that moment.
+ * `moves` gets the folder each step ran for.
  */
-function topMovedAwayOnceWalkStarts(top: string, moves: string[]): void {
+function onCheck(check: number, moves: string[], step: () => void, undo: () => void): void {
+  let checks = 0;
   vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
     return {
       ...actual,
       storedPath: (path: string) => {
         const stored = actual.storedPath(path);
-        if (moves.length > 0) return stored;
+        checks += 1;
+        if (checks !== check) return stored;
         moves.push(path);
-        retried(() => renameSync(top, `${top}.aside`));
-        setImmediate(() => retried(() => renameSync(`${top}.aside`, top)));
-        return stored;
-      },
-    };
-  });
-}
-
-/**
- * `checkout-control.ts` with `checkout`'s `.git` folder moved to `separate` as soon as the hook's walk has the real path
- * of the folder it starts from (`storedPath`), and a `gitdir:` file naming it written in its place on the next turn of
- * the event loop, once the hook's own read is over: `git init --separate-git-dir` and `git submodule absorbgitdirs`
- * leave a checkout with no `.git` for that moment. `moves` gets the path the walk started from.
- */
-function dotGitTurnedIntoAFileOnceWalkStarts(checkout: string, separate: string, moves: string[]): void {
-  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
-    return {
-      ...actual,
-      storedPath: (path: string) => {
-        const stored = actual.storedPath(path);
-        if (moves.length > 0) return stored;
-        moves.push(path);
-        retried(() => renameSync(join(checkout, ".git"), separate));
-        setImmediate(() => writeFileSync(join(checkout, ".git"), `gitdir: ${separate}\n`));
+        step();
+        setImmediate(undo);
         return stored;
       },
     };
@@ -1603,6 +1620,89 @@ const GRACE_NO_ANSWER_MISSES = 60_000;
 /** The Git variables the test setup sets (`setup-rerail-home.ts`); a shell's others reach no test of the start check. */
 const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
 
+/**
+ * Changes after the daemon answered stopped in `<app>/src` (`app` a checkout stopped in its own record) that the hook
+ * sees, each of which leaves it no answer to repeat there: it waits for the late daemon and takes its answer. A daemon
+ * named by another start time (`startedAt`) is another daemon, which places every folder again.
+ */
+const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void; startedAt?: number }> = [
+  { what: "the answer kept does not parse", change: app => writeFileSync(keptAnswerFile(join(app, "src")), "{") },
+  { what: "the answer kept is older than 5 minutes", change: app => keptAt(join(app, "src"), Date.now() - 5 * 60_000 - 1_000) },
+  { what: "the answer kept is dated after now, as once the clock is set back", change: app => keptAt(join(app, "src"), Date.now() + 60_000) },
+  {
+    what: "the folder is made again", change: app => {
+      retried(() => renameSync(join(app, "src"), join(app, "src-before")));
+      mkdirSync(join(app, "src"));
+    },
+  },
+  {
+    what: "the checkout's .git is made again", change: app => {
+      retried(() => renameSync(join(app, ".git"), join(app, ".git-before")));
+      cpSync(join(app, ".git-before"), join(app, ".git"), { recursive: true });
+    },
+  },
+  { what: "a .git is made in the folder", change: app => git(join(app, "src"), "init", "-q") },
+  { what: "the checkout is started", change: app => inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true)) },
+  {
+    what: "the checkout's repository takes the remote it gained",
+    change: app => inDatabase(database => adoptRemote(database, recordCheckout(database, app).repositoryKey, "https://example.invalid/team/other.git")),
+  },
+  { what: "another daemon runs", change: () => undefined, startedAt: 2 },
+];
+
+/**
+ * Two start checks in each of `folders`, beside a daemon that answers late as a live one reads the folder, its Git
+ * stopping right above each folder where `ceiling` says: where the hook repeated stopped though the daemon reads
+ * otherwise or took another answer (`wrong`), and where its second check waited though the daemon reads stopped. With a
+ * ceiling it is another daemon, named by another start time.
+ */
+async function checkTrees(
+  host: StartCheckHost, folders: ReadonlyArray<[string, string]>, ceiling: boolean, found: { wrong: string[]; waitedThoughStopped: string[] },
+): Promise<void> {
+  const daemon = await daemonAnsweringAfterProof(host, daemonReads, { startedAt: ceiling ? 2 : 1, scopeOf: daemonScope });
+  try {
+    for (const [name, path] of folders) {
+      const real = realpathSync.native(path);
+      vi.stubEnv("GIT_CEILING_DIRECTORIES", ceiling ? dirname(real) : undefined);
+      await checkTwice(host, { name: `${name}${ceiling ? " (ceiling)" : ""}`, path, reads: daemonReads(real), ceiling }, found);
+    }
+  } finally {
+    vi.stubEnv("GIT_CEILING_DIRECTORIES", undefined);
+    await daemon.close();
+  }
+}
+
+/** {@link checkTrees} in one folder, where the daemon `reads` as it does. */
+async function checkTwice(
+  host: StartCheckHost, folder: { name: string; path: string; reads: string; ceiling: boolean }, found: { wrong: string[]; waitedThoughStopped: string[] },
+): Promise<void> {
+  for (const check of ["first", "second"]) {
+    host.proofs.nextCheck();
+    const started = await host.hookRerailStarted("claude-code", folder.path);
+    const repeated = host.proofs.found.at(-1) === true;
+    if (repeated ? folder.reads !== "stopped" : started !== (folder.reads !== "stopped")) found.wrong.push(`${folder.name}, ${check} check: ${folder.reads}`);
+    if (check === "second" && !repeated && folder.reads === "stopped" && !folder.ceiling) found.waitedThoughStopped.push(folder.name);
+  }
+}
+
+/**
+ * The folders of `generatedTrees` the daemon reads stopped where a hook waits all the same, its second as its first, as
+ * `main` does: the daemon placed the folder in a checkout with no record of its own (a worktree only its clone id
+ * places, and on Windows, where Git takes a `.git` whose `objects` is a file, one only a clone id names), or in none it
+ * knows (a repository never recorded, a folder outside Git).
+ */
+const TREE_FOLDERS_THAT_WAIT = [
+  ...(process.platform === "win32" ? ["app/objects-file"] : []), "b/.wt/inner", "c-beside", "never", "never/src", "plain", "plain-started/sub",
+];
+
+/**
+ * The folders of `miscasedFolders` where the hook repeats the daemon's last answer of stopped. Never the one outside
+ * Git, whose placement the daemon makes again on every answer. With macOS's realpaths both checkouts, which the daemon
+ * places by their stored spelling, as the hook asks. On a case-insensitive Linux folder neither: Git names each top in
+ * the case the kernel cached, which the folder the hook asks about, as typed, is not in as spelled.
+ */
+const MISCASED_FOLDERS_THAT_REPEAT = { macos: ["Git checkout", "linked worktree"], linux: [] as string[] };
+
 describe("the hook start check", () => {
   beforeEach(() => {
     // A shell that runs the tests with its own GIT_DIR, GIT_TRACE or other Git variable would send the tests' Git and
@@ -1613,16 +1713,15 @@ describe("the hook start check", () => {
   });
   afterEach(() => {
     vi.doUnmock("../../src/engine/git.js");
-    vi.doUnmock("../../src/runtime/repository-start.js");
+    vi.doUnmock("../../src/runtime/stopped-answers.js");
     vi.doUnmock("../../src/engine/storage/database.js");
-    vi.doUnmock("../../src/engine/catalog/repository-identity.js");
     vi.doUnmock("../../src/engine/catalog/checkout-control.js");
     vi.doUnmock("node:fs/promises");
     vi.resetModules();
     vi.unstubAllEnvs();
   });
 
-  it.each(foldersOfEachKind)("asks the daemon first, and takes its prompt answer in $folder without opening the database or reading its folders", async ({ make, daemonSays, started }) => {
+  it.each(foldersOfEachKind)("asks the daemon first, and takes its prompt answer in $folder without opening the database or checking a kept answer", async ({ make, daemonSays, started }) => {
     const root = await temporaryDirectory({ started: false });
     const workspace = make(root);
     const host = await startCheckHost();
@@ -1630,26 +1729,104 @@ describe("the hook start check", () => {
     try {
       expect({
         started: await host.hookRerailStarted("claude-code", workspace, undefined, GRACE_NO_ANSWER_MISSES),
-        requests: daemon.requests, opened: host.opened, walked: host.walked, proofs: host.proofs.found,
-      }).toEqual({ started, requests: ["/api/presentation"], opened: [], walked: [], proofs: [] });
+        requests: daemon.requests, opened: host.opened, proofs: host.proofs.found,
+      }).toEqual({ started, requests: ["/api/presentation"], opened: [], proofs: [] });
     } finally {
       await daemon.close();
     }
   });
 
-  it("answers stopped itself beside a daemon that has not answered in time, where the database shows it would say stopped, running no Git and ending its request", async () => {
+  it("waits for a late daemon where it last answered nothing, and keeps its answer of stopped; the next hook there repeats it without waiting, running no Git and ending its request", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     mkdirSync(join(app, "src"));
     const host = await startCheckHost();
-    // A daemon that would say started: an answer of stopped is the hook's own.
+    await keptStopped(host, join(app, "src"));
+    // A daemon that would say started: an answer of stopped is the repeat of the one kept.
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
+      host.proofs.nextCheck();
       const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", join(app, "src")));
       expect({ started, git: host.git, proofs: host.proofs.found, ...await endedStartChecks(daemon) })
-        .toEqual({ started: false, git: [], proofs: [true], asked: 1, ended: 1 });
+        .toEqual({ started: false, git: [], proofs: [false, true], asked: 1, ended: 1 });
     } finally {
       await daemon.close();
+    }
+  });
+
+  it.each(changesSinceTheAnswer)("waits for a late daemon where it last answered stopped, once $what", async ({ change, startedAt }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    mkdirSync(join(app, "src"));
+    const host = await startCheckHost();
+    await keptStopped(host, join(app, "src"));
+    change(app);
+    const daemon = await daemonAnsweringAfterProof(host, "started", { startedAt });
+    try {
+      host.proofs.nextCheck();
+      expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended() })
+        .toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("removes the answer it kept where the daemon then answers otherwise, and the next hook there waits for a late daemon", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    try {
+      expect({ started: await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES), kept: existsSync(keptAnswerFile(app)) })
+        .toEqual({ started: true, kept: false });
+    } finally {
+      await prompt.close();
+    }
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      host.proofs.nextCheck();
+      expect({ started: await host.hookRerailStarted("claude-code", app), checked: host.proofs.found.at(-1), requests: daemon.requests })
+        .toEqual({ started: true, checked: false, requests: ["/api/presentation"] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("leaves one whole answer where many hooks in one folder keep the daemon's answer at once", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      for (let round = 0; round < 5; round += 1) {
+        await rm(keptAnswerFile(app), { force: true });
+        const hooks = Array.from({ length: 8 }, () => host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
+        expect(await Promise.all(hooks)).toEqual(Array.from({ length: 8 }, () => false));
+        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 1, depth: 0 });
+        expect(readdirSync(dirname(keptAnswerFile(app)))).toEqual([basename(keptAnswerFile(app))]);
+      }
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const plain = join(root, "plain");
+    mkdirSync(plain);
+    startTestRepository(plain);
+    stopTestRepository(plain);
+    const host = await startCheckHost();
+    for (const check of ["first", "second"]) {
+      const daemon = await daemonAnsweringAfterProof(host, "stopped");
+      try {
+        host.proofs.nextCheck();
+        expect({ check, started: await host.hookRerailStarted("claude-code", plain), checked: host.proofs.found.at(-1), kept: existsSync(keptAnswerFile(plain)) })
+          .toEqual({ check, started: false, checked: false, kept: false });
+      } finally {
+        await daemon.close();
+      }
     }
   });
 
@@ -1680,16 +1857,16 @@ describe("the hook start check", () => {
     }
   });
 
-  it("waits for a late daemon where this process cannot open the database, and with no daemon recorded its failure is the hook's", async () => {
+  it("waits for a late daemon that last answered stopped where this process cannot open the database, and with no daemon recorded its failure is the hook's", async () => {
     const root = await temporaryDirectory({ started: false });
     const home = process.env.RERAIL_HOME!;
     const app = stoppedApp(root);
     const host = await startCheckHost();
+    await keptStopped(host, app);
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await writeFile(join(home, "rerail.sqlite"), "not a database");
-      expect({ started: await host.hookRerailStarted("claude-code", app), proofs: host.proofs.found, requests: daemon.requests })
-        .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"] });
+      await startedFromLateDaemon(host, daemon, app);
     } finally {
       await daemon.close();
     }
@@ -1697,16 +1874,17 @@ describe("the hook start check", () => {
     await expect(host.hookRerailStarted("claude-code", app)).rejects.toThrow("not a database");
   });
 
-  it("waits for a late daemon where the database lacks one of this version's schema steps, and leaves the file as it is", async () => {
+  it("waits for a late daemon that last answered stopped where the database lacks one of this version's schema steps, and leaves the file as it is", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
-    const step = newestStepNotRun();
     const host = await startCheckHost();
-    // A daemon that would say started: an answer of stopped would be the hook's own.
+    await keptStopped(host, app);
+    const step = newestStepNotRun();
+    // A daemon that would say started: an answer of stopped would be the repeat.
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
-      expect({ started: await host.hookRerailStarted("claude-code", app), proofs: host.proofs.found, requests: daemon.requests, stepRun: stepRun(step) })
-        .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], stepRun: false });
+      await startedFromLateDaemon(host, daemon, app);
+      expect(stepRun(step)).toBe(false);
     } finally {
       await daemon.close();
     }
@@ -1715,10 +1893,11 @@ describe("the hook start check", () => {
   it.each([
     { held: "for the whole check", releaseMs: undefined },
     { held: "and lets it go 1.5 s later", releaseMs: 1_500 },
-  ])("waits for a late daemon without waiting on the lock where another process holds the database locked $held", { timeout: 30_000 }, async ({ releaseMs }) => {
+  ])("waits for a late daemon that last answered stopped without waiting on the lock where another process holds the database locked $held", { timeout: 30_000 }, async ({ releaseMs }) => {
     const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
+    const app = stoppedApp(root);
     const host = await startCheckHost();
+    await keptStopped(host, app);
     companionsLeftByAReader();
     const holder = await lockedByAnotherProcess(releaseMs);
     // The daemon reads nothing either while the lock is held.
@@ -1731,10 +1910,11 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "win32")("waits for a late daemon at once where another program holds the database file open and shares nothing", { timeout: 30_000 }, async () => {
+  it.runIf(process.platform === "win32")("waits for a late daemon that last answered stopped at once where another program holds the database file open and shares nothing", { timeout: 30_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
+    const app = stoppedApp(root);
     const host = await startCheckHost();
+    await keptStopped(host, app);
     companionsLeftByAReader();
     const holder = await heldWithoutSharing();
     // The daemon cannot open the file either while the program holds it.
@@ -1747,14 +1927,18 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "win32")("waits for a late daemon at once where the database file is denied to this user", { timeout: 30_000 }, async ({ skip }) => {
+  it.runIf(process.platform === "win32").for([
+    { file: "database", path: () => defaultRerailDatabasePath() },
+    { file: "database's WAL", path: () => `${defaultRerailDatabasePath()}-wal` },
+  ])("waits for a late daemon that last answered stopped at once where the $file is denied to this user", { timeout: 30_000 }, async ({ path }, { skip }) => {
     const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
+    const app = stoppedApp(root);
     const host = await startCheckHost();
+    await keptStopped(host, app);
     const daemon = await daemonAnsweringAfterProof(host, "started");
-    const holder = await deniedToThisUser();
+    const holder = await deniedToThisUser(path());
     try {
-      if (nodeOpensDespiteDeny(defaultRerailDatabasePath())) skip("this process's Backup privilege is enabled, so Node's open passes the deny entry");
+      if (nodeOpensDespiteDeny(path())) skip("this process's Backup privilege is enabled, so Node's open passes the deny entry");
       await startedFromLateDaemon(host, daemon, app);
     } finally {
       await holder.end();
@@ -1762,66 +1946,59 @@ describe("the hook start check", () => {
     }
   });
 
-  it.each(checkoutPathsGoneAWhile)("waits for a late daemon where $what while the hook's own read resolves the checkout's path", async ({ away, folderOf, code }) => {
+  it.each(checkoutPathsGoneAWhile)("waits for a late daemon that last answered stopped where $what while the hook checks the answer it kept", async ({ away, folderOf }) => {
     const root = await temporaryDirectory({ started: false });
-    const app = startedApp(join(root, "parent"));
-    mkdirSync(join(app, "src"));
-    const top = realpathSync.native(app);
-    const thrown: string[] = [];
-    physicalPathFailingOnce(top, folderOf(top), away, thrown);
-    const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
-    try {
-      expect({
-        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), thrown,
-      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, thrown: [code] });
-    } finally {
-      await daemon.close();
-    }
-  });
-
-  it("waits for a late daemon where the checkout's folder is moved away while the hook walks up from a folder inside it", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
+    const app = stoppedApp(join(root, "parent"));
     mkdirSync(join(app, "src"));
     const moves: string[] = [];
-    topMovedAwayOnceWalkStarts(app, moves);
+    onCheck(2, moves, () => goAway(folderOf(app), away), () => backFromAway(folderOf(app), away));
     const host = await startCheckHost();
+    await keptStopped(host, join(app, "src"));
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
+      host.proofs.nextCheck();
       expect({
-        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
-      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
+        started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests,
+        ended: daemon.ended(), moves: moves.length,
+      }).toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0, moves: 1 });
     } finally {
       await daemon.close();
     }
   });
 
-  it("waits for a late daemon where the checkout's .git folder turns into a gitdir: file while the hook walks up from a folder inside it", async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
-    mkdirSync(join(app, "src"));
-    const moves: string[] = [];
-    dotGitTurnedIntoAFileOnceWalkStarts(app, join(root, "separate.git"), moves);
-    const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
-    try {
-      expect({
-        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
-      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
-    } finally {
-      await daemon.close();
-    }
-  });
-
-  it("waits for a late daemon where a recorded checkout's .git folder turns into a gitdir: file while the hook walks up through it to a stopped checkout around it", async () => {
+  it("waits for a late daemon that last answered stopped where the checkout's .git folder turns into a gitdir: file while the hook checks the answer it kept", async () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
-    const nested = gitRepository(join(app, "nested"));
-    startTestRepository(nested);
+    mkdirSync(join(app, "src"));
+    const moves: string[] = [];
+    const separate = join(root, "separate.git");
+    onCheck(2, moves, () => retried(() => renameSync(join(app, ".git"), separate)), () => writeFileSync(join(app, ".git"), `gitdir: ${separate}\n`));
+    const host = await startCheckHost();
+    await keptStopped(host, join(app, "src"));
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      host.proofs.nextCheck();
+      expect({
+        started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests,
+        ended: daemon.ended(), moves: moves.length,
+      }).toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0, moves: 1 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.each([
+    { checkout: "a recorded started checkout", make: (app: string) => { const nested = gitRepository(join(app, "nested")); startTestRepository(nested); return nested; } },
+    { checkout: "a never-recorded clone of a started repository", make: (app: string) => newClone(join(app, "nested")) },
+  ])("waits for a late daemon where $checkout inside a stopped one has its .git turn into a gitdir: file while the hook checks", async ({ make }) => {
+    const root = await temporaryDirectory({ started: false });
+    startedApp(join(root, "started"));
+    const app = stoppedApp(root);
+    const nested = make(app);
     mkdirSync(join(nested, "src"));
     const moves: string[] = [];
-    dotGitTurnedIntoAFileOnceWalkStarts(nested, join(root, "separate.git"), moves);
+    const separate = join(root, "separate.git");
+    onCheck(1, moves, () => retried(() => renameSync(join(nested, ".git"), separate)), () => writeFileSync(join(nested, ".git"), `gitdir: ${separate}\n`));
     const host = await startCheckHost();
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
@@ -1833,44 +2010,53 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "linux")("waits for a late daemon where the WAL and its index are deleted under the daemon's writer, whose start is only in the WAL", { timeout: 30_000 }, async () => {
+  it.runIf(process.platform === "linux")("waits for a late daemon that last answered stopped where the WAL and its index are deleted under the daemon and made again by another reader, its start only in the WAL it holds", { timeout: 30_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
     const host = await startCheckHost();
-    // The writer is the daemon's connection. One in this process too would share its WAL index with the hook's read,
-    // which a hook's own process does not.
-    const daemon = await daemonAnsweringAfterProof(host, "started", false);
+    // The writer is the daemon's connection, and daemon.json names it. One in this process too would share its WAL
+    // index with the hook's read, which a hook's own process does not.
     const writer = await startedOnlyInTheWal();
     try {
+      const daemonProcess = { holdsDatabase: false, pid: writer.pid };
+      await keptStopped(host, app, daemonProcess);
       for (const companion of ["-wal", "-shm"]) rmSync(`${defaultRerailDatabasePath()}${companion}`);
-      await startedFromLateDaemon(host, daemon, app);
+      companionsLeftByAReader();
+      const daemon = await daemonAnsweringAfterProof(host, "started", daemonProcess);
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
     } finally {
       await writer.end();
-      await daemon.close();
     }
   });
 
-  it.runIf(process.platform === "win32")("waits for a late daemon at once where the database's WAL is denied to this user", { timeout: 30_000 }, async ({ skip }) => {
+  it.runIf(process.platform === "win32").for([
+    { what: "a .git file names a Git folder on a server", shape: (root: string, app: string) => {
+      renameSync(join(app, ".git"), join(root, "app.git"));
+      writeFileSync(join(app, ".git"), `gitdir: \\\\${silentServer()}\\share\\app.git\n`);
+    } },
+    { what: "a .git file names a Git folder through a local link to a server", shape: (root: string, app: string) => {
+      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
+      renameSync(join(app, ".git"), join(root, "app.git"));
+      writeFileSync(join(app, ".git"), `gitdir: ${join(root, "srv", "app.git")}\n`);
+    } },
+    { what: ".git is a link to a local path through a link to a server", shape: (root: string, app: string) => {
+      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
+      renameSync(join(app, ".git"), join(root, "app.git"));
+      symlinkSync(join(root, "srv", "app.git"), join(app, ".git"), "dir");
+    } },
+  ])("waits for a late daemon at once where $what", { timeout: 60_000 }, async ({ shape }, { skip }) => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
-    const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
-    const wal = `${defaultRerailDatabasePath()}-wal`;
-    const holder = await deniedToThisUser(wal);
     try {
-      if (nodeOpensDespiteDeny(wal)) skip("this process's Backup privilege is enabled, so Node's open passes the deny entry");
-      await startedFromLateDaemon(host, daemon, app);
-    } finally {
-      await holder.end();
-      await daemon.close();
+      shape(root, app);
+    } catch (error) {
+      if (codeOf(error) === "EPERM") skip("this user may not make a symbolic link");
+      throw error;
     }
-  });
-
-  it.runIf(process.platform === "win32")("waits for a late daemon at once where the checkout's .git file names a Git folder on a server", { timeout: 60_000 }, async () => {
-    const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
-    renameSync(join(app, ".git"), join(root, "app.git"));
-    writeFileSync(join(app, ".git"), `gitdir: \\\\${silentServer()}\\share\\app.git\n`);
     const host = await startCheckHost();
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
@@ -1936,42 +2122,22 @@ describe("the hook start check", () => {
     }
   });
 
-  it("never answers stopped itself where the daemon reads otherwise, in any folder of these trees", { timeout: 120_000 }, async () => {
+  it("repeats only the daemon's last answer of stopped, and wherever that holds, in every folder of these trees", { timeout: 240_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
     const folders = generatedTrees(root);
     const host = await startCheckHost();
-    // A daemon asked about a folder's real path, as the hook sends it, answers as a live one reads it, late: only after
-    // the hook's own proof, so the hook answers itself wherever that proof shows stopped.
-    const daemon = await daemonAnsweringAfterProof(host, daemonReads);
-    const wrong: string[] = [];
-    const askedThoughStopped: string[] = [];
-    try {
-      // Then again with a daemon whose Git stops right above each folder: a ceiling, as for a person whose
-      // `safe.directory` refuses the checkout or whose folder is on another filesystem.
-      for (const ceiling of [false, true]) {
-        for (const [name, path] of folders) {
-          const real = realpathSync.native(path);
-          vi.stubEnv("GIT_CEILING_DIRECTORIES", ceiling ? dirname(real) : undefined);
-          const reads = daemonReads(real);
-          const proofsBefore = host.proofs.found.length;
-          host.proofs.nextCheck();
-          const started = await host.hookRerailStarted("claude-code", path);
-          const answeredItself = host.proofs.found.length > proofsBefore && host.proofs.found.at(-1) === true;
-          if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) wrong.push(`${name}${ceiling ? " (ceiling)" : ""}: ${reads}`);
-          if (!answeredItself && reads === "stopped" && !ceiling) askedThoughStopped.push(name);
-        }
-      }
-    } finally {
-      await daemon.close();
-    }
-    // Where the daemon reads stopped and the hook waits all the same, as `main` does: no record holds the folder (a
-    // repository never recorded, a folder outside Git, a worktree beside its checkout, and on Windows, where Git takes a
-    // `.git` whose `objects` is a file, one only a clone id names), or a record lies where the walk found no `.git`.
-    const unheld = [...(process.platform === "win32" ? ["app/objects-file"] : []), "b/own-folder", "c-beside", "never", "never/src", "plain", "plain-started/sub"];
-    expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: unheld });
+    // Then again with a daemon whose Git stops right above each folder: a ceiling, as for a person whose
+    // `safe.directory` refuses the checkout or whose folder is on another filesystem. It is another daemon, which
+    // places every folder again, so nothing the first one answered is repeated beside it.
+    const found = { wrong: [] as string[], waitedThoughStopped: [] as string[] };
+    for (const ceiling of [false, true]) await checkTrees(host, folders, ceiling, found);
+    // Where the daemon reads stopped and the second hook waits all the same, as `main` does: the daemon placed the
+    // folder outside Git or in a checkout with no record of its own (a repository never recorded, a worktree only its
+    // clone id places, a folder outside Git), or a `.git` lies between the folder and the checkout it was placed in.
+    expect(found).toEqual({ wrong: [], waitedThoughStopped: TREE_FOLDERS_THAT_WAIT });
   });
 
-  it("asks about a folder typed in another letter case by its stored spelling and answers itself only where the daemon reads stopped, with macOS's realpaths", { timeout: 120_000 }, async () => {
+  it("asks about a folder typed in another letter case by its stored spelling and repeats only where the daemon reads stopped, with macOS's realpaths", { timeout: 120_000 }, async () => {
     const root = realpathSync.native(await temporaryDirectory({ started: false }));
     const folders = miscasedFolders(root);
     // On macOS checkout keys go through the JS realpath, which keeps a name as typed; the native realpath, which the
@@ -1980,15 +2146,15 @@ describe("the hook start check", () => {
     const daemon = await daemonAnsweringAfterProof(host, repository => host.daemonReads(repository));
     try {
       const found = await startChecksTypedOtherwise(host, daemon, folders);
-      expect({ ...found, asked: [...new Set(daemon.asked)] }).toEqual({
-        wrong: [], askedThoughStopped: [], answeredItselfIn: folders.map(folder => folder.name), asked: folders.map(folder => folder.storedWorkspace),
+      expect({ wrong: found.wrong, answeredItselfIn: found.answeredItselfIn, asked: [...new Set(daemon.asked)] }).toEqual({
+        wrong: [], answeredItselfIn: MISCASED_FOLDERS_THAT_REPEAT.macos, asked: folders.map(folder => folder.storedWorkspace),
       });
     } finally {
       await daemon.close();
     }
   });
 
-  it.runIf(process.platform === "linux")("waits for the daemon where Git names a checkout's top in another letter case than the hook's realpath, as on a case-insensitive Linux folder", { timeout: 120_000 }, async () => {
+  it.runIf(process.platform === "linux")("repeats only where the daemon reads stopped where Git names a checkout's top in another letter case than the hook's realpath, as on a case-insensitive Linux folder", { timeout: 120_000 }, async () => {
     const root = realpathSync.native(await temporaryDirectory({ started: false }));
     const folders = miscasedFolders(root);
     // There every realpath keeps a name as typed, and Git's `getcwd` gives the name the kernel cached.
@@ -1997,7 +2163,7 @@ describe("the hook start check", () => {
     try {
       const found = await startChecksTypedOtherwise(host, daemon, folders);
       expect({ wrong: found.wrong, answeredItselfIn: found.answeredItselfIn, asked: [...new Set(daemon.asked)] })
-        .toEqual({ wrong: [], answeredItselfIn: ["outside Git"], asked: folders.map(folder => folder.workspace) });
+        .toEqual({ wrong: [], answeredItselfIn: MISCASED_FOLDERS_THAT_REPEAT.linux, asked: folders.map(folder => folder.workspace) });
     } finally {
       await daemon.close();
     }

@@ -11,6 +11,7 @@ import {
   presentedSessionNoteRules,
   readPresentation,
   readRepositoryState,
+  readStartAnswer,
   readRulesDashboard,
   readSummaryState,
 } from "../../src/presentation/session-presentation.js";
@@ -399,7 +400,7 @@ describe("a live daemon that does not answer in time", () => {
     }
   });
 
-  it("ends the start state's read when its caller stops it, as null, long before its time runs out", async () => {
+  it("ends the start answer's read when its caller stops it, as null, long before its time runs out", async () => {
     // On Windows the read waits on the engine's proof, elsewhere on the request itself; the stop reaches either.
     const engine = testEngineEndpoint(home);
     const closeEngine = await silentEngine(engine);
@@ -407,7 +408,7 @@ describe("a live daemon that does not answer in time", () => {
       await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
       const stop = new AbortController();
       const begun = performance.now();
-      const hookState = readRepositoryState(cwd, "omp", stop.signal);
+      const hookState = readStartAnswer(cwd, "omp", stop.signal);
       await new Promise(resolve => setTimeout(resolve, 100));
       stop.abort();
       expect(await hookState).toBeNull();
@@ -487,7 +488,7 @@ describe("rules page", () => {
       served.push(url.pathname);
       const answers: Record<string, unknown> = {
         "/healthz": health,
-        "/api/presentation": { presence: "compact", repositoryState: "stopped" },
+        "/api/presentation": { presence: "compact", repositoryState: "stopped", scope: { repositoryKey, checkoutPath } },
         ...(knownCheckout && url.searchParams.get("checkout") === checkoutPath ? { "/api/repository": repositoryContext(checkoutPath) } : {}),
       };
       const body = answers[url.pathname];
@@ -552,6 +553,17 @@ describe("rules page", () => {
     expect(await readRepositoryState(cwd, "omp")).toBe("stopped");
     await record(join(home, "daemon.json"), { pid: 999_999 });
     expect(await readRepositoryState(cwd, "omp")).toBeNull();
+  });
+
+  it("gives a live daemon's start answer with the folder it asked about, the checkout it placed it in and the daemon that answered", async () => {
+    const port = await listen();
+    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
+    const checkoutPath = await realpath(cwd);
+    expect(await readStartAnswer(cwd, "omp")).toEqual({
+      state: "stopped", workspace: checkoutPath, scope: { repositoryKey, checkoutPath }, daemon: expect.objectContaining({ pid: process.pid, startedAt: state.startedAt }) as unknown,
+    });
+    await record(join(home, "daemon.json"), { pid: 999_999 });
+    expect(await readStartAnswer(cwd, "omp")).toBeNull();
   });
 
   it("lets a live daemon's answer decide the hook start check, and reads the database only once none answers", async () => {
