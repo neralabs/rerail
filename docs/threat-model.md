@@ -466,7 +466,11 @@ Rerail must not be presented as a control the agent cannot switch off.
 - The launcher turns a hook's non-zero exit, a thrown error or `process.exit` included, into exit 0, with `{}` when
   the hook wrote nothing (`src/harness/hook-launcher.ts`), whether it runs the hook as a child or in its own process.
   In its own process, a native crash or an out-of-memory abort ends the process before the launcher can answer, so
-  that exit code stays; Claude Code shows it as a hook error and does not block on it.
+  that exit code stays under the `node` entry; Claude Code shows it as a hook error and does not block on it.
+- The `cmd.exe` entry of Claude Code's hooks on Windows turns a recorded Node that is there but cannot start, and a
+  launcher that ends in a native crash, into exit 0 with no answer, which Claude Code reads as `{}`, while the launcher's
+  file is there (`cmdHookArgs` in `src/setup/harness-registration.ts`). Once the launcher is gone, or `node.exe` is
+  missing from `PATH` after the recorded Node is gone, the hook fails with a hook error, as the `node` entry does.
 - With no daemon running, every hook except `SessionStart` returns at once.
 - A repository that is not started gets `{}`.
 - A Node major below the requirement does nothing.
@@ -695,8 +699,10 @@ should not widen it.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
   (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
-  drive's root folder (`C:\`) or a UNC share, and `cmd.exe` is there at set-up, and `node` otherwise: Windows completes
-  any other path from a current folder or drive, and a hook's current folder is the repository it runs in.
+  drive's root folder (`C:\`) or a UNC share, `cmd.exe` is there at set-up and `cmd.exe` reads each path of the entry
+  as one word, and `node` otherwise: Windows completes any other path from a current folder or drive, and a hook's
+  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry on a server,
+  which it never opens, and writes the `cmd.exe` entry there.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
