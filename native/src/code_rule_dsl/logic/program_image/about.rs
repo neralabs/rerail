@@ -379,6 +379,19 @@ impl Builder<'_> {
         }
         self.set_about_rows("lattice", rows);
     }
+    /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
+    /// every one of which names its relation in column 1.
+    pub fn drop_native(&mut self, rel: &str) {
+        let a = Cell::Str(self.atom(rel));
+        for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
+            let rows = self.about_rows(name);
+            let n = rows.len();
+            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| r.get(1) != Some(&a)).collect();
+            if kept.len() != n {
+                self.set_about_rows(name, kept);
+            }
+        }
+    }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
     pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
         if rels.is_empty() {

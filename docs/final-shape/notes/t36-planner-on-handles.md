@@ -484,3 +484,32 @@ ported, over the targeted tests and dl1.
     measurement (45.1–45.7 G then for the older build); the difference between the two builds is about 1.5 G, the
     address search the lookup made. Folding a run's overlays into one (the overlay chain `Version::rule` walks) is
     still open, but not for its cost: sampled after this step, `Version::rule` is 1 of `run`'s 328 samples.
+
+- **Item 7, step 6: compose on handles** (2026-11-14).
+  - The composed path reads a program's version, not its tree: `accepts`, `planned`, `compile`, `Compiled::execute`
+    and `finish`, `stages::{bind, simplify, changes, run, run_with, run_stages}` and `retained::run` take a `Placed`
+    (or its `Fields`). Rules are read by their handles (`Placed::body`, `Placed::rule`), the other fields through
+    `Fields`, what the outputs need through `analyses::needed`, and a retained boundary's identities through
+    `identities` with `RuleKey`s (`Versions::of_placed`: a run's versions with no tree behind them).
+  - The components come in the tree's order (`analyses::components_by_name`: the version's graph numbered by name,
+    run through `front::components_of_graph`, the tree's search, `together`'s rings and its first error): the
+    composed query lists its definitions in that order, so the order of ids `analyses::strata` gives would change
+    the SQL. A maintained program's sets run together are read from its `Maint`. `analyses_agree` checks the
+    components by name against `front::components_of`, order and errors included.
+  - Compose's edits are overlays of the version they were given, made with the builder: relations made inputs
+    (their rules, facts and natives gone: `Builder::drop_native`, new), rules proved empty removed, and a part's
+    outputs. An edit removes rules only, so each rule keeps its place; the maintained parts are carried as they were,
+    as the tree's edits left them.
+  - `plan::run` makes its version before the composed branch when that branch is asked (`RERAIL_COMPOSE=1`), and
+    takes it below where the branch declines, so it is made once either way.
+  - Still the tree's, and why: the `CACHE` key, a digest of the program's tree's text until the program digests move
+    onto versions (decision 0173 step 6). `plan::run` keys by its tree's text, as before; a version compose edited
+    (`stages`) has no tree, so its key is its decode's text and its sets run together (`compose::tree_text`). Only
+    tests reach `stages` and `retained` today. The tests build their programs as trees and make their versions.
+  - Checked while porting, by a check removed after: on each compile, the tree form's SQL (the old `compile` over
+    the version's decode) equalled the version form's byte for byte; `accepts` equalled the tree's; each edit,
+    decoded, equalled the tree edit of the decode; and `simplify`'s rules gone, empty relations and quiet candidates
+    and `changes` equalled the tree's. Over the compose tests (logic `compose::`, 12).
+  - Checked: logic `compose::` (12) and `plan::` (110); the engine's `compose::`, `program_image::` (with the
+    components by name), `rr::`, retain and session tests; dl1 (images required, profiling build, a fresh store): the
+    same 48 findings cold and warm as the baseline, 51.2 G instructions cold and 2.6 G warm (dl1 does not compose).

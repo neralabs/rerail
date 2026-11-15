@@ -524,9 +524,14 @@ fn analyses_agree(v: &Version, p: &Program) {
     assert_eq!(got, want, "produced");
     let produced: BTreeMap<String, String> = crate::code_rule_dsl::logic::answers::produced(p).into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
     assert_eq!(got.into_iter().collect::<BTreeMap<_, _>>(), produced, "produced, by relation");
-    let want = crate::code_rule_dsl::logic::plan::compose::accepts(p).ok();
+    // The composed path's, over the program's version, its components in the tree's order.
+    let want = crate::code_rule_dsl::logic::plan::compose::accepts(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap()).ok();
     let got = analyses::accepts(v, &about).ok();
     assert_eq!(got, want, "accepts");
+    // The components by name are the tree's, in its order, and so is the error where a negation closes a cycle.
+    let want = front::components_of(p).map_err(|e| e.to_string());
+    let got = analyses::components_by_name(v, &about, &p.together).map_err(|e| e.to_string());
+    assert_eq!(got, want, "components by name");
 }
 
 /// A program with what the analyses read beside rules: answers, a lattice its aggregate is monotone in, a native,

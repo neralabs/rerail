@@ -761,12 +761,15 @@ pub fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
 /// The program's components, dependencies first (`strata` without its edges): an error if a negation or a
 /// non-monotone aggregate closes a cycle. What most callers of `strata` read, made without the edges by name.
 pub fn components_of(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
-    let g = Graph::of(prog);
-    let sccs = g.together(&prog.together);
-    match g.first_unstratified(&sccs, true).into_iter().next() {
-        Some(e) => Err(e),
-        None => Ok(g.named(&sccs)),
-    }
+    Graph::of(prog).components(&prog.together)
+}
+
+/// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
+/// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
+/// and each once; the non-monotone aggregation edges; and the sets run as one component. The components, their order
+/// and the error are the tree's.
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph { names, succ, aggs }.components(together)
 }
 
 /// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
@@ -861,6 +864,16 @@ impl<'p> Graph<'p> {
             if sets.len() == n {
                 return sccs;
             }
+        }
+    }
+
+    /// The components, dependencies first, `together`'s sets each one (`together`): an error if a negation or a
+    /// non-monotone aggregate closes a cycle.
+    fn components(&self, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+        let sccs = self.together(together);
+        match self.first_unstratified(&sccs, true).into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(self.named(&sccs)),
         }
     }
 

@@ -622,6 +622,11 @@ impl Versions {
         let start = rules.as_ptr() as usize;
         Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], vec![(prog as *const Program as usize, 0)])
     }
+    /// `placed` alone, the run's version 0, for a caller that holds no tree (the composed path's edited versions): no
+    /// rule or program is found by its address.
+    pub fn of_placed(placed: Placed) -> Versions {
+        Versions(vec![(0, 0, placed)], Vec::new())
+    }
     /// Adds `prog` (a maintained form), a whole version of its own (`Placed::of_program`): its rules, its other fields
     /// and its maintenance's parts, which the run reads while it is the run's program (t36 item 7). Once only.
     pub fn add(&mut self, prog: &Program) -> Result<()> {

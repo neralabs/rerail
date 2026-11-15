@@ -1091,12 +1091,6 @@ fn survivors(r: &Body<'_>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String
         .map(|gone| (old, gone))
 }
 
-/// `survivors` of a rule no version the caller holds has (compose's copies of a program it trims), read alone.
-fn survivors_alone(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<(String, String)> {
-    let v = body::alone(r).ok()?;
-    survivors(&body::nth(&v, 0), scc, native_rels)
-}
-
 /// A maintenance relation (decision 0090: the rows lost, checked, held, gone, inserted or derived again): it starts
 /// empty and takes small batches from its first row, so the plan for a delta that is its whole relation (one that
 /// scans the other relations first) is never the right one for it.
@@ -7926,15 +7920,24 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let setup = super::profile::span(|| "setup".into());
     connection::run(db,4,||super::strings::register(db))?;
     connection::run(db,8,||super::native::aggregation::register_sum(db))?;
+    // The program's version (t36 item 7, step 2), made here where the composed path is asked, which reads it (step
+    // 6), and taken by the run below where that path declines.
+    let version = || -> Result<body::Placed> {
+        let _span = super::profile::span(|| "the program's version".into());
+        body::Placed::of_program(input)?.normalized(apart, prog)
+    };
+    let mut early: Option<body::Placed> = None;
     if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
         && hooks.answer.is_none()
-        && compose::enabled() && compose::accepts(prog)? {
-        let needed=super::front::needed(prog,prog.outputs.iter().chain(&inputs.kept).cloned().collect());
-        let reads:Vec<_>=prog.inputs.iter().filter(|r|needed.contains(*r)).cloned().collect();
+        && compose::enabled() && compose::accepts(early.insert(version()?))? {
+        let p=early.as_ref().expect("the version, made above");
+        let f=p.fields()?;
+        let needed=compose::needed(f,f.outputs().chain(inputs.kept.iter().map(String::as_str)));
+        let reads:Vec<String>=f.inputs().filter(|r|needed.contains(*r)).map(str::to_owned).collect();
         if let Some(load)=hooks.load.as_deref_mut(){load(&reads)?;}
         for rel in super::native::component::adopted(db).into_iter().filter(|r|reads.contains(r)) {
             let held=super::native::component::held(db,&rel).ok_or_else(||Error::Plan(format!("missing retained input {rel}")))?;
-            let source=held.source((0..prog.decls[rel.as_str()].len()).map(|c|sql_col(&rel,c)).collect());
+            let source=held.source((0..f.width(&rel)).map(|c|sql_col(&rel,c)).collect());
             if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())? {
                 connection::bind(db,&rel,source)?;
             }
@@ -7942,12 +7945,13 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         // The composed query is one statement over every needed rule. Where SQLite cannot prepare it (a relation it
         // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
         // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
-        let plan=compose::planned(prog,db,&mut inputs.clone())?;
+        // Keyed by the tree's text: the program digests are the tree's until decision 0173's step 6.
+        let plan=compose::planned(p,&format!("{prog:?}"),db,&mut inputs.clone())?;
         if let Err(e)=db.prepare_cached(&plan.sql) {
             super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
             if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         } else {
-        let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
+        let mut out=plan.execute(db,f,lowered,&mut hooks)?;
         if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         for rel in &sentinels {
             if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}
@@ -7988,9 +7992,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let planning = super::profile::span(|| "statistics and plan".into());
     // The program's version (t36 item 7, step 2): its input's image, normalized by the version passes, which the
     // planner reads its rules and fields from, and the passes below edit.
-    let normal_v = {
-        let _span = super::profile::span(|| "the program's version".into());
-        body::Placed::of_program(input)?.normalized(apart, prog)?
+    let normal_v = match early {
+        Some(v) => v,
+        None => version()?,
     };
     let mut model = {
         let _span = super::profile::span(|| "statistics".into());
