@@ -1737,3 +1737,45 @@ Counts, reported (before, after; lean):
 The rare kinds rose by about 40 a token: `mid`'s split and the
 reloads after each call. Open: their paths against lean's, and the
 second word's compare (12 instructions; lean's ninth byte, 3).
+
+## A rare start has its own head
+
+**Intro.** The lean lexer's rare token never runs its run loop's
+code. It takes `pos = base + rare.trailing_zeros()`, reads the byte
+and `match`es on it. Ours entered the same token block as the run
+loop's tokens: the entry, the pair bit, the fused rules' test, then
+the rules' jump table. The run loop's head held the `match`, and
+the rare path's work could be moved into it.
+
+**The change.** The token's body is made once per head (`Side`):
+
+- the run loop's (`Side::Fused`): the fused rules alone. A token
+  not of them is the run rule's past its block, whose block it
+  takes alone (`RuleMode::Only`), as lean's `word_end`;
+- the rare starts' (`Side::Rare`): no fused rule, the rules' jump
+  table, as lean's `match`.
+
+`mid`'s rare start goes to the rare head (`rare_word`), with the
+state and the block's words as the run loop's.
+
+The run loop has neither a call nor a `match`
+(`the_run_loop_calls_nothing`). Stepped by instruction, a string
+and the comma after it: 231 (lean 223). Its rule function is 104
+(lean's `string_end`, 124); the loop's part is 127 (lean's, 99).
+The rare head is 17 instructions to its call (lean's, 14).
+
+Counts, reported (before, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 107.8 | 106.0 | 97.9 |
+| Punctuation | 54.5 | 53.4 | 53.5 |
+| Mixed | 57.6 | 56.4 | 63.1 |
+| Strings | 321.5 | 306.9 | 240.7 |
+| Numbers | 187.8 | 173.7 | 107.3 |
+| Comments | 301.3 | 285.6 | 193.2 |
+
+Tried and dropped first: sending the run's end straight to the
+rare start `mid` had found, with one shared token head. rustc then
+moved the rare path's checks into that head: a plain word went
+from 42 instructions to 49. With the heads apart, it is next.

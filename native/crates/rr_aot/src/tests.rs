@@ -88,6 +88,8 @@ fn the_word_multiplier_is_a_literal() {
 /// The token loop's innermost loop, the fused rules' (a word's hash in it), calls nothing: as
 /// the lean lexer's `while run != 0`, it runs over the starts before the block's first rare one
 /// (its strings', comments', numbers'), whose rules' calls are in the loop around it (`mid`).
+/// Nor does it dispatch on the rules (a `match`): a rare start has its own head, as the lean
+/// lexer's `match` on a rare token's first byte is apart from its run loop.
 #[test]
 fn the_run_loop_calls_nothing() {
     let c = rerail_rr_parser::compiled().expect("compiles");
@@ -112,9 +114,9 @@ fn the_run_loop_calls_nothing() {
             }
         }
         let (a, b) = inner.expect("a loop around the hash");
-        f0[a..b].matches("(pin, ").count()
+        f0[a..b].matches("(pin, ").count() + f0[a..b].matches("match ").count()
     }).collect();
-    assert!(calls.contains(&0), "every word hash's loop has calls: {calls:?}");
+    assert!(calls.contains(&0), "every word hash's loop has calls or a rules' match: {calls:?}");
 }
 
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)

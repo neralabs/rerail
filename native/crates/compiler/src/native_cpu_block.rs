@@ -2264,6 +2264,16 @@ const READ_CALL: u16 = 0x1000;
 /// past the outputs.
 const RULES_CALL: u16 = 0x0800;
 
+/// Which of a token loop's heads a token's rules are for (`record_tokens`): one head for every
+/// token; or, as the lean lexer's two loops, the run loop's (the fused rules, and the run
+/// rule's token past its block) and the rare starts' (the other rules, no fused one).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Both,
+    Fused,
+    Rare,
+}
+
 /// Where `rule_last` builds the rules' blocks.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleMode {
@@ -2458,7 +2468,7 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
-    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, &mut heads);
+    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, mode, Side::Both, &mut heads);
     if packs(r) {
         let got = pack_rule(&mut f, l, refuse, tag, hits);
         f.ins().return_(&got);
@@ -2692,7 +2702,7 @@ impl Reads<'_> {
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
     let (ended, done) = (f.create_block(), f.create_block());
@@ -2727,8 +2737,17 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).
     let mut fused_exit = None;
     let in_regs: Vec<u16> = regs.map(|g| g.runs.iter().map(|&(k, _)| k).collect()).unwrap_or_default();
-    let fused = fused_rules(r, t, rd, &in_regs);
+    let fused = fused_rules(r, t, rd, &in_regs).filter(|_| side != Side::Rare);
+    // The run loop's head (`Side::Fused`): a token not of the fused rules is the run rule's
+    // past its block (the lean lexer's `word_end`), its block alone.
+    let mut only = match mode {
+        RuleMode::Only(k) | RuleMode::Short(k) => Some(k),
+        _ => None,
+    };
     if let Some((kn, kr)) = fused {
+        if side == Side::Fused {
+            only = Some(kr);
+        }
         let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { unreachable!("the forms chosen") };
         let fdone = f.create_block();
         for _ in 0..4 {
@@ -2792,8 +2811,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
     // alone (`records::NO_RULE`, past the table).
     // Rule `k` alone: its block, and the rules it goes on to.
-    let needed: Vec<usize> = match mode {
-        RuleMode::Only(k) | RuleMode::Short(k) => {
+    let needed: Vec<usize> = match only {
+        Some(k) => {
             let mut v = vec![k];
             let mut at = 0;
             while at < v.len() {
@@ -2807,9 +2826,9 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             }
             v
         }
-        _ => (0..r.rules.len()).collect(),
+        None => (0..r.rules.len()).collect(),
     };
-    if let RuleMode::Only(k) | RuleMode::Short(k) = mode {
+    if let Some(k) = only {
         f.ins().jump(blocks[k], &[]);
     } else {
         let none = f.create_block();
@@ -4023,6 +4042,7 @@ fn marks_in(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, marks: &[
 
 /// The cursor's block in registers (decision 0177), as the lean lexer's window: the starts
 /// left (`cand`, its bits from the cursor), and each run rule's word (output, word).
+#[derive(Clone)]
 struct BlockRegs {
     cand: Value,
     runs: Vec<(u16, Value)>,
@@ -4183,6 +4203,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The loop over a block's runs (`mid`, its header) and the starts after the run (`rest`),
     // where the rare starts split them, as the lean lexer's.
     let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value)> = None;
+    // The rare starts' head, where the runs loop has one: its token block, the state, the
+    // block's registers, as the run loop's (`Side::Rare`).
+    let mut rare_part: Option<(cranelift_codegen::ir::Block, Vec<Value>, BlockRegs)> = None;
     match walked {
         Some(o) => {
             // The next start, the first of the block's left (`cand`); none left, the cursor's
@@ -4349,6 +4372,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 }
                 mid
             });
+            // A rare start's head: its own, as the lean lexer's `match` on a rare token's first
+            // byte, apart from the run loop's.
+            let rare_word = mid.map(|_| {
+                let b = f.create_block();
+                for _ in 0..2 + STATE_WORDS {
+                    f.append_block_param(b, types::I64);
+                }
+                b
+            });
             match mid {
                 Some(mid) => {
                     let args: Vec<BlockArg> = std::iter::once(&x).chain(&state).map(|&v| v.into()).collect();
@@ -4407,8 +4439,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let tz = f.ins().ctz(rare);
                 let s0 = f.ins().iadd(q64, tz);
                 let args: Vec<BlockArg> = [s0, cand].iter().chain(st).map(|&v| v.into()).collect();
-                f.ins().jump(from_word, &args);
+                f.ins().jump(rare_word.expect("with mid"), &args);
                 runs_loop = Some((mid, rest));
+                // The rare head: the state and the block's words as the run loop's, its token
+                // block its own.
+                let rw = rare_word.expect("with mid");
+                f.switch_to_block(rw);
+                let rp = f.block_params(rw).to_vec();
+                let token_r = f.create_block();
+                f.append_block_param(token_r, types::I64);
+                let hr: Vec<Value> = rp[2..].iter().copied().chain(std::iter::once(rp[1])).chain(words.iter().copied()).collect();
+                f.ins().jump(token_r, &[rp[0].into()]);
+                rare_part = Some((token_r, hr, BlockRegs { cand: rp[1], runs: runs.iter().copied().zip(words.iter().copied()).collect() }));
             }
             // The start: a token, or past the file.
             f.switch_to_block(from_word);
@@ -4430,6 +4472,14 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     }
 
+    // The token's body, once a head: the run loop's and the rare starts', where they are two
+    // (`Side`), as the lean lexer's run loop and its `match` on a rare token's first byte.
+    let mut parts = vec![(token, h.clone(), regs.clone(), pending_in, from_in, if rare_part.is_some() { Side::Fused } else { Side::Both })];
+    if let Some((tr, hr, gr)) = rare_part.take() {
+        let (p_in, f_in) = (hr[3], hr[4]);
+        parts.push((tr, hr, Some(gr), p_in, f_in, Side::Rare));
+    }
+    for (token, h, regs, pending_in, from_in, side) in parts {
     // A token: its first and last bytes, its kind and its word's slot.
     f.switch_to_block(token);
     let (k, after, bad, pending) = (h[0], h[1], h[2], pending_in);
@@ -4469,7 +4519,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // run loop, apart from its rare tokens).
     let (general, fused_exit) = if ruled {
         let mode = if rd.calls.iter().any(|x| x.0 & !0xff == RULES_CALL) { RuleMode::Calls } else { RuleMode::Inline };
-        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, heads);
+        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, side, heads);
         (Some((l, refuse, tag, h)), fx)
     } else {
         (None, None)
@@ -4893,6 +4943,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     } else {
         f.ins().jump(head, &back);
+    }
     }
     }
 
