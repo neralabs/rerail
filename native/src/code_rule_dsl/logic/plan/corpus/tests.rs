@@ -1055,6 +1055,7 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
 /// natively from the run's vocabulary (`front::Native::TextTest`) and maintained as a filter: after each edit only
 /// the new strings are tested, its stratum is not derived again, and the outputs are a run's with an empty store.
 #[test]
+#[ignore = "a node's text read in the cross-file part is empty (decision 0174 §6; work-queue question 2): both runs give no rows, so the test checks nothing until that is answered"]
 fn a_cross_file_text_test_is_maintained_as_a_filter() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("text-filter");

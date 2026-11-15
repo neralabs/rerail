@@ -606,6 +606,13 @@ pub fn node_subject_tests(prog: &mut Program) {
 ///
 /// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
 /// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
+/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
+/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
+fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
+    let vars: HashSet<&str> = head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+    holds && width == 2 && !head.neg && head.args == atom.args && vars.len() == head.args.len()
+}
+
 pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     if prog.decls.contains_key("text") {
         node_subject_tests(prog);
@@ -616,6 +623,19 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     let (mut tests, mut specs) = (Vec::new(), Vec::new());
     // Each test over strings answered during the run, by the relation and column that give them: its native relation.
     let mut during: BTreeMap<(usize, String, usize), String> = BTreeMap::new();
+    // The rules that are a native test's own definition, `h(x…) :- input(x…), test(x_c)` (as `rr::print` writes one,
+    // and as this makes it): `h` is the native, read back as it was made, not a second native under it.
+    let mut defined: Vec<(String, String, usize, String, Vec<String>)> = Vec::new();
+    // Only a relation of that one rule, no output or input, with no facts and no other native, is made so.
+    let mut heads: HashMap<String, usize> = HashMap::new();
+    for r in &prog.rules {
+        *heads.entry(r.head.rel.to_string()).or_default() += 1;
+    }
+    let alone: HashSet<String> = heads
+        .into_iter()
+        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && !prog.natives.get(h).is_some_and(|n| !matches!(n, super::front::Native::TextTest { .. })))
+        .map(|(h, _)| h)
+        .collect();
     for rule in &mut prog.rules {
         // Each string the rule's text relations give: from a batch's column (`None`), or else from the first atom
         // that gives it over an answered `TEXT_COLUMNS` relation itself (the atom, and its column). A string only a
@@ -638,6 +658,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
         }
         // The atoms a holding native test stands for (its rows are theirs that pass), and the tests' places.
         let (mut replaced, mut dropped): (Vec<(usize, Literal)>, HashSet<usize>) = (Vec::new(), HashSet::new());
+        let (head, width) = (rule.head.clone(), rule.body.len());
         for (place, literal) in rule.body.make_mut().iter_mut().enumerate() {
             let Some((op, s, mut pats, holds)) = as_test(literal) else { continue };
             let Some(from) = texts.get(s) else {
@@ -651,6 +672,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
             pats.sort();
             pats.dedup();
             let key = (op.to_owned(), pats);
+            let spec = key.clone();
             let rel = match ids.get(&key) {
                 Some(r) => r.clone(),
                 None => {
@@ -671,6 +693,13 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
             // gives the string whose string passes (keyed as the atom is, so a file-local atom's stays file-local),
             // its strings tested by the run's vocabulary. A holding test reads it in the atom's place (its rows are
             // the atom's that pass); a failing one reads its negation beside the atom.
+            if let Some((atom, column, _)) = from
+                && alone.contains(head.rel.as_str())
+                && definition(&head, atom, width, holds)
+            {
+                defined.push((head.rel.to_string(), atom.rel.to_string(), *column, spec.0, spec.1));
+                continue;
+            }
             *literal = match from {
                 None => Literal::Atom(Atom { rel: rel.into(), args: [Term::Var(s.to_owned().into())].into(), neg: !holds, gated: false }),
                 Some((atom, column, at)) => {
@@ -705,6 +734,9 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
         let body = [Literal::Atom(Atom { rel: input.clone().into(), args: args.clone().into(), neg: false, gated: false }), test_literal(args[column].clone(), &op, &patterns)];
         prog.rules.push(super::front::Rule { head: Atom { rel: native.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         prog.decls.insert(native.clone().into(), decl);
+        prog.natives.insert(native, super::front::Native::TextTest { input, column, op, patterns });
+    }
+    for (native, input, column, op, patterns) in defined {
         prog.natives.insert(native, super::front::Native::TextTest { input, column, op, patterns });
     }
     let mut markers: Vec<String> = Vec::new();

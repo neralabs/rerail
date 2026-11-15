@@ -112,6 +112,18 @@ into notes once the queue is done).
     6. A `TextTest` native does not survive print and parse (`native_definition` does not recognise its rule).
     7. On a device binding the text tests now run on the host (the device form of 0174 for TextTest is bypassed),
        which no guard records: "no host work on Metal".
+  - *After review 1*:
+    1. Question 2 below; the session test is ignored with that reason (it compared two empty files).
+    2. `native_stratum_` makes a single text-test stratum from the vocabulary where the engine holds its input (a
+       form's `h__ins` over `i__plus`, or a stratum derived again), instead of declining it as a native.
+    3. A maintained text-test stratum's relation is no longer a native in its form: its rules are its old rows
+       and `h__ins`, and only `h__ins` is tested.
+    4. Open: to measure on a rule with findings (atoms and work), once question 2 is answered.
+    5. The prepared program's key hashes every engine switch, as the run's key does (`reuse::switches`, shared).
+    6. `as_relations` reads a text test's own definition back as that native (a relation of that one rule, no
+       output, input or facts): test `a_printed_native_text_test_is_read_back_as_itself`.
+    7. With the device on, the text test is not made on the host: its rule (the test row by row) runs as placed,
+       the device's text-test form, as before Q2.
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -129,6 +141,19 @@ into notes once the queue is done).
   differ, or where a native or an output names it. The test's collapse is gone. dropping_unreached (8),
   lowering_is_idempotent (11), rdl_programs_translate, program_image (17), the on-request tests (node_text 2,
   base 1, parse request, requested source, cone of requests) pass.
+  - *Review 1* (1d0a493ec): the fold repeats, weaker, a congruence the engine has: `simplify::merge_identical`
+    (simplify.rs 1697) merges relations with identical rules (recursion and copies of copies included, guarded for
+    inputs, demand, gates, natives, lattices, qualifiers), and the corpus run applies it between two prunes
+    (corpus.rs 2727–2730). The test pruned without it. Also: `combine_read` drops `widened`; the fold's guards miss
+    a lattice or native `of`, qualifiers, demand, gates; a copy of a folded copy is stranded; recursive copies never
+    fold; `asked_by` keeps copy names; no direct tests. To do: remove `Program::widened` and the fold; the test
+    prepares as the corpus run does (prune, simplify, prune).
+  - *After review 1*: `Program::widened` and the fold are removed (the six files as before 1d0a493ec). The test
+    prepares as `corpus::run_observed` does: prune, `simplify`, prune; its renumbering covers `simplify`'s fresh
+    variables (`rr_earlier27_f18`). That exposed a second difference: `prune` dropped an unread relation's rules but
+    kept its facts, and `merge_identical` then named a class after the unread `annt_fixed` (equal facts) in place of
+    the read `argt_fixed`. `prune` now drops the facts of relations nothing reads, as `convert::reachable` already
+    did. dropping_unreached: 8 passed.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -196,7 +221,8 @@ into notes once the queue is done).
 - **Done when**: on the final state these pass, each failure fixed at its cause:
   logic::rr dropping_unreached_clauses (8) and rdl_programs_translate; convert's
   a_sample_of_the_replay_gives_the_recorded_findings; typing pep_561 and phase_tests; session quiet_stratum.
-- **Record**: —
+- **Record**: in progress. dropping_unreached (8) and rdl_programs_translate pass (Q3). The replay sample: 14 of
+  268 events fail after Q2/Q3's fixes, against 57 on the 09:46 run (tmp/remote4.txt); all 14 are among those 57.
 
 ### Q10. The merge audit checks hunks
 

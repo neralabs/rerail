@@ -6346,7 +6346,22 @@ impl<'a> Run<'a, '_> {
             self.why_class = Some("a lattice relation".into());
             return Ok(Native::Declined);
         }
-        if scc.iter().any(|r| f.native(r).is_some()) {
+        // A text test over answered strings (a maintained form's `h__ins` among them): its rows from the run's
+        // vocabulary where the engine holds its input. With the device on, its rule (the test row by row) runs as
+        // placed, the device's text-test form.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(super::program_image::NativeSpec::TextTest { input, column, op, patterns }) = f.native(rel).map(|n| &n.spec)
+        {
+            if !placement::device_on() {
+                let (input, op, patterns) = (f.rel_name(*input).to_owned(), f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect::<Vec<_>>());
+                if self.native_text_test(rel, &input, *column, &op, &patterns)?.is_some() {
+                    return Ok(Native::Ran);
+                }
+                self.why_not = Some("a text test whose input the engine does not hold".into());
+                self.why_class = Some("native fact operator".into());
+                return Ok(Native::Declined);
+            }
+        } else if scc.iter().any(|r| f.native(r).is_some()) {
             self.why_not = Some("a native fact operator over input relations".into());
             self.why_class = Some("native fact operator".into());
             return Ok(Native::Declined);
@@ -10097,8 +10112,11 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             outcome.native.insert(key);
             continue;
         }
-        // A text test over strings the run answered, from the rows the engine holds: no table read or written.
+        // A text test over strings the run answered, from the rows the engine holds: no table read or written. With
+        // the device on, its rule runs as placed (the device's text-test form, `native_stratum_`), never on the host
+        // in the device's place.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && !placement::device_on()
             && let Some(NativeSpec::TextTest { input, column, op, patterns }) = f0.native(rel).map(|n| &n.spec)
             && let Some(n) = run.native_text_test(rel, f0.rel_name(*input), *column, f0.text(*op), &patterns.iter().map(|&p| f0.text(p).to_owned()).collect::<Vec<_>>())?
         {

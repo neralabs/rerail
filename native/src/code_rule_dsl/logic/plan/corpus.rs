@@ -2624,6 +2624,10 @@ fn run_observed(
         if !factorizing {
             hash.update(b"\0factorize:off");
         }
+        // The switches that change what is prepared (`RERAIL_TEXT_TESTS`, `RERAIL_NODE_SOURCES` …): a program
+        // prepared under one is not another's.
+        hash.update(b"\0switches\0");
+        hash.update(reuse::switches());
         hash.finalize().into()
     };
     // The lowered program's atoms are the store's: the same strings must still be the same atoms.
