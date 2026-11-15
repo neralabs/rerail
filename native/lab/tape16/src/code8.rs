@@ -23,6 +23,8 @@ use crate::tree::NONE;
 use std::collections::{HashMap, HashSet};
 
 const ESC: u8 = 255;
+/// In the one-byte table: the byte is shared (or the escape), so the previous byte decides.
+const SHARED: u16 = u16::MAX;
 /// The context of a node with none before it (the root).
 const START: u32 = u32::MAX;
 
@@ -43,7 +45,8 @@ fn ctx_of(c: &Cols, i: usize, ctx: Ctx) -> Option<usize> {
 /// The byte each code is stored as, and the decode table.
 pub struct Assign {
     pub f: Vec<u8>,
-    /// `t[s * 256 + v]`: the code byte v stands for after byte s (u32::MAX: none).
+    /// `t[s * 256 + v]`: the code byte v stands for after byte s. Built at u32 (256 KiB); the reads use a u16
+    /// copy (128 KiB), except `Code8::get`, kept as the first measurement.
     pub t: Vec<u32>,
 }
 
@@ -202,6 +205,12 @@ fn store(c: &Cols, a: &Assign, ctx: Ctx) -> (Vec<u8>, Vec<(usize, u32)>) {
 pub struct Code8<'a> {
     bytes: Vec<u8>,
     t: &'a [u32],
+    /// The same table at u16 (128 KiB), and a byte's code where no other code shares it, else SHARED.
+    t16: Vec<u16>,
+    one: [u16; 256],
+    /// Bytes another code shares (and the escape), as a 256-bit set: with codes numbered so that a byte one
+    /// code alone stands for is that code's number, a read is the byte unless its bit is set.
+    shared_set: [u64; 4],
     start: Vec<u32>,
     off: Vec<u8>,
     val: Vec<u16>,
@@ -220,7 +229,72 @@ impl<'a> Code8<'a> {
         for b in 0..blocks {
             start[b + 1] += start[b];
         }
-        Code8 { bytes, t, start, off, val }
+        let t16: Vec<u16> = t.iter().map(|&c| c as u16).collect();
+        // A byte one code alone stands for reads as that code in every context.
+        let mut one = [SHARED; 256];
+        for v in 0..256 {
+            let first = t16[v];
+            if (0..256).all(|s| t16[s * 256 + v] == first) {
+                one[v] = first;
+            }
+        }
+        let mut shared_set = [0u64; 4];
+        for v in 0..256 {
+            if one[v] == SHARED {
+                shared_set[v / 64] |= 1 << (v % 64);
+            }
+        }
+        Code8 { bytes, t, t16, one, start, off, val, shared_set }
+    }
+    /// The stored byte alone: what a sweep or a kind test compares.
+    #[inline(always)]
+    pub fn byte(&self, i: usize) -> u8 {
+        // SAFETY: callers pass i < len.
+        unsafe { *self.bytes.get_unchecked(i) }
+    }
+    /// The code: the 256-entry table for a byte one code alone stands for (all but 1–3% of nodes), else the
+    /// previous byte and the 128 KiB table.
+    #[inline(always)]
+    pub fn get_fast(&self, i: usize) -> u32 {
+        let v = self.byte(i);
+        // SAFETY: v < 256, and the 2-D table has 256 × 256 entries.
+        let c = unsafe { *self.one.get_unchecked(v as usize) };
+        if c != SHARED {
+            return u32::from(c);
+        }
+        self.shared(i, v)
+    }
+    #[cold]
+    #[inline(never)]
+    fn shared(&self, i: usize, v: u8) -> u32 {
+        if v == ESC {
+            return self.escaped(i);
+        }
+        let s = if i == 0 { ESC } else { self.byte(i - 1) };
+        u32::from(self.t16[(s as usize) << 8 | v as usize])
+    }
+    /// With codes renumbered so an unshared byte is its own code's number: the byte, unless it is shared (the
+    /// number returned is then the table's code, which a renumbering would map past 255; here the lab's own
+    /// numbering, so only the cost is measured).
+    #[inline(always)]
+    pub fn get_ident(&self, i: usize) -> u32 {
+        let v = self.byte(i);
+        // SAFETY: v / 64 < 4.
+        if unsafe { *self.shared_set.get_unchecked(v as usize >> 6) } >> (v & 63) & 1 == 0 {
+            return u32::from(v);
+        }
+        self.shared(i, v)
+    }
+    /// Every read through the 2-D table at u16 (128 KiB), unchecked.
+    #[inline(always)]
+    pub fn get_t16(&self, i: usize) -> u32 {
+        let v = self.byte(i);
+        if v == ESC {
+            return self.escaped(i);
+        }
+        let s = if i == 0 { ESC } else { self.byte(i - 1) };
+        // SAFETY: both bytes are below 256.
+        u32::from(unsafe { *self.t16.get_unchecked((s as usize) << 8 | v as usize) })
     }
     #[inline(always)]
     pub fn get(&self, i: usize) -> u32 {
@@ -266,8 +340,10 @@ pub struct Report {
     pub repeat_nodes: u64,
     pub repeat_same: u64,
     pub wrong: u64,
-    /// ns a read: 8-bit at random and in order; 9-bit packed (today's width) at random and in order.
-    pub ns: [f64; 4],
+    /// ns a read, at random then in order: the byte alone; the code by the one-byte table with the 2-D one
+    /// for shared bytes; every read through the 2-D table at u16; at u32 (the first measurement); and the
+    /// language's width bit-packed.
+    pub ns: [[f64; 2]; 6],
     /// On disk, B a node (measured files, dictionary from the others): zstd 3, LZ4 HC 9: 8-bit (bytes + side),
     /// language width bit-packed, 16 bits.
     pub disk: [[f64; 2]; 3],
@@ -319,7 +395,7 @@ pub fn run(files: &[&File]) -> Report {
         repeat_nodes: 0,
         repeat_same: 0,
         wrong: 0,
-        ns: [0.0; 4],
+        ns: [[0.0; 2]; 6],
         disk: [[0.0; 2]; 3],
     };
     for c in &train {
@@ -368,12 +444,25 @@ pub fn run(files: &[&File]) -> Report {
         }
         b as f64 / n.max(1) as f64
     };
+    // Each read inlined into its own loops (a generic, not a call through a pointer).
+    fn both(order: &[usize], n: usize, best: &dyn Fn(&dyn Fn() -> u64) -> f64, f: impl Fn(usize) -> u64) -> [f64; 2] {
+        [
+            best(&|| order.iter().fold(0u64, |s, &i| s.wrapping_add(f(i)))),
+            best(&|| (0..n).fold(0u64, |s, i| s.wrapping_add(f(i)))),
+        ]
+    }
     r.ns = [
-        best(&|| order.iter().fold(0u64, |s, &i| s.wrapping_add(u64::from(c8.get(i))))),
-        best(&|| (0..n).fold(0u64, |s, i| s.wrapping_add(u64::from(c8.get(i))))),
-        best(&|| order.iter().fold(0u64, |s, &i| s.wrapping_add(p9.get(i)))),
-        best(&|| (0..n).fold(0u64, |s, i| s.wrapping_add(p9.get(i)))),
+        both(&order, n, &best, |i| u64::from(c8.byte(i))),
+        both(&order, n, &best, |i| u64::from(c8.get_fast(i))),
+        both(&order, n, &best, |i| u64::from(c8.get_t16(i))),
+        both(&order, n, &best, |i| u64::from(c8.get(i))),
+        both(&order, n, &best, |i| p9.get(i)),
+        both(&order, n, &best, |i| u64::from(c8.get_ident(i))),
     ];
+    // The renumbered read agrees with the code wherever the byte is unshared.
+    r.wrong += (0..n).filter(|&i| c8.one[c8.byte(i) as usize] != SHARED && c8.get_ident(i) as u16 != c8.one[c8.byte(i) as usize] && c8.get_ident(i) != u32::from(c8.byte(i))).count() as u64;
+    // Every read agrees with the plain decode.
+    r.wrong += (0..n).filter(|&i| c8.get_fast(i) != c8.get(i) || c8.get_t16(i) != c8.get(i)).count() as u64;
     // On disk: each form's codes array a file, with a dictionary trained on the other files' arrays.
     if split {
         let forms = |c: &Cols, a: &Assign| -> [Vec<u8>; 3] {
@@ -424,7 +513,12 @@ pub fn print(title: &str, r: &Report) {
     println!("| nodes whose byte another code shares (a code-set sweep confirms them) | {} |", pct(r.nodes_shared, r.measured_nodes));
     println!("| memory, B a node: 8-bit + escapes / today's {} bits | {:.3} / {:.3} |", bits(r.codes), 1.0 + r.side_bytes as f64 / r.measured_nodes.max(1) as f64, bits(r.codes) as f64 / 8.0);
     println!("| repeated subtrees' nodes stored as the same bytes (root excluded) | {} |", pct(r.repeat_same, r.repeat_nodes));
-    println!("| read at random / in order, ns: 8-bit / {}-bit packed | {:.2} / {:.2}; {:.2} / {:.2} |", bits(r.codes), r.ns[0], r.ns[1], r.ns[2], r.ns[3]);
+    let names = ["the byte alone", "code: one-byte table, 2-D for shared bytes", "code: every read through the 2-D table (u16, 128 KiB)", "code: every read through the 2-D table (u32, 256 KiB; first measured)"];
+    for (k, name) in names.iter().enumerate() {
+        println!("| read at random / in order, ns: 8-bit, {name} | {:.2} / {:.2} |", r.ns[k][0], r.ns[k][1]);
+    }
+    println!("| read at random / in order, ns: 8-bit, code: renumbered, the byte unless a 256-bit set marks it shared | {:.2} / {:.2} |", r.ns[5][0], r.ns[5][1]);
+    println!("| read at random / in order, ns: {}-bit packed | {:.2} / {:.2} |", bits(r.codes), r.ns[4][0], r.ns[4][1]);
     println!("| on disk, B a node, zstd 3 + dict / LZ4 HC + dict: 8-bit | {:.3} / {:.3} |", r.disk[0][0], r.disk[0][1]);
     println!("| the same: {}-bit packed | {:.3} / {:.3} |", bits(r.codes), r.disk[1][0], r.disk[1][1]);
     println!("| the same: 16-bit | {:.3} / {:.3} |", r.disk[2][0], r.disk[2][1]);

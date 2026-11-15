@@ -786,8 +786,8 @@ tuple alone does not reach 8: the kinds fit (153–230), and so do kind, flags a
 | nodes whose byte another code shares (a code-set sweep checks them in the table) | 1.1% | 1.8% | 3.2% | 2.0% |
 | memory, B a node: 8 bits and escapes / 9 bits | 1.020 / 1.125 | 1.031 / 1.125 | 1.020 / 1.125 | 1.025 / 1.125 |
 | repeated subtrees' nodes stored as the same bytes (root excluded) | 100% | 100% | 100% | 100% |
-| read at random, ns (M3): 8-bit / 9-bit | 0.73 / 0.56 | 0.71 / 0.55 | 0.89 / 0.54 | 0.70 / 0.54 |
-| read in order, ns (M3): 8-bit / 9-bit | 0.72 / 0.81 | 0.74 / 0.81 | 0.70 / 0.81 | 0.72 / 0.80 |
+| read at random, ns (M3): the byte / the code / 9-bit | 0.32 / 0.60 / 0.71 | 0.32 / 0.59 / 0.76 | 0.32 / 0.65 / 0.71 | 0.29 / 0.58 / 0.72 |
+| read in order, ns (M3): the byte / the code / 9-bit | 0.02 / 0.48 / 0.85 | 0.02 / 0.47 / 0.84 | 0.02 / 0.50 / 0.84 | 0.02 / 0.49 / 0.84 |
 | on disk, zstd + dictionary, B a node: 8-bit / 9-bit / 16-bit | 0.24 / 0.43 / 0.30 | 0.36 / 0.62 / 0.41 | 0.31 / 0.54 / 0.37 | 0.28 / 0.45 / 0.34 |
 
 Every node decodes right, on every corpus.
@@ -796,8 +796,18 @@ Every node decodes right, on every corpus.
   on the files it was chosen on. Memory falls 9% (1.125 → 1.02–1.03 B a node).
 - **The previous byte is as good a context as the parent's**, and a read already has it: it is
   the byte before, in the same cache line. The parent's byte would cost a parent read.
-- **A point read costs 0.15–0.35 ns more** (two bytes and a table lookup, against a shift and a
-  mask), and reading in order is 10–14% faster than 9-bit unpacking.
+- **Reads are faster than at 9 bits.** The byte alone, which a sweep or a kind test compares,
+  reads in 0.29–0.32 ns at random against 0.71–0.76 for 9 bits, and in order it vectorises
+  (0.02 ns a node against 0.85). The code itself takes a 256-entry table (512 B) for a byte one
+  code alone stands for, and the 2-D table only for the shared ones: 0.58–0.65 ns at random
+  (15–20% under 9 bits), 0.47–0.50 in order (40% under).
+- **The first measurement of this step was wrong twice.** It sent every read through the 2-D
+  table (a dependent load into 256 KiB, as it was then held at u32: 0.77–0.84 ns at random, slower
+  than 9 bits). And its printed columns (8-bit at random / in order, then 9-bit) were read as
+  8-bit / 9-bit pairs, so it was reported as 0.15–0.35 ns slower than 9 bits, where it was level.
+  The reads above are all timed in one run (load 4–6), each inlined into its own loop.
+- **Numbering codes so an unshared byte is its own code** (a 256-bit set marks the shared bytes)
+  is no faster than the 256-entry table (0.65–0.72 ns at random, in a run at load 21).
 - **On disk 8-bit codes are the smallest form measured:** 38–44% under 9 bits bit-packed, and
   12–19% under 16 bits, because every code is one whole byte and the bytes repeat.
 - **The cost to rules:** a sweep for a set of codes compares bytes, and for the 1–3% of nodes
@@ -969,5 +979,6 @@ In order. Each step is measured on all three corpora, every answer checked.
     a block, 4–11% at 1,024, 14–23% at 256 on code; a reference block takes back a quarter. Fixed
     blocks do not repeat on code; only the checkpoints are read in place.
 12. **Codes in 8 bits (E20).** Done: overloaded by the previous byte, 0.04–0.31% escapes, 9% less
-    memory, 38–44% less disk, +0.15–0.35 ns a point read. With them the byte-aligned form is the
+    memory, 38–44% less disk; the byte reads 2.3× faster than 9 bits at random, the code
+    15–20% faster. With them the byte-aligned form is the
     smallest in memory and on disk.
