@@ -36,7 +36,7 @@ fn main() {
 /// goes through the farm's wrapper, the one compiler cache every worktree shares: another wrapper,
 /// or none, would compile again what the other worktrees compiled. The farm's `setup` makes it
 /// the machine's (`~/.cargo/config.toml`); this stops a build that overrode it (`RUSTC_WRAPPER`
-/// exported). Relax (`RELAX_STD` set) builds without one, and `RERAIL_FARM_ANY_ENV=1` allows any
+/// exported). Relax (`RELAX_STD` set) builds with its own (itself, or none), and `RERAIL_FARM_ANY_ENV=1` allows any
 /// (a measurement of the compiler itself). Elsewhere (CI, a machine without the farm) it does nothing.
 fn check_compiler_cache() {
     for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {
@@ -51,7 +51,8 @@ fn check_compiler_cache() {
     }
     let farm = home.join(".local/share/rerail-farm/rustc-wrapper");
     let wrapper = std::env::var_os("RUSTC_WRAPPER").unwrap_or_default();
-    if PathBuf::from(&wrapper) == farm || (wrapper.is_empty() && std::env::var_os("RELAX_STD").is_some()) {
+    // Relax (RELAX_STD set) builds its native dependencies with itself as the wrapper.
+    if PathBuf::from(&wrapper) == farm || std::env::var_os("RELAX_STD").is_some() {
         return;
     }
     panic!(

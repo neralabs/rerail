@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -19,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 5
+VERSION = 6
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -287,18 +288,23 @@ def same_in_every_checkout(args, out_dir, crate):
 TIDY_SECONDS = 3600
 
 
-def tidy(out_dir):
-    """Starts `clean-target --wait` on the target directory `out_dir` is in, at most once an hour
-    per directory: Rerail's worktrees together write terabytes of builds a day, and what the next
-    build cannot use goes after the build ends (it waits for cargo's lock). Detached, at nice 19."""
-    if not out_dir or os.environ.get("RERAIL_FARM_NO_TIDY"):
-        return
-    target, d = None, os.path.realpath(out_dir)
+def target_of(out_dir):
+    """The cargo target directory `out_dir` is in, or None."""
+    d = os.path.realpath(out_dir or "")
     for _ in range(4):
         if os.path.isfile(os.path.join(d, "CACHEDIR.TAG")):
-            target = d
-            break
+            return d
         d = os.path.dirname(d)
+    return None
+
+
+def tidy(target, checkout):
+    """Starts `clean-target --wait` on `target`, at most once an hour per target directory:
+    Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
+    goes after the build ends (it waits for cargo's lock). Then `diagnose --brief` on the checkout,
+    whose findings `advise` prints at the next builds. Detached, at nice 19."""
+    if os.environ.get("RERAIL_FARM_NO_TIDY"):
+        return
     script = os.path.join(SHARE, "clean-target")
     if target is None or not os.path.exists(script):
         return
@@ -316,14 +322,78 @@ def tidy(out_dir):
         return
     open(stamp, "w").close()
     for old in os.listdir(os.path.dirname(stamp)):
-        if old.startswith(os.path.basename(stamp) + ".") and old != os.path.basename(claim):
+        # The claims only (`<key>.<hour>`), not the log or the findings beside them.
+        if re.fullmatch(re.escape(os.path.basename(stamp)) + r"\.\d+", old) and old != os.path.basename(claim):
             try:
                 os.unlink(os.path.join(os.path.dirname(stamp), old))
             except OSError:
                 pass
+    findings = findings_path(checkout)
     with open(stamp + ".log", "a") as out:
-        subprocess.Popen(["nice", "-n", "19", script, "--wait", target], stdin=subprocess.DEVNULL,
-                         stdout=out, stderr=out, start_new_session=True, close_fds=True)
+        subprocess.Popen(["nice", "-n", "19", "/bin/sh", "-c",
+                          '"$0" --wait "$1"; "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"',
+                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings],
+                         stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True, close_fds=True)
+
+
+def findings_path(checkout):
+    return state("findings", key(checkout))
+
+
+ADVICE_SECONDS = 3 * 3600
+
+
+def advise(checkout, rustc):
+    """At the first compile of each cargo command (once per cargo process): what this build does
+    that it should not, on stderr, where the agent running it reads it. Its own nice value, a rustc
+    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the hourly
+    job writes them). RERAIL_FARM_QUIET=1 keeps it quiet."""
+    if os.environ.get("RERAIL_FARM_QUIET"):
+        return
+    cargo = os.getppid()
+    said = state("said", str(cargo))
+    try:
+        if time.time() - os.stat(said).st_mtime < ADVICE_SECONDS:
+            return
+    except OSError:
+        pass
+    try:
+        open(said, "w").close()
+        for name in os.listdir(os.path.dirname(said)):
+            if name.isdigit():
+                try:
+                    os.kill(int(name), 0)
+                except ProcessLookupError:
+                    os.unlink(os.path.join(os.path.dirname(said), name))
+                except OSError:
+                    pass
+    except OSError:
+        return
+    lines = []
+    nice = os.getpriority(os.PRIO_PROCESS, 0)
+    if nice < 19:
+        lines.append(f"this build runs at nice {nice}: run every build and test at `nice -n 19` (AGENTS.md)")
+    m = re.search(r"/toolchains/(\d+\.\d+\.\d+)-", rustc)
+    try:
+        pinned = re.search(r'^\s*channel\s*=\s*"(\d+\.\d+\.\d+)"', open(os.path.join(checkout, "rust-toolchain.toml")).read(), re.M)
+    except OSError:
+        pinned = None
+    if m and pinned and m.group(1) != pinned.group(1):
+        lines.append(f"this build runs rustc {m.group(1)}, but the checkout pins {pinned.group(1)}: its crates are cached "
+                     "apart from every other worktree's. Use rustup's cargo (`which cargo` is ~/.cargo/bin/cargo), "
+                     "without `cargo +VERSION` or RUSTUP_TOOLCHAIN")
+    try:
+        f = findings_path(checkout)
+        if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
+            lines += [l.rstrip() for l in open(f) if l.strip()]
+    except OSError:
+        pass
+    if lines:
+        out = ["warning: rerail-farm: this checkout's builds miss the shared cache or the machine's rules:"]
+        out += [f"warning: rerail-farm:   {l}" for l in lines[:10]]
+        out.append("warning: rerail-farm: details: ~/.local/share/rerail-farm/diagnose (RERAIL_FARM_QUIET=1 silences this)")
+        sys.stderr.write("\n".join(out) + "\n")
+        sys.stderr.flush()
 
 
 def wrapper(rustc, args):
@@ -346,7 +416,10 @@ def wrapper(rustc, args):
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
         canonical(crate)
     join(checkout)
-    tidy(out_dir)
+    target = target_of(out_dir)
+    if target and crate != "___":
+        tidy(target, checkout)
+        advise(checkout, rustc)
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:

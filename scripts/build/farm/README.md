@@ -144,6 +144,18 @@ state of crates no longer built or untouched for a day. Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
+## Told at the build
+
+What an agent does wrong is printed in its own build output, not left for someone to find. At the
+first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
+value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
+findings (another toolchain or cargo configuration than the active worktrees, profile settings that
+differ, scripts that set the variables builds share), each with what to do. The hourly job writes
+those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
+turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
+its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
+build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
+
 ## Configuration
 
 The farm's configuration is local to this Mac and never in git: `$RERAIL_FARM_CONFIG` if set, else
