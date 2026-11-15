@@ -255,6 +255,29 @@ function timeAuditReads(): { totalMs: () => number; restore: () => void } {
 /** The start of the line a move writes while it waits for an older Rerail sharing the file. */
 const WAITS_FOR_OLDER = "moving the rule provenance of audits recorded before this Rerail's upgrade waits until";
 
+/**
+ * Writes `text` as audit `auditId`'s provenance in its row, past the CHECK on `audits` that refuses text that is not a
+ * JSON array, as only a damaged file or a hand edit can.
+ */
+function damageProvenance(path: string, auditId: string, text: string): void {
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    database.prepare("UPDATE audits SET rule_provenance_json = ? WHERE audit_id = ?").run(text, auditId);
+  } finally {
+    database.close();
+  }
+}
+
+/** What `read` gives back as JSON text, or what it throws, as the error's name and message. */
+function readOutcome(read: () => unknown): string {
+  try {
+    return JSON.stringify(read());
+  } catch (error) {
+    return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  }
+}
+
 /** The steps an older Rerail runs when it opens the file: this build's, without the one this change adds. */
 const OLDER_STEPS = RERAIL_MIGRATIONS.filter(step => step.id !== RULE_PROVENANCE_STEP);
 
@@ -881,6 +904,45 @@ describe("audit rule provenance", () => {
       writer.close();
     }
   }, 15_000);
+
+  it("leaves an audit whose provenance in its row is not a JSON array as it is, moves every other, and says so once", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 600 }, () => provenanceOf("/home/dev/app", 20)));
+    const damaged = "older-299";
+    damageProvenance(path, damaged, '[{"ruleId":"typescript/broken","revision":3');
+    openRerailDatabase(path).$client.close();
+    const before = readOutcome(() => readAsOlder(path, [damaged])[0]?.ruleProvenance);
+    const stderr = spyOnStderr();
+    let logged = "";
+    try {
+      expect(await move(path)).toBe(599);
+      // Each later run finds nothing left to move, on its calling thread and on the move's own, and says nothing.
+      expect(await move(path)).toBe(0);
+      expect(await moveRuleProvenancesInWorker(path)).toBe(0);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+    }
+
+    // One line naming the audit, with no stack. A batch that failed on it ended the move there at every start.
+    expect(logged).toBe(`rerail: ${path}: moving the rule provenance of audits recorded before this Rerail's upgrade `
+      + `leaves audit ${damaged} as it is: the provenance in its row is not a JSON array, so no stored copy can hold it, `
+      + "and the audit reads as it did.\n");
+    expect(auditsNamingNoCopy(path)).toBe(1);
+    expect(inlineAudits(path)).toBe(1);
+    // It reads as the build before reads it, before the move and after; every other audit reads as written.
+    expect(before).toMatch(/^SyntaxError: /u);
+    const store = new SqliteAuditStore(path);
+    try {
+      expect(readOutcome(() => store.get(damaged)?.ruleProvenance)).toBe(before);
+      for (const { auditId, text } of written.filter(({ auditId }) => auditId !== damaged)) {
+        expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+      }
+    } finally {
+      store.close();
+    }
+    expect(readOutcome(() => readAsOlder(path, [damaged])[0]?.ruleProvenance)).toBe(before);
+  }, 60_000);
 
   it("reads no row of the audits an older Rerail recorded after the step, in its last batch or on its calling thread once nothing is left", async () => {
     const path = await fileOfTheBuildBefore();

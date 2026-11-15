@@ -28,7 +28,8 @@
  * Every audit is recorded as it begins, so rowids follow the order audits began in. The move takes the audits that
  * name no stored copy in that order, up to the first that began after the step: from there on each is an older
  * Rerail's, recorded after the step, which keeps its provenance in its row, hundreds of kilobytes with its start after
- * it. Neither the move nor a read of its state reads such a row past that first one.
+ * it. Neither the move nor a read of its state reads such a row past that first one. An audit whose provenance in its
+ * row is not a JSON array, which only a damaged file or a hand edit leaves, stays as it is (`moveBatch`).
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -238,6 +239,7 @@ async function moveInBatches(
     const batch = timedBatch(() => moveBatch(database, { after, upTo, limit: size }), now);
     if (batch === BUSY) continue;
     if (batch.done === undefined) return { moved, ended: true };
+    sayLeftAsItIs(database.$client.name, batch.done.left);
     moved += batch.done.moved;
     after = batch.done.last;
     size = nextBatchSize(size, batch.took, most);
@@ -364,6 +366,19 @@ function sayWaitsForOlder(path: string, { at, until }: { at: number; until: numb
 }
 
 /**
+ * The line for each audit a batch left as it is (`moveBatch`), once, from the batch that left it: a later batch of the
+ * same move starts after it, and a later start's checks pass over it (`takes`). The move's thread writes it to its
+ * stderr, which Node pipes to the daemon's, `daemon.log`.
+ */
+function sayLeftAsItIs(path: string, auditIds: readonly string[]): void {
+  for (const auditId of auditIds) {
+    process.stderr.write(`rerail: ${path}: moving the rule provenance of audits recorded before this Rerail's upgrade `
+      + `leaves audit ${auditId} as it is: the provenance in its row is not a JSON array, so no stored copy can hold it, `
+      + "and the audit reads as it did.\n");
+  }
+}
+
+/**
  * The worker beside this module (`rule-provenance-move-worker.ts`): its JavaScript as the package ships it, or, where
  * this module runs from its TypeScript source as the tests run it, that source through `tsx`.
  */
@@ -461,11 +476,26 @@ function stepAppliedAt(database: RerailDatabase): number | undefined {
  */
 const UNNAMED = "audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL";
 
+/**
+ * Whether the text `value` names is a JSON array, which a stored copy must be (the CHECK on `audit_rule_provenances`).
+ * Only a damaged file or a hand edit leaves other text in an audit's row, since the same CHECK on `audits` refuses it
+ * on insert; the move leaves such an audit as it is (`moveBatch`). `json_valid` comes first: `json_type` fails the
+ * statement on text that is not JSON.
+ */
+const holdable = (value: string): string => `CASE WHEN json_valid(${value}) THEN json_type(${value}) = 'array' ELSE 0 END`;
+
 /** Which audits one batch takes: up to `limit` after rowid `after`, of those that began no later than `upTo`. */
 interface BatchRange {
   readonly after: number;
   readonly upTo: number;
   readonly limit: number;
+}
+
+/** An audit a batch takes (`takenAfter`): its rowid, its id and the text of its provenance. */
+interface TakenAudit {
+  readonly row: number;
+  readonly auditId: string;
+  readonly json: string;
 }
 
 /**
@@ -495,14 +525,17 @@ function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
 }
 
 /**
- * Whether an audit the move takes is left: the first recorded audit that names no stored copy began no later than the
- * step (`upTo`). The move takes them in the order they were recorded, up to the first that began after the step, so
- * once that one comes first none is left. One row: the start of every audit an older Rerail recorded after the step
- * sits after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache.
+ * Whether an audit the move takes is left: the first recorded audit that names no stored copy, past those the move
+ * leaves as they are (`holdable`), began no later than the step (`upTo`). The move takes them in the order they were
+ * recorded, up to the first that began after the step, so once that one comes first none is left. One row, and one
+ * more for each audit left as it is before it: the start of every audit an older Rerail recorded after the step sits
+ * after its provenance, and reading the start of each of 2,400 such audits took 1.1 s on a cold cache.
  */
 function takes(client: Client, upTo: number): boolean {
-  const first = client.prepare<[], number>(`SELECT started_at FROM ${UNNAMED} ORDER BY rowid LIMIT 1`).pluck().get();
-  return first !== undefined && first <= upTo;
+  const firsts = client.prepare<[number], number | null>(
+    `SELECT CASE WHEN started_at <= ? THEN ${holdable("rule_provenance_json")} END FROM ${UNNAMED} ORDER BY rowid`).pluck();
+  for (const taken of firsts.iterate(upTo)) if (taken !== 0) return taken === 1;
+  return false;
 }
 
 /**
@@ -526,39 +559,63 @@ function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): numbe
  * audit had the same text, and keeps `[]` inline. An audit whose provenance is `[]` names the stored copy of `[]`, as
  * the store's audits that run no rules do, so no audit recorded before the step is left naming none. The text moves as
  * it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys
- * the provenance it writes, so the store's later audits of the same rules name the copy moved here. The last rowid it
- * moved and how many, or undefined when none was left.
+ * the provenance it writes, so the store's later audits of the same rules name the copy moved here. An audit whose text
+ * no stored copy can hold (`holdable`) stays as it is, naming none, with its text in its row, where both versions read
+ * it as before. The last rowid it read, how many it moved and which it left, or undefined when none was left.
  */
-function moveBatch(database: RerailDatabase, { after, upTo, limit }: BatchRange): { last: number; moved: number } | undefined {
+function moveBatch(
+  database: RerailDatabase,
+  { after, upTo, limit }: BatchRange,
+): { last: number; moved: number; left: string[] } | undefined {
   const client = database.$client;
   return client.transaction(() => {
     const rows = takenAfter(client, { after, upTo, limit });
-    const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
-    const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
+    const copyOf = storedCopyOf(client);
     const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");
-    for (const { row, json } of rows) {
-      const digest = createHash("sha256").update(json).digest("hex");
-      name.run(stored.get(digest) ?? Number(store.run(digest, json).lastInsertRowid), row);
+    const left: string[] = [];
+    for (const { row, auditId, json } of rows) {
+      const copy = copyOf(json);
+      if (copy === undefined) left.push(auditId);
+      else name.run(copy, row);
     }
     const last = rows.at(-1);
-    return last === undefined ? undefined : { last: last.row, moved: rows.length };
+    return last === undefined ? undefined : { last: last.row, moved: rows.length - left.length, left };
   }).immediate();
 }
 
 /**
- * Up to `limit` audits after rowid `after` that name no stored copy of their provenance, in the order they were
- * recorded, each with its provenance's text, ending before the first that began after the step (`upTo`). From that one
- * on, each such audit is one a Rerail older than the step recorded after it, whose provenance stays in its row: the
- * batch reads none of their rows past the first. Under the batch's write lock, reading the start of each of 2,000 such
- * rows took 125 ms on Linux and 470 ms on Windows.
+ * The id of the stored copy of a provenance's text, stored first when no audit had the same text, or undefined when no
+ * stored copy can hold that text (`holdable`). A text found by its key is one already stored, so only a new one is read
+ * as JSON.
  */
-function takenAfter(client: Client, { after, upTo, limit }: BatchRange): { row: number; json: string }[] {
-  const audits = client.prepare<[number, number, number], { row: number; json: string | null }>(`SELECT rowid AS row,
-    CASE WHEN started_at <= ? THEN rule_provenance_json END AS json FROM ${UNNAMED} AND rowid > ? ORDER BY rowid LIMIT ?`);
-  const taken: { row: number; json: string }[] = [];
-  for (const { row, json } of audits.iterate(upTo, after, limit)) {
+function storedCopyOf(client: Client): (json: string) => number | undefined {
+  const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
+  const store = client.prepare<{ digest: string; json: string }>(
+    `INSERT INTO audit_rule_provenances (digest, rule_provenance_json) SELECT @digest, @json WHERE ${holdable("@json")}`);
+  return json => {
+    const digest = createHash("sha256").update(json).digest("hex");
+    const copy = stored.get(digest);
+    if (copy !== undefined) return copy;
+    const inserted = store.run({ digest, json });
+    return inserted.changes === 0 ? undefined : Number(inserted.lastInsertRowid);
+  };
+}
+
+/**
+ * Up to `limit` audits after rowid `after` that name no stored copy of their provenance, in the order they were
+ * recorded, each with its id and its provenance's text, ending before the first that began after the step (`upTo`).
+ * From that one on, each such audit is one a Rerail older than the step recorded after it, whose provenance stays in
+ * its row: the batch reads none of their rows past the first. Under the batch's write lock, reading the start of each
+ * of 2,000 such rows took 125 ms on Linux and 470 ms on Windows.
+ */
+function takenAfter(client: Client, { after, upTo, limit }: BatchRange): TakenAudit[] {
+  const audits = client.prepare<[number, number, number], { row: number; auditId: string; json: string | null }>(`SELECT
+    rowid AS row, audit_id AS auditId, CASE WHEN started_at <= ? THEN rule_provenance_json END AS json FROM ${UNNAMED}
+    AND rowid > ? ORDER BY rowid LIMIT ?`);
+  const taken: TakenAudit[] = [];
+  for (const { row, auditId, json } of audits.iterate(upTo, after, limit)) {
     if (json === null) break;
-    taken.push({ row, json });
+    taken.push({ row, auditId, json });
   }
   return taken;
 }

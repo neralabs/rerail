@@ -229,6 +229,36 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(fileState(databasePath).inline).toBe(20);
   }, TEST_MS);
 
+  it("leaves an audit whose provenance in its row is not a JSON array as it is, says so once in its log, and not at the next start", async () => {
+    const { home, databasePath, provenance } = databaseWithInlineAudits({ audits: 600, rules: 20 });
+    // Only a damaged file or a hand edit leaves such text in an audit's row: the CHECK on audits refuses it on insert.
+    const damaged = "older-300";
+    const database = new Database(databasePath);
+    try {
+      database.pragma("ignore_check_constraints = ON");
+      database.prepare("UPDATE audits SET rule_provenance_json = ? WHERE audit_id = ?").run('[{"ruleId":"broken"', damaged);
+    } finally {
+      database.close();
+    }
+    const log = spyOnStderr();
+
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => daemon.close());
+    await until(() => fileState(databasePath).inline === 1 && walEmpty(databasePath));
+    await daemon.close();
+    const next = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => next.close());
+    await next.close();
+
+    // One line, naming the audit, with no stack, and no failure: a batch that failed on it ended the move there, with a
+    // failure and its stack at every start.
+    const left = log.writes().filter(write => write.includes(`leaves audit ${damaged} as it is`));
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatch(/^rerail: .+: moving the rule provenance of audits .+ leaves audit older-300 as it is: [^\n]+\.\n$/u);
+    expect(moveLines(log.writes())).toEqual([]);
+    expect(namingStoredCopy(databasePath, provenance)).toBe(599);
+  }, 2 * TEST_MS);
+
   it("writes a failure of the move's thread to the daemon log with the stack of where the thread threw it", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
     // The first batch fails as it stores the shared copy, on the move's thread.

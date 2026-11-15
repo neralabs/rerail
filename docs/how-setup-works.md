@@ -596,7 +596,8 @@ if that comes first, so an older Rerail that keeps recording adds at most one li
 sleeps the move starts at most an hour late. A move that finds such an audit before its next batch stops there and
 waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
 the order they were recorded and stops at the first one an older Rerail recorded after the update, so it reads none of
-the later ones' rows.
+the later ones' rows. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
+hand edit leaves, stays as it is and reads as before; the move names it once in `daemon.log` and moves the rest.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
