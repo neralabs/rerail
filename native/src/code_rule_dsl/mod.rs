@@ -1777,6 +1777,9 @@ pub(crate) mod logic {
             // The base tests compile and evaluate rule documents through the engine (`test_support`).
             #[cfg(test)]
             pub mod base_tests;
+            // Decision 0225 §2: partial memo hits hand on what a full evaluation does.
+            #[cfg(test)]
+            pub mod partial_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.

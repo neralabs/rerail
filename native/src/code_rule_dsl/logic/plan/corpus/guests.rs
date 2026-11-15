@@ -61,6 +61,17 @@ pub(super) enum Request {
     Splice { node: i64, with: String },
 }
 
+/// The location a slice's output line asks at (`requests`): `embed`'s and `embed_value`'s second column, a demand's
+/// first. Whose request it is: that location's file's (decision 0225 §2).
+pub(super) fn asked_at(rel: &str, line: &str) -> Option<i64> {
+    let col = match rel {
+        "embed" | "embed_value" => 1,
+        DEMAND | PARSE | SPLICE => 0,
+        _ => return None,
+    };
+    line.split('\t').nth(col)?.parse().ok()
+}
+
 /// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
 /// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
 pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> {
