@@ -7,9 +7,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 share=$HOME/.local/share/rerail-farm
 config=$HOME/.config/rerail-farm
 mkdir -p "$share/bin" "$config"
-for f in farm.py mirror.py rustc-wrapper farm-rustc remote-rustc farm-agent shared-volume; do
+for f in farm.py mirror.py rustc-wrapper farm-rustc farm-cc remote-rustc farm-agent shared-volume; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
+ln -sf farm-cc "$share/farm-c++"
 if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$share/bin/sccache.tmp" "$share/bin/sccache"; fi
 [ -f "$config/hosts.json" ] || cp "$here/hosts.example.json" "$config/hosts.json"
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")

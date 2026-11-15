@@ -13,9 +13,14 @@ pub fn build_all(native: &Path, omitted: &[String]) {
     // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; locked_version reads LF lines.
     let generator = locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
     let skipped = vendored_of(&root.join("languages"), omitted);
-    for grammar in GRAMMARS.iter().filter(|grammar| !skipped.contains(&grammar.name.to_owned())) {
-        build_grammar(native, grammar, &generator);
-    }
+    // A grammar a thread: in a new target directory each generates its parser and compiles it, which
+    // one after another was this build script's 20 s on the build's critical path.
+    std::thread::scope(|scope| {
+        for grammar in GRAMMARS.iter().filter(|grammar| !skipped.contains(&grammar.name.to_owned())) {
+            let generator = &generator;
+            scope.spawn(move || build_grammar(native, grammar, generator));
+        }
+    });
 }
 
 /// The vendored grammars (`GRAMMARS` names) the `omitted` languages' dialects are parsed with.

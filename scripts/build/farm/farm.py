@@ -5,6 +5,7 @@ See README.md beside this file. Two entry points use this module:
 - `rustc-wrapper`, cargo's `RUSTC_WRAPPER` in Rerail's worktrees, sends each compile through the farm's
   sccache (its own server and cache, `PORT`).
 - `farm-rustc`, the compiler that sccache runs on a miss, compiles here or on another Mac.
+- `farm-cc` and `farm-c++`, build scripts' C compilers (`CC`, `CXX`), go through the same sccache.
 """
 import fcntl
 import hashlib
@@ -159,6 +160,8 @@ def sccache_env(env):
         SCCACHE_CONF=SCCACHE_CONF,
         SCCACHE_BASEDIRS_REMAP_PATHS="1",
         SCCACHE_BASEDIRS_VERBATIM_ENV_DEPS=VERBATIM,
+        # Proc macros, build scripts and the engine's cdylib are cached too (`same_in_every_checkout`).
+        SCCACHE_CACHE_LINKED="1",
         # The server restarts when a new worktree joins (`join`): a compile it drops runs here instead.
         SCCACHE_IGNORE_SERVER_IO_ERROR="1",
     )
@@ -226,15 +229,19 @@ def hot_marker(out_dir, crate, extra):
     return state("hot", key(out_dir), crate + (extra or ""))
 
 
+LINKED = {"proc-macro", "cdylib", "dylib", "bin"}
+
+
 def same_in_every_checkout(args, out_dir, crate):
-    """Arguments that keep a proc macro's dylib free of its checkout's and target directory's paths. sccache never caches
-    a proc macro, but every crate that uses one hashes its dylib: with the checkout's path in it (its
-    install name, and the debug map's paths to the rlibs it links), each target directory's crates
-    above it had different keys."""
+    """Arguments that keep what rustc links (a proc macro's dylib, a build script, the engine's cdylib)
+    free of its checkout's and target directory's paths: its install name and the debug map's paths
+    to the objects it links. The farm's sccache caches these (`SCCACHE_CACHE_LINKED`), and every crate
+    that uses a proc macro hashes its dylib. A cached one's debug map names objects of the target
+    directory that compiled it: elsewhere, its own code has no line tables."""
     types = set()
     for t in values(args, "--crate-type"):
         types.update(t.split(","))
-    if "proc-macro" not in types or not out_dir:
+    if not types & LINKED or not out_dir:
         return []
     # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
     target = os.path.dirname(os.path.dirname(os.path.abspath(out_dir)))
@@ -244,8 +251,14 @@ def same_in_every_checkout(args, out_dir, crate):
     out = ["--remap-path-prefix", f"{checkout}=/rerail-farm/checkout"] if checkout else []
     out += ["--remap-path-prefix", f"{target}=/rerail-farm/target"]
     if sys.platform == "darwin":
-        name = f"lib{crate}{codegen(args, 'extra-filename') or ''}.dylib"
-        out += ["-C", f"link-arg=-Wl,-install_name,@rpath/{name}", "-C", f"link-arg=-Wl,-oso_prefix,{target}/"]
+        # The path as a link-arg of its own (`link-arg=<path>`), where sccache strips a basedir from
+        # its key: in `-Wl,-oso_prefix,<path>` it would not, and each checkout would key apart.
+        out += ["-C", "link-arg=-Xlinker", "-C", "link-arg=-oso_prefix", "-C", "link-arg=-Xlinker", "-C", f"link-arg={target}/"]
+        # A cdylib's file name has no hash suffix; a proc macro's and a dylib's has.
+        name = f"lib{crate}.dylib" if "cdylib" in types else \
+            f"lib{crate}{codegen(args, 'extra-filename') or ''}.dylib" if types & {"proc-macro", "dylib"} else None
+        if name:
+            out += ["-C", f"link-arg=-Wl,-install_name,@rpath/{name}"]
     return out
 
 
@@ -278,6 +291,22 @@ def wrapper(rustc, args):
         env.pop(k, None)
     sccache_env(env)
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
+
+
+def cc(argv0, args):
+    """`farm-cc` and `farm-c++`, the C and C++ compilers of build scripts (`CC`, `CXX`): clang through
+    the farm's sccache, so a build script's C (SQLite, tree-sitter's grammars, simdjson) is compiled
+    once for every target directory and worktree, not once per target directory."""
+    compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    if not os.path.exists(SCCACHE):
+        os.execv(compiler, [compiler] + args)
+    checkout = checkout_of(os.getcwd()) or checkout_of(os.environ.get("OUT_DIR", ""))
+    if checkout:
+        join(checkout)
+    env = sccache_env(dict(os.environ))
+    for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
+        env.pop(k, None)
+    os.execve(SCCACHE, [SCCACHE, compiler] + args, env)
 
 
 # ---- a miss
