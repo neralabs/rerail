@@ -253,8 +253,14 @@ describe("Rerail API over HTTP", () => {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
     }
 
-    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
-      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2 });
+    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps).toEqual({
+      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2,
+      // Each place with why, in the order the session met them, for the person to act on.
+      discoveryGapPlaces: [
+        { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },
+        { boundary: "turn", ...large, observedAt: expect.any(Number) },
+      ],
+    });
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {

@@ -28,6 +28,9 @@ import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, hi
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
+/** How many of a session's `source-discovery-gap` places `sessions_get` lists: what the dashboard shows of them. */
+const DISCOVERY_GAP_PLACES = 20;
+
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
 const booleanParameter = z.union([z.boolean(), z.stringbool()]);
 const countParameter = z.coerce.number().int().nonnegative();
@@ -631,12 +634,19 @@ export const operations: readonly Operation[] = [
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
         discoveryGaps: z.number().int().nonnegative().describe(`Places the session's shell-write check could not check, so shell writes there went unchecked: a folder or file it could not read, an unlisted file too large to read, a failed walk of another worktree. Each place is counted once, by its path and its error's code, however many boundaries met it; its \`source-discovery-gap\` event holds the path, the reason and the first boundary, and is withheld from coding agents. Past the most places the check records in one session, one more says so and no others are recorded.`),
+        discoveryGapPlaces: z.array(z.object({
+          path: z.string().optional().describe("The place as the session folder names it (`.` for the folder itself, `../other/src` in another worktree); absent when a walk failed whole."),
+          reason: z.string().describe("Why the check could not check it, as the walk was told."),
+          boundary: z.string().describe("The boundary that first met it."),
+          observedAt: z.number().int().describe("Epoch milliseconds it was first met."),
+        })).max(DISCOVERY_GAP_PLACES).optional().describe(`The first ${DISCOVERY_GAP_PLACES} places \`discoveryGaps\` counts, in the order the session met them. A person's only: a coding agent gets none, as it gets no \`source-discovery-gap\` payload.`),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
     }),
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
-      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
+      const places = caller.kind === "person" ? { discoveryGapPlaces: [...stores.reader.discoveryGaps(input.sessionId, DISCOVERY_GAP_PLACES)] } : {};
+      return { ...response, gaps: { ...stores.reader.gaps(input.sessionId), ...places } };
     },
   }),
   defineOperation({

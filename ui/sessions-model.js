@@ -285,8 +285,11 @@ export const ignoredEdits = s => gapsOf(s).ignoredEdits;
 /** Changes to Git's ignore rules during the session. */
 export const ignoreRuleChanges = s => gapsOf(s).ignoreRuleChanges;
 
-/** What the session's shell-write check could not check, each gap once. */
+/** The places the session's shell-write check could not check, each once. */
 export const discoveryGaps = s => gapsOf(s).discoveryGaps ?? 0;
+
+/** The first of those places, each with its path and why; none until the daemon answers. */
+export const discoveryGapPlaces = s => gapsOf(s).discoveryGapPlaces ?? [];
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */

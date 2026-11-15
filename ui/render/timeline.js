@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapPlaces, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -24,8 +24,9 @@ function build(tl) {
     start: h("div.bound", null, "Session started"),
     turns: h("div.turns"),
     end: h("div.bound"),
+    places: h("div.places", { hidden: true }, h("p"), h("ul")),
   };
-  tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end);
+  tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end, t.places);
 }
 
 /* ---------- event rows ---------- */
@@ -251,7 +252,7 @@ function renderEarlier(earlier) {
 const COVERAGE_CLAUSES = [
   [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
   [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
-  [discoveryGaps, n => `rules could not see shell edits in part of the repository (${fmt(n)} ${plural(n, "gap")})`],
+  [discoveryGaps, n => `rules could not check part of the repository (${fmt(n)} ${plural(n, "place")})`],
   [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
   [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
   [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],
@@ -263,6 +264,23 @@ export function coverageGaps(sess) {
     const n = count(sess);
     return n === 0 ? [] : [clause(n)];
   }).join("; ");
+}
+
+/** The heading over the places listed: how many of the session's `total` they are. */
+export function placesHeading(shown, total) {
+  const which = shown < total ? `the first ${fmt(shown)} of these ${fmt(total)} places` : plural(shown, "this place", "these places");
+  return `Rules could not check ${which}, so shell edits there went unchecked:`;
+}
+
+const placeKey = place => JSON.stringify([place.path ?? "", place.reason]);
+const placeItem = place => h("li", null, h("code", null, place.path ?? "the whole walk"), h("span", null, ` · ${place.reason}`));
+
+/** Each place the session's shell-write check could not check, with why: what a person acts on. Hidden while there are none. */
+function renderPlaces(sess, loaded) {
+  const places = loaded ? discoveryGapPlaces(sess) : [];
+  setAttr(t.places, "hidden", places.length === 0);
+  setText(t.places.firstChild, placesHeading(places.length, discoveryGaps(sess)));
+  syncChildren(t.places.lastChild, places, placeKey, placeItem, () => undefined);
 }
 
 /** The audited-clean note, and what it says of the session's coverage. */
@@ -306,6 +324,7 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   renderCleanNote(sess, gaps, loaded, clean);
   renderLoading(loaded, quietEmpty, total);
   renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier });
+  renderPlaces(sess, loaded);
   syncChildren(t.turns, visibleTurns(turns, quietEmpty), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
   renderEarlier(earlierToOffer({ loaded, clean, earlier }));
   placeTicks(rail, tl);

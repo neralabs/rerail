@@ -207,6 +207,31 @@ interface SessionPlan {
   readonly daysAgo: number;
 }
 
+/** A place a session's turn end could not check, as its walk records it. */
+type WalkGap = Parameters<SqliteSessionStore["recordDiscoveryGap"]>[1];
+const OVERSIZE = "Source exceeds 1000000 byte policy limit";
+/** What the oldest `mature` session's turn end could not check: a folder, a file too large to read, another worktree's folder. */
+const OLDEST_SESSION_WALK_GAPS: readonly WalkGap[] = [
+  { boundary: "turn", path: "src/vendor/locked", reason: "EACCES: permission denied, opendir '/work/storefront/src/vendor/locked'", key: JSON.stringify(["src/vendor/locked", "EACCES"]) },
+  { boundary: "turn", path: "data/catalog.json", reason: OVERSIZE, key: JSON.stringify(["data/catalog.json", OVERSIZE]) },
+  {
+    boundary: "turn", path: "../storefront-hotfix/src/cache", reason: "EACCES: permission denied, opendir '/work/storefront-hotfix/src/cache'",
+    key: JSON.stringify(["../storefront-hotfix/src/cache", "EACCES"]),
+  },
+];
+
+/**
+ * In `mature`, a step for each of `OLDEST_SESSION_WALK_GAPS`, recorded at the oldest session's turn end, six minutes after
+ * it starts (`recordSession`); none in another scenario.
+ */
+function walkGapSteps(scenario: ScenarioName, context: HistoryContext, plans: readonly SessionPlan[]): Array<{ at: number; run: () => void }> {
+  const oldest = plans.find(plan => plan.index === 0);
+  if (scenario !== "mature" || oldest === undefined) return [];
+  const at = oldest.startedAt + 6 * MINUTE;
+  const session = { host: oldest.host, sessionId: oldest.sessionId, cwd: context.checkoutPath };
+  return OLDEST_SESSION_WALK_GAPS.map(gap => ({ at, run: () => atTime(at, () => context.sessions.recordDiscoveryGap(session, gap)) }));
+}
+
 /** A repository change at an instant: set-up, a setting, a new library rule, a stop. */
 interface Change {
   readonly at: number;
@@ -643,6 +668,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
         ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, violating) })),
+        ...walkGapSteps(scenario, context, plan.sessions),
       ].sort((left, right) => left.at - right.at);
       for (const step of steps) step.run();
       const listing = listRepositories(db).find(repository => repository.repositoryKey === recorded.repositoryKey)!;

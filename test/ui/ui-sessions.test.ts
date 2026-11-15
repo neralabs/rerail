@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { coverageGaps } from "../../ui/render/timeline.js";
-import { lastEventAt, openState, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
+import { coverageGaps, placesHeading } from "../../ui/render/timeline.js";
+import { discoveryGapPlaces, lastEventAt, openState, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
 import { data } from "../../ui/state.js";
 
 const MIN = 60_000;
@@ -84,11 +84,22 @@ describe("what the timeline says Rerail did not see of the session", () => {
     ].join("; "));
   });
 
-  it("says when rules could not see shell edits in part of the repository, beside the boundaries that answered before their walk ended", () => {
+  it("says when rules could not check part of the repository, beside the boundaries that answered before their walk ended", () => {
     withGaps({ ...NO_GAPS, discoveryGaps: 1 });
-    expect(coverageGaps(row())).toBe("rules could not see shell edits in part of the repository (1 gap)");
+    expect(coverageGaps(row())).toBe("rules could not check part of the repository (1 place)");
     withGaps({ ...NO_GAPS, uncheckedBoundaries: 2, discoveryGaps: 3 });
-    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not see shell edits in part of the repository (3 gaps)");
+    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not check part of the repository (3 places)");
+  });
+
+  it("lists the places the daemon names with why, and says how many of the session's places they are", () => {
+    const place = { boundary: "turn", path: "src/locked", reason: "EACCES: permission denied, opendir '/repo/src/locked'", observedAt: 1 };
+    withGaps({ ...NO_GAPS, discoveryGaps: 1, discoveryGapPlaces: [place] });
+    expect(discoveryGapPlaces(row())).toEqual([place]);
+    withGaps({ ...NO_GAPS, discoveryGaps: 1 });
+    expect(discoveryGapPlaces(row())).toEqual([]);
+    expect(placesHeading(1, 1)).toBe("Rules could not check this place, so shell edits there went unchecked:");
+    expect(placesHeading(3, 3)).toBe("Rules could not check these places, so shell edits there went unchecked:");
+    expect(placesHeading(20, 1001)).toBe("Rules could not check the first 20 of these 1,001 places, so shell edits there went unchecked:");
   });
 
   it("says nothing of a walk's gaps when the session has none, or the answer counts none", () => {

@@ -399,6 +399,14 @@ describe("MCP callers and the agent guard", () => {
     // Ongoing audit settings outlast the session, so an agent cannot set its checkout to log-only for everyone after it.
     expect((await call("audit_settings_update", { sessionId: "in-app", mode: "log" }, caller)).result).toMatch(/^agent-not-permitted: .*rerail settings/u);
     expect((await call("audit_settings_get", { sessionId: "in-app" }, caller)).result).toMatchObject({ settings: { mode: "steer" } });
+    // A place a turn end's walk could not check: the agent gets the count, never the place, as it gets no payload of it.
+    const place = { path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" };
+    sessions.recordDiscoveryGap({ host: "codex", sessionId: "in-app", cwd: parent }, { boundary: "turn", ...place, key: JSON.stringify([".secrets", "EACCES"]) });
+    const agentGaps = ((await call("sessions_get", { sessionId: "in-app" }, caller)).result as { gaps: Record<string, unknown> }).gaps;
+    expect(agentGaps).toMatchObject({ discoveryGaps: 1 });
+    expect(agentGaps).not.toHaveProperty("discoveryGapPlaces");
+    expect(((await (await person.request("/api/sessions/in-app")).json()) as { gaps: unknown }).gaps)
+      .toMatchObject({ discoveryGaps: 1, discoveryGapPlaces: [{ ...place, boundary: "turn", observedAt: expect.any(Number) }] });
 
     // Naming another repository is refused; its sessions and audits answer exactly as ones that do not exist.
     for (const name of ["sessions_list", "violations_list", "audits_list", "repository_audits_list", "rules_activity"]) {
