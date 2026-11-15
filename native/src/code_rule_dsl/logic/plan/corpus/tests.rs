@@ -1123,5 +1123,52 @@ fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let program = crate::code_rule_dsl::logic::settings::program_text(&rules.join("bandit-b301-pickle.rr")).unwrap();
-    super::run_all(&[program.as_str()], std::path::Path::new(&src), std::path::Path::new(&out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
+    // runs of one session.
+    let runs: usize = std::env::var("RERAIL_CHILD_RUNS").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+    let _session = std::env::var_os("RERAIL_CHILD_SESSION").map(|dir| super::session::start(std::path::Path::new(&dir)).unwrap());
+    for _ in 0..runs {
+        super::run_all(&[program.as_str()], std::path::Path::new(&src), std::path::Path::new(&out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    }
+}
+
+/// A second run in one process names what the first named: no manifest of its own. Its process-memory answers (the
+/// planning choices kept, the groups of automata kept) skipped the store reads that named their sources, so its
+/// manifest left them out, and the next process's run, naming them again, recorded one more.
+#[test]
+fn a_second_run_in_one_process_records_the_first_runs_manifest() {
+    let temp = tempfile::tempdir().unwrap();
+    let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
+    let base = kept.as_deref().unwrap_or(temp.path());
+    let src = base.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    let store = base.join("store.sqlite");
+    let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
+        let db = rusqlite::Connection::open(&store).unwrap();
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
+        rows.sort();
+        rows
+    };
+    let run = |runs: usize| {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", &store)
+            .env("RERAIL_CHILD_RUN", &src)
+            .env("RERAIL_CHILD_OUT", base.join("out"))
+            .env("RERAIL_CHILD_RUNS", runs.to_string())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "the runs' process: {}", output.status);
+    };
+    // A process of one run: what a run names.
+    run(1);
+    let one = manifests();
+    // A process of two: the second names the same.
+    run(2);
+    let two = manifests();
+    let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
+    assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
 }

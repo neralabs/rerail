@@ -33,6 +33,11 @@ const DFA_LIMIT: usize = 4 << 20;
 pub trait DfaCache {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>>;
     fn put(&self, key: &str, dfa: Option<&[u8]>);
+    /// A group this process holds already: whether the cache keeps it, naming it as `get` would (a store's run names
+    /// its sources in its manifest), with nothing read. One it does not keep is `put`.
+    fn held(&self, _key: &str) -> bool {
+        true
+    }
 }
 
 /// What compiling the searchers did, for the run's report: groups read from the cache, determinized, and run lazily.
@@ -142,6 +147,23 @@ pub(in crate::code_rule_dsl) struct Searchers {
     groups: Vec<Group>,
     backtracking: Vec<(usize, Compiled)>,
     pub(in crate::code_rule_dsl) compiling: Compiling,
+    /// The groups a cache keeps, by key, with their automata (`None`: run lazily): named in a cache again by a later
+    /// run that takes these searchers as compiled (`name_in`).
+    cached: Vec<(String, Option<std::sync::Arc<Dfa>>)>,
+}
+
+/// Names the group `key` in `cache` (`DfaCache::held`), or puts it there where the cache does not keep it.
+fn held_or_put(cache: &dyn DfaCache, key: &str, dfa: &Option<std::sync::Arc<Dfa>>) {
+    if cache.held(key) {
+        return;
+    }
+    match dfa {
+        Some(dfa) => {
+            let (bytes, pad) = dfa.to_bytes_native_endian();
+            cache.put(key, Some(&bytes[pad..]));
+        }
+        None => cache.put(key, None),
+    }
 }
 
 impl Searchers {
@@ -150,7 +172,7 @@ impl Searchers {
     /// that wants it dense builds it). A dense build costs more than a small run's search saves
     /// (O-vocabulary-dfa-reuse).
     pub(in crate::code_rule_dsl) fn new(plans: &[&Plan], cache: Option<&dyn DfaCache>, dense: bool) -> Self {
-        let mut out = Searchers { plans: plans.len(), always: Vec::new(), whole: HashMap::new(), affixes: Vec::new(), groups: Vec::new(), backtracking: Vec::new(), compiling: Compiling::default() };
+        let mut out = Searchers { plans: plans.len(), always: Vec::new(), whole: HashMap::new(), affixes: Vec::new(), groups: Vec::new(), backtracking: Vec::new(), compiling: Compiling::default(), cached: Vec::new() };
         let mut affixes: [(Vec<Vec<u8>>, Vec<usize>); 3] = Default::default();
         let mut automata = Vec::new();
         for (at, plan) in plans.iter().enumerate() {
@@ -187,6 +209,11 @@ impl Searchers {
             let named = group_key(&hirs);
             if let Some(kept) = kept_groups().lock().expect("the kept groups").get(&named).cloned() {
                 crate::code_rule_dsl::prof::count("text.dfa_group_kept", 1);
+                // Named in the cache as a read of it would (the run's manifest), or put where it is not kept there.
+                if let Some(c) = cache {
+                    held_or_put(c, &named, &kept);
+                }
+                out.cached.push((named.clone(), kept.clone()));
                 let engine = match kept {
                     Some(dfa) => {
                         out.compiling.read += 1;
@@ -242,6 +269,9 @@ impl Searchers {
                 Engine::Each(_) => None,
             };
             if let Some(kept) = kept {
+                if cache.is_some() {
+                    out.cached.push((named.clone(), kept.clone()));
+                }
                 let mut all = kept_groups().lock().expect("the kept groups");
                 if all.len() >= KEPT_GROUPS {
                     all.clear();
@@ -251,6 +281,14 @@ impl Searchers {
             out.groups.push(Self::grouped(Group { owners, hirs, engine, lazy: std::sync::OnceLock::new() }, plans));
         }
         out
+    }
+
+    /// Names each group a cache keeps in `cache` (`DfaCache::held`), as compiling them with it did: a later run that
+    /// takes these searchers as they are (compiled once a process) names the same sources in its manifest.
+    pub(in crate::code_rule_dsl) fn name_in(&self, cache: &dyn DfaCache) {
+        for (key, dfa) in &self.cached {
+            held_or_put(cache, key, dfa);
+        }
     }
 
     /// A group that runs lazily but does not build together runs one at a time.

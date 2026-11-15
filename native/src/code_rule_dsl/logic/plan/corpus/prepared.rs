@@ -340,6 +340,7 @@ pub fn prepared_of(facts: &Facts, prog: crate::code_rule_dsl::logic::front::Prog
         merged,
         split,
         interned,
+        documents: Default::default(),
     })
 }
 
@@ -402,6 +403,25 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     Ok(got.ok().map(|p| (p, documents)))
 }
 
+/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
+/// for a run that holds the prepared program in memory. Empty when the store keeps none.
+pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+    let set = pointer_plan(key);
+    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
+    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(Vec::new()) };
+    let Ok(mut facts) = program_facts::decode(&result.entry) else { return Ok(Vec::new()) };
+    let mut digests = Vec::new();
+    for row in facts.remove(PROGRAM).unwrap_or_default() {
+        if let [Value::Str(name), Value::Str(digest)] = row.as_slice()
+            && (name.as_ref() == "front" || name.as_ref() == "lowered")
+            && let Some(digest) = unhex(digest)
+        {
+            digests.push(digest);
+        }
+    }
+    program_text::sources(store, &digests)
+}
+
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).
 pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/prepared", key])
@@ -453,6 +473,16 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
             Some((1, bytes)) => Some(Some(bytes.to_vec())),
             Some((0, _)) => Some(None),
             _ => None,
+        }
+    }
+
+    fn held(&self, key: &str) -> bool {
+        match super::memo::stored_source(self.0, key) {
+            Ok(Some(source)) => {
+                self.1.lock().expect("the groups' sources").push(source);
+                true
+            }
+            _ => false,
         }
     }
 

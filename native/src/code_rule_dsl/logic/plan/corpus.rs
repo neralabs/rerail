@@ -652,6 +652,22 @@ pub struct Prepared {
     pub merged: (usize, usize),
     pub split: crate::code_rule_dsl::typing::file_local::Programs,
     pub interned: Vec<(Vec<String>, Vec<u32>)>,
+    /// The sources its programs' texts are kept under, by the store that keeps them (its path): a run that takes it
+    /// from memory names them in its manifest as one that read it from the store does.
+    pub documents: Arc<parking_lot::Mutex<Vec<(std::path::PathBuf, Vec<crate::content_store::SourceId>)>>>,
+}
+
+impl Prepared {
+    /// The sources its texts are kept under in the store at `path`, when known (`documents`).
+    fn documents_in(&self, path: &std::path::Path) -> Option<Vec<crate::content_store::SourceId>> {
+        self.documents.lock().iter().find(|(p, _)| p == path).map(|(_, d)| d.clone())
+    }
+
+    fn keep_documents(&self, path: &std::path::Path, documents: &[crate::content_store::SourceId]) {
+        let mut all = self.documents.lock();
+        all.retain(|(p, _)| p != path);
+        all.push((path.to_path_buf(), documents.to_vec()));
+    }
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
@@ -2679,7 +2695,29 @@ fn run_observed(
         program_plans.push(plan);
     }
     let (kept, from) = match (kept, durable) {
-        (Some(p), _) => (Some(p), "memory"),
+        (Some(p), durable) => {
+            // Its texts' sources, which a run that read it from the store names: known where this process wrote or
+            // read it in this store; else (its write still queued, or another store's) settled and asked of the
+            // store, with no program read. Left out, the manifest of a process's second run differed from its first.
+            if let Some(Some(source)) = durable {
+                let documents = match p.documents_in(store.database_path()) {
+                    Some(d) => d,
+                    None => {
+                        store.settle(&prepared::queued(&prepared_key));
+                        match p.documents_in(store.database_path()) {
+                            Some(d) => d,
+                            None => {
+                                let d = prepared::documents(store, source, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
+                                p.keep_documents(store.database_path(), &d);
+                                d
+                            }
+                        }
+                    }
+                };
+                program_sources.extend(documents);
+            }
+            (Some(p), "memory")
+        }
         (None, Some(Some(source))) => {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             // One this process queued is read once written (`settle`; it is kept in memory, so this is rare).
@@ -2690,6 +2728,7 @@ fn run_observed(
             }
             let found = found.filter(|(p, _)| holds(p));
             (found.map(|(p, documents)| {
+                p.keep_documents(store.database_path(), &documents);
                 program_sources.extend(documents);
                 Arc::new(p)
             }), "store")
@@ -2850,7 +2889,7 @@ fn run_observed(
             }
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
-            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned });
+            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default() });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -2874,6 +2913,7 @@ fn run_observed(
                             }
                         };
                         if let Some(documents) = prepared::remember(store, source, &key, &kept)? {
+                            kept.keep_documents(store.database_path(), &documents);
                             late.lock().expect("the late sources").extend(documents);
                         }
                         Ok(())
@@ -2890,7 +2930,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _ } = &*prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _ } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let mut split = shared_split.clone();
