@@ -880,3 +880,45 @@ strings had skipped those masks before.
 Tier 1 AOT 155 to 147 instructions a node, JIT 239 to 222. The string
 reader is 153 lines of machine code, down from 460, and saves two
 register pairs, not six.
+
+## The rare tokens' rules are calls (2026-11-14)
+
+A corpus average hides which tokens cost what. `tier1_by_kind` (in
+rr_aot, run by hand) counts instructions a token on files of one kind
+each, tier 1 against the lean lexer.
+
+The punctuation path in the loop showed stack traffic around the rule
+dispatch: six loads and stores of the pending marks, the entry, and the
+run and pair words. The loop held every rule's blocks inline: the
+readers, the numbers' word loop, their tests. Their registers were the
+common tokens' registers too.
+
+The lean lexer has the same split in its loops: the common tokens in a
+tight run loop, the rare ones outside it.
+
+Now each rule but the two fused ones is a function of its own
+(`rule_fn`, `RuleMode`), where its reads are the bytes'. The loop's
+dispatch calls it, so a rare token is one call and the loop's code is
+the common tokens'. The function is `rule_last`'s own block for that
+rule, built alone (`RuleMode::Only`).
+
+Measured, instructions a token (tier 1 AOT; the lean lexer's after the
+arrow):
+
+| Shape | Corpus a node | Punct. | Words | Strings | Numbers |
+|---|---|---|---|---|---|
+| All rules inline | 147 | 72 | 109 | 395 | 350 |
+| One function for all rare rules | 150 | 68 | 112 | 430 | 374 |
+| A function a rare rule (kept) | 149 | 69 | 107 | 430 | 379 |
+| Same, the readers inline | 150 | 75 | 111 | 391 | 374 |
+| The lean lexer | 109 | 54 | 98 | 241 | 107 |
+
+The JIT went 222 to 217 a node. The common tokens (90% of the corpus)
+are nearer the lean lexer's. A rare token pays one call: about 30
+instructions of prologue, argument moves and a four-value return
+through memory. Packing the return into two registers was costed and
+dropped: the unpacking costs what the memory round trip does.
+
+Open: numbers are 379 a token against 107. Their run's word is a
+window function's call at each token, and their tests' gate is the
+short one.

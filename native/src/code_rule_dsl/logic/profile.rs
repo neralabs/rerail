@@ -919,21 +919,9 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
     state().decisions.clone()
 }
 
-/// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
-/// step's result to state again (`add_decisions`).
+/// The decisions made since `before` (`decisions`), with how often: what a step decided.
 pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
-}
-
-/// Decisions a reused step made when it ran (`decisions_since`), stated for this run.
-pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
-    if !on() {
-        return;
-    }
-    let mut state = state();
-    for (k, n) in made {
-        *state.decisions.entry(k.clone()).or_default() += n;
-    }
 }
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it

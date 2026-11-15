@@ -255,3 +255,53 @@ fn aot_profile_loop() {
     let (t1, (i1, c1)) = (thread_cpu(), retired());
     eprintln!("{form}: {rounds} rounds, {:.1}M instructions and {:.1}M cycles a round, {:?} CPU; {} a round", (i1 - i0) as f64 / rounds as f64 / 1e6, (c1 - c0) as f64 / rounds as f64 / 1e6, (t1 - t0) / rounds as u32, n / rounds.max(1));
 }
+
+/// Tier 1's instructions a token against the lean lexer's, a kind of token at a time: a file
+/// of words, of punctuation, of strings, of numbers, of comments, each about 64 KB. Where the
+/// corpus's average hides which tokens cost what, the side-by-side count by kind.
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn tier1_by_kind() {
+    let aot = crate::aot(BOTH).expect("the ahead-of-time build");
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let rounds = 21;
+    let kinds: [(&str, &str); 6] = [
+        ("words", "alpha beta_2 gamma delta epsilon zeta eta theta iota kappa\n"),
+        ("punctuation", "(),:-;[]{}.=<>!=<=>=:-\n"),
+        ("mixed code", "rule(X, Y) :- edge(X, Z), path(Z, Y), X != Y.\n"),
+        ("strings", "\"select * from t\" \"a\" \"some longer text, with spaces in it\"\n"),
+        ("numbers", "1 22 333 4444 55555 1.5 2.25\n"),
+        ("comments", "// a line comment of some words\n/* a block */\n"),
+    ];
+    // `RR_KIND`: that kind alone, tier 1 for `RR_SECONDS`, for a profile.
+    let only = std::env::var("RR_KIND").ok();
+    let seconds: f64 = std::env::var("RR_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    for (name, line) in kinds {
+        if only.as_deref().is_some_and(|k| k != name) {
+            continue;
+        }
+        let text = line.repeat(65536 / line.len());
+        // Lean counts no comment's token: a comment a line there.
+        let tokens = rr::lean::token_count(&text).max(text.lines().count());
+        if only.is_some() {
+            let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
+            let t0 = thread_cpu();
+            while (thread_cpu() - t0).as_secs_f64() < seconds {
+                b.call(&aot.parser.tier1);
+            }
+            continue;
+        }
+        let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
+        b.call(&aot.parser.tier1);
+        let (mut ours, mut lean) = (u64::MAX, u64::MAX);
+        for _ in 0..rounds {
+            let at = retired().0;
+            b.call(&aot.parser.tier1);
+            ours = ours.min(retired().0 - at);
+            let at = retired().0;
+            std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
+            lean = lean.min(retired().0 - at);
+        }
+        eprintln!("  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions a token, lean lexer {:6.1}", ours as f64 / tokens as f64, lean as f64 / tokens as f64);
+    }
+}

@@ -2188,7 +2188,24 @@ fn tests_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_b
 
 /// A reader's arm and its rule's count tests, joined (`read_fn`), its key in the loop's calls:
 /// `READ_CALL | rule << 3 | arm`, past the outputs.
-const READ_CALL: u16 = 0x2000;
+const READ_CALL: u16 = 0x1000;
+
+/// A rule's function of its own (`rule_fn`): its key in the loop's calls, `RULES_CALL | rule`,
+/// past the outputs.
+const RULES_CALL: u16 = 0x0800;
+
+/// Where `rule_last` builds the rules' blocks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RuleMode {
+    /// Every rule's block in the function.
+    Inline,
+    /// Each rule with a function of its own (`rule_fn`) its call, but the fused two: the loop's
+    /// code is its common tokens', as the lean lexer's run loop, and a rare token one call.
+    Calls,
+    /// Rule `k`'s block alone, and those it goes on to (`Reader::other`), entered at once: the
+    /// body of its function.
+    Only(usize),
+}
 
 /// The arms whose reads `read_fn` joins with their rule's count tests: a closer, and its
 /// tests' masks, the bytes make.
@@ -2285,6 +2302,52 @@ fn read_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_by
     f.finalize();
     let mut own = carries.to_vec();
     own.push(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+    crate::native_cpu_shape::check(func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+}
+
+/// Whether rule `k`, and a reader's other rule, read only outputs the bytes make
+/// (`Bytewise::can`), their tests too: their reads wait on no block, so the rule can be a
+/// function of its own (`rule_fn`).
+fn rule_bytewise(r: &crate::records::Records, bw: &crate::native_cpu_bytes::Bytewise<'_>, k: usize) -> bool {
+    use crate::records::EndRule;
+    let own = |k: usize| {
+        (match r.rules[k] {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => bw.can(o),
+            EndRule::Read(i) => r.readers[usize::from(i)].arms.iter().all(|a| bw.can(a.opener) && bw.can(a.closer)),
+            _ => true,
+        }) && r.checks.iter().all(|c| usize::from(c.rule) != k || bw.can(c.o))
+    };
+    own(k) && match r.rules[k] {
+        EndRule::Read(i) => r.rules.get(usize::from(r.readers[usize::from(i)].other)).is_none() || own(usize::from(r.readers[usize::from(i)].other)),
+        _ => true,
+    }
+}
+
+/// Rule `k` (`rule_last`'s block), a function of its own, as the lean lexer's rare tokens are
+/// out of its run loop: `(bytes, len, blocks, s, raw, entry)` to the token's last, its refusal,
+/// its tag and its tests' hits (`rule_last`'s). The loop calls it for a token of the rule; its
+/// registers are the common tokens'.
+#[allow(clippy::too_many_arguments)]
+fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, bw: &crate::native_cpu_bytes::Bytewise<'_>, outputs: usize, k: usize, calls: &[ByteCall], carries: &[cranelift_codegen::ir::UserExternalName]) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let entry = f.create_block();
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let (bytes, len, blocks, s, raw, first) = (p[0], p[1], p[2], p[3], p[4], p[5]);
+    let consts = Consts::make(&mut f);
+    let (tables, mult, slots) = tables_consts(&mut f, t);
+    // The records' columns: not read by the rules.
+    let zero = f.ins().iconst(types::I64, 0);
+    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout };
+    let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
+    let mut heads = vec![];
+    let (l, refuse, tag, hits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, first, None, None, RuleMode::Only(k), &mut heads);
+    f.ins().return_(&[l, refuse, tag, hits]);
+    f.seal_all_blocks();
+    f.finalize();
+    let own: Vec<cranelift_codegen::ir::UserExternalName> = calls.iter().map(|x| cranelift_codegen::ir::UserExternalName::new(0, x.1.as_u32())).chain(carries.iter().cloned()).collect();
     crate::native_cpu_shape::check(func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))
 }
 
@@ -2509,7 +2572,7 @@ impl Reads<'_> {
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
     let (ended, done) = (f.create_block(), f.create_block());
@@ -2542,7 +2605,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).
     let mut fused_exit = None;
     let in_regs: Vec<u16> = regs.map(|g| g.runs.iter().map(|&(k, _)| k).collect()).unwrap_or_default();
-    if let Some((kn, kr)) = fused_rules(r, t, rd, &in_regs) {
+    let fused = fused_rules(r, t, rd, &in_regs);
+    if let Some((kn, kr)) = fused {
         let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { unreachable!("the forms chosen") };
         let fdone = f.create_block();
         for _ in 0..4 {
@@ -2605,17 +2669,54 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     }
     // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
     // alone (`records::NO_RULE`, past the table).
-    let none = f.create_block();
-    let calls: Vec<_> = blocks.iter().map(|&b| f.func.dfg.block_call(b, &[])).collect();
-    let default = f.func.dfg.block_call(none, &[]);
-    let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
-    f.ins().br_table(rule, jt);
-    f.switch_to_block(none);
-    f.set_cold_block(none);
-    let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
-    f.ins().jump(done, &[s.into(), refuse.into(), untag.into(), nohits.into()]);
+    // Rule `k` alone: its block, and the rules it goes on to.
+    let needed: Vec<usize> = match mode {
+        RuleMode::Only(k) => {
+            let mut v = vec![k];
+            let mut at = 0;
+            while at < v.len() {
+                if let EndRule::Read(i) = r.rules[v[at]] {
+                    let o = usize::from(r.readers[usize::from(i)].other);
+                    if o < r.rules.len() && !v.contains(&o) {
+                        v.push(o);
+                    }
+                }
+                at += 1;
+            }
+            v
+        }
+        _ => (0..r.rules.len()).collect(),
+    };
+    if let RuleMode::Only(k) = mode {
+        f.ins().jump(blocks[k], &[]);
+    } else {
+        let none = f.create_block();
+        let calls: Vec<_> = blocks.iter().map(|&b| f.func.dfg.block_call(b, &[])).collect();
+        let default = f.func.dfg.block_call(none, &[]);
+        let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+        f.ins().br_table(rule, jt);
+        f.switch_to_block(none);
+        f.set_cold_block(none);
+        let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
+        f.ins().jump(done, &[s.into(), refuse.into(), untag.into(), nohits.into()]);
+    }
     for (k, (&rule, &b)) in r.rules.iter().zip(&blocks).enumerate() {
+        if !needed.contains(&k) {
+            continue;
+        }
         f.switch_to_block(b);
+        // A rule with a function of its own, but the fused two: its call (`rule_fn`).
+        let own = rd.calls.iter().find(|x| x.0 == RULES_CALL | k as u16);
+        if let (RuleMode::Calls, Some((_, id, sig)), false) = (mode, own, fused.is_some_and(|(kn, kr)| k == kn || k == kr)) {
+            f.set_cold_block(b);
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+            let call = f.ins().call(callee, &[c.bytes, c.len, c.blocks, s, raw, entry]);
+            let got: Vec<BlockArg> = f.inst_results(call).iter().map(|&v| v.into()).collect();
+            f.ins().jump(done, &got);
+            continue;
+        }
         // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
         // the token, as a lexer checks the token it reads.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(c, _)| usize::from(c.rule) == k).map(|(c, &b)| (*c, b)).collect();
@@ -3725,7 +3826,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // tail is made again knowing their tokens are no reader's and no extra (the lean lexer's
     // run loop, apart from its rare tokens).
     let (general, fused_exit) = if ruled {
-        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), heads);
+        let mode = if rd.calls.iter().any(|x| x.0 & !0xff == RULES_CALL) { RuleMode::Calls } else { RuleMode::Inline };
+        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), mode, heads);
         (Some((l, refuse, tag, h)), fx)
     } else {
         (None, None)
@@ -4717,6 +4819,20 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
             tail_fn(&mut func, t.tails)?;
             byte_calls.push((TAIL_CALL, id, sig, func));
+        }
+        // Each rule a function of its own (`rule_fn`), where its reads are the bytes': the
+        // loop calls those of its rare tokens (`RuleMode::Calls`).
+        let ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();
+        let t = records.map(|(_, t, _)| t).expect("records");
+        for k in (0..rec.rules.len()).filter(|&k| k < 0xff && rule_bytewise(rec, &bytewise, k)) {
+            let mut sig = words_signature(module, 6);
+            for _ in 0..4 {
+                sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+            }
+            let id = module.declare_function(&format!("{name}_rule{k}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+            rule_fn(&mut func, rec, t, &bytewise, made.outputs.len(), k, &ids, &carry_names)?;
+            byte_calls.push((RULES_CALL | k as u16, id, sig, func));
         }
     }
     let byte_ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();
