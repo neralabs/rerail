@@ -31,12 +31,11 @@ pt007_pos1(n) :- pt007_positional(n), child(p1, n, _), pt007_counted_3(n),
 
 // kw_names(n): the JSON util `kw-names`, used where the JSON says `matches: "kw-names"`
 .decl pt007_kw_names(n: node)
-pt007_kw_names(n) :- kind(n, "keyword_argument"), field(n, "name", c1), glob("argnames", c1).
+pt007_kw_names(n) :- kind(n, "keyword_argument"), pt007_tok_has_1(n).
 
 // kw_values(n): the JSON util `kw-values`, used where the JSON says `matches: "kw-values"`
 .decl pt007_kw_values(n: node)
-pt007_kw_values(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("argvalues", c1).
+pt007_kw_values(n) :- kind(n, "keyword_argument"), pt007_tok_has_2(n).
 
 // param_call(n): the JSON util `param-call`, used where the JSON says `matches: "param-call"`
 .decl pt007_param_call(n: node)
@@ -113,6 +112,30 @@ PT007(n, "Pass the parametrize values as a list, `[...]`, instead of a tuple") :
     pt007_values_expr(n).
 PT007(n, "Write each row of parametrize values as a tuple, `(a, b)`, instead of a list; leave it if the names are one parameter and the list is that parameter's value") :- kind(n, "list"),
     pt007_row(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^argnames$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt007_tok_has_1(n: node)
+.stored pt007_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt007_tok_has_1(n) :- field(n, "name", c1), glob("argnames", c1).
+pt007_tok_has_1(n) :- op(n, t2), match("argnames", t2).
+pt007_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:argnames)(?:\\W.*)?)$", g3).
+pt007_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:argnames)(?:\\W.*)?)$", g3).
+pt007_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:argnames)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^argvalues$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt007_tok_has_2(n: node)
+.stored pt007_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt007_tok_has_2(n) :- field(n, "name", c1), glob("argvalues", c1).
+pt007_tok_has_2(n) :- op(n, t2), match("argvalues", t2).
+pt007_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:argvalues)(?:\\W.*)?)$", g3).
+pt007_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:argvalues)(?:\\W.*)?)$", g3).
+pt007_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:argvalues)(?:\\W.*)?)$", g3).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pt007_alt_1(n: node)

@@ -89,6 +89,17 @@ pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
     merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9));
 }
 
+/// A trial of `order` of line `key` (decision 0207): `work` rows of work against a price of `est` for the same
+/// sample, `cut` where it stopped at its budget.
+///
+/// A cut trial measured part of its order's work, so its work over its price is only a floor: the order is at least
+/// its price. Kept as the ratio, it made the order look as cheap as its cut: `attr_of`'s cross product on PostHog,
+/// cut at 3,581 rows of a price of 9.4 M (0.0004), was then chosen over orders measured at 3.5 times their price.
+pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est: f64, cut: bool) {
+    let ratio = work / est.max(1.0);
+    put_tried(key, rule, order, if cut { ratio.max(1.0) } else { ratio });
+}
+
 fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64) {
     match n.tried.iter_mut().find(|t| t.order == order) {
         Some(t) => {

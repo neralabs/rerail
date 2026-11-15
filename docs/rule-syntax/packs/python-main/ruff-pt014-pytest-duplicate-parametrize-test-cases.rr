@@ -30,7 +30,8 @@ pt014_parametrize_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1,
 pt014_values(n) :- (kind(n, "list") ; kind(n, "tuple")), node(_, n, _, _, _), L = n, inside(n, p1, "call"),
     field(p1, "function", c2), pt014_parametrize_callee(c2), kind(p1, "call"),
     pt014_arg_argvalues_1(p1, a3), V = a3,
-    ( text(n, t_l1_1), text(L, t_l1_1), text(L, t1_1), text(V, t1_1), @doc(n) = @doc(L), @doc(L) = @doc(V) ; within_stop(n, p3_2, pt014_stop_1), kind(p3_2, "parenthesized_expression"), node(_, p3_2, _, _, _), W = p3_2, text(W, t4_2), text(V, t4_2), @doc(W) = @doc(V) ).
+    ( text(n, t_l1_1), text(L, t_l1_1), node(_, L, _, _, _), node(_, V, _, _, _), L = V, @doc(n) = @doc(L) ; within_stop(n, p3_2, pt014_stop_1), kind(p3_2, "parenthesized_expression"), node(_, p3_2, _, _, _), W = p3_2, node(_, W, _, _, _), node(_, V, _, _, _), W = V
+    ).
 
 
 // repeated_slot(n): the JSON util `repeated-slot`, used where the JSON says `matches: "repeated-slot"`

@@ -582,6 +582,8 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
+    end_point: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -835,6 +837,10 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
+        if x.ends > 0 {
+            let from = p.len() + x.ends_from();
+            self.end_point.extend((0..x.ends).map(|l| [p.global(l), p.global(from + l)]));
+        }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -863,7 +869,8 @@ impl CoreRows {
         let narrowed = self.text_nodes.is_some();
         let token_text = projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all");
         if wants_text {
-            for i in 0..(p.locs() - p.len()) as usize {
+            // An end point has no text (it is empty): the positions before them.
+            for i in 0..x.ends_from() as usize {
                 let [a, b] = p.span(p.len() + i as u32);
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
@@ -1108,6 +1115,7 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("end_point", pair(&["n", "p"], &self.end_point)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),

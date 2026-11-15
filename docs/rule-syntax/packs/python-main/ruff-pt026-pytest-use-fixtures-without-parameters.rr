@@ -20,7 +20,7 @@ PT026(rr_at, SPAN) :- kind(n, "decorator"), child(n, c1, _),
     (kind(c3, "function_definition") ; kind(c3, "class_definition")),
     ( child(n, c1_1, _), (kind(c1_1, "comment") ; kind(c1_1, "line_continuation")), match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n)
     ; count : { child(n, c2_2, _), (kind(c2_2, "comment") ; kind(c2_2, "line_continuation")) } = 0, unset(SPAN)
-    ; !match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n), unset(SPAN)
+    ; !match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n), unset(SPAN), count : { child(n, c1_1_e0, _), (kind(c1_1_e0, "comment") ; kind(c1_1_e0, "line_continuation")), match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n) } = 0, count : { count : { child(n, c2_2_e1, _), (kind(c2_2_e1, "comment") ; kind(c2_2_e1, "line_continuation")) } = 0, unset(SPAN_e1) } = 0
     ),
     (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
 

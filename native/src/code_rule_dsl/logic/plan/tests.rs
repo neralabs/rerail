@@ -1139,7 +1139,12 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Vec<V
     let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
+        // Each run a store of its own: in one, the second run found the first's strata kept (decision 0117 step 3,
+        // "quiet: no read changed") and the native set engine solved nothing.
+        let store = super::corpus::test_store::copy();
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.path().to_owned()));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         native = r.native;
         got.push(rels.iter().map(|rel| (rel.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap())).collect::<BTreeMap<_, _>>());
     }

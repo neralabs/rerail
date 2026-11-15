@@ -62,3 +62,8 @@ pub(crate) fn warm_job(what: &str) {
 pub(crate) fn warm_write_allowed(what: &str) -> bool {
     profile::warm_write_allowed(what)
 }
+
+/// Whether a store may be asked here: not inside the waves (`profile::may_read_store`, decision 0104).
+pub(crate) fn may_read_store() -> bool {
+    profile::may_read_store()
+}

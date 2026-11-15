@@ -1,6 +1,7 @@
 # 0138: A frame's use is kept apart from its rows, and the WAL is checkpointed beside the writer
 
-Status: decided and built (2026-11-12).
+Status: decided and built (2026-11-12). The use kept apart is now only the put run's stamp: decision 0227 keeps
+frames by reachability, not by the run that last used them.
 
 ## Intro
 

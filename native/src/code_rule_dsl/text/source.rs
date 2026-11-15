@@ -173,9 +173,13 @@ fn parse(pattern: &str, fold_case: bool) -> Result<Hir, Error> {
         .map_err(|e| Error(format!("regex {pattern:?}: {e}")))
 }
 
+/// A globset regex, read as globset itself reads it: `.` matches a line break too, so `**` (and `*`, `?` of a
+/// non-path glob) spans the lines of a multi-line text. globset's string carries no `(?s)`; its own matcher sets
+/// the flag (`new_regex`). Without it, `glob("**", n)` failed on any node whose text has a newline.
 fn parse_bytes(pattern: &str) -> Result<Hir, Error> {
     regex_syntax::ParserBuilder::new()
         .utf8(false)
+        .dot_matches_new_line(true)
         .build()
         .parse(pattern)
         .map_err(|e| Error(format!("glob regex {pattern:?}: {e}")))

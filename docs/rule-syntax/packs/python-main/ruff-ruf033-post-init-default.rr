@@ -48,10 +48,9 @@ ruf033_attrs_callable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _)
 
 // post_init(n): the JSON util `post-init`, used where the JSON says `matches: "post-init"`
 .decl ruf033_post_init(n: node)
-ruf033_post_init(n) :- kind(n, "function_definition"), field(n, "name", c1),
-    glob("__post_init__", c1), within_stop(n, p2, ruf033_stop_2),
-    kind(p2, "class_definition"), child(p3, p2, _), kind(p3, "decorated_definition"),
-    child(p3, c4, _), ruf033_stdlib_decorator(c4).
+ruf033_post_init(n) :- kind(n, "function_definition"), ruf033_tok_has_1(n), ruf033_up_1(n, p9),
+    child(p10, p9, _), kind(p10, "decorated_definition"), child(p10, c11, _),
+    ruf033_stdlib_decorator(c11).
 
 // default_value(n): the JSON util `default-value`, used where the JSON says `matches: "default-value"`
 .decl ruf033_default_value(n: node)
@@ -61,6 +60,22 @@ ruf033_default_value(n) :- field(p1, "value", n),
     kind(p3, "function_definition"), ruf033_post_init(p3).
 ruf033_default_value(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
     ruf033_default_value(p4).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^__post_init__$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf033_tok_has_1(n: node)
+.stored ruf033_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf033_tok_has_1(n) :- field(n, "name", c1), glob("__post_init__", c1).
+ruf033_tok_has_1(n) :- op(n, t2), match("__post_init__", t2).
+ruf033_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__post_init__).*)$", g3).
+ruf033_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:__post_init__).*)$", g3).
+ruf033_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:__post_init__).*)$", g3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf033_up_1(n: node, p: node)
+ruf033_up_1(n, p) :- ruf033_tok_has_1(n), within_stop(n, p, ruf033_stop_2), kind(p, "class_definition").
 
 // set_1: symbols from the JSON `resolves.import`
 .decl ruf033_set_1(v: symbol)

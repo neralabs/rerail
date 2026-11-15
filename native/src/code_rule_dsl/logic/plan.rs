@@ -1161,6 +1161,9 @@ thread_local! {
     /// kept here, read before the run's, and taken into the run's once, as the job ends; the run's are read under a
     /// shared lock, not taken per rule (four strands planning took turns at one lock: 2.9 s of an edit's 7 s on them).
     static OWN_PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    /// A job's keys planned (profiled, `RunPlans::planned_now`), kept as its plans are and taken into the run's as
+    /// it ends: written to the run's, every plan of every job took the run's lock exclusively.
+    static OWN_PLANNED: std::cell::RefCell<Option<rustc_hash::FxHashSet<PlanKey>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
@@ -1288,7 +1291,26 @@ struct RunPlans {
 
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
-    PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+    OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
+        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+}
+
+/// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
+fn note_planned(key: PlanKey) {
+    let key = OWN_PLANNED.with(|o| match o.borrow_mut().as_mut() {
+        Some(o) => {
+            o.insert(key);
+            None
+        }
+        None => Some(key),
+    });
+    if let Some(key) = key {
+        PLANS.with(|p| {
+            if let Some(s) = p.borrow().as_ref() {
+                s.write().planned_now.insert(key);
+            }
+        });
+    }
 }
 
 impl std::ops::Deref for RunPlans {
@@ -1521,20 +1543,30 @@ pub fn share_plans() -> Option<SharedPlans> {
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
 /// (`OWN_PLANS`) taken into them as it ends.
 pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
-    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>);
+    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
     impl Drop for Entered {
         fn drop(&mut self) {
             let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()));
+            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.2.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
-            if let (Some(own), Some(shared)) = (own, entered)
-                && !own.is_empty()
+            let own = own.filter(|o| !o.is_empty());
+            let planned = planned.filter(|o| !o.is_empty());
+            if let Some(shared) = entered
+                && (own.is_some() || planned.is_some())
             {
-                shared.write().kept.extend(own);
+                let mut s = shared.write();
+                s.kept.extend(own.into_iter().flatten());
+                s.planned_now.extend(planned.into_iter().flatten());
             }
         }
     }
     let own = plans.is_some().then(rustc_hash::FxHashMap::default);
-    Entered(PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)), OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
+    let planned = plans.is_some().then(rustc_hash::FxHashSet::default);
+    Entered(
+        PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)),
+        OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
+        OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+    )
 }
 
 /// A kept plan's last price: the corpus's nodes and the rows of each relation its body reads when priced, and the
@@ -1639,7 +1671,7 @@ thread_local! {
 /// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
 /// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
 pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
-    c.part(&["PLANS", "OWN_PLANS"], super::run_state::Shared(share_plans(), enter_plans));
+    c.part(&["PLANS", "OWN_PLANS", "OWN_PLANNED"], super::run_state::Shared(share_plans(), enter_plans));
     c.copy(&["PLAN_SITE"], &PLAN_SITE);
     c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
     c.copy(&["NO_SHAPES"], &NO_SHAPES);
@@ -2020,11 +2052,7 @@ impl Model {
         let kept = if pending { None } else { kept };
         let sizes = self.live_sizes(b, first);
         if super::profile::on() {
-            PLANS.with(|p| {
-                if let Some(s) = p.borrow().as_ref() {
-                    s.write().planned_now.insert(key);
-                }
-            });
+            note_planned(key);
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
@@ -3097,7 +3125,12 @@ impl Model {
         };
         // (work, rows out, mode) of adding join literal `l`, or None if it can't run yet.
         let long = (0..b.len()).filter(|&i| b.is_join(i)).count() > joins::greedy_limit(GREEDY, cx.wide);
-        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
+        // Past the step that binds the head's last variable, the native walk needs one witness (`setfix::tail`): a
+        // step there passes on at most the bindings it gets, and reads no further rows of them than it passes on. A
+        // factorized part's key, `fzk($d) :- demand($d), node($d, $v, …), col($v, $c)`, was planned from `col` (31,191
+        // rows est., 4 M read) where `demand` first reads one node a document.
+        let head_vars = body::atom_vars(b.head());
+        let step_all = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
             // In a long body's greedy order, a step that reads with no bound variable (a scan, a cross product) is
             // priced from at least one binding (Postgres's `clamp_row_est`): an estimate near 0 would make every next
             // step look free (decision 0038). The search keeps T's pricing, which takes a cross product after an
@@ -3130,6 +3163,14 @@ impl Model {
                 }
                 _ => None,
             }
+        };
+        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
+            let (w, out, mode) = step_all(l, rows, bound)?;
+            if out > rows && head_vars.is_subset(bound) {
+                let atom = matches!(b.view(l), Lit::Atom(_));
+                return Some((if atom { w - out + rows } else { w }, rows, mode));
+            }
+            Some((w, out, mode))
         };
         // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
         // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
@@ -3713,11 +3754,15 @@ impl Model {
                         _ => r *= 0.5,
                     }
                     bound.extend(b.vars(s.at));
-                    steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, passed: Vec::new(), basis: String::new() });
+                    steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
                 }
                 return super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
             }
+            // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
+            // 0229): what the device's breadth-first stages make (decision 0233).
+            let mut r_all = 1.0;
             for s in &order {
+                let before = r;
                 // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
                 // delta comes first by construction, not by choice: nothing was passed over for it.
                 let passed: Vec<(String, f64, String)> = if b.is_join(s.at) && first != Some(s.at) {
@@ -3791,8 +3836,14 @@ impl Model {
                         ("filter".to_owned(), String::new())
                     }
                 };
+                let walked = match b.view(s.at) {
+                    Lit::Atom(a) if !a.neg() => step_all(s.at, r_all, &bound).map(|x| x.1),
+                    Lit::Nearest { .. } => step_all(s.at, r_all, &bound).map(|x| x.1),
+                    _ => None,
+                };
+                r_all = walked.unwrap_or(if before > 0.0 { r_all * r / before } else { r_all });
                 bound.extend(b.vars(s.at));
-                steps.push(super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, passed, basis });
+                steps.push(super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis });
             }
             super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
         });
@@ -4024,6 +4075,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
+        "end_point" => &[&["n"], &["p"]],
         "next_sibling" => &[&["a"], &["b"]],
         "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
@@ -6949,13 +7001,13 @@ impl<'a> Run<'a, '_> {
         handoff.resize_with(nseeds + probes.len(), || None);
         // Each relation's rows, delta start and end as its statistics were last read (`stats_changed`).
         let mut live_seen: Vec<[usize; 3]> = Vec::new();
+        // `RERAIL_JOIN_CUT_ONLY=<text>` (a measurement aid): only components whose name holds it are cut.
+        let cut_only = std::env::var("RERAIL_JOIN_CUT_ONLY").ok();
         loop {
             // Decision 0206: each join's budget (a seed's or a probe's), the work left before its line is next checked
             // against its price (`joins::next_due`), or before a replacement's own limit. A join that spends it is cut
             // at the row of its first atom it is at, and the run returns here (`5`).
-            // `RERAIL_JOIN_CUT_ONLY=<text>` (a measurement aid): only components whose name holds it are cut.
-            static CUT_ONLY: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_JOIN_CUT_ONLY").ok());
-            if joins::on() && self.fx().direct && CUT_ONLY.as_deref().is_none_or(|s| name.contains(s)) {
+            if joins::on() && self.fx().direct && cut_only.as_deref().is_none_or(|s| name.contains(s)) {
                 let budgets: Vec<(usize, Option<u64>)> = (0..nseeds + probes.len()).filter(|&line| line < nseeds || !sql_probe[line - nseeds] && !unplanned[line - nseeds]).map(|line| {
                     let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
                     let due = match &handoff[line] {
@@ -7357,7 +7409,7 @@ impl<'a> Run<'a, '_> {
                     for (o, run) in &measured {
                         let est = self.model.price_for_delta(prog, &b, Some(lead), o, run.rows as f64);
                         if let Some(est) = est {
-                            joins::put_tried(key, rule, o, run.work as f64 / est.max(1.0));
+                            joins::put_trial(key, rule, o, run.work as f64, est, run.cut);
                         }
                         prices.push(est.unwrap_or(f64::NAN));
                     }

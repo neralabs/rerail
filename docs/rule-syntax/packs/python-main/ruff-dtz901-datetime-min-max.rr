@@ -24,13 +24,48 @@ dtz901_none_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz9
 
 // dtz901_safe(n): the JSON util `safe`, used where the JSON says `matches: "safe"`
 .decl dtz901_safe(n: node)
-dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_1(n, p1), field(p1, "attribute", c2), glob("time", c2),
-    within_stop(p1, p3, dtz901_stop_2), kind(p3, "call").
-dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_2(n, p4), field(p4, "attribute", c5),
-    glob("replace", c5), within_stop(p4, p6, dtz901_stop_2), kind(p6, "call"),
-    child(p6, c7, _), kind(c7, "argument_list"), child(c7, c8, _),
-    kind(c8, "keyword_argument"), field(c8, "name", c9), glob("tzinfo", c9),
-    field(c8, "value", c10), !dtz901_none_lit(c10).
+dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_1(n, p1), within_stop(p1, p10, dtz901_stop_2),
+    kind(p10, "call").
+dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_2(n, p11), within_stop(p11, p20, dtz901_stop_2),
+    kind(p20, "call"), child(p20, c21, _), kind(c21, "argument_list"),
+    child(c21, c22, _), kind(c22, "keyword_argument"), dtz901_tok_has_3(c22),
+    field(c22, "value", c31), !dtz901_none_lit(c31).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^time$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz901_tok_has_1(n: node)
+.stored dtz901_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz901_tok_has_1(n) :- field(n, "attribute", c2), glob("time", c2).
+dtz901_tok_has_1(n) :- op(n, t3), match("time", t3).
+dtz901_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:time)(?:\\W.*)?)$", g4).
+dtz901_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:time)(?:\\W.*)?)$", g4).
+dtz901_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:time)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^replace$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz901_tok_has_2(n: node)
+.stored dtz901_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz901_tok_has_2(n) :- field(n, "attribute", c12), glob("replace", c12).
+dtz901_tok_has_2(n) :- op(n, t13), match("replace", t13).
+dtz901_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g14).
+dtz901_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g14).
+dtz901_tok_has_2(n) :- node_text(n, g14), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:replace)(?:\\W.*)?)$", g14).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^tzinfo$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl dtz901_tok_has_3(n: node)
+.stored dtz901_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+dtz901_tok_has_3(n) :- field(n, "name", c23), glob("tzinfo", c23).
+dtz901_tok_has_3(n) :- op(n, t24), match("tzinfo", t24).
+dtz901_tok_has_3(n) :- child(n, c30, _), structural_before(c30, g25),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g25).
+dtz901_tok_has_3(n) :- child(n, c30, _), structural_after(c30, g25),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g25).
+dtz901_tok_has_3(n) :- node_text(n, g25), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:tzinfo)(?:\\W.*)?)$", g25).
 
 // demand_safe: the nodes safe is asked at (it looks at every ancestor of every node)
 .decl dtz901_demand_safe(n: node)
@@ -40,11 +75,13 @@ dtz901_demand_safe(n) :- kind(n, "attribute"),
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl dtz901_up_1(n: node, p: node)
-dtz901_up_1(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute").
+dtz901_up_1(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute"),
+    dtz901_tok_has_1(p).
 
 // up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl dtz901_up_2(n: node, p: node)
-dtz901_up_2(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute").
+dtz901_up_2(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute"),
+    dtz901_tok_has_2(p).
 
 // stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl dtz901_stop_1(n: node)

@@ -13,10 +13,10 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation UP050(at: node, name: loc) "Remove `metaclass=type` from class `{name}`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too."
     suppress noqa "UP050"
-UP050(n, NAME) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("metaclass", c1), field(n, "value", c2), up050_builtin_type(c2), child(p3, n, _),
-    kind(p3, "argument_list"), field(p4, "superclasses", p3),
-    kind(p4, "class_definition"), field(p4, "name", c5), node(_, c5, _, _, _), NAME = c5.
+UP050(n, NAME) :- kind(n, "keyword_argument"), up050_tok_has_1(n), field(n, "value", c9),
+    up050_builtin_type(c9), child(p10, n, _), kind(p10, "argument_list"),
+    field(p11, "superclasses", p10), kind(p11, "class_definition"),
+    field(p11, "name", c12), node(_, c12, _, _, _), NAME = c12.
 
 // builtin_type(n): the JSON util `builtin-type`, used where the JSON says `matches: "builtin-type"`
 .decl up050_builtin_type(n: node)
@@ -24,3 +24,15 @@ up050_builtin_type(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     global_ref(n, "type"), sym_of(n, "builtins.type").
 up050_builtin_type(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     up050_builtin_type(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^metaclass$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up050_tok_has_1(n: node)
+.stored up050_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up050_tok_has_1(n) :- field(n, "name", c1), glob("metaclass", c1).
+up050_tok_has_1(n) :- op(n, t2), match("metaclass", t2).
+up050_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:metaclass)(?:\\W.*)?)$", g3).
+up050_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:metaclass)(?:\\W.*)?)$", g3).
+up050_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:metaclass)(?:\\W.*)?)$", g3).

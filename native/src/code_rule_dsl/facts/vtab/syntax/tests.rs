@@ -527,6 +527,17 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
+        // Read whole first (the device's keyed read, decision 0233): the tree by the batch's solve, every pair once,
+        // and the lookups after it read the same rows; spans have no solve.
+        let whole = within::Within::new(Arc::clone(&batch), mode);
+        assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
+        if mode == within::Mode::Tree {
+            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
+            assert_eq!(whole.len(), expected.len());
+            assert_eq!(rows((0..whole.len()).collect()), expected);
+            assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
+            assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
+        }
         relation_cpu += cpu() - before_relation;
     }
     eprintln!("CONTAINMENT CHECK: {nodes} nodes, reference {reference_cpu:.6} CPU s, relation and comparisons {relation_cpu:.6} CPU s");
@@ -1264,6 +1275,20 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
             Err(_) => assert!(got.is_err(), "{body}: {got:?}"),
         }
     }
+}
+
+/// A rule reading the text of a node no kind fixes gets twins reading `rr_long_text_node(n)` (`long_text_twins`): a
+/// node's own fact, as `text` is, so the phase still projects only the subtrees its rules start from. Read as a
+/// relation of nodes from anywhere, it kept every node: PostHog's `py_from_name` visited all 41 M nodes.
+#[test]
+fn a_long_text_twin_keeps_its_phases_anchors() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let src = format!("{prelude}\n.phase p\n.export out\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_from_statement\"), field(i, \"name\", n), text(n, t).\n.output out\n");
+    let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+    let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+    assert!(long_text_twins(&mut program, &matchers) > 0, "the rule reads the text of a node no kind fixes");
+    let got = node_anchors(&program, &matchers);
+    assert_eq!(got, Ok(["import_from_statement".to_owned()].into_iter().collect::<BTreeSet<String>>()));
 }
 
 /// The definition ids of every node, token and span of a set of files, pinned (decision 0094 §2): a change to how

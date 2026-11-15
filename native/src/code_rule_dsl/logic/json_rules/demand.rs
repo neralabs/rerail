@@ -35,6 +35,42 @@ fn matches(r: &Regex, s: &str) -> bool {
     search(r, s)
 }
 
+/// The variables a literal names: identifiers not called, not `@` functions, not aggregate words; and in a pattern
+/// (`` p ~ `$F2` ``), its metavariables, which bind the variables of their names.
+pub(super) fn vars_of(px: &Patterns, l: &str) -> BTreeSet<String> {
+    const WORDS: &[&str] = &["_", "count", "sum", "min", "max", "mean", "join", "by", "sep", "true", "false"];
+    let plain = strip_strings(px, l);
+    let t = mask_ticks(px, &plain);
+    let mut vs: BTreeSet<String> = px.demand_var.find_iter(&t).flatten().map(|m| m.as_str().to_owned()).filter(|v| !WORDS.contains(&v.as_str())).collect();
+    if t != plain {
+        vs.extend(px.demand_mv.captures_iter(&plain).flatten().filter_map(|c| c.get(1)).map(|m| m.as_str().to_owned()));
+    }
+    vs
+}
+
+/// The literals a demand for `seeds` needs: those joined to a seed through shared variables. A demand may drop the
+/// rest, as it only widens; kept, a literal over variables the call's arguments never reach is a cross product
+/// (no-shadow's `(text(MV, t) ; text(VAL, t))` beside the demanded node).
+fn connected(px: &Patterns, lits: Vec<String>, seeds: &[String]) -> Vec<String> {
+    let vs: Vec<BTreeSet<String>> = lits.iter().map(|l| vars_of(px, l)).collect();
+    let mut reach: BTreeSet<String> = seeds.iter().filter(|s| s.as_str() != "_").cloned().collect();
+    let mut keep = vec![false; lits.len()];
+    loop {
+        let mut grew = false;
+        for (i, v) in vs.iter().enumerate() {
+            if !keep[i] && !v.is_disjoint(&reach) {
+                keep[i] = true;
+                reach.extend(v.iter().cloned());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    lits.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
+}
+
 fn by_head(prog: &Program, entries: &[usize]) -> IndexMap<String, Vec<usize>> {
     let mut by: IndexMap<String, Vec<usize>> = IndexMap::new();
     for &e in entries {
@@ -181,6 +217,9 @@ impl Demand<'_> {
                     if want.iter().any(|a| a == "_") {
                         return Ok(false);
                     }
+                    // The call's whole scope, before the literals that reach the group are dropped: a metavariable one
+                    // of those binds is bound at the call, so it is not unset below.
+                    let whole = scope.clone();
                     let mut lits: Vec<String> = scope.into_iter().filter(|l| !reaches(l)).collect();
                     lits.extend(unset_wild);
                     if gset.contains(&owner) {
@@ -190,15 +229,17 @@ impl Demand<'_> {
                     } else if gset.iter().any(|gname| self.callees(gname).contains(&owner)) {
                         return Ok(false);
                     }
+                    let mut lits = connected(px, lits, &want);
                     let head = format!("{dname}({})", want.join(", "));
                     // A metavariable the callee reads that this call site never binds, and its owner is not passed,
                     // is unset there (ast-grep's empty metavariable): main's `early-enough` holds of an unset `$LATE`.
+                    // One that a dropped literal binds is bound at the call: no demand then, not an unset one.
                     if ungrounded(px, &wrap(&head, &lits, None))? {
                         let own = self.inputs.get(&owner).cloned().unwrap_or_default();
                         let word = |x: &str| Regex::new(&format!(r"(^|[^\w]){x}([^\w]|$)")).expect("a word");
                         let unbound: Vec<String> = want
                             .iter()
-                            .filter(|x| is_full(UPPER, x) && !own.contains(*x) && !lits.iter().any(|l| matches(&word(x), l)))
+                            .filter(|x| is_full(UPPER, x) && !own.contains(*x) && !whole.iter().any(|l| matches(&word(x), l)))
                             .cloned()
                             .collect::<BTreeSet<_>>()
                             .into_iter()
@@ -401,6 +442,7 @@ pub fn node_demand(px: &Patterns, prog: &mut Program, entries: &[usize], helpers
                         ok = false;
                         break 'entries;
                     }
+                    let lits = connected(px, lits, std::slice::from_ref(&x));
                     let head = format!("demand_{gname}({x})");
                     if ungrounded(px, &wrap(&head, &lits, None))? {
                         ok = false;

@@ -27,7 +27,7 @@ try400_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
 try400_logger_object(n) :-
     ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
-    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), try400_name_chain(c2)
+    ; kind(n, "attribute"), try400_tok_has_2(n), field(n, "object", c1), try400_name_chain(c1)
     ),
     !sym_of(n, _).
 
@@ -47,20 +47,72 @@ try400_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
 .decl try400_exc_info_kwarg(n: node)
-try400_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
-    glob("exc_info", c1), field(n, "value", c2), try400_exc_info_set(c2).
+try400_exc_info_kwarg(n) :- kind(n, "keyword_argument"), try400_tok_has_3(n), field(n, "value", c9),
+    try400_exc_info_set(c9).
 
 // level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
 .decl try400_level_callee(n: node)
-try400_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("error", c1),
-    field(n, "object", c2), try400_logger_object(c2).
+try400_level_callee(n) :- kind(n, "attribute"), try400_tok_has_4(n), field(n, "object", c9),
+    try400_logger_object(c9).
 try400_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.error").
-try400_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    try400_level_callee(c3).
+try400_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    try400_level_callee(c10).
 
 // handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
 .decl try400_handler_type(n: node)
 try400_handler_type(n) :- !kind(n, "block"), child(p1, n, _), kind(p1, "except_clause").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try400_tok_has_1(n: node)
+.stored try400_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try400_tok_has_1(n) :- field(n, "attribute", c3),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c3).
+try400_tok_has_1(n) :- op(n, t4),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t4).
+try400_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+try400_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+try400_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try400_tok_has_2(n: node)
+.stored try400_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try400_tok_has_2(n) :- field(n, "attribute", c1),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1).
+try400_tok_has_2(n) :- op(n, t2),
+    match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", t2).
+try400_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+try400_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+try400_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:.*(?:(log|LOG)).*|.*(?:(logger|logging|LOGGER|LOGGING)).*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^exc_info$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try400_tok_has_3(n: node)
+.stored try400_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try400_tok_has_3(n) :- field(n, "name", c1), glob("exc_info", c1).
+try400_tok_has_3(n) :- op(n, t2), match("exc_info", t2).
+try400_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+try400_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+try400_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:exc_info)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^error$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try400_tok_has_4(n: node)
+.stored try400_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try400_tok_has_4(n) :- field(n, "attribute", c1), glob("error", c1).
+try400_tok_has_4(n) :- op(n, t2), match("error", t2).
+try400_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
+try400_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
+try400_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:error)(?:\\W.*)?)$", g3).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl try400_alt_2(n: node)

@@ -153,7 +153,7 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
 
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
-    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
+    let builtin = crate::code_rule_dsl::logic::rr::native_dir().join("src/code_rule_dsl/typing/programs");
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
 }
 
@@ -223,7 +223,7 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 ///
 /// The batch is one run of the frames' spaces too (O-store-single-program): its policies share one run token, as a
 /// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
-/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (`frames::RUNS`) by another
+/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (by recency, before decision 0227) by another
 /// policy's write: the next batch found its kept inputs and its memo entries gone.
 pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading);
 
@@ -439,7 +439,7 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/sources.rr")
+    crate::code_rule_dsl::logic::rr::native_dir().join("src/code_rule_dsl/typing/programs/sources.rr")
 }
 
 /// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded

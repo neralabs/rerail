@@ -96,6 +96,14 @@ pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
 /// `bind_slot[0]`.
 pub(in crate::code_rule_dsl) const ROWTEXT: u32 = 10;
+/// A witness (decision 0233): per binding, its candidates of the stage's relation until one that every probe of the
+/// rest of the body passes (`Batch::witness`); the binding out as it is. A probe's key reads a slot (`SLOT`), a
+/// constant (`CONST`) or a column of the candidate (`ACOL`, its column in `key_slot`).
+pub(in crate::code_rule_dsl) const WITNESS: u32 = 11;
+/// A witness probe's key from the candidate's row: its column.
+pub(in crate::code_rule_dsl) const ACOL: u32 = 2;
+/// The most probes a witness makes per candidate.
+pub(in crate::code_rule_dsl) const WITNESS_PROBES: usize = 3;
 /// `cat`'s text of X and Y ("." between when X is not empty).
 pub(in crate::code_rule_dsl) const ROW_CAT: u32 = 0;
 /// `str_concat`'s text of X and Y.
@@ -678,6 +686,68 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         write_row(s, L, t, R, r, O, at);
         at++;
     }
+}
+
+// A witness's probe (decision 0233): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
+// candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
+static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, device const long* RA, uint nra, uint ra,
+                                 device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
+                                 device const uint* nruns) {
+    long kv[8];
+    for (uint i = 0; i < b.nkeys && i < 8; i++) {
+        uint k = b.key_kind[i];
+        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? RA[ulong(b.key_slot[i]) * nra + ra] : b.key_const[i]);
+    }
+    uint lo = 0, hi = b.nr;
+    if (b.nkeys > 0) {
+        uint h = hash_keys(kv, b.nkeys, b.mask);
+        uint a = 0, e = b.nr == 0 ? 0 : nruns[0];
+        uint runs = e;
+        for (uint k = 0; k < 34 && a < e; k++) {
+            uint mid = (a + e) / 2;
+            if (rkeys[mid] < h) a = mid + 1; else e = mid;
+        }
+        if (a < runs && rkeys[a] == h) { lo = starts[a]; hi = starts[a + 1]; } else { lo = 0; hi = 0; }
+    }
+    bool found = false;
+    for (uint q = lo; q < hi; q++) {
+        uint r = b.nkeys > 0 ? perm[q] : q;
+        if (matches(b, R, r, kv)) { found = true; break; }
+    }
+    return found != (b.mode == 2);
+}
+
+// A witness's count (mode 11): 1 for a binding with a candidate of the stage's relation that every probe passes,
+// found in the candidates' order, the loop ending at the first; else 0. `stage_scatter` (as a semi-join) writes them.
+kernel void witness_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
+                          device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
+                          device const uint* totals [[buffer(6)]], device uint* counts [[buffer(7)]], constant Stage* bs [[buffer(8)]],
+                          device const long* R0 [[buffer(9)]], device const uint* p0 [[buffer(10)]], device const uint* s0 [[buffer(11)]],
+                          device const uint* k0 [[buffer(12)]], device const uint* n0 [[buffer(13)]],
+                          device const long* R1 [[buffer(14)]], device const uint* p1 [[buffer(15)]], device const uint* s1 [[buffer(16)]],
+                          device const uint* k1 [[buffer(17)]], device const uint* n1 [[buffer(18)]],
+                          device const long* R2 [[buffer(19)]], device const uint* p2 [[buffer(20)]], device const uint* s2 [[buffer(21)]],
+                          device const uint* k2 [[buffer(22)]], device const uint* n2 [[buffer(23)]],
+                          constant Stage& s [[buffer(24)]], uint t [[thread_position_in_grid]]) {
+    if (t > s.cap_in) return;
+    uint n = min(totals[s.in_slot], s.cap_in);
+    if (t >= n) { counts[t] = 0; return; }
+    long kv[8];
+    uint lo, hi;
+    candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    bool keyed = s.nkeys > 0;
+    uint nb = min(s.agg[0], 3u);
+    uint found = 0;
+    for (uint q = lo; q < hi; q++) {
+        uint r = keyed ? perm[q] : q;
+        if (!matches(s, R, r, kv)) continue;
+        bool all = true;
+        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, R, s.nr, r, R0, p0, s0, k0, n0);
+        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, R, s.nr, r, R1, p1, s1, k1, n1);
+        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, R, s.nr, r, R2, p2, s2, k2, n2);
+        if (all) { found = 1; break; }
+    }
+    counts[t] = found;
 }
 
 // A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
@@ -1950,6 +2020,71 @@ impl Batch {
         pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
+        Ok(())
+    }
+
+    /// A witness stage (`WITNESS`, decision 0233) from `left` into `out`: per binding, the candidates of `right` in
+    /// order until one that each of `rest`'s probes (semi- or anti-joins, at most `WITNESS_PROBES`) passes; then the
+    /// bindings that have one, as a semi-join writes them. `stage`'s sizes, and the probes', are set here.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), rest: &[(Stage, &DevRel, Option<&DevIndex>)],
+                                            in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
+        assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
+        let count = pipeline("join", "witness_count", || SOURCE.to_owned())?;
+        let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
+        stage.cap_in = left.cap as u32;
+        stage.cap_out = out.cap as u32;
+        stage.in_slot = in_slot as u32;
+        stage.out_slot = out_slot as u32;
+        stage.counter = NONE;
+        stage.nslots = left.slots as u32;
+        stage.nr = right.0.rows as u32;
+        stage.agg[0] = rest.len() as u32;
+        let dummy: metal::Buffer = self.dummy.buffer.to_owned();
+        let parts = |rel: &DevRel, ix: Option<&DevIndex>| -> [metal::Buffer; 5] {
+            match ix {
+                Some(ix) => [rel.buffer.buffer.to_owned(), ix.parts.perm.buffer.to_owned(), ix.parts.starts.buffer.to_owned(), ix.parts.rkeys.buffer.to_owned(), ix.parts.nruns.buffer.to_owned()],
+                None => [rel.buffer.buffer.to_owned(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()],
+            }
+        };
+        if let Some(ix) = right.1 {
+            stage.mask = ix.mask;
+        }
+        let a = parts(right.0, right.1);
+        let mut probes = [Stage::default(); WITNESS_PROBES];
+        let mut bufs: Vec<[metal::Buffer; 5]> = Vec::new();
+        for (k, (b, rel, ix)) in rest.iter().enumerate() {
+            let mut b = *b;
+            b.nr = rel.rows as u32;
+            b.cap_in = left.cap as u32;
+            if let Some(ix) = ix {
+                b.mask = ix.mask;
+            }
+            probes[k] = b;
+            bufs.push(parts(rel, *ix));
+        }
+        while bufs.len() < WITNESS_PROBES {
+            bufs.push([dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()]);
+        }
+        let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let n = left.cap + 1;
+        let counts = scratch(FREE, 4 * n)?;
+        let scan = Scan::new(n)?;
+        let pass = self.pass(3)?;
+        let lbuf: &BufferRef = &left.buffer.buffer;
+        let mut count_bufs: Vec<&BufferRef> = vec![lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &held.buffer];
+        for b in &bufs {
+            count_bufs.extend(b.iter().map(|x| &**x));
+        }
+        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
+        scan.encode(pass, &counts)?;
+        // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
+        let mut write = stage;
+        write.mode = SEMI;
+        write.nbinds = 0;
+        let scatter_bufs: [&BufferRef; 11] = [lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy];
+        pass.run_bytes(&scatter, &scatter_bufs, write.bytes(), groups(n));
+        self.keep.push(held);
         Ok(())
     }
 

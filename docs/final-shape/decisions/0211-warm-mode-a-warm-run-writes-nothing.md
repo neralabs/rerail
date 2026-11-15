@@ -59,6 +59,7 @@ both before every commit (the commit hook runs it beside the cache and thread-st
   | a source's pin | A lock: a lease on a source the run reads, until its manifest names it (O95) |
   | the combined program's pins released | The release of the combined program's leases |
   | the run's manifest | Timestamps, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`a new manifest recorded`) |
+  | the journal's aged cursor | A timestamp: a root's journal cursor, or a cutoff record's (`git-files:`, `cone-rounds:`), stored again once it is `observe::CURSOR_AGE` (2^20) events behind with nothing named since. Added with the user's approval (2026-11-14) |
 
   Neither the queued job nor its commit is a fault, and only when every job in the writer's transaction is
   listed. The writer opens a scope around each transaction (`profile::warm_scope`), each job marks it
@@ -132,7 +133,7 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   - its hold on its plans and the hold's release, a source's pins, and the combined program's pins and their release:
     leases against a collection pass in another process while the run reads;
   - the frames' used marks (`frames`, `the frames' parts used`), by which relations unused for `RUNS` runs are
-    forgotten;
+    forgotten. Gone: decision 0227 keeps frames while a kept manifest reaches them, and a run marks nothing;
   - the run's atoms, if any were made (`flush_atoms`, `the pending atoms`), and the writer waits.
 
   The warm batch with the cutoff applied writes none of these, and collection still keeps what it needs, so skipping
@@ -142,6 +143,92 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
 - **`forget` was quadratic**: it matched each named path against every answer kept, so a root that churns cost
   paths × answers on every ask. Fixed: the answers and canonical forms are sorted by path (`BTreeMap`), and what
   lies under a named path is one range from it (`forget_takes_what_is_under_a_path_and_no_sibling`).
-- **Choosing the widest stored root** for a path (`watch_above`) means one ask covers many reads, so there are fewer
-  cookie waits. But a read near the top (a work tree's `.git`) makes the whole tree a root. The deepest root would name
-  less, at the cost of more asks. Not measured.
+- **The widest stored root stays** (`watch_above`). The deepest was measured with a temporary switch, on the warm
+  44-policy batch, at load 64 to 95:
+
+  | Corpus | Root | Asks | Their wait | Paths named | Instructions |
+  |---|---|---|---|---|---|
+  | `dl10`, inside this work tree | widest | 13 | 3.86 s | 354 | 9.7 G |
+  | | deepest | 17 | 5.48 s | 314 | 9.9 G |
+  | `dl1g`, its own repository | widest | 22 | 6.02 s | 0 | 8.2 G |
+  | | deepest | 22 | 7.00 s | 0 | 8.2 G |
+
+  The deepest root names 11% fewer paths where the work tree is a root, and asks 30% more often. Each ask costs a
+  wait for its cookie, and now that `forget` is a range a path, a path named costs little. Where the corpus is its
+  own repository, the roots do not nest and the two are the same.
+- **The journal's asks were the warm batch's wall time**: 22 asks, about 6 s of waits for 0.8 s of CPU over `dl1g`.
+  Each cause is fixed:
+
+  | Seen | Fix |
+  |---|---|
+  | One directory asked as two roots, `/var/folders/…` and `/private/var/folders/…` (phase 0's root) | Phase 0's root is canonical, and not watched up front: it is an empty placeholder, and a read under it is watched as it comes |
+  | A root kept as `native/crates/logic/../../src/…` | `rr::native_dir()` names the source tree without `..`; the library, the typing programs and phase 1's program are found through it |
+  | Each root asked again after every run inside the run (phase 0's, a policy's) | Only the outermost run's end (`Observer::flush` with no run left open) ends the roots' answers and settles the roots the journal could not speak for |
+  | Each root asked again, with a cookie's wait, at each policy of a batch | A batch is one run for the observer (`corpus::ObservedBatch`, in `run_policies`): its runs read the tree as of its first ask; a change meanwhile is named to the next batch |
+  | `dl1g/.git` asked beside `dl1g` | A cutoff's check (`changed_since`) skips a root under another it holds with the same cursor: one ask gave both |
+  | Phase 0's root timed out twice, so it was not trusted | Not asked up front (above) |
+
+  After all of them: 6 asks and 0.51 s of waits, 1.1 s wall for the warm batch (from about 10 s), 6.9 G instructions,
+  no warm fault, the same findings (load 47 to 87). Before the last, 12 asks waited 1.5 s, mostly the first cookie
+  of each library stream (0.6 to 0.9 s): they replay from cursors 7 million events old (below).
+- **An old cursor is slow to replay after all, at 7 million events.** It was not at 2 million (above). The first ask
+  of a stream started from a cursor that old waited 0.6 to 2 s, against 0.04 to 0.17 s for the same stream's later
+  asks; a cutoff record's check from 4 million events back timed out, and the record was made again. A cursor stayed
+  where it was while the journal named nothing under its root, so a root or a record that never changes aged without
+  bound. Fixed, with the user's approval of the write:
+  - a root's stored cursor `CURSOR_AGE` (2^20) events behind, with nothing named, is stored again (`forget`);
+  - so is a cutoff record's cursor line, where its check (`changed_since`) finds nothing named under its roots: it
+    holds as of the journal's cursors now;
+  - a stream started as the process opens (`journal::prepare`) starts from its outermost root's cursor (the newest,
+    for two names of one directory), no longer from the oldest of the roots under it. Those held cursors no run asks
+    any more (`lib` under `rule-syntax`, `/var/…` beside `/private/var/…`). A root asked with an older cursor than its
+    stream's starts its own, as before.
+
+  After: no stream starts from far back, the warm batch over `dl1g` writes nothing it may not, and its 6 asks waited
+  0.57 to 1.23 s at load 115.
+- **The observer's store kept everything, and every process read it all.** Nothing was ever dropped from it, and
+  each process loads all of it as it opens (`read_all`). In the `dl1g` store: 3 of 7 root cursors were of names no
+  run asks any more, 7 of 86 answers and 8 of 81 canonical forms were under them, and 54 whole-run cutoff records
+  (975 KB) were mostly of earlier builds (the engine's id is in their key). Its database file was 4 KB, with
+  everything in a 2.9 MB WAL that was never folded in. Fixed:
+  - `observe::collect`, in the content store's collection pass (behind the run, never in a warm run), drops:
+    - a root's cursor whose name has a `.` or `..`, is gone, lies under another root kept, or is another name of a
+      kept root's directory with an older cursor;
+    - an answer, a canonical form or a Git file list under no root kept (every path read is under a root);
+    - a cutoff record (now keyed `cutoff:…`) none of whose plans is live in the content store, and one from before
+      records named their plans.
+
+    Then it folds the WAL in and truncates it. `constants:` and `cone-rounds:` records stay.
+  - The outermost run's end folds the WAL in (`wal_checkpoint(PASSIVE)`: it waits for no reader, commits nothing).
+  - The journal's cookies are written in `<store>.cookies`, a directory holding nothing else. Beside the store, each
+    stream was told every write there: 2,596 events in one warm batch's first ask, the harness's outputs and the
+    store's own writes, all replayed and dropped.
+- **The observer's store is read as it is asked, not at open.**
+  - At open it reads the roots' cursors, its metadata and the Git aliases only.
+  - The answers and canonical forms are read a part of the tree at a time, the first time a run asks under it
+    (`ensure`): under the widest root the store keeps a cursor for, else the path's directory. One range query of
+    each table a part; a part read holds those under it.
+  - A run's record is read by its key as it is asked (`run_record`): one point lookup.
+  - The store is never asked inside the waves (`may_read_store`, decision 0104): there a part not yet read is
+    unknown, read again from the tree, and a warm run faults "the observer's store not asked inside the waves".
+    Every part a run reads is asked before its first wave (the roots are watched first), so none has faulted.
+  - Memory is ahead of the store: a part read later keeps what memory holds. A part forgotten before it is read
+    waits for the writer's delete first, so nothing forgotten is read back.
+  - On dl10, a run reads three parts (the work tree, the phase-0 root, the Git directory); the warm batch is as
+    before (6.4 G instructions, the same findings, no fault).
+- **An inner root is asked as the stored root above it** (`Observer::outermost`), on the same volume. A journal's
+  cursor is the volume's, so the outer root's answers for what is under it. Phase 0 asked its rule libraries
+  (`docs/rule-syntax/lib`, then `docs/rule-syntax`) before the work tree, each as a root of its own: the first
+  started a stream whose cookie missed its 2 s wait, the second had no cursor; both were lost, settled and written
+  again every warm run, with their canonical forms resolved again. Now neither is lost: a warm dl10 run with the
+  cutoff off has no settled root, no answer recorded and no canonical form resolved (outputs as before), and the
+  2 s wait is gone. A real loss (a fresh Watchman, a dropped stream) is still checked by each answer's `stat`.
+
+- **The cost samples were mostly of jobs with no units.** Of the newest 500,000 samples in `costs.sqlite`, 489,380
+  were the `strata` stream's: a job wrapping the whole strata loop, with no units, so it prices nothing. The fit
+  read its wall as the lane's cost of a submission. The pricing already skipped them (`price.rs`); the training did
+  not. Now (2026-11-14, with the user's approval):
+  - a job with no units keeps no sample (`score`);
+  - the stored ones are deleted once a file (`costs.sqlite`'s `user_version` 1);
+  - the read for fitting and training leaves them out (`read_samples`), since binaries from before this change
+    still write them to the shared file.

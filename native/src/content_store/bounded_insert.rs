@@ -1,5 +1,7 @@
 //! Bounded typed publication batches, from Pulling-it-all-together's anchor store. SQLite owns
 //! stored rows and transaction rollback.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 
 pub(super) fn insert<const N: usize>(
@@ -58,7 +60,7 @@ mod tests {
         )
         .unwrap();
         let count: i64 = tx
-            .query_row(
+            .query_row_cached(
                 "SELECT count(*) FROM rows WHERE typeof(t)='text' AND typeof(b)='blob'",
                 [],
                 |r| r.get(0),
@@ -76,7 +78,7 @@ mod tests {
         );
         tx.rollback().unwrap();
         assert_eq!(
-            db.query_row("SELECT count(*) FROM rows", [], |r| r.get::<_, i64>(0))
+            db.query_row_cached("SELECT count(*) FROM rows", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
             0
         );

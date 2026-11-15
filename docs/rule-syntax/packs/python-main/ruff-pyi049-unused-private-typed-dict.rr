@@ -46,7 +46,7 @@ pyi049_simple_target(n) :- (kind(n, "tuple_pattern"), !pyi049_tok_has_3(n) ; kin
     suppress noqa "PYI049"
 PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
     bind_name(n, b1), (main_form(b1, "definition") ; main_form(b1, "assignment")),
-    (st2 = b1 ; within(b1, st2)), pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1),
+    st2 = b1, pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1),
     (site_scope(b1, "module") ; site_scope(b1, "function")).
 
 // PYI049_unused_private_typed_dict_stub(n): a finding at node n, from clause `unused-private-typed-dict-stub`.
@@ -57,8 +57,8 @@ PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
     suppress noqa "PYI049"
 PYI049_unused_private_typed_dict_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     prefix("_", n), bind_name(n, b1),
-    (main_form(b1, "definition") ; main_form(b1, "assignment")),
-    (st2 = b1 ; within(b1, st2)), pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1).
+    (main_form(b1, "definition") ; main_form(b1, "assignment")), st2 = b1,
+    pyi049_typeddict_site(st2), site_latest(b1), !site_used(b1).
 
 // PYI049_unused_comprehension_variable_in_stub_typed_dict(n): a finding at node n, from clause `unused-comprehension-variable-in-stub-typed-dict`.
 // Each rule below is one way the JSON `rule` can match.

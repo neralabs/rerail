@@ -55,6 +55,10 @@ const FACT_STORE: &[&str] = &[
     "frame_part_used",
     "frame_program_used",
     "frame_used",
+    // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
+    // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
+    "memo_entries",
+    "memo_packs",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -301,6 +305,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile.rs", "ON"),
+    ("code_rule_dsl/logic/profile.rs", "SHARD"),
+    // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
+    ("code_rule_dsl/logic/profile.rs", "SHARDS"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
@@ -348,6 +355,7 @@ const STATE: &[(&str, &str)] = &[
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),

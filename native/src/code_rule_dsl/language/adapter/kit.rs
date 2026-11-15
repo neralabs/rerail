@@ -1398,7 +1398,7 @@ fn shared_walks_read_the_kinds_they_named() {
                     is_comment_kind(name),
                     matches!(
                         name,
-                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                        "comment" | "html_comment" | "line_comment" | "block_comment" | "js_comment"
                     ),
                     "{name} in {dialect:?}"
                 );

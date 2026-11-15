@@ -58,7 +58,7 @@ pyi015_real_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi0
 
 // minus(n): the JSON util `minus`, used where the JSON says `matches: "minus"`
 .decl pyi015_minus(n: node)
-pyi015_minus(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1).
+pyi015_minus(n) :- kind(n, "unary_operator"), pyi015_tok_has_1(n).
 
 // complex_left(n): the JSON util `complex-left`, used where the JSON says `matches: "complex-left"`
 .decl pyi015_complex_left(n: node)
@@ -75,9 +75,9 @@ pyi015_scalar(n) :- kind(n, "concatenated_string"),
     count : { child(n, c1, _), pyi015_fstring(c1) } = 0.
 pyi015_scalar(n) :- pyi015_number(n).
 pyi015_scalar(n) :- pyi015_minus(n), field(n, "argument", c2), pyi015_neg_arg(c2).
-pyi015_scalar(n) :- kind(n, "binary_operator"), field(n, "operator", c3), glob("[+-]", c3),
-    field(n, "left", c4), pyi015_complex_left(c4), field(n, "right", c5), pyi015_complex_arg(c5).
-pyi015_scalar(n) :- kind(n, "attribute"), sym_of(n, q6), pyi015_set_1(q6).
+pyi015_scalar(n) :- kind(n, "binary_operator"), pyi015_tok_has_2(n), field(n, "left", c11),
+    pyi015_complex_left(c11), field(n, "right", c12), pyi015_complex_arg(c12).
+pyi015_scalar(n) :- kind(n, "attribute"), sym_of(n, q13), pyi015_set_1(q13).
 
 // elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
 .decl pyi015_elem(n: node)
@@ -105,7 +105,7 @@ pyi015_valid(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi015_
 
 // pipe(n): the JSON util `pipe`, used where the JSON says `matches: "pipe"`
 .decl pyi015_pipe(n: node)
-pyi015_pipe(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+pyi015_pipe(n) :- kind(n, "binary_operator"), pyi015_tok_has_3(n).
 
 // pep604(n): the JSON util `pep604`, used where the JSON says `matches: "pep604"`
 .decl pyi015_pep604(n: node)
@@ -132,7 +132,7 @@ pyi015_plain_ok(n) :- pyi015_pep604(n).
 // name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
 .decl pyi015_name_target(n: node)
 pyi015_name_target(n) :- kind(n, "identifier").
-pyi015_name_target(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_1(n), child(n, c9, _),
+pyi015_name_target(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_4(n), child(n, c9, _),
     pyi015_name_target(c9).
 pyi015_name_target(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
     pyi015_name_target(c10).
@@ -165,16 +165,52 @@ pyi015_all_name(n) :- pyi015_alt_8(n), child(n, c9, _), pyi015_all_name(c9).
 pyi015_class_dunder_name(n) :- kind(n, "identifier"), glob("{__match_args__,__slots__}", n).
 pyi015_class_dunder_name(n) :- pyi015_alt_8(n), child(n, c9, _), pyi015_class_dunder_name(c9).
 
-// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^-$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl pyi015_tok_has_1(n: node)
 .stored pyi015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-pyi015_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
-pyi015_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi015_tok_has_1(n) :- field(n, "operator", c1), glob("-", c1).
+pyi015_tok_has_1(n) :- op(n, t2), match("-", t2).
 pyi015_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
-    match("(?s)^(?:.*(?:,).*)$", g3).
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 pyi015_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi015_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi015_tok_has_2(n: node)
+.stored pyi015_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi015_tok_has_2(n) :- field(n, "operator", c3), glob("[+-]", c3).
+pyi015_tok_has_2(n) :- op(n, t4), match("[+-]", t4).
+pyi015_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi015_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi015_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi015_tok_has_3(n: node)
+.stored pyi015_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi015_tok_has_3(n) :- field(n, "operator", c1), glob("|", c1).
+pyi015_tok_has_3(n) :- op(n, t2), match("\\|", t2).
+pyi015_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi015_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi015_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi015_tok_has_4(n: node)
+.stored pyi015_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi015_tok_has_4(n) :- child(n, c1, _), glob("\\,", c1).
+pyi015_tok_has_4(n) :- op(n, t2), match(",", t2).
+pyi015_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
-pyi015_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+pyi015_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi015_tok_has_4(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
 
 // demand_alt_14: the nodes alt_14 is asked at (it looks at every ancestor of every node)
 .decl pyi015_demand_alt_14(n: node)
@@ -231,7 +267,7 @@ pyi015_alt_4(n) :- pyi015_pair_ok(n).
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi015_alt_8(n: node)
 pyi015_alt_8(n) :- kind(n, "parenthesized_expression").
-pyi015_alt_8(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_1(n).
+pyi015_alt_8(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_4(n).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi015_alt_10(n: node)

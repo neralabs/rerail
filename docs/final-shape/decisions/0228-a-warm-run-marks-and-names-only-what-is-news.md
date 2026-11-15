@@ -1,6 +1,11 @@
-# 0223: A warm run marks and names only what is news, and keeps no text it only passes on
+# 0228: A warm run marks and names only what is news, and keeps no text it only passes on
 
-Status: built (2026-11-14). Follows decision 0211 (a warm run writes nothing) and 0213 (intern only what is stored).
+Status: built (2026-11-14). Numbered 0223 when written; moved to 0228 (another worktree took 0223). Follows decision 0211 (a warm run writes nothing) and 0213 (intern only what is stored).
+
+Partly superseded (2026-11-14, at the merge of investigate-bend-vs-datalog): decision 0227 keeps frames while a kept
+manifest reaches them, so a run marks no use at all. This decision's memo part ages (`Admitted::ages`) and its
+program-use news (`use_is_news`, `note_use`) are gone with the marks they thinned. Its source naming, its text held
+in scratch (setfix `TEXT_OUT`) and its atom flush only when atoms are pending stand.
 
 ## Intro
 

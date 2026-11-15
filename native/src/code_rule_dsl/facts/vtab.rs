@@ -130,6 +130,13 @@ pub trait Source: Send + Sync {
     fn made_on_lookup(&self) -> bool {
         false
     }
+    /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
+    /// sorts the rows it is given, decision 0233): whether its rows can be made at once, at the cost of a solve the
+    /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
+    /// them). Every source not made on lookup has them.
+    fn complete_rows(&self) -> bool {
+        !self.made_on_lookup()
+    }
     /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}

@@ -1,8 +1,10 @@
 //! The content store's SQLite schema: one current, idempotent DDL.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -394,11 +396,13 @@ INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it.
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
+-- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
 CREATE TABLE IF NOT EXISTS corpus_decided (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
-    time INTEGER NOT NULL
+    time INTEGER NOT NULL,
+    swept INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
 -- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
@@ -714,17 +718,24 @@ CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT
 -- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
 CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
 -- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
--- run, the last `frames::RUNS` runs'. A frame is collected once the run that put it is that old and no run since
+-- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
 -- used its relation.
 CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
     PRIMARY KEY (space, run)) WITHOUT ROWID;
--- Each run's use of a space by program (decision 0117 step 5, O-store-single-program): the relations it used, as
--- sorted keys, one row a program a run, each program's last `frames::RUNS`. Programs over one root share its space;
--- counted by the space's runs alone, one policy's frames went unused while the others ran, and were collected. A
--- frame is collected once the run that put it is that old and none of these rows names its relation. `frame_used`
--- (one row a run, of every program) is read no more: it stays for an older binary.
+-- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
+-- written when it first puts there. A relation's frames are kept while a live program's row names it
+-- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
+-- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
+-- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
+-- content's SHA-256 and its document key. A path's contents are ordered by where they were appended.
+CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
+    digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
+    raw INTEGER NOT NULL, PRIMARY KEY (space, part)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
+-- The packs the entries are in: the newest is appended to.
+CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
 "#;
 
 impl ContentStore {
@@ -744,6 +755,9 @@ impl ContentStore {
                         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
+                        for (table, column, declaration) in missing_columns(&transaction)? {
+                            transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                        }
                         transaction.execute_batch(SCHEMA)?;
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -759,7 +773,7 @@ impl ContentStore {
                 super::frames::forget_snapshot(path);
             }
         }
-        let id: Option<i64> = connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
         if let Some(id) = id {
             return Ok(id);
         }
@@ -770,7 +784,7 @@ impl ContentStore {
                 .spawn(|| -> StoreResult<()> {
                     super::hazards::behind_the_run();
                     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    transaction.execute("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    transaction.execute_cached("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
                     transaction.commit()?;
                     Ok(())
                 })
@@ -780,7 +794,7 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
+        Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
 }
 
@@ -810,7 +824,29 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)))
+    Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
+}
+
+/// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
+/// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
+/// Each has a default, so an older binary's inserts, which do not name it, still apply.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+
+/// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
+fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+    let mut missing = Vec::new();
+    for added in ADDED_COLUMNS {
+        let (table, column, _) = added;
+        let (tables, columns): (i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1), (SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2)",
+            params![table, column],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if tables > 0 && columns == 0 {
+            missing.push(added);
+        }
+    }
+    Ok(missing)
 }
 
 /// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is
@@ -864,6 +900,34 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
 #[cfg(test)]
 mod schema_object_tests {
     use super::*;
+
+    /// A store made before a column of `ADDED_COLUMNS` (here `corpus_decided.swept`, decision 0227) gains it when
+    /// opened, its rows keeping their values.
+    #[test]
+    fn an_older_store_gains_the_added_columns() {
+        let dir = std::env::temp_dir().join(format!("rerail-added-columns-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.sqlite");
+        let _ = std::fs::remove_file(&path);
+        drop(ContentStore::open(&path).unwrap());
+        {
+            let c = Connection::open(&path).unwrap();
+            // The table as an older binary made it.
+            c.execute_batch(
+                "DROP TABLE corpus_decided; \
+                 CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; \
+                 INSERT INTO corpus_decided VALUES (1, 7, 0)",
+            )
+            .unwrap();
+            assert_eq!(missing_columns(&c).unwrap().len(), 1);
+        }
+        drop(ContentStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        assert!(missing_columns(&c).unwrap().is_empty());
+        assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
     #[test]

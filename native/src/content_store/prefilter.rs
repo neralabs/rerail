@@ -18,6 +18,8 @@
 //!   characters, too long) are kept as terms only while the store-wide residue of their kind stays
 //!   under `RESIDUE_CAP`.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::bounded_insert::insert;
 use super::postings::{append_delta, pack_edges};
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
@@ -98,7 +100,7 @@ impl ContentStore {
     pub fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().forget_kinds(tape.row());
         self.immediate_transaction(|transaction| {
-            transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
+            transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
             Ok(())
         })
     }
@@ -182,7 +184,7 @@ impl ContentStore {
         }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let target = path.to_str().ok_or_else(|| StoreError::Invalid("capture path is not UTF-8".to_owned()))?;
-        connection.execute("ATTACH DATABASE ?1 AS capture", [target])?;
+        connection.execute_cached("ATTACH DATABASE ?1 AS capture", [target])?;
         // The copies keep their keys, not their parents (sources, hashes), so the capture is
         // written with foreign keys off; that pragma is per connection and outside transactions.
         connection.execute_batch("PRAGMA foreign_keys = OFF")?;
@@ -239,7 +241,7 @@ impl ContentStore {
     pub fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().clear();
         self.immediate_transaction(|transaction| {
-            transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
+            transaction.execute_cached("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
             Ok(())
         })
     }
@@ -352,8 +354,8 @@ fn put(transaction: &Connection, set: &TapePrefilter, counts: &mut Counts, atoms
             counts.flush(transaction, atoms)?;
         }
     }
-    transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
-    transaction.execute(
+    transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
+    transaction.execute_cached(
         "INSERT INTO prefilter_sets(tape_id,version,nodes,edges) VALUES(?1,?2,?3,?4)",
         params![tape, PREFILTER_VERSION, set.nodes, pack_edges(&set.edges)],
     )?;

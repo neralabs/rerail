@@ -17,7 +17,7 @@ SIM109(n, FIRST, N) :- kind(n, "boolean_operator"), sim109_or_op(n), !sim109_alt
     sim109_eq_target(c11, N), node(_, c11, _, _, _), FIRST = c11, within_stop(c11, p14, sim109_stop_10), sim109_or_op(p14),
     count : { child(p15, p14, _), sim109_or_op(p15) } = 0, within_stop(c16, p14, sim109_stop_10),
     !sim109_or_op(c16), sim109_eq_target(c16, N), node(_, c16, _, _, _), SECOND = c16,
-    text(SECOND, t17), text(FIRST, t18), t17 != t18.
+    node(_, SECOND, _, _, _), node(_, FIRST, _, _, _), SECOND != FIRST.
 
 // or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
 .decl sim109_or_op(n: node)

@@ -915,6 +915,9 @@ impl Source for Renamed {
     fn made_on_lookup(&self) -> bool {
         self.0.made_on_lookup()
     }
+    fn complete_rows(&self) -> bool {
+        self.0.complete_rows()
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
     }
@@ -1993,6 +1996,10 @@ impl Retained {
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
+        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability).
+        if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
+            return Ok(written);
+        }
         // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped

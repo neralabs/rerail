@@ -12,13 +12,11 @@
 .violation PYI056(at: loc, attr: node, detail: symbol) "{detail}."
     suppress noqa "PYI056"
 PYI056(ATTR, n, "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call") :- kind(n, "attribute"),
-    pyi056_callee(n), field(n, "object", c1), pyi056_all_ref(c1), field(n, "attribute", c2),
-    glob("{append,extend}", c2),
+    pyi056_callee(n), field(n, "object", c1), pyi056_all_ref(c1), pyi056_tok_has_1(n),
     match("(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)", n).
 PYI056(ATTR, n, "Build `__all__` without that name instead of calling `.remove()`; if it depends on a condition, add the name back with `__all__ += [...]` under the opposite condition") :- kind(n, "attribute"),
     pyi056_callee_remove_from_all(n), field(n, "object", c1), pyi056_all_ref_remove_from_all(c1),
-    field(n, "attribute", c2), glob("remove", c2),
-    match("(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)", n).
+    pyi056_tok_has_2(n), match("(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)", n).
 PYI056(ATTR, n, "Change `__all__` with `+=` (or build it without the name) instead of calling `.append()`, `.extend()` or `.remove()` on it; type checkers do not all support those calls") :- pyi056_in_annotation(n, ATTR).
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
@@ -62,6 +60,30 @@ pyi056_callee_method_call_on_all_in_string_annotation(n) :- child(p2, n, _),
 .decl pyi056_in_annotation(n: node, attr: loc)
 pyi056_in_annotation(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), pyi056_alt_1(c2, ATTR).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(append|extend)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi056_tok_has_1(n: node)
+.stored pyi056_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi056_tok_has_1(n) :- field(n, "attribute", c2), glob("{append,extend}", c2).
+pyi056_tok_has_1(n) :- op(n, t3), match("(append|extend)", t3).
+pyi056_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:append)(?:\\W.*)?|(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g4).
+pyi056_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:append)(?:\\W.*)?|(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g4).
+pyi056_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:append)(?:\\W.*)?|(?:.*\\W)?(?:extend)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(remove)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi056_tok_has_2(n: node)
+.stored pyi056_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi056_tok_has_2(n) :- field(n, "attribute", c2), glob("remove", c2).
+pyi056_tok_has_2(n) :- op(n, t3), match("(remove)", t3).
+pyi056_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:remove)(?:\\W.*)?)$", g4).
+pyi056_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:remove)(?:\\W.*)?)$", g4).
+pyi056_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:remove)(?:\\W.*)?)$", g4).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule

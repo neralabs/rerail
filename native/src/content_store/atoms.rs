@@ -18,6 +18,8 @@
 //! beside the database (`<db>-atoms.lock`), which the operating system releases when its process
 //! dies. A process that waits for it holds a shared lock on `<db>-atoms.want`; the holder sees that
 //! at its next interning and flushes, which gives the lease back.
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{StoreError, StoreResult};
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{Connection, OptionalExtension, ffi};
@@ -164,13 +166,16 @@ impl Interner {
         held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 9
     }
 
-    /// The pending atoms from `from` on, as one segment of at most `most` bytes (and at least one atom): their end
-    /// offsets (u32, little-endian, relative to the segment's first byte), their bytes, each one's (hash, id), and
-    /// the id past its last.
-    fn segment(&self, from: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
+    /// The pending atoms from `from` to `upto`, as one segment of at most `most` bytes (and at least one atom): their
+    /// end offsets (u32, little-endian, relative to the segment's first byte), their bytes, each one's (hash, id), and
+    /// the id past its last. Never past `upto`: atoms interned since the write took its end are the next write's. A
+    /// segment cut from all the atoms held then ran past it (PostHog: to 1,680,880 of a write to 1,676,444), the write
+    /// recorded its end as `upto`, and the next took the store's end for another process's: a fork (0170) in a run
+    /// that was the store's only writer.
+    fn segment(&self, from: usize, upto: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
         let i = from - self.base();
         let start = if i == 0 { 0 } else { self.ends[i - 1] };
-        let n = self.ends[i..].partition_point(|&end| (end - start) as usize <= most).max(1).min(self.ends.len() - i);
+        let n = self.ends[i..].partition_point(|&end| (end - start) as usize <= most).max(1).min(self.ends.len() - i).min(upto - from);
         let last = self.ends[i + n - 1];
         let ends = self.ends[i..i + n].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
         let keys = self.hashes[i..i + n].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
@@ -551,7 +556,7 @@ fn key_segments(connection: &Connection) -> StoreResult<()> {
     }
     keys.sort_unstable();
     super::bounded_insert::insert(connection, "INSERT OR IGNORE INTO atom_key(h, id)", "", keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h), rusqlite::types::Value::Integer(id)]))?;
-    connection.execute("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
+    connection.execute_cached("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
     Ok(())
 }
 
@@ -636,7 +641,7 @@ impl Atoms {
     }
 
     fn identity_read(connection: &Connection) -> rusqlite::Result<Option<i64>> {
-        let store: bool = connection.query_row(
+        let store: bool = connection.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'store_identity')",
             [],
             |row| row.get(0),
@@ -644,7 +649,7 @@ impl Atoms {
         if !store {
             return Ok(None);
         }
-        connection.query_row("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
+        connection.query_row_cached("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
     }
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
@@ -1013,7 +1018,7 @@ impl Atoms {
                             };
                             let c = rusqlite::Connection::open(&path)?;
                             c.busy_timeout(std::time::Duration::from_secs(60))?;
-                            c.execute("ATTACH ?1 AS donor", [&donor])?;
+                            c.execute_cached("ATTACH ?1 AS donor", [&donor])?;
                             c.execute_batch("BEGIN IMMEDIATE")?;
                             let held: std::collections::HashSet<String> = strings(&c, "main")?.into_iter().collect();
                             let mut seen = std::collections::HashSet::new();
@@ -1025,9 +1030,9 @@ impl Atoms {
                                     bytes.extend_from_slice(t.as_bytes());
                                     ends.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                                 }
-                                c.execute("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
+                                c.execute_cached("INSERT INTO main.atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), ?1, ?2 FROM main.atom_segment", rusqlite::params![ends, bytes])?;
                             }
-                            let end: i64 = c.query_row("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
+                            let end: i64 = c.query_row_cached("SELECT max(first + length(ends) / 4) FROM main.atom_segment", [], |r| r.get(0))?;
                             c.execute_batch("COMMIT")?;
                             Ok((fresh.len(), end))
                         })
@@ -1310,7 +1315,7 @@ impl Atoms {
         // statement's, SQLite's record of the row).
         let mut from = end;
         while from < upto {
-            let (ends, bytes, mut keys, next) = self.state.read().atoms.segment(from, segment_bytes());
+            let (ends, bytes, mut keys, next) = self.state.read().atoms.segment(from, upto, segment_bytes());
             let size = (ends.len() + bytes.len()) as u64;
             // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
             if key_end(connection).is_none_or(|k| k < from) {
@@ -1439,7 +1444,7 @@ impl Atoms {
             return Ok(complete);
         }
         if !held() {
-            let bytes = self.with_reader(|connection| Ok(connection.query_row("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
+            let bytes = self.with_reader(|connection| Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
             if bytes as usize <= READ_WHOLE {
                 self.read_all()?;
             }
@@ -1664,7 +1669,8 @@ impl super::ContentStore {
         let ids = self.atoms.intern_all(values)?;
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {
-            if self.atoms.due_now() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
+            // Due, and with atoms a flush would write (not only those a component reserves, `Atoms::pending`).
+            if self.atoms.due_now() && self.atoms.pending() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
                 self.queue_atoms_flush();
             }
         } else if self.atoms.due() {

@@ -400,7 +400,7 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
 
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     trace_for_hazards(connection);
-    connection.set_prepared_statement_cache_capacity(128);
+    connection.set_prepared_statement_cache_capacity(256);
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
     // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
@@ -555,19 +555,49 @@ impl ContentStore {
         &self,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
+        self.immediate_transaction_stopping(None, operation)
+    }
+
+    /// `immediate_transaction`, interrupted once `stop` says so (upkeep yielding to a run, decision 0190 §8): a
+    /// progress handler's `SQLITE_INTERRUPT`, the transaction rolled back. The handler is the connection's for
+    /// this transaction only.
+    pub(super) fn immediate_transaction_until<T>(
+        &self,
+        stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            self.immediate_transaction_stopping(Some(&stop), &mut operation)
+        })
+    }
+
+    fn immediate_transaction_stopping<T>(
+        &self,
+        stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
         self.yield_writer();
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
+        if let Some(stop) = stop {
+            let stop = std::sync::Arc::clone(stop);
+            connection.progress_handler(1000, Some(move || stop()));
+        }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
         let outer = IN_RETRY.replace(true);
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate);
         IN_RETRY.set(outer);
-        let transaction = transaction?;
-        let value = operation(&transaction)?;
-        self.commit(transaction)?;
-        Ok(value)
+        let value = transaction.and_then(|transaction| {
+            let value = operation(&transaction)?;
+            self.commit(transaction)?;
+            Ok(value)
+        });
+        if stop.is_some() {
+            connection.progress_handler(0, None::<fn() -> bool>);
+        }
+        value
     }
 
     /// Runs `operation` in one immediate transaction without waiting: `Busy` if another writer
@@ -740,5 +770,23 @@ impl ContentStore {
                 Err(error)
             }
         }
+    }
+}
+
+/// `Connection::query_row` and `Connection::execute` through the connection's statement cache (decision 0240): the
+/// plain forms parse their SQL at every call, and the store's writer made several such calls a tape (the tape's
+/// generation, its source's hash), parsing SQL for each of 27,000 files.
+pub(crate) trait Cached {
+    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T>;
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize>;
+}
+
+impl Cached for Connection {
+    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T> {
+        self.prepare_cached(sql)?.query_row(params, f)
+    }
+
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
+        self.prepare_cached(sql)?.execute(params)
     }
 }

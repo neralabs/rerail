@@ -35,7 +35,7 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
 
 fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
@@ -72,8 +72,13 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
         h.update(v.as_bytes());
         h.update([0]);
     }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
+
+/// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
+/// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
+/// live plan of which it names is dropped (`observe::collect`).
+pub const CUTOFF: &str = "cutoff:";
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
@@ -106,45 +111,8 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
     Ok(out)
 }
 
-/// Lists of texts as bytes, for a record the store keeps (a run's consulted list, the cone's rounds, the Git files):
-/// the lists' count, then each list's count and each text's length and bytes (little-endian `u32`s). Read back by
-/// `decode_lists`, never as text.
-pub fn encode_lists<S: AsRef<str>>(lists: &[&[S]]) -> Vec<u8> {
-    let mut out = (lists.len() as u32).to_le_bytes().to_vec();
-    for list in lists {
-        out.extend((list.len() as u32).to_le_bytes());
-        for t in *list {
-            let t = t.as_ref();
-            out.extend((t.len() as u32).to_le_bytes());
-            out.extend(t.as_bytes());
-        }
-    }
-    out
-}
-
-/// The lists `encode_lists` made, or none where the bytes are not some (a record of another form, or cut).
-pub fn decode_lists(bytes: &[u8]) -> Option<Vec<Vec<String>>> {
-    // The `u32` at `*at`, past it.
-    fn word(bytes: &[u8], at: &mut usize) -> Option<usize> {
-        let w = u32::from_le_bytes(bytes.get(*at..*at + 4)?.try_into().ok()?) as usize;
-        *at += 4;
-        Some(w)
-    }
-    let mut at = 0;
-    let n = word(bytes, &mut at)?;
-    let mut lists = Vec::with_capacity(n.min(64));
-    for _ in 0..n {
-        let k = word(bytes, &mut at)?;
-        let mut list = Vec::with_capacity(k.min(1 << 16));
-        for _ in 0..k {
-            let len = word(bytes, &mut at)?;
-            list.push(std::str::from_utf8(bytes.get(at..at + len)?).ok()?.to_owned());
-            at += len;
-        }
-        lists.push(list);
-    }
-    (at == bytes.len()).then_some(lists)
-}
+/// A record's lists as bytes: the observer's codec (one definition for every record, `observe::encode_lists`).
+pub use crate::content_store::observe::{decode_lists, encode_lists};
 
 /// A record's consulted list as bytes (`encode_lists`): each entry its kind, its path and its digest.
 pub fn encode_consulted(consulted: &[(String, String, String)]) -> Vec<u8> {
@@ -198,13 +166,15 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let checking = super::thread_usage();
     let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..12], programs.len()));
+        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], programs.len()));
         return Ok(None);
     };
     let Some(consulted) = decode_consulted(&consulted) else {
         miss("the record's consulted list does not decode");
         return Ok(None);
     };
+    // The plans it names are for collection (`CUTOFF`), not reads to check.
+    let consulted: Vec<_> = consulted.into_iter().filter(|c| c.0 != "plan").collect();
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);
@@ -281,9 +251,10 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let read_docs: std::collections::BTreeSet<String> = read.iter().filter(|c| c.0 == "doc" && !c.2.is_empty()).map(|c| c.1.clone()).collect();
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
     consulted.extend(read);
+    consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
-        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..12], consulted.len());
+        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
     }
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())
