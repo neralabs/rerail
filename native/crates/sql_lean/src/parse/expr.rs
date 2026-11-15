@@ -133,6 +133,11 @@ impl P<'_> {
                         break;
                     }
                     let text = &self.src[t.s..t.s + n];
+                    if text == b"@" {
+                        // A lone `@` lexes as the start of a `_tsql_parameter` (`@ b`, an
+                        // identifier) wherever a name may follow, not as `op_other`.
+                        return self.refuse();
+                    }
                     let (level, kind) = if other {
                         (prec::OTHER, K::OpOther)
                     } else {
@@ -668,6 +673,22 @@ impl P<'_> {
             self.expect_punct(b")", K::TRParen)?;
             return Ok(self.node(K::List, m));
         }
+        // `table` lexes as the keyword here, which no expression starts with; and `((select …`
+        // reads as a subquery around a parenthesized query, where tree-sitter's choice between
+        // that and a parenthesized subquery is its own.
+        if self.is(K::KeywordTable)? {
+            return self.refuse();
+        }
+        if self.at_punct(b"(")? {
+            let save = (self.at, self.last_end, self.look);
+            let t = self.peek()?;
+            self.take(Tok { e: t.s + 1, ..t });
+            let query = self.is(K::KeywordSelect)? || self.is(K::KeywordWith)? || self.is(K::KeywordValues)?;
+            (self.at, self.last_end, self.look) = save;
+            if query {
+                return self.refuse();
+            }
+        }
         let first = self.expr_or_all(0, true)?;
         if self.kind_at(first) == K::AllFields {
             self.expect_punct(b")", K::TRParen)?;
@@ -801,15 +822,6 @@ impl P<'_> {
         if self.is(K::KeywordVariadic)? || self.is(K::KeywordAll)? {
             return self.refuse();
         }
-        if self.unit_next()? {
-            // `extract(epoch from t)`: `unit: object_reference`, `from`, a term, by commas. Where it
-            // does not hold (`substring(a from 1 for 2)`), the `from` form below.
-            let saved = self.save();
-            if self.unit_arguments().is_ok() {
-                return Ok(());
-            }
-            self.restore(saved);
-        }
         if self.is(K::KeywordBoth)? || self.is(K::KeywordLeading)? || self.is(K::KeywordTrailing)? {
             // `trim(both [x] from y)`.
             let ws = self.words()?;
@@ -824,6 +836,15 @@ impl P<'_> {
             self.set_field(id, f::PARAMETER);
             self.expect_punct(b")", K::TRParen)?;
             return Ok(());
+        }
+        if self.unit_next()? {
+            // `extract(epoch from t)`: `unit: object_reference`, `from`, a term, by commas. Where it
+            // does not hold (`substring(a from 1 for 2)`), the `from` form below.
+            let saved = self.save();
+            if self.unit_arguments().is_ok() {
+                return Ok(());
+            }
+            self.restore(saved);
         }
         let mut first = true;
         loop {

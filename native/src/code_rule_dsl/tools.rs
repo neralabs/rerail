@@ -740,6 +740,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+    // Done as the library loaded, except where nothing runs then (the browser's build).
+    crate::install_store_functions();
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).

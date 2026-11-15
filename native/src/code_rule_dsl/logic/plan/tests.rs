@@ -881,7 +881,6 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 .output name
 "#;
     let out = dir.join("out");
-    #[cfg(target_os = "linux")]
     let store = out.join("store.sqlite");
     for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
         let root = dir.join(format!("corpus-{i}"));
@@ -891,14 +890,42 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         let mut names = [a, b];
         names.sort_unstable();
         assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
-        #[cfg(target_os = "linux")]
-        {
-            let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
-            let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
-            assert!(held.is_empty(), "run {i} left its store open: {held:?}");
-        }
+        // The run's connections close beside it (`close_beside`): once they are closed, nothing holds the store.
+        super::corpus::closes_done();
+        assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
+        // The kernel names files by their real path (macOS's /var is /private/var).
+        let real = out.canonicalize().unwrap().join(store.file_name().unwrap());
+        let held: Vec<_> = open_files().into_iter().filter(|file| file.to_string_lossy().starts_with(&*real.to_string_lossy())).collect();
+        assert!(held.is_empty(), "run {i} left its store open: {held:?}");
     }
     std::fs::write(dir.join("done"), "").unwrap();
+}
+
+/// The files this process holds open.
+fn open_files() -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: getdtablesize reads the limit; F_GETPATH writes at most PATH_MAX bytes into the buffer.
+        let fds = unsafe { libc::getdtablesize() };
+        (0..fds)
+            .filter_map(|fd| {
+                let mut buf = [0u8; libc::PATH_MAX as usize];
+                (unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0).then(|| {
+                    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len]))
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Vec::new()
+    }
 }
 
 /// A process runs the corpus twice over its own store (`corpus_store_child`).

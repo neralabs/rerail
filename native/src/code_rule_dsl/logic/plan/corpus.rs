@@ -1881,9 +1881,45 @@ impl Drop for ObservedBatch {
 }
 
 /// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
-/// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
+/// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock. Until
+/// it is done the file stays open: a run that replaces its files waits for it first (`closes_done`).
 fn close_beside(db: Connection) {
-    rerail_accel::exec::drop_beside(db);
+    *CLOSING.0.lock().expect("the closes beside") += 1;
+    rerail_accel::exec::drop_beside(Closing(Some(db)));
+}
+
+/// The connections closing beside runs (`close_beside`), and their end.
+static CLOSING: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+/// A connection closing beside the run: counted until its close is done.
+struct Closing(Option<Connection>);
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        drop(self.0.take());
+        let (n, done) = &CLOSING;
+        *n.lock().expect("the closes beside") -= 1;
+        done.notify_all();
+    }
+}
+
+/// Waits until every connection closing beside a run is closed: then no file of a run that ended is open. A file
+/// replaced under a connection still closing would be its, and the connection's close deletes its write-ahead log by
+/// name: the new store's. On a thread of the pool it runs the pool's jobs meanwhile (a close may be one of them).
+pub fn closes_done() {
+    let (n, done) = &CLOSING;
+    let mut left = n.lock().expect("the closes beside");
+    while *left > 0 {
+        if rayon::current_thread_index().is_some() {
+            drop(left);
+            if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
+                std::thread::yield_now();
+            }
+            left = n.lock().expect("the closes beside");
+        } else {
+            left = done.wait_timeout(left, std::time::Duration::from_millis(10)).expect("the closes beside").0;
+        }
+    }
 }
 
 /// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
@@ -2664,6 +2700,8 @@ fn run_observed(
     // A session's store is kept from run to run; the cross-file scratch never is. A failed run leaves its write-ahead
     // log beside the store; reopening a new store over it reads stale pages.
     let scratch = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path);
+    // An earlier run's connections may be closing still (`close_beside`): not on the files replaced here.
+    closes_done();
     for p in scratch.flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;

@@ -1,8 +1,8 @@
 //! W: the matcher, scopes, values, suppressions, demand and the workspace's model.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-// The mounts below are facades: a module globs its owner's, and repeats its file's imports for the
-// children it mounts (`super::*`); an import and the glob name the same item.
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item.
 #![allow(dead_code, unused_imports, hidden_glob_reexports)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
@@ -24,7 +24,7 @@ pub mod code_rule_dsl {
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub mod facts_a;
-        #[path = "vtab"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "vtab")]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -164,7 +164,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub mod suppress;
-    #[cfg_attr(test, path = "tape")]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[cfg(test)]
@@ -234,7 +233,7 @@ pub mod code_rule_dsl {
     pub mod violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod walks;
-    #[path = "waves"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "waves")]
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod relational;

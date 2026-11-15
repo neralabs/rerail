@@ -414,7 +414,7 @@ impl Guests {
         let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
         let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
         let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };

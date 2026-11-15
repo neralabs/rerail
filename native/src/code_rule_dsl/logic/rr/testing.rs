@@ -283,6 +283,7 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
+#[cfg(test)]
 impl Outcome {
     #[cfg(test)]
     pub fn passed(&self) -> bool {

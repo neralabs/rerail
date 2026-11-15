@@ -147,12 +147,18 @@ pub fn reset_search_index_family_writes() {
     SEARCH_INDEX_FAMILY_WRITES.store(0, Ordering::Relaxed);
 }
 
+/// The store handles open on the database at `path` in this process, and the thread connections to it still open.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn holding(path: &Path) -> (usize, usize) {
+    connection::holding(path)
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn search_index_family_writes() -> usize {
     SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 thread_local! {
     static WRITE_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WRITE_LOCK_SECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -160,10 +166,10 @@ thread_local! {
 }
 
 /// Marks this thread as holding a publication write transaction until dropped.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) struct WriteLockSection;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl WriteLockSection {
     pub(super) fn enter() -> Self {
         WRITE_LOCK_HELD.with(|held| held.set(true));
@@ -172,7 +178,7 @@ impl WriteLockSection {
     }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl Drop for WriteLockSection {
     fn drop(&mut self) {
         WRITE_LOCK_HELD.with(|held| held.set(false));
@@ -211,7 +217,7 @@ impl HashKey {
     }
 
     pub fn sha256(bytes: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -223,7 +229,7 @@ impl HashKey {
     /// named-only tape holds no source text, so two sources of one shape and one set of token
     /// lengths store the same bytes; each is its own tape, as it carries its own source.
     pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -652,7 +658,8 @@ pub struct ContentStore {
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
     /// writer's own handle, which writes at once.
     write_back: Option<std::sync::Arc<write_back::Writer>>,
-    /// This handle's shared collection lease (`hold_collection`).
+    /// This handle's shared collection lease (`hold_collection`): a file lock, which WASI has not.
+    #[cfg(not(target_family = "wasm"))]
     lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
@@ -712,6 +719,7 @@ impl ContentStore {
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
             write_back: None,
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),
@@ -758,6 +766,7 @@ impl ContentStore {
             holder: parking_lot::Mutex::new(None),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
+            #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),

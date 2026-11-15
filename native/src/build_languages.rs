@@ -263,14 +263,14 @@ pub(crate) fn generate(
         .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
     let registry = render_built(&entries, &test_only, omitted);
-    // `with_adapter!` is written alone: its one user is the test kit (`adapter/kit.rs`), and the crates that include
-    // the registry expand it nowhere (an unused macro in each).
+    // `with_adapter!` in a file of its own, for the crates that dispatch by family (the test kit, `adapter/kit.rs`);
+    // the registry's crate does not, so its registry leaves the macro out.
     let start = registry.find("/// Evaluates `$body` with `$a` the adapter").expect("with_adapter");
     let use_line = "\npub(crate) use with_adapter;\n";
     let end = registry.find(use_line).expect("with_adapter's use");
     std::fs::write(out.join("with_adapter.rs"), &registry[start..end]).expect("generated with_adapter is writable");
-    let registry = format!("{}{}", &registry[..start], &registry[end + use_line.len()..]);
-    std::fs::write(out.join("language_registry.rs"), registry).expect("generated language registry is writable");
+    let rest = format!("{}{}", &registry[..start], &registry[end + use_line.len()..]);
+    std::fs::write(out.join("language_registry.rs"), rest).expect("generated language registry is writable");
     read
 }
 
@@ -1064,12 +1064,14 @@ mod tests {
                 &[],
                 &self.0.join("out"),
             );
-            std::fs::read_to_string(self.0.join("out/language_registry.rs")).expect("generated")
+            // The registry and the dispatch macro written beside it, as one text.
+            let read = |name: &str| std::fs::read_to_string(self.0.join("out").join(name)).expect("generated");
+            read("language_registry.rs") + &read("with_adapter.rs")
         }
 
-        /// `with_adapter!`, written beside the registry by the last `generate`.
-        fn with_adapter(&self) -> String {
-            std::fs::read_to_string(self.0.join("out/with_adapter.rs")).expect("generated")
+        /// The registry alone, as `generate` wrote it.
+        fn registry(&self) -> String {
+            std::fs::read_to_string(self.0.join("out/language_registry.rs")).expect("generated")
         }
     }
 
@@ -1215,9 +1217,9 @@ mod tests {
         assert!(generated.contains("            GrammarDialect::Sql => false,"));
         assert!(generated.contains("            GrammarDialect::Python => true,"));
         // PHP's family has no language in the build: its adapter is unreachable. Blade's still is.
-        let adapters = std::fs::read_to_string(out.0.join("out/with_adapter.rs")).expect("generated");
-        assert!(adapters.contains("Family::Php => unreachable!"));
-        assert!(!adapters.contains("Family::Blade => unreachable!"));
+        let dispatch = std::fs::read_to_string(out.0.join("out/with_adapter.rs")).expect("generated");
+        assert!(dispatch.contains("Family::Php => unreachable!"));
+        assert!(!dispatch.contains("Family::Blade => unreachable!"));
         // Nothing embeds SQL.
         assert!(!generated.contains("GrammarDialect::Sql)"));
     }
@@ -1391,9 +1393,7 @@ mod tests {
                 planned("four", ".four"),
             ],
         );
-        // The registry leaves it out: no crate that includes it expands it.
-        assert!(!registry.generate().contains("macro_rules! with_adapter"));
-        let generated = registry.with_adapter();
+        let generated = registry.generate();
         assert!(generated.contains("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n"));
         for family in ["One", "Two"] {
             assert_eq!(
@@ -1406,6 +1406,8 @@ mod tests {
         }
         assert!(!generated.contains("adapter::Three"));
         assert!(!generated.contains("adapter::Four"));
+        // The registry's crate dispatches by no family: the macro is in `with_adapter.rs` alone.
+        assert!(!registry.registry().contains("with_adapter"));
     }
     #[test]
     fn dialect_macro_generates_registry_support_rules() {

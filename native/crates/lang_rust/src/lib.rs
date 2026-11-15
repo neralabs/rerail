@@ -1,8 +1,8 @@
 //! Rust: format arguments, values, suppressions.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-// The mounts below are facades: a module globs its owner's, and repeats its file's imports for the
-// children it mounts (`super::*`); an import and the glob name the same item.
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item.
 #![allow(dead_code, unused_imports, hidden_glob_reexports)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]

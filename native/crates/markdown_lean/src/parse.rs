@@ -519,9 +519,10 @@ impl<'a> P<'a> {
                     return Ok(done);
                 }
                 self.restore(saved);
-                // A label that starts with an escape and is not a definition: tree-sitter's parse
-                // has an error.
-                if self.byte(q + 1) == b'\\' && punct(self.byte(q + 2)).is_some() {
+                // A label that starts with an escape, or unindented with a character reference
+                // (`[&amp; b](u)`), and is not a definition: tree-sitter's parse has an error.
+                let reference = q == self.at && self.byte(q + 1) == b'&' && self.reference_at(q + 1).is_some();
+                if reference || (self.byte(q + 1) == b'\\' && punct(self.byte(q + 2)).is_some()) {
                     return Err(Refusal::Parse(q as u32));
                 }
             }
@@ -587,7 +588,9 @@ impl<'a> P<'a> {
         // A soft line break taken before the destination, and where the definition ends if a
         // title after a line break does not hold (the state before that break).
         let mut broken = false;
-        let mut before_title: Option<Saved> = None;
+        // With it, the soft line break's token: its scan is in the saved scanner state, so it is
+        // taken again, not scanned again (a second scan would start a line there).
+        let mut before_title: Option<(Saved, Tok)> = None;
         // Ends the definition at line end `t`.
         macro_rules! end {
             ($t:expr) => {{
@@ -609,11 +612,9 @@ impl<'a> P<'a> {
         macro_rules! fail {
             () => {{
                 match before_title.take() {
-                    Some(s) => {
+                    Some((s, t)) => {
                         self.restore(s);
                         part = 4;
-                        self.gap.clear();
-                        let t = self.next(V_PARAGRAPH)?.expect("the soft line break");
                         end!(t)
                     }
                     None => {
@@ -650,7 +651,7 @@ impl<'a> P<'a> {
                         part = 4;
                         let mut s = self.save();
                         s.at = at_line;
-                        before_title = Some(s);
+                        before_title = Some((s, t));
                         self.take(t);
                         continue;
                     }
@@ -1175,22 +1176,17 @@ impl<'a> P<'a> {
                 Some(e) => return Err(Refusal::Parse(e.start as u32)),
                 None => {
                     at_line_start = false;
-                    // The end conditions of blocks 2 to 5: a token of their own, longer than the
-                    // punctuation it starts with.
-                    let closer: &[u8] = match kind {
-                        HTML_BLOCK_2_START => b"-->",
-                        HTML_BLOCK_3_START => b"?>",
-                        HTML_BLOCK_4_START => b">",
-                        HTML_BLOCK_5_START => b"]]>",
-                        _ => b"",
+                    // The end conditions of blocks 2, 3 and 5: a token of their own, longer than
+                    // the punctuation it starts with. Block 4's `>` is the line's own `>` token,
+                    // and tree-sitter's parse keeps reading it as one: block 4 ends with its
+                    // container (`<!DOCTYPE html>` runs to the text's end).
+                    let (closer, k): (&[u8], K) = match kind {
+                        HTML_BLOCK_2_START => (b"-->", K::TCommentEnd),
+                        HTML_BLOCK_3_START => (b"?>", K::TQGt),
+                        HTML_BLOCK_5_START => (b"]]>", K::TCdataEnd),
+                        _ => (b"", K::TGt),
                     };
                     if !closer.is_empty() && self.src[self.at..].starts_with(closer) {
-                        let k = match closer.len() {
-                            3 if closer[0] == b'-' => K::TCommentEnd,
-                            3 => K::TCdataEnd,
-                            2 => K::TQGt,
-                            _ => K::TGt,
-                        };
                         if stores(K::HtmlBlock, k) {
                             self.leaf(k, 0, self.at, self.at + closer.len());
                         }
@@ -1376,8 +1372,16 @@ impl<'a> P<'a> {
         let Some(&(row_start, _)) = toks.first() else { return self.refuse() };
         let n_row = self.w.push(key(K::PipeTableDelimiterRow, 0), row_start as u32);
         let pipes: Vec<usize> = (0..toks.len()).filter(|&i| toks[i].1 == b'|').collect();
+        // An empty cell between two pipes is a delimiter cell tree-sitter inserts, MISSING: an error.
+        if pipes.windows(2).any(|w| toks[w[0] + 1..w[1]].iter().all(|t| t.1 == b' ')) {
+            return Err(Refusal::Parse(row_start as u32));
+        }
         let lead = pipes.first().copied().filter(|&i| toks[..i].iter().all(|t| t.1 == b' '));
-        let trail = pipes.last().copied().filter(|&i| toks[i + 1..].iter().all(|t| t.1 == b' '));
+        // The trailing `|` is stored where the row could end without it: after a second cell, which
+        // may be the grammar's last pipeless cell. After a lone cell, `cell |` is the only way on
+        // (the pipeless cell follows at least one), so the `|` is implied and left out.
+        let cells = (0..toks.len()).filter(|&i| matches!(toks[i].1, b':' | b'-') && (i == 0 || matches!(toks[i - 1].1, b' ' | b'|'))).count();
+        let trail = pipes.last().copied().filter(|&i| cells > 1 && toks[i + 1..].iter().all(|t| t.1 == b' '));
         let mut i = 0;
         let mut cells_before_pipe = 0;
         let mut row_end = row_start;
