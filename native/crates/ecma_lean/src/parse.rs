@@ -184,6 +184,22 @@ const V_MEMBER_NAME: V = 256;
 const V_FN_SIG: V = 512;
 /// After an expression, where it may go on.
 const V_EXPR: V = V_LOGICAL_OR | V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MINUS;
+/// After a block's `}` where `||` may not follow (tree-sitter's external state 5).
+const V_BLOCK_END: V = V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MINUS;
+
+/// Where a statement block is, for the automatic semicolon its grammar allows after its `}`: whether
+/// tree-sitter's state there also takes `||`, which decides whether a comment on the `}`'s line
+/// ends inside the block (`if (a) {} // c` then a line: inside).
+#[derive(Clone, Copy, PartialEq)]
+enum Tail {
+    /// A statement: `||` may follow an empty block, as it may an empty object.
+    Statement,
+    /// A function's body, not an exported declaration's: `||` may follow, as after a function
+    /// expression.
+    Function,
+    /// A method's body, `try`'s, `catch`'s, `finally`'s, an exported function's: `||` may not.
+    Fixed,
+}
 
 const MAX_DEPTH: u32 = 300;
 
@@ -861,9 +877,8 @@ impl<'a> P<'a> {
                 if blt {
                     return self.after_line_terminator(p, v, scanned);
                 }
-                if p >= self.src.len() {
-                    return true;
-                }
+                // At the text's end the scanner's lookahead is 0, not white space: no semicolon
+                // here; the comment is lexed, and the scan at its end gives one after it.
             }
             if self.at(p) == b'}' {
                 return true;
@@ -1046,7 +1061,7 @@ impl<'a> P<'a> {
                 self.close(n);
                 return Ok(());
             }
-            T::LBrace => return self.statement_block(s, false),
+            T::LBrace => return self.statement_block(s, Tail::Statement),
             T::At => return self.class_declaration(s),
             T::Name => {}
             _ => return self.expression_statement(s),
@@ -1126,7 +1141,7 @@ impl<'a> P<'a> {
             }
             w::DEBUGGER => {
                 let n = self.open_in(K::DebuggerStatement, s);
-                self.bump()?;
+                self.tk(K::DebuggerStatement, K::TDebugger, f::NONE)?;
                 self.after = 0;
                 self.semicolon()?;
                 self.close(n);
@@ -1178,15 +1193,19 @@ impl<'a> P<'a> {
     }
 
     /// `{ statement* }`; `body` for a function's (no supertype).
-    fn statement_block(&mut self, s: Slot, _function: bool) -> R<()> {
+    fn statement_block(&mut self, s: Slot, tail: Tail) -> R<()> {
         let n = self.open_in(K::StatementBlock, s);
-        self.bump()?;
+        let open = self.bump()?;
         let saved = self.asi;
         while !matches!(self.peek(), T::RBrace | T::Eof) {
             self.statement(slot(f::NONE, Ctx::Stmt))?;
         }
+        let empty = self.last_end == open.end;
         self.expect(T::RBrace)?;
         self.asi = saved;
+        // The optional automatic semicolon after `}`: the comments before it are the block's.
+        let or = tail == Tail::Function || tail == Tail::Statement && empty;
+        self.asi_end(if or { V_EXPR } else { V_BLOCK_END });
         self.close(n);
         self.after = V_EXPR;
         Ok(())
@@ -1259,8 +1278,10 @@ impl<'a> P<'a> {
             T::LBrace => self.object_pattern(s),
             T::LBracket => self.array_pattern(s),
             T::Name => {
-                let kind = if !self.ts && self.is_word(w::UNDEFINED) { K::Undefined } else { K::Identifier };
-                self.leaf_in(kind, s)?;
+                // tree-sitter reads a declarator's `undefined` as a name (`var undefined`), and
+                // JavaScript's elsewhere as the `undefined` it is in an expression.
+                let undefined = !self.ts && s.field != f::NAME && self.is_word(w::UNDEFINED);
+                self.leaf_in(if undefined { K::Undefined } else { K::Identifier }, s)?;
                 Ok(())
             }
             _ => self.refuse(),
@@ -1288,7 +1309,7 @@ impl<'a> P<'a> {
         if self.peek() != T::LBrace {
             return self.refuse();
         }
-        self.statement_block(slot(f::BODY, Ctx::Bare), false)?;
+        self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
         if self.is_word(w::CATCH) {
             let c = self.open(K::CatchClause, f::HANDLER, C_NONE);
             self.bump()?;
@@ -1303,7 +1324,7 @@ impl<'a> P<'a> {
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
-            self.statement_block(slot(f::BODY, Ctx::Bare), false)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(c);
         }
         if self.is_word(w::FINALLY) {
@@ -1312,7 +1333,7 @@ impl<'a> P<'a> {
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
-            self.statement_block(slot(f::BODY, Ctx::Bare), false)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(c);
         }
         self.close(n);
@@ -1546,7 +1567,8 @@ impl<'a> P<'a> {
             return Ok(());
         }
         let saved = self.asi;
-        self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+        let tail = if decl && s.field == f::DECLARATION { Tail::Fixed } else { Tail::Function };
+        self.statement_block(slot(f::BODY, Ctx::Bare), tail)?;
         self.asi = saved;
         self.close(n);
         self.after = V_EXPR;
@@ -1609,7 +1631,7 @@ impl<'a> P<'a> {
             return self.rest_pattern(pat);
         }
         let start = self.here();
-        let first = self.open_pattern_target(pat)?;
+        let first = self.parameter_target(pat)?;
         if self.peek() == T::Eq {
             let n = N { at: start, kind: first };
             let a = self.wrap(n, K::AssignmentPattern, BARE, slot(f::LEFT, Ctx::Pattern));
@@ -1618,6 +1640,18 @@ impl<'a> P<'a> {
             self.close(a);
         }
         Ok(())
+    }
+
+    /// A parameter's target: a pattern's, or the name `yield`, whose `identifier` in tree-sitter's
+    /// tape holds the `yield` token.
+    fn parameter_target(&mut self, s: Slot) -> R<K> {
+        if self.is_word(w::YIELD) && matches!(self.peek_at(1).kind, T::Comma | T::RParen | T::Eq | T::Colon | T::Question) {
+            let n = self.open_in(K::Identifier, s);
+            self.leaf(K::TYield, f::NONE, C_NONE)?;
+            self.close(n);
+            return Ok(K::Identifier);
+        }
+        self.open_pattern_target(s)
     }
 
     /// A pattern's target: a name, an object or array pattern. Its kind. Patterns nest through
@@ -1849,6 +1883,9 @@ impl<'a> P<'a> {
         }
         self.leaf(if self.ts { K::TypeIdentifier } else { K::Identifier }, f::NAME, C_NONE)?;
         self.class_rest()?;
+        // `class_declaration`'s optional automatic semicolon after its body: `||` may follow but
+        // for an exported declaration's.
+        self.asi_end(if s.field == f::DECLARATION { V_BLOCK_END } else { V_EXPR });
         self.close(n);
         self.after = V_EXPR;
         Ok(())
@@ -1873,7 +1910,12 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         let b = self.open(K::ClassBody, f::BODY, C_NONE);
-        self.bump()?;
+        // The `{` is stored before a `;` (the body's first child), as the `}` after one.
+        if self.peek_at(1).kind == T::Semi {
+            self.leaf(K::TLBrace, f::NONE, C_NONE)?;
+        } else {
+            self.bump()?;
+        }
         loop {
             match self.peek() {
                 T::RBrace => break,
@@ -1902,7 +1944,7 @@ impl<'a> P<'a> {
         if self.is_word(w::STATIC) && self.peek_at(1).kind == T::LBrace {
             let n = self.open(K::ClassStaticBlock, f::MEMBER, C_NONE);
             self.tk(K::ClassStaticBlock, K::TStatic, f::NONE)?;
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -1936,7 +1978,7 @@ impl<'a> P<'a> {
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             if self.peek() == T::Semi {
                 // `seq(method_definition, optional(';'))`: the `;` is the class body's.
                 self.close(n);
@@ -2501,7 +2543,7 @@ impl<'a> P<'a> {
         self.bump()?;
         if self.peek() == T::LBrace {
             let saved = self.asi;
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Function)?;
             self.asi = saved;
             self.close(n);
             self.after = V_ARROW_BODY_END;
@@ -2648,7 +2690,17 @@ impl<'a> P<'a> {
             self.deeper()?;
             let n = self.open_in(K::UnaryExpression, s);
             self.leaf(op, f::OPERATOR, C_NONE)?;
-            self.unary(slot(f::ARGUMENT, Ctx::Expr), false)?;
+            // The argument is tree-sitter's `expression`, where `yield` is a `yield_expression`
+            // (`void yield`). One with an argument after it is not read.
+            if self.is_word(w::YIELD) {
+                let after = self.peek_at(1);
+                if !after.nl && !matches!(after.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Colon | T::Eof) {
+                    return self.refuse();
+                }
+                self.yield_expression(slot(f::ARGUMENT, Ctx::Expr))?;
+            } else {
+                self.unary(slot(f::ARGUMENT, Ctx::Expr), false)?;
+            }
             self.close(n);
             self.depth -= 1;
             self.after = V_EXPR;
@@ -3272,7 +3324,7 @@ impl<'a> P<'a> {
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -3286,7 +3338,7 @@ impl<'a> P<'a> {
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }

@@ -2897,6 +2897,20 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
         "let s = `a${b}c` + tag`d` + /re[/]g/.source; a = b\n(c)\n",
         "x = async (a) => { await a }\ny = a => a?.b?.[c]?.(d)\n",
         "a\n++b\nreturn\n",
+        "debugger;\nif (a) debugger\n",
+        // A declarator's `undefined` is a name; `yield` as a parameter, and as `void`'s operand.
+        "var a = 1, undefined;\nlet undefined\nfunction f(undefined) {}\n",
+        "function f(yield, b = yield) { void yield; }\nx = function* (yield) {}\n",
+        // A class body's `{` is stored before a `;`.
+        "class A { ; m() {} }\nx = class { ;; }\n",
+        // A comment on a `}`'s line, before the automatic semicolon the grammar allows there: in
+        // the block (or class) where `||` may follow it (an empty block, a function's body), and
+        // where the scanner gives no semicolon at the `}` (a line follows, not `,` or `(`).
+        "if (a) {} // c\nx\n{ a } // c\nx\nfunction f() {} // c\n// d\nx = function () {} // c\n+ y\n",
+        "class B {} // c\nx\nf(() => {} // c\n)\ntry {} // c\ncatch (e) {}\n{} // c\n(x)\nf(function () {} // c\n, 1)\n",
+        "{} /* a */ // c\n.5\nif (a) { b } // c\nelse {} // d\nx\n",
+        "function f() {} // c",
+        "42 /* c */ // d",
         // Chains: each operator or postfix wraps the chain so far (held by the writer until it ends).
         "x = a + b * c - d.e.f(g)[h] + i - j ** k ** l + (m + n) * o.p\n",
         "x = a /* c */ + b // d\n  + c.d /* e */ .f\n  (g)\n",

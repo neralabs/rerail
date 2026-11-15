@@ -1041,7 +1041,7 @@ impl<'a> P<'a> {
         } else if self.peek() == T::Ellipsis {
             self.rest_pattern(pat)?;
         } else {
-            self.open_pattern_target(pat)?;
+            self.parameter_target(pat)?;
         }
         let mut kind = K::RequiredParameter;
         if self.peek() == T::Question {
@@ -1232,7 +1232,7 @@ impl<'a> P<'a> {
                 return self.refuse();
             }
             self.tk(K::AmbientDeclaration, K::TGlobal, f::NONE)?;
-            self.statement_block(BARE, false)?;
+            self.statement_block(BARE, Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -1295,7 +1295,7 @@ impl<'a> P<'a> {
             _ => return self.refuse(),
         }
         if self.peek() == T::LBrace {
-            self.statement_block(slot(f::BODY, Ctx::Bare), false)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
         } else {
             return self.refuse();
         }
@@ -1352,7 +1352,7 @@ impl<'a> P<'a> {
         if self.is_word(w::STATIC) && self.peek_at(1).kind == T::LBrace {
             let n = self.open(K::ClassStaticBlock, f::NONE, C_NONE);
             self.tk(K::ClassStaticBlock, K::TStatic, f::NONE)?;
-            self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+            self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
             self.close(n);
             return Ok(());
         }
@@ -1428,7 +1428,7 @@ impl<'a> P<'a> {
             }
             self.call_signature()?;
             if self.peek() == T::LBrace && !is_abstract {
-                self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
+                self.statement_block(slot(f::BODY, Ctx::Bare), Tail::Fixed)?;
                 self.close(n);
                 if self.peek() == T::Semi {
                     self.leaf(K::TSemi, f::NONE, C_NONE)?;
