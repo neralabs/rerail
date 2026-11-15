@@ -250,6 +250,12 @@ struct P<'a> {
     /// The times the buffer was cut for another mode (`relex_at`): a restore keeps the tokens
     /// lexed after its mark unless one was.
     relexes: u32,
+    /// Where an arrow function was tried and is not (the `(` or `<`, or the `async` before it, by
+    /// its first byte): read again as a parenthesized expression or a call, a nested one is not
+    /// tried again. Without it, each `(` in a
+    /// parameter's default value is tried twice for each enclosing one: `(a = (b = (c = …`, as
+    /// minifiers write, took time exponential in the nesting.
+    no_arrow: std::collections::HashSet<u32>,
     extras: Vec<Extra>,
     e: usize,
     w: Writer<Widths>,
@@ -284,6 +290,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             i: 0,
             next: 0,
             relexes: 0,
+            no_arrow: std::collections::HashSet::new(),
             extras: Vec::new(),
             e: 0,
             w: Writer::new(0, widths, src.len() / 3 + 16),
@@ -2401,11 +2408,12 @@ impl<'a> P<'a> {
                 if n1.kind == T::Name && !self.is_word_at(1, w::FUNCTION) && self.peek_at(2).kind == T::Arrow {
                     return self.arrow(s, true);
                 }
-                if n1.kind == T::LParen || self.ts && n1.kind == T::Lt {
+                if (n1.kind == T::LParen || self.ts && n1.kind == T::Lt) && !self.no_arrow.contains(&t.start) {
                     let m = self.mark();
                     if let Ok(n) = self.arrow(s, true) {
                         return Ok(n);
                     }
+                    self.no_arrow.insert(t.start);
                     self.restore(m);
                 }
             }
@@ -2417,11 +2425,12 @@ impl<'a> P<'a> {
         let generic = self.ts
             && t.kind == T::Lt
             && (self.dialect == Dialect::TypeScript || self.peek_at(2).kind == T::Comma || self.is_word_at(2, w::EXTENDS));
-        if t.kind == T::LParen || generic {
+        if (t.kind == T::LParen || generic) && !self.no_arrow.contains(&t.start) {
             let m = self.mark();
             if let Ok(n) = self.arrow(s, false) {
                 return Ok(n);
             }
+            self.no_arrow.insert(t.start);
             self.restore(m);
         }
         // A destructuring assignment: `[a, b] = c`, `({a} = b)`.
@@ -3090,6 +3099,11 @@ impl<'a> P<'a> {
 
     /// A string token's pieces: its quotes (stored) and its fragments and escapes.
     fn string_body(&mut self, n: N) -> R<()> {
+        // A caller that expects a string (`from`'s module) may find none: `import {b} from` at
+        // the file's end.
+        if self.peek() != T::Str {
+            return self.refuse();
+        }
         let t = self.bump()?;
         let q = if self.src[t.start as usize] == b'"' { K::TDQuote } else { K::TSQuote };
         let mut pieces = std::mem::take(&mut self.pieces);

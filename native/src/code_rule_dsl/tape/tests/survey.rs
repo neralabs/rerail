@@ -73,9 +73,12 @@ struct Survey {
     keep: usize,
     findings: std::fs::File,
     gaps: std::fs::File,
-    progress: PathBuf,
+    /// `current.txt`, rewritten in place for each file (no file made per file).
+    progress: std::fs::File,
     /// Places not read: files a parser did not stop on in an earlier run.
     skip: HashSet<String>,
+    /// The part of each repository read (`RERAIL_SURVEY_PART`).
+    part: Option<(usize, usize)>,
     files: u64,
 }
 
@@ -102,6 +105,13 @@ fn digest(label: &str, text: &str) -> u64 {
 }
 
 impl Survey {
+    fn at(&mut self, place: &str) {
+        use std::io::Seek;
+        let _ = self.progress.seek(std::io::SeekFrom::Start(0));
+        let _ = self.progress.write_all(format!("{place}\n").as_bytes());
+        let _ = self.progress.set_len(place.len() as u64 + 1);
+    }
+
     fn reader(&mut self, label: &'static str, dialect: GrammarDialect) -> Option<&mut Reader> {
         if !self.readers.contains_key(label) {
             let grammar = Grammar::new(dialect).ok()?;
@@ -120,35 +130,34 @@ impl Survey {
         let Some(lean) = tree_parser(dialect).filter(|parser| parser.kinds().is_none()) else { return };
         self.files += 1;
         // The file being read: where a run is killed (a parser that does not stop), its last line.
-        let _ = std::fs::write(&self.progress, format!("{place}\n"));
+        self.at(place);
         let Some(reader) = self.reader(label, dialect) else { return };
         let grammar = Arc::clone(&reader.grammar);
         let Some(tree) = reader.parser.parse(source, None) else { return };
         let error = tree.root_node().has_error();
         let ours = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lean.parse(&grammar, source, &|| false)));
-        let (outcome, detail, ours) = match ours {
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false);
+        let (outcome, detail) = match ours {
             Err(panic) => {
                 let message = panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()));
-                (Outcome::Panic, message.unwrap_or_default(), None)
+                (Outcome::Panic, message.unwrap_or_default())
             }
-            Ok(None) if error => (Outcome::RefusedError, String::new(), None),
-            Ok(None) => (Outcome::Refused, String::new(), None),
-            Ok(Some(Err(why))) => (Outcome::Failed, format!("{why:?}"), None),
-            Ok(Some(Ok(_))) if error => (Outcome::AcceptedError, String::new(), None),
-            Ok(Some(Ok(image))) => match TapeImage::encode(tree.root_node(), &grammar, source, &|| false) {
-                Err(why) => (Outcome::Failed, format!("tree-sitter's tape: {why}"), Some(image)),
+            Ok(None) if error => (Outcome::RefusedError, String::new()),
+            Ok(None) => (Outcome::Refused, String::new()),
+            Ok(Some(Err(why))) => (Outcome::Failed, format!("{why:?}")),
+            Ok(Some(Ok(_))) if error => (Outcome::AcceptedError, String::new()),
+            Ok(Some(Ok(image))) => match &theirs {
+                Err(why) => (Outcome::Failed, format!("tree-sitter's tape: {why}")),
                 Ok(theirs) => {
-                    let detail = compare(&image, &theirs, &grammar);
-                    (if detail.is_empty() { Outcome::Same } else { Outcome::Differ }, detail, Some(image))
+                    let detail = compare(&image, theirs, &grammar);
+                    (if detail.is_empty() { Outcome::Same } else { Outcome::Differ }, detail)
                 }
             },
         };
         self.count(label, outcome, place, ext, source, &detail);
         // The texts a file holds in other dialects, read from tree-sitter's tape (what the
         // product embeds is checked above, as the file's derived documents).
-        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).ok();
-        drop(ours);
-        if let Some(theirs) = theirs {
+        if let Ok(theirs) = theirs {
             self.inner_texts(dialect, &theirs.primary, &grammar, place, source);
         }
     }
@@ -272,6 +281,10 @@ const PACK_LIMITS: [&str; 6] = ["-c", "core.packedGitLimit=256m", "-c", "core.pa
             }
         }
         let _ = lister.wait();
+        // One part of a large repository (`RERAIL_SURVEY_PART=k/n`: every n-th file from the k-th).
+        if let Some((k, n)) = self.part {
+            blobs = blobs.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, b)| b).collect();
+        }
         if blobs.is_empty() {
             return;
         }
@@ -368,7 +381,8 @@ fn compare(ours: &FileImage, theirs: &FileImage, grammar: &Grammar) -> String {
 /// refused) and `cases/`.
 /// `RERAIL_SURVEY_MAX_BYTES` (default 1,000,000) skips larger files; `RERAIL_SURVEY_KEEP` (default
 /// 20) is how many cases of each dialect and outcome are kept. `RERAIL_SURVEY_SKIP` lists places
-/// (as `current.txt` names them) not to read.
+/// (as `current.txt` names them) not to read. `RERAIL_SURVEY_PART=k/n` reads one part of each
+/// repository: every n-th of its files, from the k-th.
 #[test]
 #[ignore = "needs RERAIL_SURVEY_INPUTS and RERAIL_SURVEY_OUT"]
 fn lean_parsers_survey() {
@@ -380,7 +394,7 @@ fn lean_parsers_survey() {
     let mut survey = Survey {
         findings: std::fs::File::create(out.join("findings.tsv")).expect("findings"),
         gaps: std::fs::File::create(out.join("gaps.tsv")).expect("gaps"),
-        progress: out.join("current.txt"),
+        progress: std::fs::File::create(out.join("current.txt")).expect("current.txt"),
         out: out.clone(),
         readers: BTreeMap::new(),
         seen: HashSet::new(),
@@ -392,6 +406,10 @@ fn lean_parsers_survey() {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|text| text.lines().map(str::to_owned).collect())
             .unwrap_or_default(),
+        part: std::env::var("RERAIL_SURVEY_PART").ok().and_then(|p| {
+            let (k, n) = p.split_once('/')?;
+            Some((k.parse().ok()?, n.parse::<usize>().ok().filter(|&n| n > 0)?))
+        }),
         files: 0,
     };
     // A panic's message is the finding's; the default hook would print each one as well.
@@ -402,7 +420,7 @@ fn lean_parsers_survey() {
         if survey.skip.contains(input) {
             continue;
         }
-        let _ = std::fs::write(&survey.progress, format!("{input}\n"));
+        survey.at(input);
         if path.is_file() {
             if let Ok(bytes) = std::fs::read(path) {
                 survey.file(input, input, &bytes);
@@ -418,6 +436,6 @@ fn lean_parsers_survey() {
     }
     std::panic::set_hook(hook);
     std::fs::write(out.join("summary.tsv"), survey.summary()).expect("summary");
-    let _ = std::fs::write(&survey.progress, "done\n");
+    survey.at("done");
     eprint!("{}", survey.summary());
 }

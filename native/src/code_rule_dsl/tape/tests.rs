@@ -2955,13 +2955,21 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
             let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
             assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "{dialect:?}: the tapes of a chain of {} bytes differ", source.len());
         }
+        // Nested parentheses in parameter defaults, as minifiers write (`E = (E = (E = …`): each `(`
+        // is tried as an arrow function once, not again for each enclosing one (once 2^40 tries).
+        for source in [format!("x = {}1{};\n", "(a = ".repeat(40), ")".repeat(40)), format!("x = {}1{};\n", "async(a = ".repeat(40), ")".repeat(40))] {
+            let ours = ecma_lean::encode(dialect, &grammar, &source, &|| false).unwrap_or_else(|why| panic!("{dialect:?} refused {source:?}: {why:?}")).unwrap();
+            let tree = parser.parse(&source, None).unwrap();
+            let theirs = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
+            assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "{dialect:?}: the tapes of {source:?} differ");
+        }
         // Past what tree-sitter's tape is compared at: the lean parser's own, not refused (no chain limit).
         for source in [format!("x = {}a;\n", "a + ".repeat(200_000)), format!("x = a{};\n", ".b(c)".repeat(100_000))] {
             assert!(ecma_lean::encode(dialect, &grammar, &source, &|| false).is_ok_and(|t| t.is_ok()), "{dialect:?} refused a chain of {} bytes", source.len());
         }
         // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
         // has one behavior: tree-sitter's tape, or a refusal.
-        for invalid in ["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2"] {
+        for invalid in ["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2", "import {b} from"] {
             assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
             assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err(), "{dialect:?} accepted {invalid:?}");
         }
