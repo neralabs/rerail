@@ -4214,6 +4214,11 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         // from x)`: no unit; `begin; …; end`: a `block`.
         "CREATE TABLE t (\"a\" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL, b int DEFAULT (current_timestamp));\nCREATE INDEX i ON t (\"a\" DESC, b);\n",
         "SELECT trim(BOTH FROM name) FROM t;\nBEGIN;\nSELECT 1;\nEND;\n",
+        // Backtick names (MySQL, BigQuery): an `identifier` over its two backticks; ``` `` ``` a
+        // backtick inside one. Where `op_other` takes more than the backtick, the operator.
+        "SELECT `a`.`b` AS `c`, `d` `e` FROM `s`.`t` `x` WHERE `a` = 1;\nSELECT `a``b` FROM t;\n",
+        "CREATE TABLE `t` (`id` int NOT NULL, `n` varchar(20));\nINSERT INTO `t` (`a`, `b`) VALUES (1, 2);\n",
+        "SELECT a `| b FROM t;\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4246,6 +4251,11 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         "SELECT a FROM t GROUP BY grouping, a;\n",
         "SELECT a FROM t WHERE ((SELECT 1) > 0 OR b);\n",
         "CREATE TABLE t (a int DEFAULT current_timestamp + 1);\n",
+        // A backtick where an alias may follow is a name's, as tree-sitter's lexer takes it (a
+        // string token wins its tie with `op_other`): not an operator between `a`, `b` and `c`.
+        "SELECT a`b`c FROM t;\n",
+        "SELECT \"a\"`b`\"c\" FROM t;\n",
+        "SELECT `a FROM t;\n",
     ] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
