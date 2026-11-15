@@ -513,3 +513,37 @@ ported, over the targeted tests and dl1.
   - Checked: logic `compose::` (12) and `plan::` (110); the engine's `compose::`, `program_image::` (with the
     components by name), `rr::`, retain and session tests; dl1 (images required, profiling build, a fresh store): the
     same 48 findings cold and warm as the baseline, 51.2 G instructions cold and 2.6 G warm (dl1 does not compose).
+
+- **Item 7, step 7 begun: the again paths read `Maint`** (2026-11-14).
+  - The run reads a maintained program's strata derived again from its version's `Maint` (decision 0215), not from
+    `prog.again`: the placement of each group (`again_at`: its first piece, what its rules and deltas read, how long
+    those live), its owners, the choice (`again_wanted`, `again_costs`, which take the `Maint` and the group's
+    place), the deferred deltas (`make_deferred`), the run of a group derived again, a form's group (found by its
+    relations, `Maint::group_of`), and the sets run together (`Maint::together_holds`, in `native_stratum_` and the
+    gated set). A group's rules and deltas are keys of a version of their own over `Maint::v`
+    (`Versions::add_again`, held once per group and list); `Versions::add_rules`, `index_of_rules`, `Placed::over`
+    and `Run::add_rules` are gone.
+  - Still the tree's: `Run::add_again` is given the group's trees beside the keys, for `Run::tree`'s readers (the
+    fixpoints' made rules, the profile's rule text), until step 5's run-local overlay. A form itself is still a tree
+    (below).
+  - Checked while porting, by a check removed after: each key's rule read from `Maint` had the tree rule's head and
+    observation key, and a form's group found by `group_of` was the tree's. Over logic `plan::` (110) and the
+    engine's maintain, again (the derived-again tests), session, edit, retain, cone, supports, kept, frame, strata,
+    keeps, demand, negation, inline, choices, phase0, answer, native, setfix, program_image, `rr::` and `corpus::`
+    (in chunks). dl1: the same 48 findings cold and warm as the baseline; 51.6 G instructions cold, 2.6 G warm (load
+    about 19).
+  - **Open, a design question: what a form's version is.** Step 7 asks for each form as an overlay of the run's
+    version. The run reads a form as its current program (`set_prog`, `Run::fields`, its components and
+    projections, the strands of forms), so the form's version must answer as the form does. An overlay does not:
+    - its rules are the run's and the form's (`Version::rules`, `heads`, `readers`, and so `FieldsData::heads` and
+      every `analyses` reading): the run's version holds the stratum's own rules beside the form's rules for it;
+    - its declarations, facts and about rows (natives, lattices, gates, qualifiers, tapes, nullary, demand,
+      answers) are the run's unless each is restated or removed; the form's tree has only what its stratum mentions
+      (its inputs are the mentioned run inputs and old rows, its outputs none);
+    - removing the run's rules and parts costs the run, not the form, and folds (the size counts removals, and an
+      empty view's size is 0), so each form would copy every declaration and fact of the run.
+    Decision 0173 §7 classes the one-stratum form (E5) as a view ("ranges of its rules, and the relations they
+    need") and the maintained rewrite as a derivation; the builder's views keep the parent's parts, and step 9 lists
+    the missing piece ("a view whose fields are overlaid, and a fold that does not count a view's removals"). So
+    `maintain::rewrite_with`, `Driver::form`, `supports`, `maintained_cross` and the `Forms` arena stay as they were
+    until that is decided.

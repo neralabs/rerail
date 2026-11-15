@@ -4101,8 +4101,9 @@ struct Run<'a, 'b> {
     /// and each maintained form's as it is placed (t36 item 2, until `run` takes a version).
     versions: Arc<body::Versions>,
     /// The trees each of `versions`' versions was made from, by its place: a rule's tree by its key (`tree`), for the
-    /// readers that still read one (the again paths, a maintained form's driver, the fixpoints' made rules, the
-    /// profile's rule text). The run's rule lists hold keys.
+    /// readers that still read one (a maintained form's driver, the fixpoints' made rules, the profile's rule text;
+    /// a stratum's rules derived again are read from its `Maint`, and their trees are here for those readers alone).
+    /// The run's rule lists hold keys.
     trees: Arc<Vec<&'a [Rule]>>,
     /// Where `prog` is among `versions` (0, the program; a maintained form's place once added), whose fields the run
     /// reads (`fields`) rather than the tree's (t36 item 7). Set with `prog` (`set_prog`).
@@ -4222,19 +4223,22 @@ impl<'a> Run<'a, '_> {
         debug_assert_eq!(self.versions.len(), self.trees.len());
         Ok(self.versions.len() - 1)
     }
-    /// Adds `rules` (a stratum's rules derived again, its deltas) to the run's versions (`Versions::add_rules`), with
-    /// their tree, unless they are held already: their keys, in order.
-    fn add_rules(&mut self, rules: &'a [Rule]) -> Result<Vec<RuleKey>> {
-        let v = match self.versions.index_of_rules(rules) {
+    /// Adds the rules stratum `g` of `maint` is derived again by, or its deltas (`deltas`), to the run's versions
+    /// (`Versions::add_again`) unless they are held already: their keys, in order. `tree` is the same rules as trees,
+    /// for the readers that still read one (`tree`: the fixpoints' made rules, the profile's rule text).
+    fn add_again(&mut self, maint: &Arc<body::Maint>, g: usize, deltas: bool, tree: &'a [Rule]) -> Vec<RuleKey> {
+        let n = if deltas { maint.again[g].deltas.len() } else { maint.again[g].rules.len() };
+        debug_assert_eq!(n, tree.len());
+        let v = match self.versions.again_at(maint, g, deltas) {
             Some(v) => v,
             None => {
-                let Some(v) = Arc::make_mut(&mut self.versions).add_rules(rules)? else { return Ok(Vec::new()) };
-                Arc::make_mut(&mut self.trees).push(rules);
+                let Some(v) = Arc::make_mut(&mut self.versions).add_again(maint, g, deltas) else { return Vec::new() };
+                Arc::make_mut(&mut self.trees).push(tree);
                 debug_assert_eq!(self.versions.len(), self.trees.len());
                 v
             }
         };
-        Ok(body::Versions::keys(v, rules.len()).collect())
+        body::Versions::keys(v, n).collect()
     }
     /// Makes `p` the run's program (the program, or a maintained form added to `versions`): its tree and its version.
     fn set_prog(&mut self, p: &'a Program) {
@@ -4381,15 +4385,16 @@ impl<'a> Run<'a, '_> {
     /// skips it). `RERAIL_AGAIN=off` maintains every one. Read at each choice, so a test can set them.
     /// The deferred deltas (decision 0090 §4) among `wanted`, made now: a stratum that runs reads them.
     fn make_deferred(&mut self, wanted: &[&str], deferred: &mut HashMap<String, (usize, usize, usize)>) -> Result<()> {
+        let maint = Arc::clone(self.versions.placed(0).maint.as_ref().ok_or_else(|| Error::Plan("a deferred delta of a program with no maintenance".into()))?);
         let prog = self.prog;
         for r in wanted {
             let Some((g, k, _)) = deferred.remove(*r) else { continue };
-            let d = &prog.again[g].deltas[k];
-            let _span = super::profile::span(|| format!("delta {} made where it is read", d.head.rel));
-            // A key of the group's deltas' version (`add_rules`: held once).
-            let dk = self.add_rules(&prog.again[g].deltas)?[k];
-            if !self.native_stratum_now(&BTreeSet::from([d.head.rel.to_string()]), &[dk])? {
-                return Err(Error::Plan(format!("{} derived again: the native engine declined", d.head.rel)));
+            // A key of the group's deltas' version (`add_again`: held once).
+            let dk = self.add_again(&maint, g, true, &prog.again[g].deltas)[k];
+            let head = self.versions.head_at(dk).to_owned();
+            let _span = super::profile::span(|| format!("delta {head} made where it is read"));
+            if !self.native_stratum_now(&BTreeSet::from([head.clone()]), &[dk])? {
+                return Err(Error::Plan(format!("{head} derived again: the native engine declined")));
             }
         }
         Ok(())
@@ -4397,43 +4402,45 @@ impl<'a> Run<'a, '_> {
 
     /// Whether a maintained stratum is derived again (decision 0090 §4), and the size taken for its input deltas. A
     /// delta not made yet (`deferred`) is taken at its estimate, the input deltas of the stratum that makes it, at
-    /// most that stratum's rows new and old; one made is counted.
-    fn again_wanted(&mut self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Result<(bool, usize)> {
+    /// most that stratum's rows new and old; one made is counted. The stratum is `maint`'s `g`-th (decision 0215).
+    fn again_wanted(&mut self, maint: &Arc<body::Maint>, g: usize, deferred: &HashMap<String, (usize, usize, usize)>) -> Result<(bool, usize)> {
         if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
             return Ok((false, 0));
         }
+        let again = &maint.again[g];
         let theta: f64 = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|t| t.parse().ok()).unwrap_or(0.25);
         let floor: usize = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|t| t.parse().ok()).unwrap_or(1024);
         let rows = |r: &str| -> usize { self.rows_of(r).map_or(0, |n| n as usize) };
-        let estimated: usize = again.reads.iter().filter_map(|r| deferred.get(r)).map(|d| d.2).sum();
-        let delta: usize = again.reads.iter().filter(|r| !deferred.contains_key(*r)).map(|r| rows(r)).sum::<usize>() + estimated;
-        let old: usize = again.olds.iter().map(|r| rows(r)).sum();
+        let estimated: usize = maint.names(&again.reads).filter_map(|r| deferred.get(r)).map(|d| d.2).sum();
+        let delta: usize = maint.names(&again.reads).filter(|r| !deferred.contains_key(*r)).map(|r| rows(r)).sum::<usize>() + estimated;
+        let old: usize = maint.names(&again.olds).map(|r| rows(r)).sum();
         let past = delta > 0 && delta >= floor && delta as f64 >= theta * old as f64;
         // Past θ, the second test of §4: derived again only where that is priced below maintaining. The input
         // deltas' size alone counts rows no rule reaches, and a deferred delta's estimate is an upper bound: at the
         // o125 replay's step 07, `attr_open` (41,654 input delta rows, 32,944 of them estimated) cost 31 k units
         // derived again and 6.6 k maintained, `type_miss` 107 k and 21 k.
         let why = std::env::var_os("RERAIL_AGAIN_WHY").is_some();
-        let each: Vec<String> = if why { again.reads.iter().map(|r| match deferred.get(r) { Some(d) => format!("{r}~{}", d.2), None => format!("{r}={}", rows(r)) }).collect() } else { Vec::new() };
-        let cap: usize = again.olds.iter().map(|r| rows(r)).sum::<usize>() * 2;
+        let each: Vec<String> = if why { maint.names(&again.reads).map(|r| match deferred.get(r) { Some(d) => format!("{r}~{}", d.2), None => format!("{r}={}", rows(r)) }).collect() } else { Vec::new() };
+        let cap: usize = maint.names(&again.olds).map(|r| rows(r)).sum::<usize>() * 2;
         // `RERAIL_AGAIN_PRICED=off`: θ alone chooses.
         let priced = !std::env::var("RERAIL_AGAIN_PRICED").is_ok_and(|v| v == "off");
-        let costs = if past && priced { self.again_costs(again, deferred) } else { None };
+        let costs = if past && priced { self.again_costs(maint, g, deferred) } else { None };
         let wanted = past && costs.is_none_or(|(again_cost, kept)| again_cost < kept);
+        let scc: BTreeSet<&str> = maint.names(&again.scc).collect();
         if why {
             eprintln!(
                 "RERAIL_AGAIN_WHY {:?}: input deltas {delta} ({estimated} estimated), old rows {old}, priced again/maintained {costs:?}: {} [{}]",
-                again.scc.iter().next(),
+                scc.iter().next(),
                 if wanted { "derived again" } else { "maintained" },
                 each.join(" ")
             );
         }
         if wanted {
             super::profile::decision("derived again (decision 0090 §4)", || {
-                format!("{:?}: input deltas {delta} rows ({estimated} estimated), {old} old rows, θ {theta}; priced again/maintained {costs:?}", again.scc)
+                format!("{scc:?}: input deltas {delta} rows ({estimated} estimated), {old} old rows, θ {theta}; priced again/maintained {costs:?}")
             });
         } else if past {
-            super::profile::decision("maintained past θ (decision 0090 §4)", || format!("{:?}: input deltas {delta} rows, {old} old rows; priced again/maintained {costs:?}", again.scc));
+            super::profile::decision("maintained past θ (decision 0090 §4)", || format!("{scc:?}: input deltas {delta} rows, {old} old rows; priced again/maintained {costs:?}"));
         }
         // What its own deltas are taken at, when deferred: at most its rows new and old (`cap`).
         Ok((wanted, delta.min(cap.max(1))))
@@ -4445,38 +4452,40 @@ impl<'a> Run<'a, '_> {
     /// stratum's relations at their old rows, and each piece of the maintained form (`__del`, `__ins`, …) at the rows
     /// its rules priced before it make. Each stratum a form runs is an engine call besides, priced at what the
     /// decision measured: 0.4 ms a call, 0.4 µs a unit of work. None where a rule cannot be planned here (the θ test
-    /// alone then chooses).
-    fn again_costs(&mut self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Option<(f64, f64)> {
+    /// alone then chooses). The stratum is `maint`'s `g`-th (decision 0215), and the run's current program holds it.
+    fn again_costs(&mut self, maint: &Arc<body::Maint>, g: usize, deferred: &HashMap<String, (usize, usize, usize)>) -> Option<(f64, f64)> {
         const CALL: f64 = 1_000.0;
-        let prog = self.prog;
+        let again = &maint.again[g];
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let _span = super::profile::span(|| "derive again or maintain: priced".into());
         let held = |db: &Connection, r: &str| super::native::component::held(db, r).map(|h| h.rows());
+        let (scc, owned, reads): (BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>) = (maint.names(&again.scc).collect(), maint.names(&again.owned).collect(), maint.names(&again.reads).collect());
         // The sizes the pricing takes, set for it alone and put back after.
         let mut sizes: Vec<(String, f64)> = Vec::new();
-        for r in &again.reads {
+        for r in maint.names(&again.reads) {
             if let Some(n) = deferred.get(r).map(|d| d.2).or_else(|| held(&self.db, r)) {
-                sizes.push((r.clone(), n as f64));
+                sizes.push((r.to_owned(), n as f64));
             }
         }
-        for r in &again.scc {
+        for r in maint.names(&again.scc) {
             if let Some(n) = held(&self.db, &format!("{r}__old")) {
-                sizes.push((r.clone(), n as f64));
+                sizes.push((r.to_owned(), n as f64));
             }
         }
-        let pieces: Vec<&String> = again.owned.iter().filter(|r| !again.scc.contains(*r) && !r.ends_with("__old") && !again.reads.contains(*r)).collect();
-        sizes.extend(pieces.iter().map(|r| ((*r).clone(), 0.0)));
+        let pieces: Vec<&str> = maint.names(&again.owned).filter(|r| !scc.contains(*r) && !r.ends_with("__old") && !reads.contains(*r)).collect();
+        sizes.extend(pieces.iter().map(|r| ((*r).to_owned(), 0.0)));
         let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
         // The form's rules are planned as the run's are, read by their handles.
         // A local copy: the run's versions are not grown by a pricing.
         let mut vs = (*self.versions).clone();
-        let keys = |vs: &mut body::Versions, rules: &[Rule]| -> Option<Vec<RuleKey>> {
-            Some(vs.add_rules(rules).ok()?.map_or_else(Vec::new, |v| body::Versions::keys(v, rules.len()).collect()))
+        let keys = |vs: &mut body::Versions, deltas: bool| -> Vec<RuleKey> {
+            let n = if deltas { again.deltas.len() } else { again.rules.len() };
+            vs.add_again(maint, g, deltas).map_or_else(Vec::new, |v| body::Versions::keys(v, n).collect())
         };
-        let mut again_rules = keys(&mut vs, &again.rules)?;
-        again_rules.extend(keys(&mut vs, &again.deltas)?);
-        let kept_rules: Vec<RuleKey> = body::Versions::keys(self.version, prog.rules.len()).filter(|&k| again.owned.contains(vs.head_at(k))).collect();
+        let mut again_rules = keys(&mut vs, false);
+        again_rules.extend(keys(&mut vs, true));
+        let kept_rules: Vec<RuleKey> = body::Versions::keys(self.version, vs.placed(self.version).len()).filter(|&k| owned.contains(vs.head_at(k))).collect();
         let mut price = |rules: &[RuleKey], grow: bool| -> Option<f64> {
             let mut total = 0.0;
             let mut made: BTreeMap<&str, f64> = BTreeMap::new();
@@ -4484,7 +4493,7 @@ impl<'a> Run<'a, '_> {
                 let (_, w, rows) = self.model.plan_rule_priced(pf, &vs.at(r), None).ok()?;
                 total += w;
                 let head = vs.head_at(r);
-                if grow && pieces.iter().any(|p| **p == head) {
+                if grow && pieces.iter().any(|p| *p == head) {
                     let n = made.entry(head).or_insert(0.0);
                     *n += rows;
                     self.model.stats.card.insert(head.to_owned(), n.max(1.0));
@@ -5809,7 +5818,6 @@ impl<'a> Run<'a, '_> {
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[RuleKey], native_rels: &BTreeSet<String>) -> Result<Native> {
-        let prog = self.prog;
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let vs = Arc::clone(&self.versions);
@@ -5927,7 +5935,8 @@ impl<'a> Run<'a, '_> {
             kept
         };
         // A gate ordering pieces (decision 0101 §3) that no rule left reads has nothing to order.
-        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(*g)) || rules.iter().any(|&r| {
+        let maint = vs.placed(self.version).maint.as_deref();
+        gates.retain(|(g, _)| !maint.is_some_and(|m| m.together_holds(g)) || rules.iter().any(|&r| {
             let (v, rule) = vs.rule_at(r);
             rule.body().any(|l| l.atom().is_some_and(|a| v.rel_name(a.rel()) == *g))
         }));
@@ -8315,39 +8324,45 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // (`at`), which must come before any of its own relations' strata (else it is always maintained), and what it
     // reads is kept until then.
     let stratum_of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
-    let owner: HashMap<&str, usize> = prog.again.iter().enumerate().flat_map(|(i, g)| g.owned.iter().map(move |r| (r.as_str(), i))).collect();
-    let again_at: Vec<Option<usize>> = prog
-        .again
+    // A maintained program's strata derived again (decision 0215): read from its version's `Maint`.
+    let maint0: Option<Arc<body::Maint>> = p0.maint.clone();
+    if maint0.is_none() && (!prog.again.is_empty() || !prog.together.is_empty()) {
+        return Err(Error::Plan("a maintained program whose version has no maintenance's parts".into()));
+    }
+    let groups: &[body::AgainRef] = maint0.as_deref().map_or(&[], |m| m.again.as_slice());
+    let owner: HashMap<&str, usize> = maint0.as_deref().map_or_else(HashMap::new, |m| m.again.iter().enumerate().flat_map(|(i, g)| m.names(&g.owned).map(move |r| (r, i))).collect());
+    let again_at: Vec<Option<usize>> = groups
         .iter()
         .map(|g| {
-            let first_piece = g.owned.iter().filter_map(|r| stratum_of.get(r.as_str())).min().copied()?;
-            let reads: BTreeSet<&str> = g.rules.iter().chain(&g.deltas).flat_map(|r| r.body.iter().filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-                _ => None,
-            })).filter(|r| !g.scc.contains(*r)).collect();
+            let m = maint0.as_deref().expect("a group of the program's maintenance");
+            let reads_of_rule = |id: super::program_image::RuleId| m.v.rule(id).expect("a rule of the maintenance's version").body().filter_map(|l| l.atom()).map(|a| m.name(a.rel()));
+            let first_piece = m.names(&g.owned).filter_map(|r| stratum_of.get(r)).min().copied()?;
+            let scc: BTreeSet<&str> = m.names(&g.scc).collect();
+            let reads: BTreeSet<&str> = g.rules.iter().chain(&g.deltas).flat_map(|&id| reads_of_rule(id)).filter(|r| !scc.contains(*r)).collect();
             let at = reads.iter().map(|r| match stratum_of.get(r) {
                 Some(&j) => j + 1,
                 None => first.get(*r).copied().unwrap_or(0),
             }).fold(first_piece, usize::max);
-            let made: Vec<usize> = g.scc.iter().map(String::as_str).chain(g.deltas.iter().map(|d| d.head.rel.as_str())).filter_map(|r| stratum_of.get(r).copied()).collect();
+            let delta_head = |id: super::program_image::RuleId| m.name(m.v.rule(id).expect("a rule of the maintenance's version").head().rel());
+            let made: Vec<usize> = scc.iter().copied().chain(g.deltas.iter().map(|&id| delta_head(id))).filter_map(|r| stratum_of.get(r).copied()).collect();
             if made.iter().any(|&j| j < at) {
                 return None;
             }
-            for r in reads.iter().copied().chain(g.reads.iter().map(String::as_str)).chain(g.olds.iter().map(String::as_str)) {
+            for r in reads.iter().copied().chain(m.names(&g.reads)).chain(m.names(&g.olds)) {
                 let l = last.entry(r.to_owned()).or_insert(at);
                 *l = (*l).max(at);
             }
             // Its deltas may be made late, where a stratum first reads them (`deferred`): what they read lives until
             // their last reader.
-            let read_to = g.deltas.iter().filter_map(|d| last.get(d.head.rel.as_str())).copied().max().unwrap_or(at).max(at);
-            for r in g.deltas.iter().flat_map(|d| d.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).collect::<Vec<_>>() {
-                let l = last.entry(r.to_string()).or_insert(read_to);
+            let read_to = g.deltas.iter().filter_map(|&id| last.get(delta_head(id))).copied().max().unwrap_or(at).max(at);
+            for r in g.deltas.iter().flat_map(|&id| reads_of_rule(id)).collect::<Vec<_>>() {
+                let l = last.entry(r.to_owned()).or_insert(read_to);
                 *l = (*l).max(read_to);
             }
             Some(at)
         })
         .collect();
-    let mut again_chosen: Vec<Option<bool>> = vec![None; prog.again.len()];
+    let mut again_chosen: Vec<Option<bool>> = vec![None; groups.len()];
     // A stratum derived again makes its deltas against its old rows only when a stratum that runs reads them
     // (`RERAIL_AGAIN_DEFER`): those not yet made, by name, with the group and rule that make each and the size taken
     // for it. A group reading one makes it and measures it (`measure`, the default); or decides by its estimate
@@ -8359,14 +8374,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let defer = defer_mode != "off";
     let propagate = defer_mode == "propagate";
     let estimate = defer && !propagate && defer_mode == "estimate";
-    let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
+    let mut again_delta: Vec<usize> = vec![0; groups.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
     // A gate that orders a maintained stratum's pieces (decision 0101 §3) holds nothing past its component.
     let gated: BTreeSet<String> = f0
         .gates()
         .iter()
-        .filter(|g| !prog.together.iter().any(|t| t.contains(f0.text(g.key))))
+        .filter(|g| !maint0.as_ref().is_some_and(|m| m.together_holds(f0.text(g.key))))
         .flat_map(|g| [f0.text(g.key)].into_iter().chain(g.src.map(|s| f0.text(s))).chain(g.rel.iter().chain(&g.quiet).chain(&g.deps).map(|&r| f0.rel_name(r))))
         .map(str::to_owned)
         .collect();
@@ -8442,13 +8457,19 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         .collect();
     let mut waved = vec![false; sccs.len()];
     if std::env::var_os("RERAIL_AGAIN_WHY").is_some() {
-        for (i, g) in prog.again.iter().enumerate() {
-            for r in &g.owned {
-                if owner.get(r.as_str()) != Some(&i) {
-                    eprintln!("RERAIL_AGAIN_WHY overlap: {r} owned by {:?} and {:?}", g.scc, prog.again[owner[r.as_str()]].scc);
+        let m = maint0.as_deref();
+        fn names<'m>(m: Option<&'m body::Maint>, rels: &'m [super::program_image::RelId]) -> BTreeSet<&'m str> {
+            m.map_or_else(BTreeSet::new, |m| m.names(rels).collect())
+        }
+        let set = |rels| names(m, rels);
+        for (i, g) in groups.iter().enumerate() {
+            for r in set(&g.owned) {
+                if owner.get(r) != Some(&i) {
+                    eprintln!("RERAIL_AGAIN_WHY overlap: {r} owned by {:?} and {:?}", set(&g.scc), set(&groups[owner[r]].scc));
                 }
             }
-            eprintln!("RERAIL_AGAIN_WHY group {:?}: owns {:?}, reads {:?}", g.scc, g.owned, g.reads);
+            let reads: Vec<&str> = m.map_or_else(Vec::new, |m| m.names(&g.reads).collect());
+            eprintln!("RERAIL_AGAIN_WHY group {:?}: owns {:?}, reads {:?}", set(&g.scc), set(&g.owned), reads);
         }
     }
     // Strata waiting on their device wave: position, key, driver's state.
@@ -8751,18 +8772,20 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     // Decision 0090 §4: derived again, its rules over the current reads and its deltas against its old
                     // rows, where its input deltas are past θ of its old rows and that is priced below maintaining.
                     let mut again = false;
-                    if let Some(g) = form.again.iter().find(|g| g.scc == *scc) {
+                    if let Some(fm) = form_v.maint.as_ref()
+                        && let Some(g) = fm.group_of(scc)
+                    {
                         run.set_prog(form);
-                        let chosen = run.again_wanted(g, &HashMap::new());
+                        let chosen = run.again_wanted(fm, g, &HashMap::new());
                         run.set_prog(prog);
                         if chosen?.0 {
                             again = true;
                             outcome.again += 1;
                             // Its pieces are now the form's rules for deriving it again, planned as any rules are.
-                            let again_rules = run.add_rules(&g.rules)?;
-                            let deltas = run.add_rules(&g.deltas)?;
-                            pieces = std::iter::once((g.scc.clone(), again_rules))
-                                .chain(g.deltas.iter().zip(deltas).map(|(d, k)| (BTreeSet::from([d.head.rel.to_string()]), vec![k])))
+                            let again_rules = run.add_again(fm, g, false, &form.again[g].rules);
+                            let deltas = run.add_again(fm, g, true, &form.again[g].deltas);
+                            pieces = std::iter::once((scc.clone(), again_rules))
+                                .chain(deltas.into_iter().map(|k| (BTreeSet::from([run.versions.head_at(k).to_owned()]), vec![k])))
                                 .collect();
                         }
                     }
@@ -8992,21 +9015,23 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             if let Some(&g) = scc.iter().next().and_then(|r| owner.get(r.as_str()))
                 && again_chosen[g].is_none()
             {
-                let reads_deferred = prog.again[g].reads.iter().any(|r| deferred.contains_key(r));
-                let wanted: Vec<&str> = prog.again[g].reads.iter().map(String::as_str).collect();
+                let m = maint0.as_ref().expect("a group of the program's maintenance");
+                let reads_deferred = m.names(&groups[g].reads).any(|r| deferred.contains_key(r));
+                let wanted: Vec<&str> = m.names(&groups[g].reads).collect();
                 again_chosen[g] = Some(if again_at[g].is_none() {
                     false
                 } else if reads_deferred && propagate {
-                    super::profile::decision("derived again (decision 0090 §4)", || format!("{:?}: reads the deltas of a stratum derived again", prog.again[g].scc));
+                    let scc: BTreeSet<&str> = m.names(&groups[g].scc).collect();
+                    super::profile::decision("derived again (decision 0090 §4)", || format!("{scc:?}: reads the deltas of a stratum derived again"));
                     if std::env::var_os("RERAIL_AGAIN_WHY").is_some() {
-                        eprintln!("RERAIL_AGAIN_WHY {:?}: reads a deferred delta: derived again", prog.again[g].scc.iter().next());
+                        eprintln!("RERAIL_AGAIN_WHY {:?}: reads a deferred delta: derived again", scc.iter().next());
                     }
                     true
                 } else {
                     if !estimate {
                         run.make_deferred(&wanted, &mut deferred)?;
                     }
-                    let (chosen, delta) = run.again_wanted(&prog.again[g], &deferred)?;
+                    let (chosen, delta) = run.again_wanted(m, g, &deferred)?;
                     again_delta[g] = delta;
                     chosen
                 });
@@ -9015,25 +9040,28 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     run.make_deferred(&wanted, &mut deferred)?;
                 }
             }
-            for g in (0..prog.again.len()).filter(|&g| again_at[g] == Some(at) && again_chosen[g] == Some(true)) {
-                let again = &prog.again[g];
-                let _span = super::profile::span(|| format!("stratum {} derived again", again.scc.iter().next().map_or("", String::as_str)));
-                let wanted: Vec<&str> = again.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
+            for g in (0..groups.len()).filter(|&g| again_at[g] == Some(at) && again_chosen[g] == Some(true)) {
+                let m = maint0.as_ref().expect("a group of the program's maintenance");
+                let again = &groups[g];
+                let scc: BTreeSet<String> = m.names(&again.scc).map(str::to_owned).collect();
+                let _span = super::profile::span(|| format!("stratum {} derived again", scc.iter().next().map_or("", String::as_str)));
+                let wanted: Vec<&str> = again.rules.iter().flat_map(|&id| m.v.rule(id).expect("a rule of the maintenance's version").body().filter_map(|l| l.atom()).map(|a| m.name(a.rel()))).collect();
                 run.make_deferred(&wanted, &mut deferred)?;
-                // Its rules derived again and its deltas, keys of versions of their own (`add_rules`).
-                let rules = run.add_rules(&again.rules)?;
-                let deltas = run.add_rules(&again.deltas)?;
-                if !run.native_stratum_now(&again.scc, &rules)? {
-                    return Err(Error::Plan(format!("{:?} derived again: the native engine declined: {}", again.scc, run.why_not.take().unwrap_or_default())));
+                // Its rules derived again and its deltas, keys of versions of their own (`add_again`).
+                let rules = run.add_again(m, g, false, &prog.again[g].rules);
+                let deltas = run.add_again(m, g, true, &prog.again[g].deltas);
+                if !run.native_stratum_now(&scc, &rules)? {
+                    return Err(Error::Plan(format!("{scc:?} derived again: the native engine declined: {}", run.why_not.take().unwrap_or_default())));
                 }
-                for (k, (d, dk)) in again.deltas.iter().zip(deltas).enumerate() {
+                for (k, dk) in deltas.into_iter().enumerate() {
+                    let head = run.versions.head_at(dk).to_owned();
                     if defer {
-                        deferred.insert(d.head.rel.to_string(), (g, k, again_delta[g]));
+                        deferred.insert(head, (g, k, again_delta[g]));
                         continue;
                     }
-                    let one = BTreeSet::from([d.head.rel.to_string()]);
+                    let one = BTreeSet::from([head.clone()]);
                     if !run.native_stratum_now(&one, &[dk])? {
-                        return Err(Error::Plan(format!("{} derived again: the native engine declined", d.head.rel)));
+                        return Err(Error::Plan(format!("{head} derived again: the native engine declined")));
                     }
                 }
             }

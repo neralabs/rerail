@@ -425,7 +425,17 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 /// once it is final: its rules do not move after. A whole program (the run's, a maintained form) is also found by its
 /// address (`index_of`), for the run to read its fields from its version.
 #[derive(Clone, Default)]
-pub struct Versions(Vec<(usize, usize, Placed)>, Vec<(usize, usize)>);
+pub struct Versions(Vec<(usize, usize, Placed)>, Vec<(usize, usize)>, Vec<AgainAt>);
+
+/// Where a maintained program's stratum's rules for deriving it again, or its deltas, are among a run's versions
+/// (`Versions::add_again`): its `Maint` (by address), the stratum's place there, which list, and the version's place.
+#[derive(Clone, Copy)]
+struct AgainAt {
+    maint: usize,
+    group: usize,
+    deltas: bool,
+    at: usize,
+}
 
 /// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
 /// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
@@ -465,6 +475,22 @@ pub struct AgainRef {
 }
 
 impl Maint {
+    /// The name of relation `r`, one of `v`'s.
+    pub fn name(&self, r: RelId) -> &str {
+        self.v.rel_name(r)
+    }
+    /// The names of `rels`, a set of a stratum's (`AgainRef`), in order.
+    pub fn names<'m>(&'m self, rels: &'m [RelId]) -> impl Iterator<Item = &'m str> + 'm {
+        rels.iter().map(move |&r| self.v.rel_name(r))
+    }
+    /// The stratum derived again whose relations are `scc`, if one is.
+    pub fn group_of(&self, scc: &std::collections::BTreeSet<String>) -> Option<usize> {
+        self.again.iter().position(|g| g.scc.len() == scc.len() && self.names(&g.scc).zip(scc).all(|(a, b)| a == b))
+    }
+    /// Whether a set run as one component (`together`) holds `rel`.
+    pub fn together_holds(&self, rel: &str) -> bool {
+        self.v.rel(rel).is_some_and(|r| self.together.iter().any(|t| t.contains(&r)))
+    }
     /// `prog`'s `again` and `together`, over `parent`, its version.
     fn of(parent: &Arc<Version>, prog: &Program) -> Result<Maint> {
         let mut b = Builder::on(parent);
@@ -542,19 +568,6 @@ impl Placed {
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
         Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default() }
     }
-    /// `rules` added to `parent` (an overlay that removes nothing), in order.
-    pub fn over(parent: &Arc<Version>, parent_whole: bool, rules: &[Rule]) -> Result<Placed> {
-        let mut b = Builder::on(parent);
-        let mut ids = Vec::with_capacity(rules.len());
-        for r in rules {
-            ids.push(b.add(r).map_err(Error::Plan)?);
-        }
-        let (v, made) = b.finish().map_err(Error::Plan)?;
-        if let Some(order) = super::keeps::inline::renumbered(parent, &[], &ids, made) {
-            ids.iter_mut().for_each(|id| *id = order[id]);
-        }
-        Ok(Placed::new(v, ids, parent_whole))
-    }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
         self.ids.as_ref().map_or(self.v.size(), |ids| ids.len())
@@ -620,12 +633,12 @@ impl Versions {
     pub fn with(prog: &Program, placed: Placed) -> Versions {
         let rules = &prog.rules;
         let start = rules.as_ptr() as usize;
-        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], vec![(prog as *const Program as usize, 0)])
+        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], vec![(prog as *const Program as usize, 0)], Vec::new())
     }
     /// `placed` alone, the run's version 0, for a caller that holds no tree (the composed path's edited versions): no
     /// rule or program is found by its address.
     pub fn of_placed(placed: Placed) -> Versions {
-        Versions(vec![(0, 0, placed)], Vec::new())
+        Versions(vec![(0, 0, placed)], Vec::new(), Vec::new())
     }
     /// Adds `prog` (a maintained form), a whole version of its own (`Placed::of_program`): its rules, its other fields
     /// and its maintenance's parts, which the run reads while it is the run's program (t36 item 7). Once only.
@@ -650,14 +663,6 @@ impl Versions {
     pub fn placed(&self, k: usize) -> &Placed {
         &self.0[k].2
     }
-    /// The place of the version made of `rules` (`add_rules`), if the run holds one.
-    pub fn index_of_rules(&self, rules: &[Rule]) -> Option<usize> {
-        let start = rules.as_ptr() as usize;
-        if rules.is_empty() {
-            return None;
-        }
-        self.0.iter().position(|e| e.0 == start)
-    }
     /// How many versions the run holds.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -670,24 +675,27 @@ impl Versions {
     pub fn keys(v: usize, n: usize) -> impl Iterator<Item = RuleKey> {
         (0..n).map(move |k| RuleKey::new(v, k))
     }
-    /// Adds `rules` (a program's, or a maintained form's), encoded, unless they are held already: their version's
-    /// place, the one that holds them already if one does (`None` for no rules).
-    pub fn add_rules(&mut self, rules: &[Rule]) -> Result<Option<usize>> {
-        let start = rules.as_ptr() as usize;
-        if rules.is_empty() {
-            return Ok(None);
+    /// Adds the rules stratum `g` of `maint` (decision 0215) is derived again by (`deltas` false: its rules over the
+    /// current reads) or its deltas against its old rows (`deltas` true), rules of `maint.v`, unless held already:
+    /// their version's place (`None` for no rules). Rule `k` of the version is the list's `k`-th.
+    pub fn add_again(&mut self, maint: &Arc<Maint>, g: usize, deltas: bool) -> Option<usize> {
+        if let Some(at) = self.again_at(maint, g, deltas) {
+            return Some(at);
         }
-        if let Some(k) = self.0.iter().position(|e| e.0 == start) {
-            return Ok(Some(k));
+        let at = Arc::as_ptr(maint) as usize;
+        let a = &maint.again[g];
+        let ids = if deltas { &a.deltas } else { &a.rules };
+        if ids.is_empty() {
+            return None;
         }
-        // A maintained form's rules are an overlay of the run's version (decision 0173 §7, t36 item 6 step 6): the
-        // rules it adds over the program's atoms and relations, not a program image of their own.
-        let v = match self.0.first() {
-            Some((_, _, run)) => Placed::over(&run.v, run.whole, rules)?,
-            None => Placed::made(rules)?,
-        };
-        self.0.push((start, start + std::mem::size_of_val(rules), v));
-        Ok(Some(self.0.len() - 1))
+        self.0.push((0, 0, Placed::new(Arc::clone(&maint.v), ids.clone(), false)));
+        self.2.push(AgainAt { maint: at, group: g, deltas, at: self.0.len() - 1 });
+        Some(self.0.len() - 1)
+    }
+    /// Where the run holds stratum `g` of `maint`'s rules derived again, or its deltas (`add_again`), if it does.
+    pub fn again_at(&self, maint: &Arc<Maint>, g: usize, deltas: bool) -> Option<usize> {
+        let at = Arc::as_ptr(maint) as usize;
+        self.2.iter().find(|e| e.maint == at && e.group == g && e.deltas == deltas).map(|e| e.at)
     }
     /// `r`'s key, a rule of a program the run holds.
     pub fn key(&self, r: &Rule) -> Option<RuleKey> {
