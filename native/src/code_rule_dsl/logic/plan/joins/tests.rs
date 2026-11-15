@@ -165,7 +165,9 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     propose(210, vec![(steps(&order(&[0, 1])), 4e5), (steps(&order(&[1, 0])), 3.2e5)], Some(4e5));
     let mut round = vec![Choice { key: 210, candidates, chosen: 9, why: "" }];
     choose(&mut round);
-    assert_eq!(round[0].chosen, 0, "within the walks' spread: {}", round[0].why);
+    // An untried order within the margin is still explored now and then (`explore_rate`, a draw): that is not its walk
+    // taken.
+    assert!(round[0].chosen == 0 || round[0].why.starts_with("explored"), "within the walks' spread: {}", round[0].why);
     clear();
 }
 
@@ -613,7 +615,7 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     // The run's version: `h(x, y) :- e(x, y), q(y)`. Its form (decision 0241) holds an overdelete of `e`'s position,
     // written as `maintain::write_ir` writes it: the source's literals, `e`'s over its lost rows, and a test the
     // rewrite adds.
-    let p = parse(".decl e(x: number, y: number)\n.decl q(y: number)\n.decl h(x: number, y: number)\nh(x, y) :- e(x, y), q(y).\n.output h\n").unwrap();
+    let p = parse(".decl e(x: number, y: number)\n.decl q(y: number)\n.decl h(x: number, y: number)\nh(x, y) :- e(x, y), q(y).\n.decl a(x: number)\n.decl c(y: number, z: number)\n.decl g(x: number, z: number)\ng(x, z) :- a(x), e(x, y), c(y, z).\n.output h\n.output g\n").unwrap();
     let placed = Placed::of_program(&p).unwrap();
     let src_id = placed.id(0);
     let mut b = Builder::under(&placed.v);
@@ -621,6 +623,9 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
     // A rule written with no source has no origin.
     b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).finish().unwrap();
+    // An insert of `g`'s first position, its delta `a__plus`.
+    let z = T::Var("z");
+    b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", &[x.clone()]).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
     let (form, _) = b.finish().unwrap();
     let mut vs = Versions::of_placed(placed);
     let k = vs.push(Placed::derived(form, None));
@@ -631,12 +636,22 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     // `q(y)` is the source's second literal, `e__minus(x, y)` its first's lost rows; `!h__old(x, y)` is no source's.
     let map = del.source_map(&src);
     assert_eq!(map, vec![Some(1), Some(0), None]);
-    // The source ran `q` first, then `e`: the overdelete is led by its change (`e__minus`), tests `h__old` as soon as
-    // that binds its terms, then follows the source's other joins.
+    // A seed keeps the source's lead: the source ran `e` first, then `q`, so the overdelete runs `e__minus` where `e`
+    // stood, tests `h__old` as soon as that binds its terms, then joins `q`.
     let steps = |o: &[usize]| o.iter().map(|&at| Step { at, mode: None }).collect::<Vec<_>>();
-    let got = source_order(&del, &src, &map, &steps(&[1, 0]), None).expect("an order");
+    let got = source_order(&del, &src, &map, &steps(&[0, 1]), None).expect("an order");
     assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![1, 2, 0]);
+    let got = source_order(&del, &src, &map, &steps(&[1, 0]), None).expect("an order");
+    assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
     // With a delta, the delta leads.
     let got = source_order(&del, &src, &map, &steps(&[0, 1]), Some(0)).expect("an order");
+    assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
+    // `g`'s source ran `c` first, then `e`, then `a`. Led by its delta `a__plus(x)`, the insert joins `e(x, y)`, which
+    // shares `x`, before `c(y, z)`, which shares nothing yet: no cross product while a connected join remains.
+    let ins = vs.at(RuleKey::new(k, 2));
+    let gsrc = ins.origin().expect("the insert's source rule");
+    let gmap = ins.source_map(&gsrc);
+    assert_eq!(gmap, vec![Some(0), Some(1), Some(2)]);
+    let got = source_order(&ins, &gsrc, &gmap, &steps(&[2, 1, 0]), Some(0)).expect("an order");
     assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
 }

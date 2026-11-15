@@ -11745,10 +11745,12 @@ struct Starts {
 /// values): a variable of the lead at such a column (`None` for the link's route), else the one atom holding both a
 /// variable at such a column and a variable of the lead (`inf(f, m)` from `kind(m, return)`): its key's column, and
 /// Decision 0258: maintenance rule `b`'s order from its source rule `src`'s kept order `order` (`map`: each literal's
-/// literal of the source, `Body::source_map`). Led by the line's delta (`first`), else by the rule's change (a join
-/// that is no source literal, as `h__del(..)` of a rederive, or one over a maintenance relation of its literal's,
-/// `r__minus`, not its old rows); then the source's joins in their order, then the rule's other joins; each filter
-/// once it can run, as a search places them. `None` where a filter never can.
+/// literal of the source, `Body::source_map`). Led by the line's delta (`first`) where it has one; else as the source
+/// was, each of the rule's literals where its source literal stood (a seed's start is the search's to choose, and the
+/// source's was chosen for that body: a change led by itself ran a selective constant probe after it, 5x the work).
+/// The source's joins follow in their order, then the rule's other joins, each next the first of them that shares a
+/// bound variable while one does (no cross product while a connected join remains, as the search); each filter once
+/// it can run, as a search places them. `None` where a filter never can.
 fn source_order(b: &Body<'_>, src: &Body<'_>, map: &[Option<usize>], order: &[Step], first: Option<usize>) -> Option<Vec<Step>> {
     let mut of = vec![None; src.len()];
     for (i, m) in map.iter().enumerate() {
@@ -11756,24 +11758,17 @@ fn source_order(b: &Body<'_>, src: &Body<'_>, map: &[Option<usize>], order: &[St
             of[j] = Some(i);
         }
     }
-    let change = |i: usize| {
-        b.is_join(i)
-            && match (map[i], b.atom(i)) {
-                (None, _) => true,
-                (Some(j), Some(a)) => src.atom(j).is_some_and(|c| b.rel(a) != src.rel(c)) && !b.rel(a).ends_with("__old"),
-                (Some(_), None) => false,
-            }
-    };
-    let mut joins: Vec<usize> = first.or_else(|| (0..b.len()).find(|&i| change(i))).into_iter().collect();
+    let mut joins: Vec<usize> = Vec::with_capacity(b.len());
     for s in order {
         if let Some(i) = of.get(s.at).copied().flatten()
             && b.is_join(i)
+            && Some(i) != first
             && !joins.contains(&i)
         {
             joins.push(i);
         }
     }
-    joins.extend((0..b.len()).filter(|&i| b.is_join(i)).collect::<Vec<_>>().into_iter().filter(|i| !joins.contains(i)).collect::<Vec<_>>());
+    joins.extend((0..b.len()).filter(|&i| b.is_join(i) && Some(i) != first).collect::<Vec<_>>().into_iter().filter(|i| !joins.contains(i)).collect::<Vec<_>>());
     let mut out: Vec<Step> = Vec::with_capacity(b.len());
     let mut bound = VarSet::new();
     let mut rest: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
@@ -11785,10 +11780,18 @@ fn source_order(b: &Body<'_>, src: &Body<'_>, map: &[Option<usize>], order: &[St
         }
     };
     close(&mut out, &mut bound, &mut rest);
-    for i in joins {
+    let mut take = |i: usize, out: &mut Vec<Step>, bound: &mut VarSet, rest: &mut Vec<usize>| {
         out.push(Step { at: i, mode: None });
         bound.extend(b.vars(i));
-        close(&mut out, &mut bound, &mut rest);
+        close(out, bound, rest);
+    };
+    if let Some(f) = first {
+        take(f, &mut out, &mut bound, &mut rest);
+    }
+    while !joins.is_empty() {
+        let next = joins.iter().position(|&i| bound.is_empty() || !b.vars(i).is_disjoint(&bound)).unwrap_or(0);
+        let i = joins.remove(next);
+        take(i, &mut out, &mut bound, &mut rest);
     }
     rest.is_empty().then_some(out)
 }

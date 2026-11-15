@@ -38,10 +38,11 @@ price instead of searching.
    component). It is set where a line is searched or started. A session carries it between its runs, with its plans.
 5. **A first sight starts from a kept order** (`Model::started`). There are two kinds, tried in this order:
    - the line's own order, kept under another key (the same body, solved in another component);
-   - the source rule's order, for a maintenance rule. `source_order` leads with the line's delta, else with the rule's
-     change: a join that maps to no source literal, or one over a maintenance relation of its literal's (not its old
-     rows). The source's joins follow in their order, then the rule's other joins. Each filter goes in once it can
-     run, as a search places them.
+   - the source rule's order, for a maintenance rule. `source_order` leads with the line's delta where it has one.
+     A seed keeps the source's lead: each literal stands where its source literal stood, since a seed's start is
+     the search's to choose. The source's joins follow in their order, then the rule's other joins. Each next join
+     is the first of them that shares a bound variable, while one does (no cross product while a connected join
+     remains, as in the search). Each filter goes in once it can run, as a search places them.
 
    The order is priced (`plan_inner` with the order fixed). It is taken where it is led by its delta and priced
    under what a search costs (`search_rows`): a search could not pay for itself there (decisions 0122, 0123 §7). Else
@@ -55,8 +56,9 @@ price instead of searching.
 
 ## Measured
 
-O125 replay (`spike_o125_replay`), one session step after a cold run at the step before. Debug build. Every run
-ended "same as full: true".
+O125 replay (`spike_o125_replay`): a cold run at step 11, then sessions 12 to 16. Every run ended "same as full: true".
+
+**What starts.** Debug build, one session step after a cold run at the step before:
 
 | session | first-sight lines | started from the source rule | searched |
 |---|---|---|---|
@@ -73,13 +75,43 @@ At step 12, the searched lines:
 | the source rule's line has no order kept | 50 |
 | the source's order not led by the delta | 2 |
 
-With the start on, orders searched at step 12 fell from 5,672 to 4,881. On the debug build a search cost 125 µs
-and a re-price 52 µs (2,779 and 564 spans at step 12).
+**What it saves.** `--profile profiling`, unprofiled, the cross part's retired instructions (G), two rounds each.
+The join choices' exploration was seeded (`RERAIL_JOIN_SEED=1`): with its clock seed, the same build's sessions
+moved by up to 2% between rounds, and step 16's join work by a third.
+
+| session | off | on | |
+|---|---|---|---|
+| 12 | 11.76, 11.80 | 11.98, 12.04 | +1.9% |
+| 13 | 7.10, 7.24 | 7.13, 7.22 | 0 |
+| 14 | 6.56, 6.59 | 6.40, 6.55 | −1.4% |
+| 15 | 5.05, 4.94 | 4.82, 4.81 | −3.6% |
+| 16 | 7.35, 7.35 | 7.06, 7.07 | −3.9% |
+| the five | 37.87 | 37.54 | −0.9% |
+| cold (11) | 10.44 | 10.47 | +0.3% |
+
+The join work is at parity: at step 12, 5.46 M rows against 5.44 M. On the optimized build a search costs about
+6.5 µs and a start 3.3 µs (step 13: 1,891 searches in 27.8 ms). A started line saves half a search.
+
+**The first form was a loss.** It led each seed with its change and followed the source's joins in their order.
+The sessions came out 0.3% to 2% over the searches, though join work read lower, for two reasons:
+
+- A seed led by its change could run a selective constant probe after it. `call_target__sup2__del` led with
+  `callee__minus` before `bv($at, 29, 2992, $f)`: 21,558 rows against the search's 4,489.
+- The source's sequence after a new lead could cross a join in. `tgt__held` read `patkind($k)` before `fl391_tgt`
+  bound `$k`: 164 rows against 52.
+
+Both are fixed above: a seed keeps the source's lead, and the next join is a connected one.
 
 ## Open
 
+- **A plan call's fixed cost is the larger part.** A `plan #` span's own time, outside its search, is about 18 µs a
+  line on the optimized build (step 13: 57.7 ms over 3,128 lines, against 27.8 ms of searches). That is the kept
+  plan's lookup, `live_sizes` (each column's distinct values and fan, and each constant's count), the planning
+  budget and the bookkeeping. It is paid by every line, kept or new. Starting from the source's order does not reach it.
 - **The glue rules** (1,049 lines at step 12) have no source rule. They are a few literals over one relation's
   maintenance relations, the same shape for every relation. Their search is mostly its fixed part.
+- **Orders priced over a search's cost** are priced and then searched (414 at step 12). That is a start's cost
+  spent for nothing.
 - **Across processes.** The line orders live with a session's plans in memory. A new process takes plans from the
   store by key (decision 0116), and its line orders start empty.
 
@@ -89,7 +121,12 @@ and a re-price 52 µs (2,779 and 564 spans at step 12).
   `h__del(x, y) :- q(y), e__minus(x, y), !h__old(x, y)` of `h(x, y) :- e(x, y), q(y)`.
   - Its origin is `h`'s rule; a rule written with no source has none.
   - Its map is `[1, 0, none]`.
-  - From the source's order `q, e`, it is led by `e__minus`, tests `h__old` once that binds its terms, then joins
-    `q`. With a delta, the delta leads.
+  - A seed keeps the source's lead: from `e, q` it runs `e__minus`, then `h__old` once that binds its terms, then
+    `q`; from `q, e` it runs `q`, `e__minus`, `h__old`. With a delta, the delta leads.
+  - An insert of `g(x, z) :- a(x), e(x, y), c(y, z)` led by `a__plus(x)`, from the source's `c, e, a`: `e` (connected)
+    before `c`.
+- `walked_orders_are_costed_against_the_walked_order_that_ran` failed about one run in ten: a walk within the
+  walks' spread is not taken on its walk, but an untried order within the margin is still explored at
+  `explore_rate`, a clock-seeded draw. The test now admits the exploration, named as such.
 - Logic crate: `plan::` 134 (1 ignored), `native::` 52, `cut_tests` 4, `maintain` 3. Engine: `corpus::session` 15,
   `corpus::tests` 15, `logic::plan::tests` 55.
