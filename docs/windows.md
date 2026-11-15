@@ -443,8 +443,11 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
-  at once, and the proof tries again until its limit. The pipe is not opened as a file: a write its holder never reads
-  would then hold the process until the holder ends. macOS and Linux treat `EPERM` as another user's.
+  at once with `ENOENT`, as it does for a pipe that is gone. A plain open of the pipe, closed at once, tells the two
+  apart (`EBUSY` while every instance is taken), and the proof tries again on each tick of Windows' timer, about every
+  16 ms, until its limit: an instance the engine frees, or a pipe that goes, is found within a tick. The request never
+  goes over the pipe opened as a file: a write its holder never reads would then hold the process until the holder
+  ends. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
   asks it before it sends the capability the file records to the URL it records: `lookupDaemon`, the MCP bridge
   (`src/api/mcp-bridge.ts`), and the status line, the rules link and the start check

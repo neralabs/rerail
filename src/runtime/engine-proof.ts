@@ -1,9 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
+import { closeSync, openSync } from "node:fs";
 import { request, type RequestOptions } from "node:http";
 import { connect, type Socket } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
-import { isNamedPipe, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { isNamedPipe, pipeNameOf } from "./engine-pipe.js";
 
 /**
  * How a process asks whether the engine on a socket or pipe is this Rerail home's without presenting the home's access
@@ -19,8 +20,13 @@ const CHALLENGE = /^[0-9a-f]{64}$/u;
 const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
-/** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
-const PIPE_RETRY_MS = 50;
+/**
+ * How long a proof waits before it tries again a Windows pipe whose instances are all taken. A timer there fires on a
+ * tick of the system clock, every 15.6 ms, and this wait, shorter than a tick and longer than a try, ends on the next
+ * one: an instance a busy engine frees, or a pipe that goes, is found within a tick. A wait of 1 ms would end there
+ * too, but on a machine whose clock ticks every millisecond it would make a thousand tries a second.
+ */
+const PIPE_RETRY_MS = 10;
 /**
  * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
  * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
@@ -76,9 +82,21 @@ function pipeConnectPath(path: string): string {
   return String.raw`\\?\pipe` + "\\" + pipeNameOf(path);
 }
 
-/** Whether a connect to the pipe `path` failed with `error` only because every instance was taken: the pipe is listed. */
+/**
+ * Whether a connect to the pipe `path` failed with `error` only because every instance was taken. The connect fails with
+ * `ENOENT` both then and when the pipe is gone. A plain open of the pipe tells the two apart in one call (`EBUSY` while
+ * every instance is taken), where a listing of `\\.\pipe\` would read every pipe on the machine at each try. An open
+ * that gets an instance, freed since the connect, closes it at once, and the proof tries again. An open that fails
+ * otherwise counts as busy, so a pipe the open cannot tell about is never read as gone.
+ */
 function pipeBusy(error: unknown, path: string): boolean {
-  return (error as NodeJS.ErrnoException).code === "ENOENT" && pipeListed(path);
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+  try {
+    closeSync(openSync(path, "r+"));
+    return true;
+  } catch (opened) {
+    return (opened as NodeJS.ErrnoException).code !== "ENOENT";
+  }
 }
 
 /** Whether `socket` connected; the error it failed with when it did not. */
