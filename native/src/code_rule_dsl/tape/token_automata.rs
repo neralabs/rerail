@@ -641,3 +641,71 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Built> {
     }
     r.0.is_empty().then_some(Built { texts, kinds, unsupported, extras })
 }
+
+// ---------------------------------------------------------------------------------------------
+// The census the token tests ask (`token_census`): what the automata say, by name, without the automata.
+
+/// Per kind, the (token, field) pairs a tape of it may leave out; per kind, the kinds that have it as a named child;
+/// every token text some automaton moves on; and the grammar's extras.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Census {
+    pub(crate) implied: BTreeMap<String, BTreeSet<(String, String)>>,
+    pub(crate) parents: BTreeMap<String, BTreeSet<String>>,
+    pub(crate) tokens: BTreeSet<String>,
+    pub(crate) extras: BTreeSet<String>,
+}
+
+/// The census of `kinds`' automata, their names in `texts`, and the grammar's `extras`.
+pub(crate) fn census<'a>(texts: &[String], kinds: impl Iterator<Item = (&'a Sym, &'a Automaton)>, extras: &BTreeSet<String>) -> Census {
+    let mut out = Census { extras: extras.clone(), ..Census::default() };
+    for (kind, automaton) in kinds {
+        let name = &texts[*kind as usize];
+        let entry = out.implied.entry(name.clone()).or_default();
+        for label in automaton.dropped() {
+            entry.insert((texts[label.name as usize].clone(), texts[label.field as usize].clone()));
+        }
+        for label in automaton.moves.iter().flat_map(|moves| moves.keys()) {
+            if label.token {
+                out.tokens.insert(texts[label.name as usize].clone());
+            } else {
+                out.parents.entry(texts[label.name as usize].clone()).or_default().insert(name.clone());
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn encode_census(census: &Census) -> Vec<u8> {
+    let mut w = Writer(Vec::new());
+    w.u(FORMAT);
+    w.n(census.implied.len());
+    for (kind, pairs) in &census.implied {
+        w.text(kind);
+        w.n(pairs.len());
+        for (token, field) in pairs {
+            w.text(token);
+            w.text(field);
+        }
+    }
+    w.n(census.parents.len());
+    for (kind, parents) in &census.parents {
+        w.text(kind);
+        w.texts(parents.iter());
+    }
+    w.texts(census.tokens.iter());
+    w.texts(census.extras.iter());
+    w.0
+}
+
+/// The census `encode_census` wrote; `None` for bytes it did not write.
+pub(crate) fn decode_census(bytes: &[u8]) -> Option<Census> {
+    let mut r = Reader(bytes);
+    if r.u()? != FORMAT {
+        return None;
+    }
+    let implied = (0..r.n()?).map(|_| Some((r.text()?, (0..r.n()?).map(|_| Some((r.text()?, r.text()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
+    let parents = (0..r.n()?).map(|_| Some((r.text()?, r.texts()?))).collect::<Option<_>>()?;
+    let tokens = r.texts()?;
+    let extras = r.texts()?;
+    r.0.is_empty().then_some(Census { implied, parents, tokens, extras })
+}

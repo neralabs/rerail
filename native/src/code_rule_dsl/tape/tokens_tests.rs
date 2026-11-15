@@ -57,8 +57,11 @@ fn the_automata_built_with_the_build_are_the_grammars() {
         let built = TokenGrammar::of(lang, &language).unwrap_or_else(|| panic!("{lang:?}: no automata built with the build"));
         assert_eq!(built.kind_count(), fresh.kind_count(), "{lang:?}");
         assert_eq!(built.implied_tokens(), fresh.implied_tokens(), "{lang:?}");
-        assert_eq!(built.parents(), fresh.parents(), "{lang:?}");
-        assert_eq!(built.token_texts(), fresh.token_texts(), "{lang:?}");
+        // The census the token tests read, as the build wrote it.
+        let census = crate::code_rule_dsl::tape::token_census::Lang::of(lang).unwrap_or_else(|| panic!("{lang:?}: no census"));
+        assert_eq!(census.implied, fresh.implied_tokens(), "{lang:?}");
+        assert_eq!(census.parents, fresh.parents(), "{lang:?}");
+        assert_eq!(census.tokens, fresh.token_texts(), "{lang:?}");
         compared += 1;
     }
     assert!(compared >= 8, "{compared} grammars compared");

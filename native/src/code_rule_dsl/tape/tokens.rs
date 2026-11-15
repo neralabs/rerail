@@ -67,8 +67,6 @@ pub struct TokenGrammar {
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
-    /// Every token text some kind's automaton implies somewhere.
-    implied_texts: BTreeSet<String>,
     /// Every token text and field name, sorted, leaked once per dialect ([`Self::intern`]).
     interned: Vec<&'static str>,
 }
@@ -101,16 +99,11 @@ impl TokenGrammar {
         let kind_sym = (0..language.node_kind_count() as u16)
             .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied())).collect();
         let filters = kinds.iter().filter(|(_, a)| a.dropped().next().is_some()).map(|(&sym, _)| sym).collect();
-        let implied_texts = kinds
-            .values()
-            .flat_map(Automaton::dropped)
-            .map(|label| texts[label.name as usize].clone())
-            .collect();
         let mut interned: Vec<&'static str> = texts.iter().map(|text| &*Box::leak(text.clone().into_boxed_str())).collect();
         interned.push("");
         interned.sort_unstable();
         interned.dedup();
-        Self { names, texts, kinds, field_sym, kind_sym, filters, unsupported, extras, implied_texts, interned }
+        Self { names, texts, kinds, field_sym, kind_sym, filters, unsupported, extras, interned }
     }
 
     pub fn kind_count(&self) -> usize {
@@ -190,24 +183,6 @@ impl TokenGrammar {
 }
 
 impl TokenGrammar {
-    /// Every token text some kind's automaton implies somewhere: what a tape may leave out.
-    pub(in crate::code_rule_dsl) fn implied_texts(&self) -> &BTreeSet<String> {
-        &self.implied_texts
-    }
-
-    /// Whether `regex` tests a token the grammar implies somewhere: it matches one. A regex that
-    /// also matches names (`(?s).`, `^`) counts too: `not follows (?s).` asks for a first child,
-    /// and a node after an implied `(` was never one.
-    pub fn tests_implied(&self, regex: &regex::Regex) -> bool {
-        self.implied_texts.iter().any(|token| regex.is_match(token))
-    }
-
-    /// Whether `regex` tests a token the grammar implies in `field` somewhere: a `has` in a field
-    /// whose implied words hold no such token asks only for stored children.
-    pub fn tests_implied_in(&self, regex: &regex::Regex, field: &str) -> bool {
-        self.kinds.values().flat_map(Automaton::dropped).any(|label| self.texts[label.field as usize] == field && regex.is_match(&self.texts[label.name as usize]))
-    }
-
     /// Whether `kind` is one of the grammar's extras (a comment and the like).
     pub fn is_extra(&self, kind: &str) -> bool {
         self.extras.contains(kind)
@@ -358,44 +333,32 @@ impl TokenGrammar {
         out
     }
 
-    /// Per kind: the (token, field) pairs a tape of it may leave out: those some implied word of
-    /// its automaton holds, less the kept ones ([`kept`]). `""` is no
-    /// field.
+    /// What the automata say, by name ([`token_automata::Census`]): per kind, the (token, field) pairs a tape of it
+    /// may leave out (those some implied word of its automaton holds, less the kept ones; `""` is no field), each
+    /// kind's parents, and every token text some automaton moves on.
+    pub(in crate::code_rule_dsl) fn census(&self) -> token_automata::Census {
+        token_automata::census(&self.texts, self.kinds.iter(), &self.extras)
+    }
+
+    /// Per kind: the (token, field) pairs a tape of it may leave out ([`Self::census`]).
     pub fn implied_tokens(&self) -> BTreeMap<String, BTreeSet<(String, String)>> {
-        let mut out: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
-        for (kind, automaton) in &self.kinds {
-            let entry = out.entry(self.texts[*kind as usize].clone()).or_default();
-            for label in automaton.dropped() {
-                entry.insert((self.texts[label.name as usize].clone(), self.texts[label.field as usize].clone()));
-            }
-        }
-        out
+        self.census().implied
     }
 
     /// Per kind: the kinds whose automata have it as a named child.
     pub fn parents(&self) -> BTreeMap<String, BTreeSet<String>> {
-        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (kind, automaton) in &self.kinds {
-            for label in automaton.moves.iter().flat_map(|moves| moves.keys()).filter(|label| !label.token) {
-                out.entry(self.texts[label.name as usize].clone()).or_default().insert(self.texts[*kind as usize].clone());
-            }
-        }
-        out
+        self.census().parents
     }
 
     /// Every token text some automaton moves on.
     pub fn token_texts(&self) -> BTreeSet<String> {
-        self.kinds
-            .values()
-            .flat_map(|automaton| automaton.moves.iter().flat_map(|moves| moves.keys()))
-            .filter(|label| label.token)
-            .map(|label| self.texts[label.name as usize].clone())
-            .collect()
+        self.census().tokens
     }
 }
 
-// `built(lang)`: the automata of a dialect's grammar, built with the build (`token_automata::GRAMMARS`); `None` for a
-// dialect whose tapes keep all their tokens, or a grammar that has none.
+// `built(lang)`: the automata of a dialect's grammar, built with the build (`token_automata::GRAMMARS`), and
+// `census(lang)`, what they say by name; `None` for a dialect whose tapes keep all their tokens, or a grammar that has
+// none.
 include!(concat!(env!("OUT_DIR"), "/token_automata.rs"));
 
 /// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
