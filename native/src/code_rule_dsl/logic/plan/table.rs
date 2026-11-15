@@ -257,8 +257,9 @@ impl<T> ColMap<T> {
             (0..w).filter_map(move |c| self.vals[(b + c) as usize].as_ref().map(|v| ((rel_name(r as RelId), c as usize), v)))
         })
     }
-    /// Relation `rel`'s columns with a value.
-    pub fn of_rel(&self, rel: &str) -> impl Iterator<Item = (usize, &T)> {
+    /// Relation `rel`'s columns with a value. The iterator borrows `self` only, not `rel` (`use<'a, T>`; Relax's
+    /// checker refused the capture of `rel`'s lifetime that edition 2024 implies, E0310).
+    pub fn of_rel<'a>(&'a self, rel: &str) -> impl Iterator<Item = (usize, &'a T)> + use<'a, T> {
         let block = find(rel).and_then(|r| self.base.get(r as usize).copied()).filter(|(b, _)| *b != u32::MAX);
         block.into_iter().flat_map(move |(b, w)| (0..w).filter_map(move |c| self.vals[(b + c) as usize].as_ref().map(|v| (c as usize, v))))
     }

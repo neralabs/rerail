@@ -3465,7 +3465,10 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             crate::code_rule_dsl::logic::simplify::simplify(&mut p);
             let p = front::prune(p);
             // Q3's property itself: no widened copy is left with its relation's own rules, each copy read as its
-            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads).
+            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads). A copy equals
+            // its relation when their rules are equal with every equal copy read as its relation: the greatest such
+            // set, from all copies assumed equal, each dropped once its rules differ. (A copy whose read copy differs,
+            // as a cross-file `node_text` read makes it, is rightly its own.)
             let copies = lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| format!("rr_wide_{}_", a.rel)).collect::<Vec<_>>();
             let source = |rel: &str| -> String {
                 let mut at = rel;
@@ -3474,21 +3477,35 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
                 at.to_owned()
             };
-            let as_sources = |x: &front::Rule| {
-                let mut x = x.clone();
-                x.head.rel = source(&x.head.rel).as_str().into();
-                for l in x.body.make_mut().iter_mut() {
-                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                        a.rel = source(&a.rel).as_str().into();
-                    }
-                }
-                format!("{x:?}")
+            let rules_as = |rel: &str, same: &BTreeSet<String>| {
+                let name = |n: &str| if same.contains(n) { source(n) } else { n.to_owned() };
+                p.rules
+                    .iter()
+                    .filter(|x| x.head.rel == rel)
+                    .map(|x| {
+                        let mut x = x.clone();
+                        x.head.rel = name(&x.head.rel).as_str().into();
+                        for l in x.body.make_mut().iter_mut() {
+                            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                                a.rel = name(&a.rel).as_str().into();
+                            }
+                        }
+                        format!("{x:?}")
+                    })
+                    .collect::<BTreeSet<_>>()
             };
-            for w in p.decls.keys().filter(|w| source(w) != w.as_str()) {
+            let mut same: BTreeSet<String> = p.decls.keys().filter(|w| source(w) != w.as_str()).map(|w| w.to_string()).collect();
+            loop {
+                let next: BTreeSet<String> = same.iter().filter(|w| rules_as(w, &same) == rules_as(&source(w), &same)).cloned().collect();
+                if next == same {
+                    break;
+                }
+                same = next;
+            }
+            for w in &same {
                 let r = source(w);
-                let rules_of = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(as_sources).collect::<BTreeSet<_>>();
-                let mine = rules_of(w);
-                assert!(mine.is_empty() || mine != rules_of(&r), "{}: {w} is left with {r}'s own rules", path.display());
+                let raw = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| format!("{x:?}")).collect::<Vec<_>>();
+                assert!(raw(w).is_empty(), "{}: {w} is left with {r}'s own rules\n {w}: {:#?}\n {r}: {:#?}", path.display(), raw(w), raw(&r));
             }
             let kept = p.rules.clone();
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
