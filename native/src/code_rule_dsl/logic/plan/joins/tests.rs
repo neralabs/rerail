@@ -604,3 +604,39 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {
     o.iter().map(|&at| (at as u16, None)).collect()
 }
+
+#[test]
+fn a_maintenance_rule_starts_from_its_source_rules_order() {
+    use crate::code_rule_dsl::logic::plan::body::{Placed, RuleKey, Versions};
+    use crate::code_rule_dsl::logic::plan::{Step, source_order};
+    use crate::code_rule_dsl::logic::program_image::{Builder, T};
+    // The run's version: `h(x, y) :- e(x, y), q(y)`. Its form (decision 0241) holds an overdelete of `e`'s position,
+    // written as `maintain::write_ir` writes it: the source's literals, `e`'s over its lost rows, and a test the
+    // rewrite adds.
+    let p = parse(".decl e(x: number, y: number)\n.decl q(y: number)\n.decl h(x: number, y: number)\nh(x, y) :- e(x, y), q(y).\n.output h\n").unwrap();
+    let placed = Placed::of_program(&p).unwrap();
+    let src_id = placed.id(0);
+    let mut b = Builder::under(&placed.v);
+    let (x, y) = (T::Var("x"), T::Var("y"));
+    b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
+    // A rule written with no source has no origin.
+    b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).finish().unwrap();
+    let (form, _) = b.finish().unwrap();
+    let mut vs = Versions::of_placed(placed);
+    let k = vs.push(Placed::derived(form, None));
+    let del = vs.at(RuleKey::new(k, 0));
+    let src = del.origin().expect("the overdelete's source rule");
+    assert_eq!(src.rel(src.head()), "h");
+    assert!(vs.at(RuleKey::new(k, 1)).origin().is_none());
+    // `q(y)` is the source's second literal, `e__minus(x, y)` its first's lost rows; `!h__old(x, y)` is no source's.
+    let map = del.source_map(&src);
+    assert_eq!(map, vec![Some(1), Some(0), None]);
+    // The source ran `q` first, then `e`: the overdelete is led by its change (`e__minus`), tests `h__old` as soon as
+    // that binds its terms, then follows the source's other joins.
+    let steps = |o: &[usize]| o.iter().map(|&at| Step { at, mode: None }).collect::<Vec<_>>();
+    let got = source_order(&del, &src, &map, &steps(&[1, 0]), None).expect("an order");
+    assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![1, 2, 0]);
+    // With a delta, the delta leads.
+    let got = source_order(&del, &src, &map, &steps(&[0, 1]), Some(0)).expect("an order");
+    assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
+}

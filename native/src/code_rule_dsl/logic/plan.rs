@@ -956,8 +956,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 10] = [const { std::sync::atomic::AtomicU64::new(0) }; 10];
-const PLAN_CACHE_NAMES: [&str; 10] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 12] = [const { std::sync::atomic::AtomicU64::new(0) }; 12];
+const PLAN_CACHE_NAMES: [&str; 12] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price", "started: its line's order", "started: its source rule's order"];
 /// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
 /// ran, ran over a search's work, or its inputs grew past what that allows.
 static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
@@ -1286,6 +1286,40 @@ struct RunPlans {
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
     /// shared with its jobs as the plans are.
     planned_now: rustc_hash::FxHashSet<PlanKey>,
+    /// The last order kept for each rule line (its body and delta, `line_key`), whatever component solved it: a line
+    /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
+    /// A session's, carried between its runs with its plans.
+    orders: rustc_hash::FxHashMap<u128, Arc<[Step]>>,
+}
+
+/// Decision 0258: a line's key apart from what solves it: its body and its delta.
+fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
+    super::derived::digest(|d| {
+        d.str("line");
+        b.digest(d);
+        d.u64(first.map_or(u64::MAX, |f| f as u64));
+    })
+}
+
+/// The order last kept for line `line` (`RunPlans::orders`).
+fn orders_get(line: u128) -> Option<Arc<[Step]>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.read().orders.get(&line).cloned()))
+}
+
+/// Keeps `order` as line `line`'s last (`RunPlans::orders`).
+fn orders_put(line: u128, order: &[Step]) {
+    PLANS.with(|p| {
+        if let Some(s) = p.borrow().as_ref() {
+            s.write().orders.insert(line, order.into());
+        }
+    });
+}
+
+/// Decision 0258: a line seen first starts from an order kept before (its own under another key, or its source
+/// rule's). `RERAIL_SOURCE_ORDERS=off` searches it, as before (a measurement aid).
+fn source_orders() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_SOURCE_ORDERS").is_ok_and(|v| v == "off"));
+    *ON
 }
 
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
@@ -1569,14 +1603,14 @@ pub struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>, rustc_hash::FxHashMap<u128, Arc<[Step]>>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
-        let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept: kept.unwrap_or_default(), ..Default::default() }))));
+        let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept, orders, ..Default::default() }))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1597,7 +1631,7 @@ impl Drop for KeepPlans {
         let plans = PLANS.with(|p| p.borrow_mut().take()).map(|p| Arc::try_unwrap(p).map_or_else(|p| std::mem::take(&mut *p.write()), parking_lot::RwLock::into_inner));
         keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
-            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans.kept)));
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans.kept, plans.orders)));
         }
     }
 }
@@ -2146,6 +2180,19 @@ impl Model {
                 }
             }
         } else if !mispriced {
+            // A line seen first starts from an order kept before, where a search could not pay (decision 0258).
+            if !pending && let Some((got, how)) = self.started(pf, b, first) {
+                plan_cache(10 + how);
+                super::profile::decision("plan cache (decision 0038)", || format!("started from {} (decision 0258)", ["its line's order kept under another key", "its source rule's order"][how]));
+                PLANS.with(|p| {
+                    if let Some(p) = p.borrow().as_ref() {
+                        plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, None, got.0.1 / SEED.with(|c| c.get()).max(1.0), None, None));
+                    }
+                });
+                orders_put(line_key(b, first), &got.0.0);
+                remember(&key, &got);
+                return Ok(got);
+            }
             plan_cache(1);
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
@@ -2161,8 +2208,47 @@ impl Model {
                 plans_put(p, key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
+        if source_orders() {
+            orders_put(line_key(b, first), &got.0.0);
+        }
         remember(&key, &got);
         Ok(got)
+    }
+
+    /// Decision 0258: an order for a line seen first, from one kept before, priced now, where it is under what a
+    /// search costs (a search could not pay for itself: decisions 0122, 0123 §7) and led by the line's delta: the
+    /// line's own order kept under another key (its component differs), else, for a maintenance rule (`Body::origin`),
+    /// its source rule's order (`source_order`). Which of the two (0, 1) with it.
+    fn started(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>) -> Option<((Plan, Option<super::profile::RulePlan>), usize)> {
+        if !source_orders() {
+            return None;
+        }
+        // Why a line is searched, not started (the profile's decisions).
+        let not = |why: &str| {
+            super::profile::decision("source orders (decision 0258)", || format!("searched: {why}"));
+            None
+        };
+        let (order, how) = match orders_get(line_key(b, first)) {
+            Some(o) => (o.to_vec(), 0),
+            None => {
+                let Some(src) = b.origin() else { return not(if b.rule.source().is_some() { "a source of another relation" } else { "no source rule" }) };
+                let map = b.source_map(&src);
+                // The source's line with the same delta, else its line with none.
+                let at = first.and_then(|f| map[f]);
+                let Some(kept) = orders_get(line_key(&src, at)).or_else(|| at.and_then(|_| orders_get(line_key(&src, None)))) else { return not("its source rule's line has no order kept") };
+                let Some(order) = source_order(b, &src, &map, &kept, first) else { return not("a filter of the source's order never runs") };
+                (order, 1)
+            }
+        };
+        let _span = super::profile::span(|| "start".into());
+        let Ok(got) = self.plan_inner(pf, b, first, Some(&order), false) else { return not("the order does not run") };
+        if !self.valid_live_driver(&got.0.0, b, first) {
+            return not("the order is not led by its delta");
+        }
+        if got.0.1 > search_rows(b, first) {
+            return not("priced over a search's cost");
+        }
+        Some((got, how))
     }
 
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
@@ -11658,6 +11744,55 @@ struct Starts {
 /// Decision 0245: the heavy key a walk or trial from `lead` splits by (`has`: whether a relation's column has heavy
 /// values): a variable of the lead at such a column (`None` for the link's route), else the one atom holding both a
 /// variable at such a column and a variable of the lead (`inf(f, m)` from `kind(m, return)`): its key's column, and
+/// Decision 0258: maintenance rule `b`'s order from its source rule `src`'s kept order `order` (`map`: each literal's
+/// literal of the source, `Body::source_map`). Led by the line's delta (`first`), else by the rule's change (a join
+/// that is no source literal, as `h__del(..)` of a rederive, or one over a maintenance relation of its literal's,
+/// `r__minus`, not its old rows); then the source's joins in their order, then the rule's other joins; each filter
+/// once it can run, as a search places them. `None` where a filter never can.
+fn source_order(b: &Body<'_>, src: &Body<'_>, map: &[Option<usize>], order: &[Step], first: Option<usize>) -> Option<Vec<Step>> {
+    let mut of = vec![None; src.len()];
+    for (i, m) in map.iter().enumerate() {
+        if let Some(j) = *m {
+            of[j] = Some(i);
+        }
+    }
+    let change = |i: usize| {
+        b.is_join(i)
+            && match (map[i], b.atom(i)) {
+                (None, _) => true,
+                (Some(j), Some(a)) => src.atom(j).is_some_and(|c| b.rel(a) != src.rel(c)) && !b.rel(a).ends_with("__old"),
+                (Some(_), None) => false,
+            }
+    };
+    let mut joins: Vec<usize> = first.or_else(|| (0..b.len()).find(|&i| change(i))).into_iter().collect();
+    for s in order {
+        if let Some(i) = of.get(s.at).copied().flatten()
+            && b.is_join(i)
+            && !joins.contains(&i)
+        {
+            joins.push(i);
+        }
+    }
+    joins.extend((0..b.len()).filter(|&i| b.is_join(i)).collect::<Vec<_>>().into_iter().filter(|i| !joins.contains(i)).collect::<Vec<_>>());
+    let mut out: Vec<Step> = Vec::with_capacity(b.len());
+    let mut bound = VarSet::new();
+    let mut rest: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
+    let close = |out: &mut Vec<Step>, bound: &mut VarSet, rest: &mut Vec<usize>| {
+        while let Some(p) = rest.iter().position(|&l| b.ready(l, bound)) {
+            let l = rest.remove(p);
+            out.push(Step { at: l, mode: None });
+            bound.extend(b.vars(l));
+        }
+    };
+    close(&mut out, &mut bound, &mut rest);
+    for i in joins {
+        out.push(Step { at: i, mode: None });
+        bound.extend(b.vars(i));
+        close(&mut out, &mut bound, &mut rest);
+    }
+    rest.is_empty().then_some(out)
+}
+
 /// its column of that variable with the lead's.
 fn heavy_link(b: &Body<'_>, lead: usize, has: &dyn Fn(&str, usize) -> bool) -> Option<(String, usize, Option<(usize, usize)>)> {
     let Lit::Atom(la) = b.view(lead) else { return None };
