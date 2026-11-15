@@ -1683,7 +1683,8 @@ pub mod tests {
 
     /// A string's, a comment's and a backtick's tokens end plainly (`plain_end`): no start is
     /// put back after them, as the lean lexer's arms for them put none back. A number's can end
-    /// before a word's byte (`12abc`), and `#include`'s inside a run: theirs are put back.
+    /// before a word's byte (`12abc`), and `#include`'s inside a run: theirs are put back, the
+    /// run's byte alone (`word_end`).
     #[test]
     fn a_strings_end_puts_no_start_back() {
         let c = crate::compiled().expect("compiles");
@@ -1693,6 +1694,15 @@ pub mod tests {
         }
         for b in [b'0', b'7', b'#', b'a', b'('] {
             assert!(!t.plain_end_at(b), "{:?} does not", b as char);
+        }
+        // A number's and `#include`'s last byte is no pair's first (`12.5`'s dot is no run's
+        // last): the byte after is put back where it is a run byte alone, as the lean lexer's
+        // number arm reads the word after it. A punctuation's can be a pair's first.
+        for b in [b'0', b'7', b'#'] {
+            assert!(t.word_end_at(b), "{:?} ends with no pair's first byte", b as char);
+        }
+        for b in [b'"', b'/', b'('] {
+            assert!(!t.word_end_at(b), "{:?} is not of the class", b as char);
         }
     }
 

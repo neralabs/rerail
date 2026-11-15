@@ -767,6 +767,49 @@ pub fn output_byte_at(native: &BlockNative, o: u16, off: i32) -> Option<[u64; 4]
     inst_byte_at(native, x, off - d, 0)
 }
 
+/// The bytes a run of output `o`'s bits (`EndRule::Run`) can end with: `output_byte_at`'s at
+/// the run's bytes, but an `Or`'s term whose byte after is surely one of the run's (a test of
+/// that byte alone, another term) ends none, as `dot & next(digit)` in `digit | …`.
+pub fn run_last_bytes(native: &BlockNative, o: u16) -> Option<[u64; 4]> {
+    let x = usize::from(*native.outputs.get(usize::from(o))?);
+    let d = i32::from(native.output_delays[usize::from(o)]);
+    let mut terms = Vec::new();
+    let mut todo = vec![x];
+    while let Some(t) = todo.pop() {
+        match native.insts[t] {
+            BlockInst::Or(a, b) => todo.extend([usize::from(a), usize::from(b)]),
+            _ => terms.push(t),
+        }
+    }
+    // The bytes whose bit is surely set: a term that tests its own byte alone (a byte's test,
+    // shifted by `Prev`s to the output's place).
+    fn alone(native: &BlockNative, t: usize) -> bool {
+        match native.insts[t] {
+            BlockInst::EqByte(_) | BlockInst::Class { .. } => true,
+            BlockInst::Prev(a, _) => alone(native, usize::from(a)),
+            _ => false,
+        }
+    }
+    let mut sure = [0u64; 4];
+    for &t in &terms {
+        if alone(native, t) {
+            if let Some(n) = needs_at(native, t, &mut HashMap::new()).filter(|n| n.lo == -d && n.hi == -d) {
+                sure = std::array::from_fn(|k| sure[k] | n.set[k]);
+            }
+        }
+    }
+    let mut set = [0u64; 4];
+    for &t in &terms {
+        let after = inst_byte_at(native, t, 1 - d, 0);
+        if after.is_some_and(|a| (0..4).all(|k| a[k] & !sure[k] == 0)) {
+            continue;
+        }
+        let at = inst_byte_at(native, t, -d, 0)?;
+        set = std::array::from_fn(|k| set[k] | at[k]);
+    }
+    Some(set)
+}
+
 fn inst_byte_at(native: &BlockNative, x: usize, off: i32, depth: u32) -> Option<[u64; 4]> {
     if depth > 64 {
         return None;

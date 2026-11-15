@@ -1856,6 +1856,52 @@ after the string are `lsr; lsl; ldr; cmp; csel` (lean: `cmp; b`,
 then the mask). Counts, reported: words 105.8, punctuation 53.2,
 mixed 56.2, strings 297.3, numbers 173.0, comments 271.9.
 
-Still open around the call: after it, seven values are reloaded
-(the table base, the file's pointers, constants), where lean keeps
-them in callee-saved registers.
+Around the call, the reloads after it (three loads, two constants,
+the table's address) are about lean's: its `starts`, its window's
+words and the reader's result are in memory too.
+
+## A number puts back a run byte alone
+
+**Intro.** Lean's number arm asks one question after the digits:
+is the next byte a word byte (`CLASS[b[end]] & IDENT`)? If so, it
+reads that word. Ours still put back both kinds of left-out start
+after a number, a run byte and a pair's second, and checked for a
+run of pairs across the token's end. That is 14 instructions, with
+two words loaded from the stack.
+
+A pair's second is left out only after a pair's first byte. A
+number never ends with one: its last byte is a digit.
+
+**What the compiler knows.** A rule's tokens' last bytes
+(`last_bytes`), from the grammar:
+
+- a reader's closers at their offset, its opener's bytes where none
+  closes, and the rule it goes on to;
+- a run's first byte, and the bytes the run can end with;
+- a pair's first byte and its seconds.
+
+The bytes a run can end with (`run_last_bytes`) leave out an `Or`
+term whose next byte is surely in the run. In `.rr`'s number:
+
+```
+mask num_run = digit | (dot & prev(digit) & next(digit))
+// a dot has a digit after it: it never ends the run.
+// The number's last bytes: digits.
+```
+
+Where no last byte is a pair's first (`word_end`), the rule's tokens
+take a third form, `TokenEnd::Word`. Its tail puts back the byte
+after the token where it is a run byte (`w & bit`), with no reread.
+After a last byte that is no run byte, that bit is a start already,
+so it changes nothing. The form is the entry's `TOKEN_WORD_END`.
+That bit is free on a rare byte, which has no punctuation code. The
+rare body branches on it after the plain bit.
+
+For `.rr`, the number and the `#` word take it.
+
+Stepped, a number and its comma: 193 → 187 (lean about 128; the
+number's reader is 69 of ours, lean's digit loop is inline). The
+tail after the number is 9 instructions: the mask (2), the run byte
+put back (4), the block (3). Counts, reported: words 105.8,
+punctuation 53.2, mixed 56.2, strings 297.5, numbers 166.6,
+comments 272.2.

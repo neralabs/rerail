@@ -1692,8 +1692,9 @@ pub struct RecordTables {
     /// block's rare starts split its starts into runs (`record_tokens`); none where the loop's
     /// starts are not the lean lexer's.
     pub rare: Option<[[u8; 16]; 2]>,
-    /// Each rule's tokens end plainly (`plain_end`, a first byte's `TOKEN_PLAIN_END`).
-    pub plain: Vec<bool>,
+    /// How each rule's tokens end (`TokenEnd`, a first byte's `TOKEN_PLAIN_END` or
+    /// `TOKEN_WORD_END`).
+    pub ends: Vec<TokenEnd>,
     pub table: crate::records::WordTable,
     /// The extracts of the first and last bytes.
     pub starts: u16,
@@ -1775,6 +1776,10 @@ const TOKEN_PUNCT: i64 = 34;
 /// (`plain_end`): the starts after such a token are those past it, no byte put back, as the
 /// lean lexer's `starts &= bits(cursor - base)` after its string's or comment's arm.
 const TOKEN_PLAIN_END: i64 = 35;
+/// 1 where the byte's rule's tokens end with no pair's first byte (`word_end`): the byte after
+/// it put back where it is a run byte. On a byte of no punctuation, whose
+/// code's bits (`TOKEN_PUNCT_ONE`) are free.
+const TOKEN_WORD_END: i64 = 36;
 
 /// A punctuation's code in its entry (`RecordTables::punct_in_entry`), past the kind's bits
 /// (none set in a code): from this bit to the entry's last.
@@ -1784,6 +1789,11 @@ impl RecordTables {
     /// Whether first byte `b`'s tokens end plainly (`TOKEN_PLAIN_END`, `plain_end`).
     pub fn plain_end_at(&self, b: u8) -> bool {
         self.words[self.token / 8 + usize::from(b)] >> TOKEN_PLAIN_END & 1 == 1
+    }
+
+    /// Whether first byte `b`'s tokens end with a run byte, no pair's first (`TOKEN_WORD_END`).
+    pub fn word_end_at(&self, b: u8) -> bool {
+        self.words[self.token / 8 + usize::from(b)] >> TOKEN_WORD_END & 1 == 1
     }
 
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1897,7 +1907,15 @@ impl RecordTables {
             _ => None,
         });
         // Each rule's tokens end plainly (`plain_end`), with the lean lexer's starts.
-        let plain_rules: Vec<bool> = (0..r.rules.len()).map(|k| lean.and(fused).is_some_and(|(kn, kr)| plain_end(r, made, k, &(0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == k)).collect::<Vec<u8>>(), kn, kr, 0))).collect();
+        // Else, their last byte no pair's first (`word_end`); else any.
+        let ends_of: Vec<TokenEnd> = (0..r.rules.len()).map(|k| {
+            let starts: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == k)).collect();
+            match lean.and(fused) {
+                Some((kn, kr)) if plain_end(r, made, k, &starts, kn, kr, 0) => TokenEnd::Plain,
+                Some((kn, kr)) if word_end(r, made, k, &starts, kn, kr) && starts.iter().all(|&b| !punct_codes[usize::from(b)].2) => TokenEnd::Word,
+                _ => TokenEnd::Any,
+            }
+        }).collect();
         let mut entries = [0u64; 512];
         for (at, e) in entries.iter_mut().enumerate() {
             let (b, two) = (at & 255, at >= 256);
@@ -1913,8 +1931,11 @@ impl RecordTables {
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
             let fr = fr && (lean.is_none() || run_word.is_some_and(|o| run_fused(made, o, b as u8)));
             *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
-            if plain_rules.get(usize::from(rule)).copied().unwrap_or(false) {
-                *e |= 1 << TOKEN_PLAIN_END;
+            match ends_of.get(usize::from(rule)) {
+                Some(TokenEnd::Plain) => *e |= 1 << TOKEN_PLAIN_END,
+                // A byte of no punctuation (`word_end`'s rules'): the code's bits are free.
+                Some(TokenEnd::Word) => *e |= 1 << TOKEN_WORD_END,
+                _ => {}
             }
             if let (Some(_), true) = (punct_in_entry, punct_codes[b].2) {
                 *e |= (if two { punct_codes[b].1 } else { punct_codes[b].0 } >> kb) << TOKEN_PUNCT_ONE;
@@ -1932,7 +1953,7 @@ impl RecordTables {
         });
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
-        Ok(RecordTables { words, slots, tails, second, rare, plain: plain_rules, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, second, rare, ends: ends_of, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -2288,9 +2309,8 @@ enum Side {
     Both,
     Fused,
     /// The rare starts', all their rules (`None`); or, as the lean lexer's `match` arms, the
-    /// rules whose tokens end plainly (`Some(true)`, `plain_end`) or the others, each with its
-    /// own tail.
-    Rare(Option<bool>),
+    /// rules whose tokens end one way (`TokenEnd`), each class with its own tail.
+    Rare(Option<TokenEnd>),
 }
 
 /// Where `rule_last` builds the rules' blocks.
@@ -2847,7 +2867,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
         // A class of the rare rules: its rules, and those their readers go on to.
         (None, Side::Rare(Some(p))) => {
-            let mut v: Vec<usize> = (0..r.rules.len()).filter(|&k| t.plain.get(k).copied().unwrap_or(false) == p).collect();
+            let mut v: Vec<usize> = (0..r.rules.len()).filter(|&k| t.ends.get(k).copied().unwrap_or(TokenEnd::Any) == p).collect();
             let mut at = 0;
             while at < v.len() {
                 if let EndRule::Read(i) = r.rules[v[at]] {
@@ -2868,7 +2888,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let none = f.create_block();
         // A rule of another class (`Side::Rare`) is none of this table's.
         let class = |k: usize| match side {
-            Side::Rare(Some(p)) => t.plain.get(k).copied().unwrap_or(false) == p,
+            Side::Rare(Some(p)) => t.ends.get(k).copied().unwrap_or(TokenEnd::Any) == p,
             _ => true,
         };
         let calls: Vec<_> = blocks.iter().enumerate().map(|(k, &b)| f.func.dfg.block_call(if class(k) { b } else { none }, &[])).collect();
@@ -3363,6 +3383,78 @@ fn pair_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, 
     }).collect();
     let none = bitmask(f, &parts, file.weights);
     f.ins().bnot(none)
+}
+
+/// How a rule's tokens end, for the starts after them (`lean_starts` leaves out a run byte
+/// after a run byte, and a pair's second): as the lean lexer's arms, each what it read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TokenEnd {
+    /// No byte after it left out (`plain_end`): the starts past it.
+    Plain,
+    /// Its last byte no pair's first (`word_end`): the byte after it put back where it is a
+    /// run byte, as the lean lexer's number arm reads the word after it.
+    Word,
+    /// Either put back, and a run of pairs across its end read again.
+    Any,
+}
+
+/// The bytes a token of rule `k` may end with (its first bytes `starts`), by its ends'
+/// outputs (`native_cpu_bytes::output_byte_at`); `None` where they do not say. A reader's
+/// closers at their `off`, its opener's `M` bytes where none closes (none for a token to the
+/// file's end: no byte after it), and the rule it goes on to; a last's output; a run's first
+/// byte and the bytes it can end with (`run_last_bytes`); a pair's first byte and its seconds.
+fn last_bytes(r: &crate::records::Records, made: &crate::block_native::BlockNative, k: usize, starts: &[u8], depth: u32) -> Option<[u64; 4]> {
+    use crate::records::{EndRule, ReadNone};
+    let or = |a: [u64; 4], b: [u64; 4]| [a[0] | b[0], a[1] | b[1], a[2] | b[2], a[3] | b[3]];
+    let mut first = [0u64; 4];
+    for &b in starts {
+        first[usize::from(b >> 6)] |= 1 << (b & 63);
+    }
+    match *r.rules.get(k)? {
+        EndRule::Read(i) => {
+            let rd = r.readers.get(usize::from(i))?;
+            let mut set = [0u64; 4];
+            for a in &rd.arms {
+                set = or(set, crate::native_cpu_bytes::output_byte_at(made, a.closer, i32::from(a.off))?);
+                if let ReadNone::Bytes(m) = a.none {
+                    set = or(set, crate::native_cpu_bytes::output_byte_at(made, a.opener, i32::from(m.checked_sub(1)?))?);
+                }
+            }
+            let other = usize::from(rd.other);
+            if other < r.rules.len() && other != k {
+                set = or(set, if depth < 4 { last_bytes(r, made, other, starts, depth + 1)? } else { return None });
+            }
+            Some(set)
+        }
+        EndRule::Last(out) => crate::native_cpu_bytes::output_byte_at(made, out, 0),
+        EndRule::Run(o) => Some(or(first, crate::native_cpu_bytes::run_last_bytes(made, o)?)),
+        EndRule::Next(p) => {
+            let t = r.nexts.get(usize::from(p))?;
+            let mut set = first;
+            for &x in starts {
+                for y in 0..=255u8 {
+                    if t.holds(x, y) {
+                        set[usize::from(y >> 6)] |= 1 << (y & 63);
+                    }
+                }
+            }
+            Some(set)
+        }
+        _ => None,
+    }
+}
+
+/// Whether no token of rule `k` ends with a pair's first byte (the pair rule `kn`, the run rule
+/// `kr`, as `plain_end`): the only start left out after it is a run byte after a run byte, so
+/// the byte after it is put back where it is a run byte (`TokenEnd::Word`). After a last byte
+/// that is no run byte, a run byte is a start already: its bit again changes nothing.
+fn word_end(r: &crate::records::Records, made: &crate::block_native::BlockNative, k: usize, starts: &[u8], kn: usize, kr: usize) -> bool {
+    use crate::records::EndRule;
+    let (EndRule::Next(pi), EndRule::Run(_)) = (r.rules[kn], r.rules[kr]) else { return false };
+    let Some(pt) = r.nexts.get(usize::from(pi)) else { return false };
+    let of_kn = |x: u8| r.ends.get(usize::from(x)).is_some_and(|&e| usize::from(e) == kn);
+    let Some(last) = last_bytes(r, made, k, starts, 0) else { return false };
+    (0..=255u8).all(|b| last[usize::from(b >> 6)] >> (b & 63) & 1 == 0 || !(of_kn(b) && (0..=255u8).any(|y| pt.holds(b, y))))
 }
 
 /// Whether a token of rule `k` ends where the loop's starts (`lean_starts`, the pair rule `kn`,
@@ -4609,11 +4701,21 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // tokens end plainly (`TOKEN_PLAIN_END`) and the others, each class its rules' table and
     // its own tail, so that a plain token's has no byte put back.
     let classes: Vec<(Side, Option<cranelift_codegen::ir::Block>)> = match side {
-        Side::Rare(None) if lean.is_some() && t.plain.iter().any(|&x| x) => {
-            let (bp, bo) = (f.create_block(), f.create_block());
-            let is_plain = f.ins().band_imm(entry, 1 << TOKEN_PLAIN_END);
-            f.ins().brif(is_plain, bp, &[], bo, &[]);
-            vec![(Side::Rare(Some(true)), Some(bp)), (Side::Rare(Some(false)), Some(bo))]
+        Side::Rare(None) if lean.is_some() && t.ends.iter().any(|&x| x != TokenEnd::Any) => {
+            let mut v = Vec::new();
+            for (form, bit) in [(TokenEnd::Plain, TOKEN_PLAIN_END), (TokenEnd::Word, TOKEN_WORD_END)] {
+                if t.ends.contains(&form) {
+                    let (b, other) = (f.create_block(), f.create_block());
+                    let is = f.ins().band_imm(entry, 1 << bit);
+                    f.ins().brif(is, b, &[], other, &[]);
+                    f.switch_to_block(other);
+                    v.push((Side::Rare(Some(form)), Some(b)));
+                }
+            }
+            let any = f.create_block();
+            f.ins().jump(any, &[]);
+            v.push((Side::Rare(Some(TokenEnd::Any)), Some(any)));
+            v
         }
         x => vec![(x, None)],
     };
@@ -4987,11 +5089,23 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 _ => g.cand,
             };
             let mut left = f.ins().band(cand, m);
-            // A rare token whose rule ends plainly (`Side::Rare(Some(true))`): the starts past
-            // it, as the lean lexer's after its string's arm; else the bytes put back, as its
-            // number's arm reads the word after it.
-            let plain = side == Side::Rare(Some(true));
-            if let (Some((wi, pi, chained)), false) = (lean, plain) {
+            // A rare token's class (`Side::Rare`, `TokenEnd`): one that ends plainly, the starts
+            // past it, as the lean lexer's after its string's arm; else the bytes put back, as
+            // its number's arm reads the word after it.
+            let form = match side {
+                Side::Rare(Some(e)) => e,
+                _ => TokenEnd::Any,
+            };
+            if let (Some((wi, _)), TokenEnd::Word) = (lean.map(|(wi, pi, _)| (wi, pi)), form) {
+                // Its last byte a run byte (`word_end`): the byte after it put back where it is
+                // one, as the lean lexer's number arm reads the word after it.
+                let w = g.runs[wi].1;
+                let one = f.ins().iconst(types::I64, 1);
+                let bit = f.ins().ishl(one, sh);
+                let back = f.ins().band(w, bit);
+                left = f.ins().bor(left, back);
+            }
+            if let (Some((wi, pi, chained)), TokenEnd::Any) = (lean, form) {
                 // Another rule's token may end where the starts left out the byte after it (a
                 // run's byte after a run's, a pair's second): the byte put back, a start.
                 let (w, p) = (g.runs[wi].1, g.runs[pi].1);
