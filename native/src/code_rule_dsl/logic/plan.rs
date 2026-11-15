@@ -596,11 +596,13 @@ impl Stats {
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+        // Positional names of a relation named like a base one are its base names (`input_column_name`).
+        let named = |col: String| crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned);
         for (col, m) in cols {
-            self.col.insert((rel.to_owned(), col), m);
+            self.col.insert((rel.to_owned(), named(col)), m);
         }
         for (col, v, n) in vals {
-            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((named(col), Constant::Int(v)), n);
         }
     }
 

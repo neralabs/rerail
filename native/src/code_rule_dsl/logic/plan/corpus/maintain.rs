@@ -48,9 +48,10 @@
 //!
 //! A head row that read an unchanged group read the same value before and after, so the other positions' rules cover
 //! it (with the aggregate over old rows in an overdelete). A stratum with a relation made natively (a text test
-//! included: the hub's filter form, 42f34ad0e, is not yet written over `rewrite_over`'s builder; see
-//! O-cross-file-answers), a lattice, an `ast` literal, or a changed read whose old rows were not kept, is derived
-//! again from its inputs: its rules unchanged.
+//! included: the hub's filter form, 42f34ad0e, is not yet written over `rewrite_over`'s builder; a request for a
+//! node's text is narrowed to its document, so the text test is the chunk's, `corpus::requests_file_local`), a
+//! lattice, an `ast` literal, or a changed read whose old rows were not kept, is derived again from its inputs: its
+//! rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
 use super::retain::{Cut, Retained};

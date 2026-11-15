@@ -1075,11 +1075,12 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
 }
 
-/// A text test over `node_text` answered in the cross-file part (a cross-file relation asks for the text) is made
-/// natively from the run's vocabulary (`front::Native::TextTest`) and maintained as a filter: after each edit only
-/// the new strings are tested, its stratum is not derived again, and the outputs are a run's with an empty store.
+/// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
+/// a run's outputs with an empty store after each edit, and no cross-file stratum made natively is derived again.
+/// The request for the text is narrowed to the node's own document (O-cross-file-answers), so the text is answered,
+/// and tested, in the chunk that holds it; the hub's filter form for a text test in the cross-file part (42f34ad0e)
+/// is not written over `maintain::rewrite_over` (its stratum would be derived again, which is exact).
 #[test]
-#[ignore = "a node's text read in the cross-file part is empty (decision 0174 §6; work-queue question 2): both runs give no rows, so the test checks nothing until that is answered"]
 fn a_cross_file_text_test_is_maintained_as_a_filter() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("text-filter");
@@ -1127,6 +1128,37 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
     }
     assert!(tested, "the program has a text test");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
+/// its request is narrowed to the node's own document (`file_local::requests_file_local`, the hub's work-queue
+/// question 2, option a), `uses` unfolded to `def(f, _)`, so the text is answered in the chunk that holds it. Asked in
+/// the cross-file part, the chunk's batch was gone and the text was empty: no row.
+#[test]
+fn a_cross_file_reader_finds_the_text_of_another_files_node() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-text");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    pass\ndef k():\n    return 1\n").unwrap();
+    std::fs::write(dir.join("b.py"), "from a import f\nfrom a import k\n").unwrap();
+    let rule = dir.join("named.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl passes(f: node)
+passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
+.output passes
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = std::fs::read_to_string(out.join("passes.csv")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(rows.lines().filter(|l| !l.trim().is_empty()).count(), 1, "f, whose body is `pass`, and not k: {rows:?}");
 }
 
 /// Every switch the lowering and preparation sources read is classified: it changes the prepared program (in its key,

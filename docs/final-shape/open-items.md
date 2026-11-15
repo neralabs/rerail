@@ -5169,7 +5169,11 @@ string-keyed BTree lookups like these across many passes (tarjan, components, `f
 
 ## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
 
-Status: open. Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
+Status: closed (2026-11-15) by decision 0264: a request the split finds cross-file is narrowed to the asked node's
+own document, so it is answered in the chunk that holds the text. B010 with C414 gives its 2 findings on request,
+and the python and data-layer packs on request give the eager oracle's findings.
+
+Found: Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
 with the eager oracle (`RERAIL_NODE_SOURCES=eager`) and none on request, the default. In a combined run the
 answer rule for `value` runs in the cross-file part: its request `rr_value_req` has 592 rows and
 `$x1 = @rr_node_value($x0)` gives none, because `node_value_any` and `held_text` read the batch's texts, and a

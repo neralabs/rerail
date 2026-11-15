@@ -1108,6 +1108,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
         let mut one = parsed.pop().expect("one program");
+        requests_file_local(&mut one);
         same_relations(&mut one);
         return Ok(one);
     }
@@ -1269,6 +1270,8 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
         crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
     }
+    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers).
+    requests_file_local(&mut all);
     // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
     // the same for every program, so one analysis gives what each program's would.
     if shared && makes_guests {
@@ -1293,6 +1296,23 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     });
     same_relations(&mut all);
     Ok(all)
+}
+
+/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
+/// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
+/// the chunk's batch holds the text (O-cross-file-answers). Run on the program that runs, once its requests are made.
+fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
+    if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
+        return;
+    }
+    let requests: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| prog.decls.contains_key(*r)).collect();
+    if requests.is_empty() {
+        return;
+    }
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "on request: the requests narrowed to the node's document".to_owned());
+    for (req, how) in crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests) {
+        crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
+    }
 }
 
 /// The relations that are one relation under two names made one, after the transforms that run after `simplify`

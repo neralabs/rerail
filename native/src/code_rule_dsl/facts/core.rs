@@ -836,6 +836,15 @@ pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<Str
     let _ = CORE_NAMES.set(names);
 }
 
+/// A column's name as the planner and SQL read it: a positional name (`c1`, as the engine names a derived
+/// relation's rows) of a relation named like a base one (`input_columns`) is that column's base name. Such a
+/// relation is derived where an attribute is answered on request (`value`, `node_text`: decision 0174), and handed
+/// on from the chunks it is the cross-file part's input, read as `value(n, v)`.
+pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
+    let i: usize = name.strip_prefix('c')?.parse().ok()?;
+    input_columns(rel)?.get(i).copied()
+}
+
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
 pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
     Some(match rel {
