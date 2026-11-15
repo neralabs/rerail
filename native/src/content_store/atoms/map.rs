@@ -664,7 +664,8 @@ impl Atoms {
 /// Every stored column that holds atoms, and how it crosses the store's boundary when this process's numbering differs
 /// from the store's (decision 0170). With `NOT_ATOMS`, it classifies every integer, untyped and blob column of the
 /// store's schema: a test (`every_stored_column_is_classified`) fails on a column in neither, so a new column of atoms
-/// is mapped, or said to be none, before it is kept.
+/// is mapped, or said to be none, before it is kept. Only that test reads the two tables.
+#[cfg(test)]
 pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("atom_segment", "first", "the store's atoms themselves: their numbering is the store's"),
     ("atom_segment", "ends", "the store's atoms themselves"),
@@ -693,6 +694,7 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 /// The integer, untyped and blob columns of the store's schema that hold no atom (ids of the store's own rows,
 /// counts, digests, encoded bytes of integers or text). `fact_value_stats.val`: the slice's scope (text) and clause
 /// numbers (`matched(c: number, …)`).
+#[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("accel_models", &["model_key", "archive"]),
     ("atom_key_end", &["one"]),

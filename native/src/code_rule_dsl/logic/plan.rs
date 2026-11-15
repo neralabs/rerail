@@ -6370,7 +6370,9 @@ impl<'a> Run<'a, '_> {
                 self.why_class = Some("native fact operator".into());
                 return Ok(Native::Declined);
             }
-        } else if scc.iter().any(|r| f.native(r).is_some()) {
+        // A text test whose rules are not its definition (a maintained form's relation: its old rows and its new
+        // ones) is those rules, run below.
+        } else if scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::NativeSpec::TextTest { .. }))) {
             self.why_not = Some("a native fact operator over input relations".into());
             self.why_class = Some("native fact operator".into());
             return Ok(Native::Declined);

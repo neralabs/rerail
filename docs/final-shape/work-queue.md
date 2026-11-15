@@ -89,7 +89,9 @@ into notes once the queue is done).
   - *Sessions.* A text-test stratum is maintained exactly (maintain.rs: `h__del` from `input__minus`, `h__ins` the
     native over `input__plus`), in both maintained paths (the 0117 run sends it to its form rather than deriving it
     again). Not exercised: the session test reaches no text-test stratum (cross-file `node_text` is empty, question
-    2), so every run derives its strata again; it is ignored with that reason.
+    2), so every run derives its strata again; it is ignored with that reason. The form's pieces run as: `rel__del`
+    and `rel` (old rows less `rel__del`, plus `rel__ins`) as rules, `rel__ins` from the vocabulary over `input__plus`;
+    a stratum the run derives again from the vocabulary over the whole input. Shown only by reading the code.
   - `RERAIL_TEXT_TESTS=row` keeps answered tests per row, to compare.
   - *Measured* (47 authored data-layer programs that test `node_text`, 50 data-layer files sampled across the
     checkout, cold store each, strict): outputs identical on all 47; 44 run both ways, 3 fail both ways (Q12). Work
@@ -134,6 +136,16 @@ into notes once the queue is done).
     where its rules are its definition (`text_test_defined`), so `rel` stays native (maintained form: its rules run;
     derived again and `h__ins`: the vocabulary); the prepared key hashes only the switches lowering and preparation
     read (`corpus::PREPARING`); the Sessions bullet corrected.
+  - *Review 3* (426e5190d): (1) a maintained form's `rel` (two rules: old rows, `h__ins`) failed
+    `text_test_defined` and was then declined as a native (an `Err` in a 0117 form, SQL elsewhere): the claim
+    "its rules run" was false; (2) `PREPARING` missed switches preparation reads (`RERAIL_AST_PART_CAPTURES`,
+    `RERAIL_SAME`, `RERAIL_RULE_ORDER`, `RERAIL_INLINE_FILTERS`, `RERAIL_JOIN_KEYS`, `RERAIL_PROJECT_COLUMNS`,
+    `RERAIL_REACH_INDEX`, `RERAIL_EXPORT_DEMAND`, `RERAIL_ORDER_RAW`); (3) the commit cited a profile span as
+    evidence, but with cross-file `node_text` empty the maintenance branch never fires; (4) no test changes a
+    text test's input in a session. Fixed: a text-test relation whose rules are not its definition is declined
+    by nothing, and runs its rules; `PREPARING` completed, and a test (`every_switch_lowering_reads_is_classified`)
+    fails on a switch the lowering and preparation sources read that is neither preparing nor listed as changing
+    nothing. Open: (4) and the maintained text-test path stay untested until question 2.
 
 ### Q3. No duplicate widened copies; the dropping test strict again
 
@@ -173,6 +185,19 @@ into notes once the queue is done).
     second matches only `simplify`'s renamed-apart variables (`rr_<name><k>_[ft]<k>`); the test compares the facts of
     the relations its rules name and the outputs', and asserts that no widened copy is left with its relation's own
     rules.
+  - *Review 3* (73ec3c050): (1) the assertion renamed only the copy's head, so a recursive copy or a chain of copies
+    never compared equal; (2) `merge` could still name a class after a copy (`rr_wide_…` sorts before names from
+    s on), leaving the relation's rules under the copy's name unseen; (3) the helper regex matched copies of helpers
+    (`rr_wide_node_text_rr_up9`) whole, their bodies uncompared; (4) `read` left out relations the engine reads by
+    name (`env`, `unconverged`, a guest policy, `SCALE` …), so merging could rename one away. Fixed: the assertion
+    reads every copy as its relation, in heads and bodies, to a fixpoint; `congruence` takes only relations a rule
+    or native reads, or outputs, so a relation nothing reads (read by name, or dead) is never merged or renamed; a
+    class is named after its shortest member (a copy's name is its relation's with a prefix); a copy of a helper
+    has the helper renumbered inside it and its body compared. Test `unread_relations_stay_and_a_class_takes_its_shortest_name`. Found
+    by the test's multiset comparison (a rule twice on one side now counts): `merge` kept the rules of a class's first
+    member, renamed, and also those of the member it was named after where that was another (two copies of each
+    rule; possible before too, when a class's first member was an output). A class now keeps its namesake's rules,
+    or its first member's where its name is new.
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -275,7 +300,19 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
 (plan/lower.rs 92); and the other crates' warnings the profiling build lists.
 
 - **Done when**: the profiling build of the engine has no warnings, each fixed at its cause.
-- **Record**: —
+- **Record**: built, pending a build and review. The engine's test build listed 7 code warnings and 3 others
+  (tmp/warnings.txt; the six unused attributes no longer appear):
+  - `atoms.rs` 1522: `fetch_update` is `try_update` (renamed in std, same arguments).
+  - `atoms/map.rs`: `ATOM_COLUMNS` and `NOT_ATOMS` are read only by `every_stored_column_is_classified`, so they
+    are `#[cfg(test)]`.
+  - `connection.rs` 586, 598 and `upkeep.rs` 179: rusqlite 0.41's `progress_handler` returns a `Result`; each is
+    returned, as the other callers do. Removing the handler after a write is returned too: a handler left on would
+    stop the connection's later statements.
+  - `plan/lower.rs` 92: the unused index (`enumerate`) goes.
+  - rerail-simd8, block and one more: rustc's "failed to connect to jobserver" (`CARGO_MAKEFLAGS` without its
+    descriptors). The farm already strips those variables (farm.py 968–970, installed 14:19). These are cargo's
+    replays of compiles made before that, and they go when the crates compile again: to confirm on the next
+    rebuild of those crates.
 
 ## Questions for the user
 

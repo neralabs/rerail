@@ -1104,3 +1104,51 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
     assert!(tested, "the program has a text test");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every switch the lowering and preparation sources read is classified: it changes the prepared program (in its key,
+/// `corpus::PREPARING`) or does not (`NOT_PREPARING`). An unlisted one would let a program prepared under
+/// one value be reused under another, or make a session's next run cold.
+#[test]
+fn every_switch_lowering_reads_is_classified() {
+    /// The switches lowering and preparation read that change no prepared program: checks, dumps and traces, and the
+    /// store's path.
+    const NOT_PREPARING: &[&str] = &[
+        "RERAIL_BLESS_CENSUS",
+        "RERAIL_IDEMPOTENCY_DUMP",
+        "RERAIL_MAGIC_CHECK",
+        "RERAIL_MERGE_WHY",
+        "RERAIL_SPLIT_CHECK",
+        "RERAIL_SPLIT_DUMP",
+        "RERAIL_DEMAND_DUMP",
+        "RERAIL_PREPARED_TRACE",
+        "RERAIL_SPIKE_PROJECTION",
+        "RERAIL_TAPE_CACHE",
+    ];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let places = [
+        "logic/rr", "logic/front.rs", "logic/front", "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs",
+        "logic/magic", "logic/plan/lower.rs", "logic/plan/corpus/cross_memo.rs", "typing/file_local.rs", "typing/file_local",
+    ];
+    let read = regex::Regex::new(r#"var(?:_os)?\("(RERAIL_[A-Z0-9_]+)"\)"#).unwrap();
+    let mut files = Vec::new();
+    let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
+    let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
+    assert!(missing.is_empty(), "places that are gone: {missing:?}");
+    while let Some(p) = pending.pop() {
+        if p.is_dir() {
+            pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
+        } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
+            files.push(p);
+        }
+    }
+    assert!(files.len() > 10, "{files:?}");
+    let mut unlisted = std::collections::BTreeSet::new();
+    for f in &files {
+        for c in read.captures_iter(&std::fs::read_to_string(f).unwrap()) {
+            if !super::PREPARING.contains(&&c[1]) && !NOT_PREPARING.contains(&&c[1]) {
+                unlisted.insert(format!("{} in {}", &c[1], f.strip_prefix(&root).unwrap().display()));
+            }
+        }
+    }
+    assert!(unlisted.is_empty(), "switches lowering reads that are neither PREPARING nor NOT_PREPARING: {unlisted:?}");
+}

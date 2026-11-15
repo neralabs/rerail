@@ -24,6 +24,14 @@ be: judge the code.
 4. Anything the change touches beyond its item: callers of changed functions, cache keys and digests, other
    worktrees' code that merges this, outputs of tools.
 
+## How to run things
+
+- Read only: no edits, commits, stashes, checkouts or builds; the binaries you are given are built from the tree.
+- Every run under a memory and time cap: `zsh tmp/capped.sh 1500 120 <command>`; tests through
+  `bash tmp/chunk.sh <binary> <filter>`, a named filter, never a whole suite.
+- Scratch output only under the worktree's `tmp/review-<item>-*`, by absolute path: `RERAIL_PROFILE=1` makes a
+  directory named `1` where the test runs.
+
 ## How to answer
 
 A list of findings, each with the file and line, what is worse, and the evidence. Or "no findings" with what you
