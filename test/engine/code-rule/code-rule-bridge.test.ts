@@ -1203,6 +1203,33 @@ describe("CodeRuleBridge", () => {
       expect(looked).not.toHaveBeenCalled();
     });
 
+    it("looks again at a folder of the session folder whose real path refuses its listing with EPERM: gone, the session folder is no gap", async () => {
+      const root = await workspace();
+      const top = join(root, "top");
+      await mkdir(top);
+      const refusing = new Set<string>();
+      const view = {
+        acceptsPath: () => true,
+        ignoresPath: (path: string) => {
+          if (refusing.has(path)) throw refusal("realpath", resolve(root, path));
+          return false;
+        },
+      };
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+
+      refusing.add("top");
+      discovery.lstats.set(top, [gone("lstat", top)]);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+      // Denied, the session folder whose listing it refused is the gap, as before.
+      const reason = `EPERM: operation not permitted, realpath '${top}'`;
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ${reason}`));
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap(".", reason, "EPERM")]]]);
+    });
+
     it("walks 10,000 files with a folder that refuses its listing with EPERM after them at what they cost without it, the first walk but one lstat more", { timeout: 240_000 }, async () => {
       const root = await workspace();
       await writeFiles(join(root, "src"), 10_000);

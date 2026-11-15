@@ -764,16 +764,22 @@ function refusedPath(error: unknown): string | undefined {
 /**
  * Keeps the walk's failure of `absolute` (`#recordObservationFailure`) to look at again once its other paths are done
  * (`judgeRefusals`) when it refused with EPERM, as Windows refuses a path being removed and one the user is denied. Not a
- * path the walk starts at, which stays a gap, nor one whose gap the record holds (`SourceWalk.held`); past
- * `MAX_LOOKED_AGAIN`, the failure is said but not recorded at this walk (`SourceScan.unconfirmed`).
+ * path the walk starts at that refused itself, which stays a gap, nor one whose gap the record holds (`SourceWalk.held`);
+ * past `MAX_LOOKED_AGAIN`, the failure is said but not recorded at this walk (`SourceScan.unconfirmed`).
  */
 function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: Stats | undefined): void {
-  const path = sessionPath(walk.discovery.root, absolute);
-  if (!hasErrorCode(error, "EPERM") || walk.roots.has(absolute) || walk.held(path)) return;
+  if (!hasErrorCode(error, "EPERM")) return;
+  const refused = refusedPath(error) ?? absolute;
+  const path = sessionPath(walk.discovery.root, absolute) || ".";
+  if (startRefused(walk, absolute, refused) || walk.held(path)) return;
   const refusals = (walk.refusals ??= []);
   if (refusals.length === MAX_LOOKED_AGAIN) return void walk.scan.unconfirmed.add(path);
-  refusals.push(refusalOf(path, absolute, refusedPath(error) ?? absolute, before));
+  refusals.push(refusalOf(path, absolute, refused, before));
   walk.refusedAt ??= Date.now();
+}
+/** A path the walk starts at refused it itself, not a child its listing asked about. */
+function startRefused(walk: SourceWalk, absolute: string, refused: string): boolean {
+  return refused === absolute && walk.roots.has(absolute);
 }
 /** What the walk's lstat found (`before`) names `absolute`: it tells whether `refused` is still that entry only when it is `absolute`. */
 function refusalOf(path: string, absolute: string, refused: string, before: Stats | undefined): Refusal {
