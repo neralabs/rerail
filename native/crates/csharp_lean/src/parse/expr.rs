@@ -298,7 +298,7 @@ impl<'a> P<'a> {
     /// `(`: a lambda's parameters, a cast, a tuple or a parenthesized expression.
     fn paren(&mut self, s: Slot) -> R<N> {
         let close = self.matching(0).ok_or_else(|| Refusal::Parse(self.tok().start))?;
-        if self.kind_at(close + 1) == T::FatArrow {
+        if self.kind_at(close + 1) == T::FatArrow && self.i + close + 1 != self.arm_arrow {
             return self.lambda(s);
         }
         if self.cast_ahead(close) {
@@ -813,6 +813,9 @@ impl<'a> P<'a> {
                     self.close(n);
                     return Ok(n);
                 }
+                if self.creation_reads_as_comparisons() {
+                    return self.refuse();
+                }
                 let n = self.open_in(K::ObjectCreationExpression, s)?;
                 self.tk(K::ObjectCreationExpression, K::TNew)?;
                 self.ty(slot(f::TYPE, Ctx::Type))?;
@@ -826,6 +829,39 @@ impl<'a> P<'a> {
                 Ok(n)
             }
         }
+    }
+
+    /// Whether tree-sitter reads `new A<X>(c) …` as comparisons, `(new A < X) > (c)`, where its type
+    /// argument is also an expression: `new A<X>(c) { … }` with a name in each (the `(c) { … }` a
+    /// cast), and `new A<(X x, Y y)>(c)` (a tuple of declarations) with one argument. Not read.
+    fn creation_reads_as_comparisons(&mut self) -> bool {
+        let mut k = 1;
+        while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
+            k += 2;
+        }
+        if !self.is_ident_at(k) || self.kind_at(k + 1) != T::Lt {
+            return false;
+        }
+        let Some(e) = self.scan_type_args(k + 1) else { return false };
+        if self.kind_at(e) != T::LParen {
+            return false;
+        }
+        let Some(m) = self.matching(e) else { return false };
+        let (args, close) = (k + 2, e - 1);
+        if self.kind_at(m + 1) == T::LBrace && self.name_only(args, close) && m > e + 1 && self.name_only(e + 1, m) {
+            return true;
+        }
+        // `<(X x, Y y)>`: a tuple whose elements are named.
+        if self.kind_at(args) == T::LParen && self.matching(args) == Some(close - 1) && m > e + 1 && !self.top_comma_pub(e + 1, m) {
+            let mut j = args + 1;
+            while j < close - 1 {
+                if self.is_ident_at(j) && self.is_ident_at(j + 1) {
+                    return true;
+                }
+                j += 1;
+            }
+        }
+        false
     }
 
     /// `stackalloc T[n] { … }` or `stackalloc[] { … }`.
@@ -924,10 +960,10 @@ impl<'a> P<'a> {
             k += 1;
         }
         if self.is_ident_at(k) && self.kind_at(k + 1) == T::FatArrow {
-            return true;
+            return self.i + k + 1 != self.arm_arrow;
         }
         if self.kind_at(k) == T::LParen {
-            return self.matching(k).is_some_and(|e| self.kind_at(e + 1) == T::FatArrow);
+            return self.matching(k).is_some_and(|e| self.kind_at(e + 1) == T::FatArrow && self.i + e + 1 != self.arm_arrow);
         }
         false
     }

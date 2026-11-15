@@ -118,10 +118,13 @@ impl<'a> P<'a> {
         (plain == k).then_some(true)
     }
 
-    /// Whether tokens `from..to` are a dotted name alone, type arguments allowed (no suffix): a
-    /// constant pattern's, to tree-sitter.
-    fn name_only(&mut self, from: usize, to: usize) -> bool {
+    /// Whether tokens `from..to` are a dotted name alone (after an alias's `A::`), type arguments
+    /// allowed (no suffix): a constant pattern's, to tree-sitter.
+    pub(super) fn name_only(&mut self, from: usize, to: usize) -> bool {
         let mut k = from;
+        if self.is_ident_at(k) && self.kind_at(k + 1) == T::ColonColon {
+            k += 2;
+        }
         loop {
             if !self.is_ident_at(k) {
                 return false;
@@ -173,9 +176,10 @@ impl<'a> P<'a> {
         let t = self.tok();
         let n = match t.kind {
             T::Name if t.word == w::NOT => {
+                // `negated_pattern` is `not` and a whole pattern: `not 1 and 2` is `not (1 and 2)`.
                 let n = self.open_in(K::NegatedPattern, s)?;
                 self.tk(K::NegatedPattern, K::TNot)?;
-                self.unary_pattern(PATTERN)?;
+                self.pattern(PATTERN)?;
                 self.close(n);
                 n
             }
@@ -196,7 +200,10 @@ impl<'a> P<'a> {
             }
             T::LParen => {
                 let close = self.matching(0).ok_or_else(|| Refusal::Parse(t.start))?;
-                if self.top_comma_pub(1, close) {
+                if !self.paren_is_pattern(0, close) {
+                    // `("a")`, `(1)`, `(a + 1)`: a constant's parenthesized expression.
+                    self.constant_pattern(s)?
+                } else if self.top_comma_pub(1, close) {
                     let n = self.open_in(K::ConstantPattern, s)?;
                     self.binary_expr(slot(f::NONE, Ctx::Lit), P_CONST)?;
                     self.close(n);
@@ -223,6 +230,65 @@ impl<'a> P<'a> {
         };
         self.depth -= 1;
         Ok(n)
+    }
+
+    /// Whether `(` at `k` (its `)` at `close`) opens a `parenthesized_pattern` to tree-sitter, not a
+    /// constant pattern's `parenthesized_expression`: a pattern-only start (`not`, a relational
+    /// operator, `{`, `var`, `_`, a `(` that is one itself), or a name chain (`A`, `A<B>.C`,
+    /// `this.M()`: an invocation after a `.` only) before `)`, `or`, `and`, a designation or `{`.
+    /// Anything else (a literal, an operator, `M()`, `[…]`) is an expression's.
+    fn paren_is_pattern(&mut self, k: usize, close: usize) -> bool {
+        // A combinator at the top level: a pattern's (`(1 or 2)`).
+        let mut depth = 0usize;
+        for j in k + 1..close {
+            let t = self.peek_at(j);
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => depth = depth.saturating_sub(1),
+                T::Name if depth == 0 && matches!(t.word, w::OR | w::AND) => return true,
+                _ => {}
+            }
+        }
+        let t = self.peek_at(k + 1);
+        match t.kind {
+            T::Lt | T::Le | T::Gt | T::Ge | T::LBrace => return true,
+            T::LParen => return self.matching(k + 1).is_some_and(|c| self.paren_is_pattern(k + 1, c)),
+            T::Name if matches!(t.word, w::NOT | w::VAR | w::UNDERSCORE) => return true,
+            T::Name => {}
+            _ => return false,
+        }
+        let mut j = k + 1;
+        let mut dotted = false;
+        if self.is_word_at(j, w::GLOBAL) && self.kind_at(j + 1) == T::ColonColon {
+            j += 2;
+        }
+        loop {
+            let n = self.peek_at(j);
+            let head = j == k + 1 && n.kind == T::Name && (matches!(n.word, w::THIS | w::BASE) || w::is_predefined(n.word));
+            if !head && !self.is_ident_at(j) {
+                return false;
+            }
+            j += 1;
+            if self.kind_at(j) == T::Lt {
+                match self.scan_type_args(j) {
+                    Some(e) => j = e,
+                    None => return false,
+                }
+            }
+            while dotted && self.kind_at(j) == T::LParen {
+                match self.matching(j) {
+                    Some(e) => j = e + 1,
+                    None => return false,
+                }
+            }
+            if self.kind_at(j) != T::Dot {
+                break;
+            }
+            dotted = true;
+            j += 1;
+        }
+        let after = self.peek_at(j);
+        j == close || after.kind == T::LBrace || (after.kind == T::Name && (matches!(after.word, w::OR | w::AND) || !w::is_reserved(after.word)))
     }
 
     /// Whether the token `k` ahead continues an expression (an operator or a postfix).
@@ -254,7 +320,10 @@ impl<'a> P<'a> {
             return Ok(n);
         }
         if after.kind == T::LParen {
-            // A positional pattern (`A(1, 2)`): not read.
+            // `A(1, 2)`, `A.M()`: a constant's invocation to tree-sitter, not a positional pattern.
+            if self.name_only(0, e) {
+                return self.constant_pattern(s);
+            }
             return self.refuse();
         }
         if self.name_only(0, e) || self.continues_expression(e) {
@@ -269,6 +338,9 @@ impl<'a> P<'a> {
     /// Whether `(` at `k` is a parenthesized designation: names and `_` between `,`s, `)`.
     fn designation_paren_ahead(&mut self, k: usize) -> bool {
         let Some(e) = self.matching(k) else { return false };
+        if e == k + 1 {
+            return false;
+        }
         let mut j = k + 1;
         while j < e {
             if !self.is_ident_at(j) {
@@ -299,7 +371,8 @@ impl<'a> P<'a> {
                     if binary_prec(self.peek()).is_some_and(|p| p >= min) {
                         return self.refuse();
                     }
-                    self.close(n);
+                    self.constant_invocation(n);
+        self.close(n);
                     return Ok(n);
                 }
                 let (cmode, in_constant) = (self.cmode, self.in_constant);
@@ -314,8 +387,27 @@ impl<'a> P<'a> {
                 }
             }
         }
+        self.constant_invocation(n);
         self.close(n);
         Ok(n)
+    }
+
+    /// A constant's own invocation (`x is A.M()`) is `_complex_invocation_expression`'s or
+    /// `_name_invocation_pattern`'s to tree-sitter: its `function` is reached through no
+    /// `expression` supertype, so it has no class.
+    fn constant_invocation(&mut self, n: N) {
+        let (call, function) = (n.at + 1, n.at + 2);
+        if call >= self.w.len() || function >= self.w.len() {
+            return;
+        }
+        let (kind, _, _, extra) = crate::unkey(self.w.key(call));
+        if extra || kind != K::InvocationExpression as u16 {
+            return;
+        }
+        let key = self.w.key(function);
+        if !crate::unkey(key).3 {
+            self.w.set_key(function, key & !(0xf << 15));
+        }
     }
 
     /// `_variable_designation`: `_`, a name, or `(` designations `)`.
@@ -433,7 +525,11 @@ impl<'a> P<'a> {
     pub(super) fn switch_expression_body(&mut self) -> R<()> {
         self.list(K::SwitchExpression, T::RBrace, true, true, |p| {
             let a = p.open(K::SwitchExpressionArm, f::NONE, C_NONE)?;
-            p.pattern(PATTERN)?;
+            let saved = p.arm_arrow;
+            p.arm_arrow = p.arm_arrow_ahead();
+            let r = p.pattern(PATTERN);
+            p.arm_arrow = saved;
+            r?;
             if p.is_word(w::WHEN) {
                 p.when_clause()?;
             }
@@ -445,6 +541,24 @@ impl<'a> P<'a> {
             p.close(a);
             Ok(())
         })
+    }
+
+    /// The token index of the arm's `=>`: the first at the top level (a `when` clause's lambdas
+    /// stand in brackets), or none before the arm's `,` or `}`.
+    fn arm_arrow_ahead(&mut self) -> usize {
+        let mut depth = 0usize;
+        let mut k = 0;
+        loop {
+            match self.kind_at(k) {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace if depth > 0 => depth -= 1,
+                T::FatArrow if depth == 0 => return self.i + k,
+                T::Comma | T::RBrace if depth == 0 => return usize::MAX,
+                T::Eof => return usize::MAX,
+                _ => {}
+            }
+            k += 1;
+        }
     }
 
     /// `when_clause`: `when` and an expression.

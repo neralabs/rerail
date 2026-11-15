@@ -3404,6 +3404,13 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A { string s = \"a\\n\" + @\"b\"\"c\" + $\"x{y,3:F2}z{{\" + \"\"\"\n  raw\n  \"\"\"; char c = '\\''; long n = 0x1FL + 1_000UL; double d = .5e-3 + 1.5m; }\n",
         "#region R\n#if DEBUG\nclass A { }\n#elif X\nclass B { }\n#else\nclass C { }\n#endif\n#endregion\n#pragma warning disable CS1591\n",
         "unsafe class A { void F(int* p, delegate*<int, void> g) { int* q = &x; fixed (byte* b = a) { } Span<int> s = stackalloc int[2]; } }\n",
+        // A parenthesized pattern holds a name chain or a pattern; a literal, an operator or a call
+        // is a constant's parenthesized expression.
+        "class A { void F() { a = x is not (\"a\"); b = x is (1) or (A); c = x is (A.B.M()); d = x is (a + 1); e = x is (1 or 2); f = x is (var v); g = x is ((1)); h = x is (this.P); } }\n",
+        // `not` takes a whole pattern; `A.M()` and `global::A.B` after `is` are constants.
+        "class A { void F() { a = x is not 1 and not 2; b = x is 1 or not 2 and 3; c = x is A.M(); d = x is global::A.B; } }\n",
+        // A switch arm's `(…)` before `=>` is a pattern, not a lambda's parameters.
+        "class A { int F() => x switch { (1) => 2, (\"a\") => 3, (A) => 4, _ => 0 }; }\n",
     ];
     let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3425,6 +3432,12 @@ fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
     for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+    // Valid, but tree-sitter reads its type arguments as comparisons (`(new S < A) > ((c) { })`):
+    // refused, not read as the object creation it is.
+    for odd in ["class A { object o = new S<A>(c) { }; }\n", "class A { object o = new List<(A a, B b)>(q); }\n"] {
+        assert!(!parser.parse(odd, None).unwrap().root_node().has_error(), "{odd:?} reads with an error");
+        assert!(csharp_lean::encode(&grammar, odd, &|| false).is_err(), "read {odd:?}");
     }
 }
 

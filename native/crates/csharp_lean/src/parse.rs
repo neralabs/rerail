@@ -304,6 +304,9 @@ struct P<'a> {
     in_constant: bool,
     /// At the first parameter of a lambda with no modifiers: `ref T` is a `ref_type`.
     bare_lambda: bool,
+    /// The token index of the switch expression arm's `=>` while its pattern is read: a `)` or a
+    /// name before it ends the pattern, no lambda's parameters.
+    arm_arrow: usize,
     /// A conditional access wrapped an operator's chain in this expression (`a || b?.c`).
     wrapped_chain: bool,
     /// How the next constant pattern reads (set by `is`).
@@ -362,6 +365,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             in_statement: false,
             in_constant: false,
             bare_lambda: false,
+            arm_arrow: usize::MAX,
             cmode: Cmode::Plain,
             wrapped_chain: false,
             dropped: Vec::new(),
