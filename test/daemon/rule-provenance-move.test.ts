@@ -182,6 +182,28 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(moveLines(log.writes())).toEqual([]);
   }, 2 * TEST_MS);
 
+  it("ends the move quietly at a stop that comes while another process holds the write lock as the move's thread opens its writer", async () => {
+    const { home, databasePath } = databaseWithInlineAudits();
+    const log = spyOnStderr();
+
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    // Another process takes the write lock as the daemon serves, before the move's thread has loaded, and holds it
+    // until the daemon has closed: the thread opens its writer while it is held, and the stop comes then.
+    const other = new Database(databasePath);
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      await daemon.close();
+    } finally {
+      other.exec("ROLLBACK");
+      other.close();
+    }
+
+    // Opened as `openRerailDatabase` opens a writer, it waited inside SQLite 5 s for the lock, where the stop could
+    // not reach it, and failed.
+    expect(moveLines(log.writes())).toEqual([]);
+    expect(fileState(databasePath).inline).toBe(20);
+  }, TEST_MS);
+
   it("writes a failure of the move's thread to the daemon log with the stack of where the thread threw it", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
     // The first batch fails as it stores the shared copy, on the move's thread.

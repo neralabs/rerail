@@ -27,7 +27,7 @@ import { existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
-import { openRerailDatabase, type RerailDatabase } from "./database.js";
+import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
 
 /** What `moveRuleProvenancesInWorker` posts to stop the move's thread (`rule-provenance-move-worker.ts`). */
@@ -168,7 +168,10 @@ type Free = <T>(step: () => T) => Promise<T | typeof STOPPED>;
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const older = olderWritesOf(options);
   if (!existsSync(path) || moveState(path, older).kind !== "move") return 0;
-  const database = openRerailDatabase(path);
+  // `moveState` opened the file through `openRerailDatabase`, which refuses a file this build cannot read and runs a
+  // pending step first. The writer only connects: a writable `openRerailDatabase` begins a write transaction, which
+  // waits inside SQLite up to 5 s while another process holds the lock, where a stop cannot reach it.
+  const database = openSqliteDatabase(path);
   try {
     // From here SQLite reports another connection's lock at once, and `whenFree` waits for it between tries.
     database.$client.pragma("busy_timeout = 0");

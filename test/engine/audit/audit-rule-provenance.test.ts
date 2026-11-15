@@ -780,6 +780,29 @@ describe("audit rule provenance", () => {
     }
   }, 15_000);
 
+  it("ends at once, moving nothing, when a stop comes before it opens its writer while another connection holds the write lock", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+    openRerailDatabase(path).$client.close();
+    const writer = new Database(path);
+    writer.exec("BEGIN IMMEDIATE");
+    const stop = new AbortController();
+    stop.abort();
+    let tookMs: number;
+    try {
+      const began = performance.now();
+      expect(await move(path, { signal: stop.signal })).toBe(0);
+      tookMs = performance.now() - began;
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+    // A writer opened as `openRerailDatabase` opens one begins a write transaction, which waited inside SQLite for the
+    // lock 5 s, where no stop reaches it, and then failed.
+    expect(tookMs).toBeLessThan(2_000);
+    expect(inlineAudits(path)).toBe(30);
+  }, 15_000);
+
   it("moves on a thread of its own, which a stop ends before its first batch, and a later run moves the rest", async () => {
     const path = await fileOfTheBuildBefore();
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
