@@ -707,9 +707,11 @@ CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
 -- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
 -- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
 -- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
--- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
+-- applied when an object is missing, and the rows are then all there (`OR IGNORE`). `content`: a memo entry's
+-- content sha256 (empty for any other frame; NULL for a row put before the column), so the memo's collection reads
+-- this table alone, not the frames' records (decision 0253).
 CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
-    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+    part INTEGER NOT NULL, used INTEGER NOT NULL, content BLOB, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
 INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
 -- How many runs each space has counted.
 CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
@@ -819,7 +821,7 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"), ("frame_part_used", "content", "BLOB")];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
 fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {

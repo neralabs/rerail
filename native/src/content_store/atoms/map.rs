@@ -726,7 +726,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("facts_results", &["source_id", "fact_schema", "plan_digest", "codec_id", "raw_length", "frame"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors"]),
     ("frame_confirmed", &["space", "data"]),
-    ("frame_part_used", &["space", "ident", "part", "used"]),
+    ("frame_part_used", &["space", "ident", "part", "used", "content"]),
     ("frame_program_used", &["space", "program", "run", "rels"]),
     ("frame_spaces", &["space", "runs"]),
     ("frame_used", &["space", "run", "rels"]),

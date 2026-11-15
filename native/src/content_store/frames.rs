@@ -1016,14 +1016,15 @@ impl ContentStore {
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            // Each frame's use, apart from its record (`frame_part_used`): three values a frame, so 300 a statement.
-            for batch in rows.chunks(300) {
-                let values = (0..batch.len()).map(|i| format!("(?1,?{},?{},?{},?2)", 3 + 3 * i, 4 + 3 * i, 5 + 3 * i)).collect::<Vec<_>>().join(",");
-                let sql = format!("INSERT INTO frame_part_used(space,rel,ident,part,used) VALUES {values} \
-                    ON CONFLICT(space,rel,ident,part) DO UPDATE SET used=excluded.used");
+            // Each frame's use and a memo entry's content, apart from its record (`frame_part_used`): four values a
+            // frame, so 225 a statement.
+            for batch in rows.chunks(225) {
+                let values = (0..batch.len()).map(|i| format!("(?1,?{},?{},?{},?2,?{})", 3 + 4 * i, 4 + 4 * i, 5 + 4 * i, 6 + 4 * i)).collect::<Vec<_>>().join(",");
+                let sql = format!("INSERT INTO frame_part_used(space,rel,ident,part,used,content) VALUES {values} \
+                    ON CONFLICT(space,rel,ident,part) DO UPDATE SET used=excluded.used, content=excluded.content");
                 let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), run.into()];
                 for f in batch {
-                    args.extend([f.rel.name.clone().into(), f.rel.ident.to_vec().into(), f.part.into()]);
+                    args.extend([f.rel.name.clone().into(), f.rel.ident.to_vec().into(), f.part.into(), memo_content(&f.stored.reads).into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
@@ -1032,8 +1033,8 @@ impl ContentStore {
             for (rel, digest, reads) in heads {
                 t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
                     .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, *digest as i64, encode_reads(reads)])?;
-                t.prepare_cached("UPDATE frame_part_used SET used = ?5 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
-                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, run])?;
+                t.prepare_cached("UPDATE frame_part_used SET used = ?5, content = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, run, memo_content(reads)])?;
             }
             // A retagged frame is not written (decision 0117 step 5): its rows, digest and stored reads stay, and the
             // space's confirmations name it with its reads' hash now, one row for the space. A frame put, given a
@@ -1141,25 +1142,35 @@ pub(super) fn collect_unreachable_frames(t: &Connection) -> rusqlite::Result<Unr
         .filter_map(|k| k.ok()?.sha256_bytes())
         .collect();
     let mut gone: Vec<([u8; 32], String, Vec<u8>, i64)> = Vec::new();
+    // Each entry's content digest is in `frame_part_used` (decision 0253): its records, rows inline, are not read. A
+    // row put before that column has none; its record's reads give it, once.
+    let mut filled: Vec<([u8; 32], String, Vec<u8>, i64, Vec<u8>)> = Vec::new();
     for plan in &live {
         let space = local_space(plan);
-        let mut st = t.prepare_cached("SELECT rel, ident, part, reads FROM frames WHERE space = ?1")?;
-        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?, r.get::<_, Vec<u8>>(3)?)))?;
+        let mut st = t.prepare_cached("SELECT rel, ident, part, content FROM frame_part_used WHERE space = ?1")?;
+        let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<Vec<u8>>>(3)?)))?;
         for row in rows {
-            let (rel, ident, part, reads) = row?;
-            let reads = decode_reads(&reads);
-            // A memo entry's reads: its path and key, then its content's sha256 in four words.
-            if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
-                continue;
-            }
-            let mut digest = [0u8; 32];
-            for (c, (_, v)) in digest.chunks_exact_mut(8).zip(&reads[1..]) {
-                c.copy_from_slice(&v.to_le_bytes());
-            }
-            if !contents.contains(&digest) {
+            let (rel, ident, part, content) = row?;
+            let content = match content {
+                Some(content) => content,
+                None => {
+                    let reads: Option<Vec<u8>> = t
+                        .prepare_cached("SELECT reads FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                        .query_row(params![&space[..], rel, ident, part], |r| r.get(0))
+                        .optional()?;
+                    let content = memo_content(&decode_reads(&reads.unwrap_or_default()));
+                    filled.push((space, rel.clone(), ident.clone(), part, content.clone()));
+                    content
+                }
+            };
+            if <[u8; 32]>::try_from(content.as_slice()).is_ok_and(|digest| !contents.contains(&digest)) {
                 gone.push((space, rel, ident, part));
             }
         }
+    }
+    for (space, rel, ident, part, content) in &filled {
+        t.prepare_cached("UPDATE frame_part_used SET content = ?5 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+            .execute(params![&space[..], rel, ident, part, content])?;
     }
     out.memo = gone.len();
     // The maintained spaces: each one's live programs' relations.
@@ -1334,6 +1345,15 @@ fn hold_symbols<'a>(atoms: &super::atoms::Atoms, frames: impl IntoIterator<Item 
     ids.sort_unstable();
     ids.dedup();
     atoms.hold_named(&ids)
+}
+
+/// A memo entry's content sha256, from its reads (its path and key, then the sha256 in four words); empty for any
+/// other frame's reads. Kept in `frame_part_used`, so the memo's collection reads that table alone (decision 0253).
+fn memo_content(reads: &[(String, u64)]) -> Vec<u8> {
+    if reads.len() != 5 || reads[1..].iter().any(|(n, _)| n != "sha256") {
+        return Vec::new();
+    }
+    reads[1..].iter().flat_map(|(_, v)| v.to_le_bytes()).collect()
 }
 
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
@@ -1721,6 +1741,40 @@ mod tests {
             collect_unreachable_frames(&c).unwrap()
         };
         assert!(!again.any(), "nothing left to collect: {again:?}");
+    }
+
+    /// The memo sweep reads each entry's content digest from `frame_part_used`, a narrow table, never the entries'
+    /// records (`frames`, rows inline). A store whose rows predate the column has them from the records, once.
+    #[test]
+    fn the_memo_sweep_reads_the_content_digests_alone() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let plan = [5u8; 32];
+        let text = b"x = 1\n";
+        let source = store.put_source(text, &[]).unwrap();
+        store.record_corpus_run_naming("/r", &[source], 1, 1, plan, &[], 1).unwrap();
+        let memo = |path: &str, content: &[u8]| {
+            let digest: [u8; 32] = Sha256::digest(content).into();
+            let mut reads = vec![(path.to_owned(), 1u64)];
+            reads.extend(digest.chunks_exact(8).map(|c| ("sha256".to_owned(), u64::from_le_bytes(c.try_into().unwrap()))));
+            Put { rel: rel(MEMO_RELS[0], 1), part: path.len() as i64, digest: 1, reads, rows: Rows { types: vec![0], rows: vec![1], n: 1 } }
+        };
+        let space = local_space(&plan);
+        store.keep_frames(&space, &[memo("a.py", text), memo("old.py", b"y = 2\n"), memo("gone.py", b"z = 3\n")], &[], None).unwrap();
+        let entry = |path: &str| store.frame_rows(&space, &rel(MEMO_RELS[0], 1), path.len() as i64).unwrap().is_some();
+        {
+            let c = store.connection.lock().unwrap();
+            let held: Vec<Vec<u8>> = c.prepare("SELECT content FROM frame_part_used WHERE space = ?1 ORDER BY part").unwrap()
+                .query_map([&space[..]], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(held, [Sha256::digest(text).to_vec(), Sha256::digest(b"y = 2\n").to_vec(), Sha256::digest(b"z = 3\n").to_vec()]);
+            // The records' reads no longer say what the entries hold: a sweep that read them would keep all three.
+            c.execute("UPDATE frames SET reads = x'' WHERE space = ?1 AND part IN (4, 6)", [&space[..]]).unwrap();
+            // gone.py's row is an older store's, with no digest of its own: the sweep takes it from the record, once.
+            c.execute("UPDATE frame_part_used SET content = NULL WHERE space = ?1 AND part = 7", [&space[..]]).unwrap();
+            assert_eq!(collect_unreachable_frames(&c).unwrap().memo, 2);
+        }
+        assert!(entry("a.py") && !entry("old.py") && !entry("gone.py"));
     }
 
     fn rel(name: &str, i: u8) -> Rel {
