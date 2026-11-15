@@ -828,13 +828,13 @@ grew(e) :- now_entry(e), !was(_, e).
         let dir = std::env::temp_dir().join(format!("rerail-base-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(&root).unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success(), "git {args:?}");
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(args).output().unwrap().status.success(), "git {args:?}");
         git(&["init", "-q"]);
         std::fs::write(root.join("allow.txt"), "a\nb\n").unwrap();
         git(&["add", "sub/allow.txt"]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
         std::fs::write(root.join("allow.txt"), "a\nb\nc\n").unwrap();
-        let head = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
+        let head = String::from_utf8(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
         for rev in [head.trim(), "HEAD"] {
             let mut read = base_reader(&root, Some(rev));
             assert_eq!(read("allow.txt").unwrap(), "a\nb\n", "{rev}");

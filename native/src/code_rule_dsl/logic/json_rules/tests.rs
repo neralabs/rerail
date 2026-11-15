@@ -100,3 +100,18 @@ fn json_rules_text_tests_are_textglobs() {
         assert_eq!(textglob::text_test(rx, "s").unwrap().as_deref(), want, "{rx}");
     }
 }
+
+/// ast-grep's `any` takes its first alternative that matches: a util's catch-all alternative (`regex: "^"`), which
+/// leaves MV unset, holds only where the earlier one, which binds it, does not. Without the guard each identifier
+/// also had an unset-MV row, which no-shadow's "is a type" test read (typescript-eslint's valid `type x` in a block).
+#[test]
+fn json_rules_any_catch_all_holds_only_where_earlier_fails() {
+    let json = r#"{"format":"rerail.policy/v1","id":"mini","revision":1,"mode":"steer","description":"mini","scope":{"include":["**/*"],"exclude":[]},
+"clauses":[{"id":"shared","define":{"language":"typescript","utils":{
+ "mk":{"has":{"stopBy":"end","kind":"identifier","pattern":"$N","any":[{"not":{"kind":"type_identifier"},"pattern":"$MV"},{"regex":"^"}]}}}}},
+{"id":"c","forbid":{"ast":{"language":"typescript","rule":{"kind":"identifier","pattern":"$N","inside":{"stopBy":"end","kind":"program","matches":"mk"},
+ "not":{"compare":{"left":"MV","op":"eq","right":"MV","text":"node"}}}},"message":"x"}}]}"#;
+    let rr = super::Translator::new().translate_text(json, "mini").expect("translates");
+    let guarded = "unset(MV), count : { !kind(c1, \"type_identifier\"),node(_, c1, _, _, _), MV_E0 = c1 } = 0";
+    assert!(rr.contains(guarded), "the catch-all alternative is guarded:\n{rr}");
+}

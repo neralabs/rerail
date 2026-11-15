@@ -803,7 +803,6 @@ fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(_)
         | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -1829,7 +1828,6 @@ impl Builder {
             AstMatcher::Semantic(semantic) => {
                 self.lower_semantic(semantic, language, at, terminals, ir);
             }
-            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => self
                 .unsupported
                 .push(format!("{at}: test-only unknown operation")),

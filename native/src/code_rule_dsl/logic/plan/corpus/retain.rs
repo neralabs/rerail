@@ -363,7 +363,9 @@ impl Cut {
         }
         program.outputs.retain(|o| !self.clean.contains(o));
         crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        lower::Lowered { program, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
+        // A part of the cross part's version, where it has one (decision 0244): rules and natives kept by relation.
+        let version = cross.version.as_ref().and_then(|v| crate::code_rule_dsl::typing::file_local::part_as(v, &program));
+        lower::Lowered { program, version, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
@@ -1151,7 +1153,7 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {program:p.clone(),version:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
         assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
         let mut changed=inputs.clone();
@@ -1218,7 +1220,7 @@ pub(in crate::code_rule_dsl) struct InFrames {
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
 /// relation as derived or named), or, for the program's stated facts, their identity, which is the program's.
 /// Anything else (an answer the run binds by another way, as a load's) has none: what reads it is not current.
-fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &front::Program) -> Option<u64> {
+fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &front::Program, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>) -> Option<u64> {
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
@@ -1228,7 +1230,7 @@ fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&Str
     }
     // Neither derived nor an input, and not bound: its rows are the program's own (its facts, or none, as an
     // earlier phase's export of no rows), the same whatever the run reads, so its identity names them.
-    let id = crate::code_rule_dsl::logic::plan::leaf_identity(prog, read);
+    let id = leaves.identity(read)?;
     Some(u64::from_le_bytes(id[..8].try_into().expect("eight bytes")))
 }
 
@@ -1466,7 +1468,9 @@ impl Retained {
     /// `sccs`: `prog`'s strata, computed once by the caller.
     pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
         let by_stratum: Vec<Vec<&front::Rule>> = front::rules_by_stratum(prog, &sccs);
-        let idents = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum);
+        // One version of the program for its identities and its leaves' (`from_frame_snapshot`).
+        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
+        let idents = leaves.identities(sccs, &by_stratum)?;
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut names: HashMap<String, FrameRel> = idents.into_iter().map(|(name, ident)| (name.clone(), FrameRel { name, ident })).collect();
         // The inputs are what the run binds (`bound`, by their digests): the program's, and an earlier phase's export
@@ -1477,7 +1481,7 @@ impl Retained {
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
-        Self::from_frame_snapshot(store, space, key, prog, &sccs, names, stored, bound)
+        Self::from_frame_snapshot(store, space, key, prog, &leaves, &sccs, names, stored, bound)
     }
 
     fn empty_frames(key: [u8; 32], mut frames: InFrames) -> Self {
@@ -1487,7 +1491,7 @@ impl Retained {
     }
 
     fn from_frame_snapshot(
-        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program,
+        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>,
         sccs: &[BTreeSet<String>], names: HashMap<String, FrameRel>, stored: HashMap<FrameRel, FrameStored>, bound: &HashMap<String, u64>,
     ) -> Result<Self> {
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
@@ -1532,7 +1536,7 @@ impl Retained {
             let current: Option<Vec<FrameStored>> = scc.iter().map(|rel| {
                 let n = frames.names.get(rel)?;
                 let at = stored.get(n)?;
-                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
+                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, &leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
                 if now == at.reads {
                     return Some(at.clone());
                 }
@@ -1545,7 +1549,7 @@ impl Retained {
                 }
             } else {
                 let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r)).collect();
-                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
+                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog, &leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
                     for rel in scc {
                         known.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
@@ -1803,6 +1807,7 @@ impl Retained {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
+        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
         // inputs requiring a frame digest. Without this, a read of gproto("Generic") or an env fact makes
         // publication skip its consumer and forces that consumer to run in every new process.
@@ -1913,7 +1918,7 @@ impl Retained {
                     }
                     continue;
                 }
-                let read_digests = reads.iter().map(|r| read_digest(r, &now, &derived, prog).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>();
+                let read_digests = reads.iter().map(|r| read_digest(r, &now, &derived, prog, &leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>();
                 // Its rows are as they were (decision 0117 step 4): its digest is the stored one, and its rows are
                 // neither read nor written; its reads are told again if they changed.
                 if unchanged.contains(rel)

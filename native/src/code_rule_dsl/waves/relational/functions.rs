@@ -40,7 +40,7 @@ pub(super) fn install_bound(db: &Connection, binding: SharedBinding) -> Result<(
             let cost = text.len().div_ceil(256).max(1);
             if pattern.len() > max_pattern
                 || work
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                         left.checked_sub(cost)
                     })
                     .is_err()

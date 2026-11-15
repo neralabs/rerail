@@ -17,13 +17,13 @@
 PTH207(F, n, "`glob.glob(...)`; it lazily yields `Path` objects and includes hidden files, so wrap it in `list(...)` where a list is needed") :- kind(n, "call"),
     field(n, "function", c1), pth207_callee(c1, F),
     ( kind(n, "call"), pth207_arg_no_dir_fd_1(n), unset(D)
-    ; kind(n, "call"), pth207_arg_dir_fd_1(n, a1_2), D = a1_2
+    ; kind(n, "call"), pth207_arg_dir_fd_1(n, a1_2), D = a1_2, count : { kind(n, "call"),pth207_arg_no_dir_fd_1(n) } = 0
     ),
     pth207_none_literal(D).
 PTH207(F, n, "`glob.iglob(...)`; it yields `Path` objects, includes hidden files, and `**` always recurses") :- kind(n, "call"),
     field(n, "function", c1), pth207_callee_glob_iglob(c1, F),
     ( kind(n, "call"), pth207_arg_no_dir_fd_1(n), unset(D)
-    ; kind(n, "call"), pth207_arg_dir_fd_1(n, a1_4), D = a1_4
+    ; kind(n, "call"), pth207_arg_dir_fd_1(n, a1_4), D = a1_4, count : { kind(n, "call"),pth207_arg_no_dir_fd_1(n) } = 0
     ),
     pth207_none_literal_glob_iglob(D).
 

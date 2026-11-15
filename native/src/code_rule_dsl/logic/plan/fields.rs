@@ -14,13 +14,16 @@ pub struct FieldsData {
     outputs: Vec<AtomId>,
     input_set: BTreeSet<AtomId>,
     output_set: BTreeSet<AtomId>,
+    /// The relations a rule derives (its head's).
+    heads: BTreeSet<RelId>,
 }
 
 impl FieldsData {
     fn of(v: &Version) -> FieldsData {
         let inputs: Vec<AtomId> = v.inputs().collect();
         let outputs: Vec<AtomId> = v.outputs().collect();
-        FieldsData { about: About::of(v), input_set: inputs.iter().copied().collect(), output_set: outputs.iter().copied().collect(), inputs, outputs }
+        let heads = v.rules().map(|r| r.head().rel()).collect();
+        FieldsData { about: About::of(v), input_set: inputs.iter().copied().collect(), output_set: outputs.iter().copied().collect(), inputs, outputs, heads }
     }
 }
 
@@ -30,6 +33,14 @@ pub struct Fields<'v> {
     pub v: &'v Version,
     pub about: &'v About,
     d: &'v FieldsData,
+}
+
+impl Placed {
+    /// This version's fields (`Fields::of`), or an error where it is its rules alone: a program the image has no form
+    /// for.
+    pub fn fields(&self) -> super::Result<Fields<'_>> {
+        Fields::of(self).ok_or_else(|| super::Error::Plan("the program has no image: its fields are read from its version".into()))
+    }
 }
 
 impl<'v> Fields<'v> {
@@ -76,6 +87,11 @@ impl<'v> Fields<'v> {
         self.atom(rel).is_some_and(|a| self.d.input_set.contains(&a))
     }
 
+    /// Whether a rule of the program derives `rel` (a rule's head).
+    pub fn derives(&self, rel: &str) -> bool {
+        self.rel(rel).is_some_and(|r| self.d.heads.contains(&r))
+    }
+
     // -- declarations --
 
     /// `rel`'s declaration (`Program::decls`).
@@ -102,7 +118,7 @@ impl<'v> Fields<'v> {
     pub fn width(&self, rel: &str) -> usize {
         self.arity(rel).unwrap_or_else(|| panic!("no declaration of {rel}"))
     }
-    /// `rel`'s declared columns' types, in order, failing where it is not declared (`plan::prog_types`).
+    /// `rel`'s declared columns' types, in order, failing where it is not declared.
     pub fn types(&self, rel: &str) -> Vec<&'v str> {
         let v = self.v;
         self.decl(rel).unwrap_or_else(|| panic!("no declaration of {rel}")).cols().map(|(_, t)| v.text(t)).collect()
@@ -297,15 +313,12 @@ mod tests {
         let vs = Versions::with(&p, placed.clone());
         assert!(std::ptr::eq(vs.fields(0).unwrap().about, f.about));
         assert!(vs.fields(1).is_none());
-        assert_eq!(vs.index_of(&p), Some(0));
-        // A whole program added (a maintained form) is a whole version of its own, found by its address, once.
+        // A whole program added (a maintained form) is a whole version of its own.
         let mut vs = vs;
         let mut form = Program::default();
         form.decls.insert("e".into(), [("a".into(), "int".into())].into());
         form.inputs = vec!["e".into()];
-        vs.add(&form).unwrap();
-        vs.add(&form).unwrap();
-        let k = vs.index_of(&form).unwrap();
+        let k = vs.push(Placed::of_program(&form).unwrap());
         assert_eq!(k, 1);
         assert_eq!((vs.whole(k).inputs().collect::<Vec<_>>(), vs.whole(k).columns("e")), (vec!["e"], Some(vec![("a", "int")])));
         assert!(vs.fields(2).is_none());

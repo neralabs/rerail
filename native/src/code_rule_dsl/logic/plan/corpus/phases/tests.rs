@@ -11,7 +11,6 @@
         std::fs::write(src.join("a.py"), "def f():\n    return 1\n").unwrap();
         std::fs::write(src.join("b.py"), "def g():\n    return 2\n").unwrap();
         let out = dir.join("out");
-        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let text = crate::code_rule_dsl::logic::rr::print(
             &crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap(),
@@ -50,7 +49,6 @@
         std::fs::write(lib.join("b.pyi"), "def fb() -> None: ...\n").unwrap();
         std::fs::write(lib.join("c.pyi"), "def fc() -> None: ...\n").unwrap();
         let out = dir.join("out");
-        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let reader = "#include \"core.rr\"\n.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)\n.decl lib(m: symbol)\nlib(m) :- sources__library(_, m, _, _).\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output lib, defs\n";
         let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
@@ -107,7 +105,6 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         };
         let reader = |reads: &str| format!("{reads}\n.decl r(s: symbol)\nr(s) :- p1__def(s, _).\n.output r\n");
         let out = dir.join("out");
-        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
@@ -175,7 +172,6 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         std::fs::write(phases.join("p1.rr"), p1).unwrap();
         std::fs::write(phases.join("p2.rr"), p2).unwrap();
         let out = dir.join("out");
-        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
@@ -218,7 +214,6 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         std::fs::write(src.join("a.py"), "class A:\n    pass\n").unwrap();
         std::fs::write(phases.join("p1.rr"), "#include \"core.rr\"\n.phase p1\n.export def\n.decl def(s: symbol, k: symbol)\ndef(x, \"class\") :- kind(n, \"class_definition\"), field(n, \"name\", i), text(i, x).\n").unwrap();
         let out = dir.join("out");
-        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy(), "env": ["mode=strict"] });
         let reader = "#include \"core.rr\"\n.decl mode(m: symbol)\nmode(m) :- env(\"mode\", m).\n.decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol, m: symbol)\nr(s, m) :- p1__def(s, _), mode(m), kind(_, \"module\").\n.output r\n";

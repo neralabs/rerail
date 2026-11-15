@@ -14,6 +14,6 @@
 .violation ASYNC210(at: node) code "ASYNC210"
     "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options."
     suppress ruff "ASYNC210"
-ASYNC210(f) :- async_blocking(_, f, q), async_http(q).
+ASYNC210(f) :- async_blocking_demand(_, f, q), async_http(q).
 
 async_api_target(q) :- async_http(q).

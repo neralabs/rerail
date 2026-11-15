@@ -46,13 +46,6 @@ pub enum ElementClass {
 }
 
 /// `ComponentMetadata`: the fields the oracle records.
-#[cfg_attr(
-    not(any(test, feature = "test-hooks")),
-    expect(
-        dead_code,
-        reason = "the oracle's AST reads, which only the tests compare"
-    )
-)]
 pub struct Component<'a> {
     /// `type`.
     pub kind: Cow<'a, [u8]>,
@@ -94,13 +87,6 @@ pub struct Attribute<'a> {
 pub struct Block {
     pub start: Option<usize>,
     pub end: Option<usize>,
-    #[cfg_attr(
-        not(any(test, feature = "test-hooks")),
-        expect(
-            dead_code,
-            reason = "the oracle's AST reads, which only the tests compare"
-        )
-    )]
     pub mid: Vec<usize>,
 }
 

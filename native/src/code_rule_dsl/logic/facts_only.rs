@@ -206,6 +206,12 @@ const STATE: &[(&str, &str)] = &[
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
     ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
+    // Decision 0211: the RERAIL_WARM switch, read once; and a `RERAIL_WARM=list` run's tally of its faults, reported
+    // at its end. A switch and a report, no result kept.
+    ("code_rule_dsl/logic/profile.rs", "WARM"),
+    ("code_rule_dsl/logic/profile.rs", "WARM_FAULTS"),
+    // Decision 0227: the `frames` upkeep job's one registration per store a process opens, a registry of jobs.
+    ("content_store/upkeep.rs", "JOBS"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
@@ -367,6 +373,10 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
+    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
+    ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // The caller's counts of quiet strata, carried to the run's jobs and dropped with the caller's guard.
+    ("code_rule_dsl/logic/plan.rs", "QUIET_COUNTS"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[

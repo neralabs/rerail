@@ -320,14 +320,14 @@ pub struct SharedArenaRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct EvaluationQuotaRecord {
+pub struct EvaluationQuotaRecord {
     pub used: u32,
     pub limit: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct LazyArenaBlockRecord {
+pub struct LazyArenaBlockRecord {
     pub start: u32,
     pub limit: u32,
     pub state: u32,

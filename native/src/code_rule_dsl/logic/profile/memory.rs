@@ -135,7 +135,11 @@ pub(super) struct Sample {
 /// The holders a sample reads (`Sample::holders`), in MB.
 fn holders() -> [usize; 5] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
+    // Relational work's device leases exist only where the device does (macOS).
+    #[cfg(target_os = "macos")]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    #[cfg(not(target_os = "macos"))]
+    let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
 }
@@ -164,6 +168,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
+        #[cfg(target_os = "macos")]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -182,7 +187,7 @@ pub(super) fn sample() {
                 let (live, resident) = heap();
                 let at = start.elapsed().as_secs_f64();
                 let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-                let mut s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let keep = s.rows.last().is_none_or(|l| now.abs_diff(l.footprint) >= 8 << 20 || at - l.at >= 0.25);
                 let rose = max.saturating_sub(last_max);
                 let top = now > s.top.footprint;

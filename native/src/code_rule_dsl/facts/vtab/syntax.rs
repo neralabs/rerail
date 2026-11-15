@@ -1986,7 +1986,7 @@ pub enum View {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Place {
+pub enum Place {
     Line,
     EndLine,
     Col,
