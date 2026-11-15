@@ -652,7 +652,7 @@ function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): str
   return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
 }
 /**
- * The most gaps one bridge tells `onDiscoveryGap` of. Past it, one more gap says the walks could not check more than that
+ * The most gaps one bridge tells `onDiscoveryGaps` of. Past it, one more gap says the walks could not check more than that
  * (`UNTOLD_GAPS`): a tree of unreadable files records a bounded number of rows, at the boundary that first meets them.
  */
 export const MAX_TOLD_GAPS = 1_000;
@@ -938,8 +938,8 @@ export class CodeRuleBridge {
   #discovery: SourceDiscovery | undefined;
   readonly #discoveryWaitMs: number;
   readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
-  readonly #onDiscoveryGap: ((gap: DiscoveryGap) => void) | undefined;
-  /** The key of each gap told to `onDiscoveryGap` (`#untold`), since the workspace opened. */
+  readonly #onDiscoveryGaps: ((gaps: readonly DiscoveryGap[]) => void) | undefined;
+  /** The key of each gap told to `onDiscoveryGaps` (`#untold`), since the workspace opened. */
   readonly #toldGaps = new Set<string>();
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
@@ -966,10 +966,11 @@ export class CodeRuleBridge {
       /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
       /**
-       * Told of each gap of the walks (`DiscoveryGap`) a checkpoint answers with, once per key while the bridge lives, at
-       * most `MAX_TOLD_GAPS` of them; a walk still to finish is `onDiscoveryPending`'s.
+       * Told of the gaps of the walks (`DiscoveryGap`) a checkpoint answers with that it has not told before, each once per
+       * key while the bridge lives, at most `MAX_TOLD_GAPS` of them, all of a checkpoint in one call, so they can be
+       * written together; a walk still to finish is `onDiscoveryPending`'s.
        */
-      onDiscoveryGap?(gap: DiscoveryGap): void;
+      onDiscoveryGaps?(gaps: readonly DiscoveryGap[]): void;
       /** Told of each file a finished tool edit wrote that no rule checked because Git ignores it. */
       onIgnoredEdit?(edit: IgnoredEdit): void;
       /** Told when the session changes Git's ignore rules; without it they are not watched. */
@@ -986,7 +987,7 @@ export class CodeRuleBridge {
     this.#observations = options.observations;
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
-    this.#onDiscoveryGap = options.onDiscoveryGap;
+    this.#onDiscoveryGaps = options.onDiscoveryGaps;
     this.#onIgnoredEdit = options.onIgnoredEdit;
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
@@ -1498,17 +1499,18 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Tells `onDiscoveryGap` each of `gaps` not yet told (`#untold`), best-effort too: it never fails the checkpoint. A gap
-   * is told once its record returned; when one throws, it and the rest are told at the next checkpoint, so a database
-   * that refuses writes costs one failed write and one log line a boundary.
+   * Tells `onDiscoveryGaps` the gaps of `gaps` not yet told (`#untold`), all in one call, best-effort too: it never fails
+   * the checkpoint. They are told once the call returned; when it throws, the next checkpoint tells them again, so a
+   * database that refuses writes costs one failed write and one log line a boundary.
    */
   #tellGaps(boundary: DiscoveryGap["boundary"], gaps: readonly WalkGap[]): void {
+    const untold = new Map<string, DiscoveryGap>();
     for (const gap of gaps) {
-      const told = this.#untold(toldGap(boundary, gap));
-      if (told === undefined) continue;
-      if (!reportBestEffort(() => this.#onDiscoveryGap?.(told))) return;
-      this.#toldGaps.add(told.key);
+      const told = this.#untold(toldGap(boundary, gap), untold);
+      if (told !== undefined) untold.set(told.key, told);
     }
+    if (untold.size === 0 || !reportBestEffort(() => this.#onDiscoveryGaps?.([...untold.values()]))) return;
+    for (const key of untold.keys()) this.#toldGaps.add(key);
   }
 
   /**
@@ -2476,8 +2478,8 @@ export class CodeRuleBridge {
 
   /**
    * The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none.
-   * Each gap the walks found is told to `onDiscoveryGap` too, alone, the first time it is met (`#untold`); a walk still
-   * to finish is none.
+   * Each gap the walks found is told to `onDiscoveryGaps` too, as its own gap, the first time it is met (`#untold`); a
+   * walk still to finish is none.
    */
   #discoveryResponse(discovery: SourceDiscovery, boundary: DiscoveryGap["boundary"]): CodeRuleResponse {
     const gaps = walkGaps(discovery);
@@ -2493,12 +2495,13 @@ export class CodeRuleBridge {
   }
 
   /**
-   * `gap` when no gap of its key was told since the workspace opened; past `MAX_TOLD_GAPS` gaps, the one that says the
-   * rest go untold (`untoldGaps`), until it is told. A gap that heals and comes back is not told again.
+   * `gap` when no gap of its key was told since the workspace opened, nor is about to be (`telling`); past
+   * `MAX_TOLD_GAPS` gaps, the one that says the rest go untold (`untoldGaps`), until it is told. A gap that heals and
+   * comes back is not told again.
    */
-  #untold(gap: DiscoveryGap): DiscoveryGap | undefined {
-    if (this.#toldGaps.has(gap.key)) return undefined;
-    const told = this.#toldGaps.size < MAX_TOLD_GAPS ? gap : untoldGaps(gap.boundary);
+  #untold(gap: DiscoveryGap, telling: ReadonlyMap<string, DiscoveryGap>): DiscoveryGap | undefined {
+    if (this.#toldGaps.has(gap.key) || telling.has(gap.key)) return undefined;
+    const told = this.#toldGaps.size + telling.size < MAX_TOLD_GAPS ? gap : untoldGaps(gap.boundary);
     return this.#toldGaps.has(told.key) ? undefined : told;
   }
 

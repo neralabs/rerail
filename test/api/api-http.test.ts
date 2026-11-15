@@ -232,7 +232,8 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
   });
 
-  it("counts a session's gaps over its whole transcript, however many events follow them", async () => {
+  // 600 appends, each a write of its own: 4 to 9 s on a busy Linux host, past vitest's 5 s.
+  it("counts a session's gaps over its whole transcript, however many events follow them", { timeout: 30_000 }, async () => {
     const dropped = { id: "gap-1", count: 7, kinds: { call: 7 }, firstEventId: null, lastEventId: null, firstDroppedAt: 1, lastDroppedAt: 2 };
     sessionStore.recordDroppedEvents(SESSION, dropped);
     sessionStore.recordDroppedEvents(SESSION, { ...dropped, id: "gap-2", count: 2 });

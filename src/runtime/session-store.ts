@@ -330,6 +330,16 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /**
+   * `recordDiscoveryGap` for each of `gaps`, in one transaction: a write each would wait for the disk once per place, 4 ms
+   * a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All of them or none.
+   */
+  recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
+    this.#database.transaction(() => {
+      for (const gap of gaps) this.recordDiscoveryGap(session, gap, attribution);
+    });
+  }
+
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
   recordCodeRulesPending(session: AdapterSession, boundary: CodeRulesPendingBoundary, attribution?: SessionAttribution): void {
     this.append({

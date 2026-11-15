@@ -747,7 +747,7 @@ describe("CodeRuleBridge", () => {
       await writeFile(join(root, "dump.raw"), "x\n".repeat(500_001));
       const gaps: unknown[] = [];
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
-        onDiscoveryGap: gap => { gaps.push(gap); },
+        onDiscoveryGaps: told => { gaps.push(...told); },
       });
       await bridge.openWorkspace("session-1");
 
@@ -767,13 +767,13 @@ describe("CodeRuleBridge", () => {
         await mkdir(folder);
         return denyFolder(folder, call => ((index + call) % 3) * 15);
       }));
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const said = denials.map((denial, index) => `src/${"abc"[index]}: ${denial}`).join("; ");
       for (let turn = 0; turn < 3; turn += 1) await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(said));
-      expect(onDiscoveryGap.mock.calls.map(([gap]) => gap)).toEqual(denials.map((denial, index) => toldGap(`src/${"abc"[index]}`, denial, "EACCES")));
+      expect(onDiscoveryGaps.mock.calls.flatMap(([told]) => told)).toEqual(denials.map((denial, index) => toldGap(`src/${"abc"[index]}`, denial, "EACCES")));
     });
 
     it("tells a folder whose files it saw before as the folder alone, as a walk that never saw them does", async () => {
@@ -781,22 +781,22 @@ describe("CodeRuleBridge", () => {
       const locked = join(root, "src", "locked");
       await mkdir(locked);
       await writeFile(join(locked, "a.py"), "a = 1\n");
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
 
       const denial = denyFolder(locked);
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
-      expect(onDiscoveryGap.mock.calls).toEqual([[toldGap("src/locked", denial, "EACCES")]]);
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]]]);
     });
 
     it("tells a place that heals and breaks again once, and again when it breaks for another reason", async () => {
       const root = await workspace();
       const locked = join(root, "src", "locked");
       await mkdir(locked);
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const denial = denyFolder(locked);
@@ -806,16 +806,16 @@ describe("CodeRuleBridge", () => {
       denyFolder(locked);
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
       // The same place for the same reason is the gap already on the record; another reason is a new fact.
-      expect(onDiscoveryGap).toHaveBeenCalledTimes(1);
+      expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
       const tooMany = denyFolder(locked, () => 0, "EMFILE");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${tooMany}`));
-      expect(onDiscoveryGap.mock.calls).toEqual([[toldGap("src/locked", denial, "EACCES")], [toldGap("src/locked", tooMany, "EMFILE")]]);
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]], [[toldGap("src/locked", tooMany, "EMFILE")]]]);
     });
 
     it("leaves out a path its folder's listing named that is gone when the walk examines it, as a read does", async () => {
       const root = await workspace();
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       // Listed, then gone by the walk's lstat or opendir: a file, a folder, and a folder that goes between the two.
@@ -830,7 +830,7 @@ describe("CodeRuleBridge", () => {
       discovery.directories.set(listed, [gone("opendir", listed)]);
 
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
-      expect(onDiscoveryGap).not.toHaveBeenCalled();
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
       expect(discovery.lstats.get(file)).toEqual([]);
       expect(discovery.directories.get(listed)).toEqual([]);
       // The folder the session works in is no listed path: one Rerail cannot find stays a gap, as before.
@@ -840,8 +840,8 @@ describe("CodeRuleBridge", () => {
 
     it("looks again at a path that refused it with EPERM, as Windows refuses one being removed: gone then is absent, refused again is a gap", async () => {
       const root = await workspace();
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       // A file being removed: refused while the delete is pending, gone a moment later.
@@ -858,7 +858,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(denied);
       const refusal = denyFolder(denied, () => 0, "EPERM");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/denied: ${refusal}`));
-      expect(onDiscoveryGap.mock.calls).toEqual([[toldGap("src/denied", refusal, "EPERM")]]);
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/denied", refusal, "EPERM")]]]);
     });
 
     it("says nothing of the folders and files a running process makes and removes while 30 checkpoints walk", async () => {
@@ -868,10 +868,10 @@ describe("CodeRuleBridge", () => {
       // As the router's walk view does: each folder's owner is looked up from its real path.
       const owner = (path: string): boolean => { physicalPath(resolve(root, path)); return false; };
       const view = { acceptsPath: (path: string) => !owner(dirname(path)), ignoresPath: (path: string) => owner(path) };
-      const onDiscoveryGap = vi.fn();
+      const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, {
         ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view,
-      }, { onDiscoveryGap });
+      }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const loop = startChurn(churn);
@@ -887,7 +887,7 @@ describe("CodeRuleBridge", () => {
       }
       expect(rounds).toBeGreaterThan(30);
       expect(said.filter(message => message.includes("churn"))).toEqual([]);
-      expect(onDiscoveryGap).not.toHaveBeenCalled();
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
     }, 60_000);
 
     it(`tells at most ${MAX_TOLD_GAPS} places, then once that the rest are not recorded, while the checkpoint says them all`, async () => {
@@ -897,14 +897,16 @@ describe("CodeRuleBridge", () => {
         await mkdir(folder);
         denyFolder(folder);
       }
-      const onDiscoveryGap = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const [failure] = (await bridge.checkpoint("turn")).failures;
       expect(failure?.message.split("; ")).toHaveLength(MAX_TOLD_GAPS + 5);
       await bridge.checkpoint("turn");
-      const told = onDiscoveryGap.mock.calls.map(([gap]) => gap as { path?: string; reason: string });
+      // One call: the places of a checkpoint are written together.
+      expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
+      const told = onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as Array<{ path?: string; reason: string }>);
       expect(told).toHaveLength(MAX_TOLD_GAPS + 1);
       expect(told.slice(0, MAX_TOLD_GAPS).map(gap => gap.path)).toEqual(folders.slice(0, MAX_TOLD_GAPS).map(folder => `src/${basename(folder)}`));
       expect(told.at(-1)).toEqual({
@@ -917,9 +919,9 @@ describe("CodeRuleBridge", () => {
       const root = await workspace();
       const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
       const pending: string[] = [];
-      const onDiscoveryGap = vi.fn();
+      const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, auditor(auditGeneratedEdits), {
-        discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGap,
+        discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGaps,
       });
       const baseline = holdDiscovery("directories", root);
       await bridge.openWorkspace("session-1");
@@ -938,7 +940,7 @@ describe("CodeRuleBridge", () => {
       // The walk between the two may outlast its wait on a slow machine too: every boundary pending is a turn's.
       expect(pending.length).toBeGreaterThanOrEqual(2);
       expect(new Set(pending)).toEqual(new Set(["turn"]));
-      expect(onDiscoveryGap).not.toHaveBeenCalled();
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
     });
 
     it("answers a turn checkpoint with its gap when recording the gap fails", async () => {
@@ -947,16 +949,16 @@ describe("CodeRuleBridge", () => {
       const locked = join(root, "src", "locked");
       await mkdir(locked);
       const denial = denyFolder(locked);
-      const onDiscoveryGap = vi.fn((_gap: unknown) => { throw new Error("database is locked"); });
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
+      const onDiscoveryGaps = vi.fn((_gaps: unknown) => { throw new Error("database is locked"); });
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       try {
         await bridge.openWorkspace("session-1");
 
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
-        expect(onDiscoveryGap.mock.calls).toEqual([[toldGap("src/locked", denial, "EACCES")]]);
+        expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]]]);
         // A record that failed is tried again at the next checkpoint.
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
-        expect(onDiscoveryGap).toHaveBeenCalledTimes(2);
+        expect(onDiscoveryGaps).toHaveBeenCalledTimes(2);
         expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed: database is locked"));
       } finally {
         stderr.mockRestore();
