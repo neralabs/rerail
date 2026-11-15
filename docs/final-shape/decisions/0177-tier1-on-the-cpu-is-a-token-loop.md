@@ -1003,3 +1003,31 @@ cases at the blocks' edges.
 
 Strings and numbers pay for the put-back on the rules' general tail.
 `tier1_by_kind` now counts comments as tokens, for both lexers.
+
+## The word hash's multiplier, kept (2026-11-15)
+
+**The problem.** The lean lexer keeps its word hash's multiplier in a
+register. In the generated Rust, rustc made the 64-bit literal again
+at each word's lookup: a `mov` and three `movk`. It takes a literal
+to be as cheap to make as to keep.
+
+**Tried and dropped.** Multipliers of two or three 16-bit parts (two
+or three instructions to make). No such multiplier parts rr's words.
+A short word's hash then depends on its first two bytes alone, so
+`abc` and `abd` meet.
+
+**The change.** `clif_rust` makes a wide constant once (`kept`, an
+empty `asm` the value passes through) where the constant is made in
+one block and used in others: a loop's invariant, as the multiplier
+where a file's token loop starts. `wide` is a constant of more than
+two parts that is not an `orr` immediate. Others stay literals.
+rustc then keeps the multiplier in a register, or reloads it from its
+slot with one load.
+
+`the_word_multiplier_is_kept` checks the generated source, and which
+constants `wide` takes.
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 103.4 | 101.6 | 97.9 |
+| Punctuation | 57.0 | 56.6 | 53.5 |

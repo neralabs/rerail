@@ -43,6 +43,55 @@ thread_local! {
     static ADDRESSES: std::cell::RefCell<Vec<(i64, i64, String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Whether 64-bit constant `v` takes more than two instructions to make on aarch64: not a
+/// logical immediate (`orr`), more than two 16-bit parts to set (`movz`/`movn`, `movk`).
+pub fn wide(v: u64) -> bool {
+    let parts = (0..4).map(|k| v >> (16 * k) & 0xffff);
+    let set = parts.clone().filter(|&p| p != 0).count();
+    let ones = parts.filter(|&p| p == 0xffff).count();
+    set.min(4 - ones) > 2 && !logical_immediate(v)
+}
+
+/// Whether `inst`'s result is used, and only in other blocks than its own.
+fn used_apart(f: &ir::Function, inst: ir::Inst) -> bool {
+    let Some(&r) = f.dfg.inst_results(inst).first() else { return false };
+    let home = f.layout.inst_block(inst);
+    let mut used = false;
+    for b in f.layout.blocks() {
+        for i in f.layout.block_insts(b) {
+            let args = f.dfg.inst_values(i).any(|v| f.dfg.resolve_aliases(v) == r);
+            if args {
+                if Some(b) == home {
+                    return false;
+                }
+                used = true;
+            }
+        }
+    }
+    used
+}
+
+/// Whether `v` is an aarch64 logical immediate: a pattern of 2 to 64 bits, repeated, whose
+/// bits are one run of ones under rotation.
+fn logical_immediate(v: u64) -> bool {
+    if v == 0 || v == !0 {
+        return false;
+    }
+    let mut e = 64u32;
+    while e > 2 {
+        let h = e / 2;
+        let m = (1u64 << h) - 1;
+        if v & m != v >> h & m {
+            break;
+        }
+        e = h;
+    }
+    let m = if e == 64 { !0 } else { (1u64 << e) - 1 };
+    let p = v & m;
+    let rotated = (p >> 1 | (p & 1) << (e - 1)) & m;
+    (p ^ rotated).count_ones() == 2
+}
+
 /// Tier 1's source, from a parser compiled with `native_cpu_stream::KEEP_IR`: `tier1_entry_K`
 /// a pass, the record pass's tables as data, `TABLES_DATA`; it ends with its fingerprint,
 /// `SOURCE`.
@@ -89,6 +138,11 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)], address
     // The stack pointer's read, where a function takes it (`GetStackPointer`).
     if bodies.contains("sp()") {
         out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
+    }
+    // The wide constants of the functions' entries (`instruction`'s `Iconst`): each made once,
+    // a value the function keeps, not one made again at each use.
+    if bodies.contains("kept(") {
+        out.push_str("/// A wide constant made once where a function starts: a value rustc keeps (in a register\n/// or its slot), where it would make a literal again at each use (four instructions).\n#[inline(always)]\nfn kept(mut v: u64) -> u64 {\n    // SAFETY: an empty asm: the value passes through unchanged.\n    unsafe { core::arch::asm!(\"// {0}\", inout(reg) v, options(pure, nomem, nostack, preserves_flags)) };\n    v\n}\n\n");
     }
     out.push_str(&bodies);
     writeln!(out, "/// The functions whose graph is structured control (the rest irreducible, a loop over a `match`).\npub const STRUCTURED: (usize, usize) = ({structured}, {});\n", funcs.len()).unwrap();
@@ -592,6 +646,11 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             Some((n, off, true)) => set(format!("(core::ptr::addr_of!({n}_DATA) as u64).wrapping_add({off})")),
             Some((n, 0, false)) => set(format!("{n}.load(core::sync::atomic::Ordering::Relaxed)")),
             Some((n, off, false)) => set(format!("{n}.load(core::sync::atomic::Ordering::Relaxed).wrapping_add({off})")),
+            // A wide constant made before the blocks that use it (a loop's invariant, as the
+            // word hash's multiplier where a file's token loop starts): made once (`kept`),
+            // which rustc cannot make again at each use as it would a literal (four
+            // instructions, at each word's hash in the token loop).
+            None if rt == Some(types::I64) && wide(imm()? as u64) && used_apart(f, inst) => set(format!("kept({:#x})", imm()? as u64)),
             None => set(format!("{}i64 as {u}", imm()?)),
         },
         Opcode::BandNot => set(format!("{} & !{}", args[0], args[1])),

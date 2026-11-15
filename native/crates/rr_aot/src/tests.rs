@@ -71,6 +71,26 @@ fn aot_tapes_are_the_jits() {
     assert_eq!(differ, Vec::<usize>::new(), "files whose tape is not the JIT's");
 }
 
+/// The word hash's multiplier, a wide constant made where a file's token loop starts, is made
+/// once (`clif_rust`'s `kept`): rustc keeps it, as the lean lexer keeps its own in a register,
+/// where it made the literal again at each word (four instructions). A constant of two parts
+/// or fewer, or an `orr`'s immediate, stays a literal.
+#[test]
+fn the_word_multiplier_is_kept() {
+    use rerail_compiler::clif_rust::wide;
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult;
+    assert!(wide(mult), "{mult:#x}");
+    let src = include_str!("tier1_aot.rs");
+    assert!(src.contains(&format!("kept({mult:#x})")), "the multiplier made at each use");
+    for v in [0x5555_5555_5555_5555u64, 0x00ff_00ff_00ff_00ff, 0xffff_0000_ffff_0000, 0x8000_0000_0000_0001, 0x1234_0000_0000_5678, 0xffff_ffff_1234_5678, 0x7fff_ffff_ffff_fffe] {
+        assert!(!wide(v), "{v:#x}: two instructions at most");
+    }
+    for v in [0x1234_5678_9abc_def1u64, 0x0001_0002_0003_0000] {
+        assert!(wide(v), "{v:#x}: three parts or more");
+    }
+}
+
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU
 /// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
 /// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a
