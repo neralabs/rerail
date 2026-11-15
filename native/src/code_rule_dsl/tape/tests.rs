@@ -4136,6 +4136,13 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
         "---\ntitle: x\n---\n\n~~~ {.python}\ncode\n~~~\n",
         "[`a`]:\n    https://x/y?a&b=c&amp;d\n[b]: u\n\"t\" x\n\n```c&#38;d\n```\n",
         "> [a]:\n> <u> 'multi\n> line'\n",
+        // A lone delimiter cell's trailing `|` is implied (left out), a second cell's is stored.
+        "| a |\n| - |\n| b |\n\n| a | b |\n| - | - |\n",
+        // Definitions after a blank line in a list item; a label led by a reference, as a
+        // definition or indented.
+        "* a\n\n  [b]: u\n  [c]: v\n\n[&amp; b]: u\n\n  [&amp; b](u)\n",
+        // `<!…` (HTML block 4) ends with its container, not at `>`.
+        "> <!X a>\n> b\n\nc\n\n<!DOCTYPE html>\n<html lang=\"en\">\n\npara\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Markdown).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -4153,7 +4160,9 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["a\n\n* ", "* <div>\n\n  y\n", "[\\<b>]\n"] {
+    // Also: an unindented label led by a character reference that is no definition, and an empty
+    // delimiter cell (tree-sitter inserts a MISSING one).
+    for invalid in ["a\n\n* ", "* <div>\n\n  y\n", "[\\<b>]\n", "[&amp; b](u)\n", "- [&#1; b](u)\n", "| a | b |\n| - |  |\n", "| a | b |\n|  | - |\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(markdown_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
